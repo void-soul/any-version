@@ -108,7 +108,7 @@ export default function InstallAgentPanel({ seed }: { seed?: string } = {}) {
         </div>
         <div className="flex-1 min-w-0">
           <h3 className="text-sm font-bold text-white">{t("installagent.title")}</h3>
-          <p className="text-[10px] text-slate-500">{t("installagent.hint")}</p>
+          <p className="text-tiny text-slate-500">{t("installagent.hint")}</p>
         </div>
         {/* 模型可自由选择：默认取第一个可用供应商，随时可换 */}
         <select
@@ -118,7 +118,7 @@ export default function InstallAgentPanel({ seed }: { seed?: string } = {}) {
             const p = config?.providers.find((x) => x.id === e.target.value);
             setModelId(p?.active_model_id || p?.models[0]?.id || "");
           }}
-          className="glass-input px-2 h-7 text-[10px] cursor-pointer max-w-[140px]"
+          className="glass-input px-2 h-7 text-tiny cursor-pointer max-w-[140px]"
         >
           {usableProviders.length === 0 && <option value="">{t("installagent.noProvider")}</option>}
           {usableProviders.map((p) => (
@@ -128,7 +128,7 @@ export default function InstallAgentPanel({ seed }: { seed?: string } = {}) {
         <select
           value={modelId}
           onChange={(e) => setModelId(e.target.value)}
-          className="glass-input px-2 h-7 text-[10px] cursor-pointer max-w-[160px]"
+          className="glass-input px-2 h-7 text-tiny cursor-pointer max-w-[160px]"
         >
           {models.map((m) => (
             <option key={m.id} value={m.id}>{m.id}</option>
@@ -141,7 +141,7 @@ export default function InstallAgentPanel({ seed }: { seed?: string } = {}) {
         className="flex-1 min-h-0 overflow-y-auto rounded-card border border-white/5 bg-slate-900/30 p-3 space-y-2"
       >
         {lines.length === 0 && (
-          <div className="text-[11px] text-slate-500 py-6 text-center">
+          <div className="text-caption text-slate-500 py-6 text-center">
             <Sparkles className="w-4 h-4 mx-auto mb-2 text-slate-600" />
             {t("installagent.placeholder")}
           </div>
@@ -150,7 +150,7 @@ export default function InstallAgentPanel({ seed }: { seed?: string } = {}) {
           if (line.role === "user") {
             return (
               <div key={i} className="flex justify-end">
-                <div className="max-w-[80%] rounded-ctl px-2.5 py-1.5 text-[11px] bg-[var(--module-accent)]/20 text-white break-all">
+                <div className="max-w-[80%] rounded-ctl px-2.5 py-1.5 text-caption bg-[var(--module-accent)]/20 text-white break-all">
                   {line.text}
                 </div>
               </div>
@@ -160,7 +160,7 @@ export default function InstallAgentPanel({ seed }: { seed?: string } = {}) {
             return (
               <div key={i} className="flex gap-2">
                 <Bot className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-[var(--module-accent)]" />
-                <div className="text-[11px] text-slate-200 whitespace-pre-wrap break-all">{line.text}</div>
+                <div className="text-caption text-slate-200 whitespace-pre-wrap break-all">{line.text}</div>
               </div>
             );
           }
@@ -177,11 +177,11 @@ export default function InstallAgentPanel({ seed }: { seed?: string } = {}) {
               )}
               <div className="min-w-0 flex-1">
                 {line.tool && (
-                  <span className="text-[9px] text-slate-500 mr-1.5">
+                  <span className="text-micro text-slate-500 mr-1.5">
                     {TOOL_LABEL[line.tool] ?? line.tool}
                   </span>
                 )}
-                <span className="text-[10px] text-slate-400 whitespace-pre-wrap break-all">{line.text}</span>
+                <span className="text-tiny text-slate-400 whitespace-pre-wrap break-all">{line.text}</span>
               </div>
             </div>
           );
@@ -189,7 +189,7 @@ export default function InstallAgentPanel({ seed }: { seed?: string } = {}) {
       </div>
 
       {error && (
-        <div className="flex-shrink-0 text-[10px] text-rose-400 break-all">{error}</div>
+        <div className="flex-shrink-0 text-tiny text-rose-400 break-all">{error}</div>
       )}
 
       <div className="flex items-center gap-2 flex-shrink-0">
@@ -198,12 +198,12 @@ export default function InstallAgentPanel({ seed }: { seed?: string } = {}) {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }}
           placeholder={t("installagent.inputPh")}
-          className="flex-1 bg-slate-900 border border-white/10 rounded-ctl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
+          className="flex-1 ui-input rounded-ctl px-3 py-2 text-body text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
         />
         <button
           onClick={() => void send()}
           disabled={busy || !input.trim()}
-          className="px-3 py-2 rounded-ctl text-[11px] bg-[var(--module-accent)] hover:opacity-90 text-white font-semibold cursor-pointer disabled:opacity-40 flex items-center gap-1"
+          className="px-3 py-2 rounded-ctl text-caption ui-btn-primary text-white font-semibold cursor-pointer disabled:opacity-40 flex items-center gap-1"
         >
           <Send className="w-3 h-3" />
           {busy ? t("installagent.running") : t("installagent.send")}

@@ -15,7 +15,7 @@ import { useTranslation } from "react-i18next";
  */
 function MarkdownRendererBase({ content }: { content: string }) {
   return (
-    <div className="md-body text-[11px] leading-relaxed text-slate-200 break-words">
+    <div className="md-body text-caption leading-relaxed text-slate-200 break-words">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -24,19 +24,19 @@ function MarkdownRendererBase({ content }: { content: string }) {
             <h1 className="text-sm font-bold text-slate-100 mt-3 mb-1.5 first:mt-0">{children}</h1>
           ),
           h2: ({ children }) => (
-            <h2 className="text-[13px] font-bold text-slate-100 mt-3 mb-1.5 first:mt-0">{children}</h2>
+            <h2 className="text-title font-bold text-slate-100 mt-3 mb-1.5 first:mt-0">{children}</h2>
           ),
           h3: ({ children }) => (
-            <h3 className="text-[12px] font-bold text-slate-200 mt-2.5 mb-1 first:mt-0">{children}</h3>
+            <h3 className="text-body font-bold text-slate-200 mt-2.5 mb-1 first:mt-0">{children}</h3>
           ),
           h4: ({ children }) => (
-            <h4 className="text-[11px] font-bold text-slate-200 mt-2 mb-1 first:mt-0">{children}</h4>
+            <h4 className="text-caption font-bold text-slate-200 mt-2 mb-1 first:mt-0">{children}</h4>
           ),
           h5: ({ children }) => (
-            <h5 className="text-[11px] font-semibold text-slate-300 mt-2 mb-1 first:mt-0">{children}</h5>
+            <h5 className="text-caption font-semibold text-slate-300 mt-2 mb-1 first:mt-0">{children}</h5>
           ),
           h6: ({ children }) => (
-            <h6 className="text-[10px] font-semibold text-slate-400 mt-2 mb-1 first:mt-0">{children}</h6>
+            <h6 className="text-tiny font-semibold text-slate-400 mt-2 mb-1 first:mt-0">{children}</h6>
           ),
           // 段落
           p: ({ children }) => <p className="my-1.5 first:mt-0 last:mb-0">{children}</p>,
@@ -66,7 +66,7 @@ function MarkdownRendererBase({ content }: { content: string }) {
             if (!isBlock) {
               // 行内代码
               return (
-                <code className="px-1 py-0.5 rounded bg-slate-700/60 text-[10px] text-[var(--module-accent)] font-mono">
+                <code className="px-1 py-0.5 rounded bg-slate-700/60 text-tiny text-[var(--module-accent)] font-mono">
                   {children}
                 </code>
               );
@@ -89,7 +89,7 @@ function MarkdownRendererBase({ content }: { content: string }) {
           // 表格
           table: ({ children }) => (
             <div className="overflow-x-auto my-2 rounded border border-white/10">
-              <table className="min-w-full text-[10px]">{children}</table>
+              <table className="min-w-full text-tiny">{children}</table>
             </div>
           ),
           thead: ({ children }) => <thead className="bg-slate-800/80">{children}</thead>,
@@ -131,15 +131,15 @@ function CodeBlock({ lang, children }: { lang: string; children: React.ReactNode
   return (
     <div className="relative my-2 rounded-ctl overflow-hidden border border-white/10 bg-slate-900/80">
       <div className="flex items-center justify-between px-2.5 py-1 bg-slate-800/60 border-b border-white/5">
-        <span className="text-[9px] font-mono text-slate-400 uppercase tracking-wide">{lang}</span>
+        <span className="text-micro font-mono text-slate-400 uppercase tracking-wide">{lang}</span>
         <button
           onClick={handleCopy}
-          className="text-[9px] text-slate-500 hover:text-slate-200 transition-colors cursor-pointer"
+          className="text-micro text-slate-500 hover:text-slate-200 transition-colors cursor-pointer"
         >
           {copied ? t("mmdmark.copied") : t("mmdmark.copy")}
         </button>
       </div>
-      <pre className="overflow-x-auto p-2.5 text-[10px] leading-relaxed">
+      <pre className="overflow-x-auto p-2.5 text-tiny leading-relaxed">
         <code className="font-mono text-slate-300">{children}</code>
       </pre>
     </div>

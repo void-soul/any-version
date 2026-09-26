@@ -103,7 +103,7 @@ function SortHeader({
   return (
     <th
       onClick={() => onSort(k)}
-      className={`px-2 py-1.5 text-[9px] font-semibold text-slate-500 cursor-pointer select-none hover:text-slate-300 whitespace-nowrap ${align || "text-right"}`}
+      className={`px-2 py-1.5 text-micro font-semibold text-slate-500 cursor-pointer select-none hover:text-slate-300 whitespace-nowrap ${align || "text-right"}`}
       title={t("usagestats.clickSort")}
     >
       <span className="inline-flex items-center gap-0.5">
@@ -154,7 +154,7 @@ function toolDisplay(rawId: string, aiTools: DetectedAiTool[]): { label: string;
   if (aiTool) {
     return {
       label: aiTool.nickname || aiTool.display_name,
-      icon: aiTool.avatar ? <span className="text-[10px] leading-none">{aiTool.avatar}</span> : undefined,
+      icon: aiTool.avatar ? <span className="text-tiny leading-none">{aiTool.avatar}</span> : undefined,
     };
   }
   return { label: rawId };
@@ -220,10 +220,10 @@ function SortableTable({
   if (rows.length === 0) {
     return (
       <div className="rounded-card bg-slate-900/30 border border-white/5">
-        <div className="flex items-center gap-1.5 px-3 py-2 text-[10px] font-bold text-slate-300">
+        <div className="flex items-center gap-1.5 px-3 py-2 text-tiny font-bold text-slate-300">
           <span className={`p-1 rounded-md ${style.softClass} ${style.iconClass}`}>{icon}</span>
           {title}
-          <span className="text-[9px] font-normal text-slate-600 ml-1">{t("usagestats.noData")}</span>
+          <span className="text-micro font-normal text-slate-600 ml-1">{t("usagestats.noData")}</span>
         </div>
       </div>
     );
@@ -237,16 +237,16 @@ function SortableTable({
 
   return (
     <div className="rounded-card bg-slate-900/30 border border-white/5 overflow-hidden">
-      <div className="flex items-center gap-1.5 px-3 py-2 text-[10px] font-bold text-slate-200 border-b border-white/[0.04] bg-white/[0.015]">
+      <div className="flex items-center gap-1.5 px-3 py-2 text-tiny font-bold text-slate-200 border-b border-white/[0.04] bg-white/[0.015]">
         <span className={`p-1 rounded-md ${style.softClass} ${style.iconClass}`}>{icon}</span>
         {title}
-        <span className="text-[9px] font-normal text-slate-600 ml-1">{t("usagestats.rowsCount", { count: rows.length })}</span>
+        <span className="text-micro font-normal text-slate-600 ml-1">{t("usagestats.rowsCount", { count: rows.length })}</span>
       </div>
       <table className="w-full border-collapse">
         <thead>
           <tr className="text-slate-500">
             <th className="w-4" />
-            <th className="px-2 py-1 text-[9px] font-semibold text-left">{nameHeader}</th>
+            <th className="px-2 py-1 text-micro font-semibold text-left">{nameHeader}</th>
             <SortHeader k="requests" sortKey={sortKey} asc={asc} onSort={setSort}>{t("usagestats.colRequests")}</SortHeader>
             <SortHeader k="input" sortKey={sortKey} asc={asc} onSort={setSort}>{t("usagestats.colInput")}</SortHeader>
             <SortHeader k="output" sortKey={sortKey} asc={asc} onSort={setSort}>{t("usagestats.colOutput")}</SortHeader>
@@ -266,13 +266,13 @@ function SortableTable({
               <td className="px-2 py-1.5 max-w-[180px]">
                 <div className="flex items-center gap-1 min-w-0">
                   {r.icon && <span className="flex-shrink-0 flex items-center justify-center w-3.5">{r.icon}</span>}
-                  <div className={`text-[10px] truncate ${r.icon ? "text-slate-100" : "text-slate-200 font-mono"}`} title={r.label}>{r.label}</div>
+                  <div className={`text-tiny truncate ${r.icon ? "text-slate-100" : "text-slate-200 font-mono"}`} title={r.label}>{r.label}</div>
                 </div>
                 {r.sub && <div className="text-[8px] text-slate-600 truncate">{r.sub}</div>}
               </td>
-              <td className="px-2 py-1.5 text-[10px] text-[var(--module-accent)] text-right font-semibold tabular-nums">{r.requests}</td>
-              <td className="px-2 py-1.5 text-[10px] text-blue-300 text-right tabular-nums">{formatTokens(r.input)}</td>
-              <td className="px-2 py-1.5 text-[10px] text-emerald-300 text-right tabular-nums">
+              <td className="px-2 py-1.5 text-tiny text-[var(--module-accent)] text-right font-semibold tabular-nums">{r.requests}</td>
+              <td className="px-2 py-1.5 text-tiny text-blue-300 text-right tabular-nums">{formatTokens(r.input)}</td>
+              <td className="px-2 py-1.5 text-tiny text-emerald-300 text-right tabular-nums">
                 {formatTokens(r.output)}
                 {typeof r.tps === "number" && (
                   <span
@@ -288,13 +288,13 @@ function SortableTable({
                   <div className="w-12 h-1.5 bg-white/5 rounded-full overflow-hidden hidden sm:block">
                     <div className={`h-full ${style.barClass} rounded-full`} style={{ width: `${Math.min(100, (r.total / maxTotal) * 100)}%` }} />
                   </div>
-                  <span className="text-[10px] text-slate-400 tabular-nums w-10 text-right">{formatTokens(r.total)}</span>
+                  <span className="text-tiny text-slate-400 tabular-nums w-10 text-right">{formatTokens(r.total)}</span>
                 </div>
               </td>
               {hasReliability && (
                 <>
                   <td
-                    className={`px-2 py-1.5 text-[10px] text-right tabular-nums whitespace-nowrap ${
+                    className={`px-2 py-1.5 text-tiny text-right tabular-nums whitespace-nowrap ${
                       r.successRate == null
                         ? "text-slate-600"
                         : r.successRate >= 0.99
@@ -311,7 +311,7 @@ function SortableTable({
                     )}
                   </td>
                   <td
-                    className={`px-2 py-1.5 text-[10px] text-right tabular-nums whitespace-nowrap ${r.cacheHitRate == null ? "text-slate-600" : "text-sky-300"}`}
+                    className={`px-2 py-1.5 text-tiny text-right tabular-nums whitespace-nowrap ${r.cacheHitRate == null ? "text-slate-600" : "text-sky-300"}`}
                     title={t("usagestats.colCacheHitHint")}
                   >
                     {r.cacheHitRate == null ? "—" : `${(r.cacheHitRate * 100).toFixed(0)}%`}
@@ -451,7 +451,7 @@ export default function UsageStats() {
             <select
               value={refreshIntervalMs}
               onChange={(e) => changeRefreshInterval(Number(e.target.value))}
-              className="bg-white/5 border border-white/10 rounded-ctl text-[10px] text-slate-300 px-1.5 py-1 cursor-pointer hover:text-white hover:bg-white/10 transition-all focus:outline-none"
+              className="bg-white/5 border border-white/10 rounded-ctl text-tiny text-slate-300 px-1.5 py-1 cursor-pointer hover:text-white hover:bg-white/10 transition-all focus:outline-none"
             >
               {REFRESH_INTERVAL_OPTIONS_MS.map((ms) => (
                 <option key={ms} value={ms} className="bg-surface-topbar text-slate-200">
@@ -461,11 +461,11 @@ export default function UsageStats() {
             </select>
           </div>
           <button onClick={load} disabled={loading}
-            className="px-2.5 py-1 rounded-ctl bg-white/5 border border-white/10 text-[10px] text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex items-center gap-1 disabled:opacity-50">
+            className="px-2.5 py-1 rounded-ctl bg-white/5 border border-white/10 text-tiny text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex items-center gap-1 disabled:opacity-50">
             <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} /> {t("usagestats.refresh")}
           </button>
           <button onClick={handleClear} disabled={!hasData}
-            className="px-2.5 py-1 rounded-ctl bg-white/5 border border-white/10 text-[10px] text-slate-300 hover:text-red-400 hover:bg-red-500/10 cursor-pointer transition-all flex items-center gap-1 disabled:opacity-30 disabled:cursor-not-allowed">
+            className="px-2.5 py-1 rounded-ctl bg-white/5 border border-white/10 text-tiny text-slate-300 hover:text-red-400 hover:bg-red-500/10 cursor-pointer transition-all flex items-center gap-1 disabled:opacity-30 disabled:cursor-not-allowed">
             <Trash2 className="w-3 h-3" /> {t("usagestats.clear")}
           </button>
         </div>
@@ -475,7 +475,7 @@ export default function UsageStats() {
         {loading ? (
           <div className="h-full flex items-center justify-center text-slate-500">
             <RefreshCw className="w-5 h-5 animate-spin mr-2" />
-            <span className="text-xs">{t("usagestats.loading")}</span>
+            <span className="text-body">{t("usagestats.loading")}</span>
           </div>
         ) : !hasData ? (
           <div className="h-full flex flex-col items-center justify-center text-slate-500">
@@ -483,9 +483,9 @@ export default function UsageStats() {
               <Hash className="w-8 h-8 text-slate-700" />
             </div>
             <span className="text-sm font-bold text-slate-400">{t("usagestats.emptyTitle")}</span>
-            <span className="text-[10px] text-slate-600 mt-1">{t("usagestats.emptyDesc")}</span>
+            <span className="text-tiny text-slate-600 mt-1">{t("usagestats.emptyDesc")}</span>
             <button onClick={load}
-              className="mt-3 px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-[10px] text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex items-center gap-1">
+              className="mt-3 px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-tiny text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex items-center gap-1">
               <RefreshCw className="w-3 h-3" /> {t("usagestats.refresh")}
             </button>
           </div>
@@ -496,21 +496,21 @@ export default function UsageStats() {
               <div className="absolute -right-6 -top-6 w-24 h-24 rounded-full bg-[var(--module-accent-soft)] blur-2xl" />
               <div className="relative flex items-start justify-between">
                 <div>
-                  <div className="text-[10px] text-slate-400 flex items-center gap-1">
+                  <div className="text-tiny text-slate-400 flex items-center gap-1">
                     <Activity className="w-3 h-3 text-[var(--module-accent)]" /> {t("usagestats.totalTokens")}
                   </div>
                   <div className="text-3xl font-bold text-white tabular-nums mt-1 leading-none">
                     {formatTokens(totalTokens)}
                   </div>
-                  <div className="text-[9px] text-slate-500 mt-1.5 tabular-nums">
+                  <div className="text-micro text-slate-500 mt-1.5 tabular-nums">
                     {t("usagestats.summaryLine", { tokens: formatFull(totalTokens), count: totalRecords, avg: formatTokens(avgPerReq) })}
                   </div>
                 </div>
                 <div className="flex gap-1.5">
-                  <span className="px-2 py-1 rounded-ctl bg-blue-500/10 border border-blue-500/20 text-blue-300 text-[10px] font-semibold flex items-center gap-1 tabular-nums">
+                  <span className="px-2 py-1 rounded-ctl bg-blue-500/10 border border-blue-500/20 text-blue-300 text-tiny font-semibold flex items-center gap-1 tabular-nums">
                     <ArrowDownRight className="w-3 h-3" />{formatTokens(totalInput)}
                   </span>
-                  <span className="px-2 py-1 rounded-ctl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-[10px] font-semibold flex items-center gap-1 tabular-nums">
+                  <span className="px-2 py-1 rounded-ctl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-tiny font-semibold flex items-center gap-1 tabular-nums">
                     <ArrowUpRight className="w-3 h-3" />{formatTokens(totalOutput)}
                   </span>
                 </div>
@@ -529,15 +529,15 @@ export default function UsageStats() {
             {/* 指标卡 */}
             <div className="grid grid-cols-3 gap-2">
               <div className="rounded-card bg-slate-900/30 border border-white/5 p-3">
-                <div className="text-[9px] text-slate-500 flex items-center gap-1"><Hash className="w-3 h-3 text-[var(--module-accent)]" />{t("usagestats.reqTotal")}</div>
+                <div className="text-micro text-slate-500 flex items-center gap-1"><Hash className="w-3 h-3 text-[var(--module-accent)]" />{t("usagestats.reqTotal")}</div>
                 <div className="text-lg font-bold text-slate-100 tabular-nums mt-1">{formatTokens(totalRecords)}</div>
               </div>
               <div className="rounded-card bg-slate-900/30 border border-white/5 p-3">
-                <div className="text-[9px] text-slate-500 flex items-center gap-1"><ArrowDownRight className="w-3 h-3 text-blue-400" />{t("usagestats.inputTokens")}</div>
+                <div className="text-micro text-slate-500 flex items-center gap-1"><ArrowDownRight className="w-3 h-3 text-blue-400" />{t("usagestats.inputTokens")}</div>
                 <div className="text-lg font-bold text-slate-100 tabular-nums mt-1">{formatTokens(totalInput)}</div>
               </div>
               <div className="rounded-card bg-slate-900/30 border border-white/5 p-3">
-                <div className="text-[9px] text-slate-500 flex items-center gap-1"><ArrowUpRight className="w-3 h-3 text-emerald-400" />{t("usagestats.outputTokens")}</div>
+                <div className="text-micro text-slate-500 flex items-center gap-1"><ArrowUpRight className="w-3 h-3 text-emerald-400" />{t("usagestats.outputTokens")}</div>
                 <div className="text-lg font-bold text-slate-100 tabular-nums mt-1">{formatTokens(totalOutput)}</div>
               </div>
             </div>

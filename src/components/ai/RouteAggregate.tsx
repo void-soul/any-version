@@ -95,7 +95,7 @@ function ChainRow({
         isDragging ? "border-[var(--module-accent)] bg-slate-900/80" : "border-white/5"
       }`}
     >
-      <span className="w-4 text-center text-[9px] font-mono text-slate-500 flex-shrink-0">{order}</span>
+      <span className="w-4 text-center text-micro font-mono text-slate-500 flex-shrink-0">{order}</span>
       <button
         {...attributes}
         {...listeners}
@@ -104,7 +104,7 @@ function ChainRow({
       >
         <GripVertical className="w-3.5 h-3.5" />
       </button>
-      <span className="text-[11px] text-slate-200 truncate flex-grow min-w-0">{name}</span>
+      <span className="text-caption text-slate-200 truncate flex-grow min-w-0">{name}</span>
       <button
         onClick={onRemove}
         className="text-slate-600 hover:text-red-400 cursor-pointer transition-colors flex-shrink-0"
@@ -393,11 +393,11 @@ export default function RouteAggregate() {
       <div className="rounded-card border border-white/5 bg-white/[0.02] px-4 py-2.5 flex items-start gap-2">
         <RouteIcon className="w-4 h-4 text-[var(--module-accent)] flex-shrink-0 mt-0.5" />
         <div className="min-w-0">
-          <div className="text-[11px] font-bold text-slate-200">
+          <div className="text-caption font-bold text-slate-200">
             {t("aggregate.title")}
-            {saving && <span className="ml-2 text-[9px] font-normal text-slate-500">{t("aggregate.saving")}</span>}
+            {saving && <span className="ml-2 text-micro font-normal text-slate-500">{t("aggregate.saving")}</span>}
           </div>
-          <p className="text-[10px] text-slate-500 mt-0.5 leading-relaxed">{t("aggregate.hint")}</p>
+          <p className="text-tiny text-slate-500 mt-0.5 leading-relaxed">{t("aggregate.hint")}</p>
         </div>
       </div>
 
@@ -405,8 +405,8 @@ export default function RouteAggregate() {
         {/* 左：仓库候选（勾选入链） */}
         <div className="flex flex-col min-h-0 rounded-card border border-white/5 bg-white/[0.02] overflow-hidden">
           <div className="px-3 py-2 border-b border-white/5 flex items-center justify-between gap-2">
-            <span className="text-[11px] font-bold text-slate-300">{t("aggregate.repoTitle")}</span>
-            <span className="text-[9px] text-slate-600">{candidates.length}</span>
+            <span className="text-caption font-bold text-slate-300">{t("aggregate.repoTitle")}</span>
+            <span className="text-micro text-slate-600">{candidates.length}</span>
           </div>
           <div className="p-2 border-b border-white/5">
             <div className="relative">
@@ -415,7 +415,7 @@ export default function RouteAggregate() {
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder={t("aggregate.searchPh")}
-                className="w-full bg-slate-900 border border-white/10 rounded-ctl pl-8 pr-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
+                className="w-full ui-input rounded-ctl pl-8 pr-2.5 py-1.5 text-body text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
               />
             </div>
           </div>
@@ -423,7 +423,7 @@ export default function RouteAggregate() {
             {grouped.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-slate-600 gap-1.5 py-8">
                 <Inbox className="w-6 h-6" />
-                <span className="text-[10px] text-center px-4">
+                <span className="text-tiny text-center px-4">
                   {candidates.length === 0 ? t("aggregate.emptyRepo") : t("aggregate.noMatch")}
                 </span>
               </div>
@@ -465,10 +465,10 @@ export default function RouteAggregate() {
                       onClick={() => toggleGroup(group.providerId)}
                       className="flex-grow min-w-0 text-left flex items-center gap-1.5 cursor-pointer"
                     >
-                      <span className="text-[10px] font-bold text-slate-300 truncate">{group.providerName}</span>
+                      <span className="text-tiny font-bold text-slate-300 truncate">{group.providerName}</span>
                       <span className="text-[8px] text-slate-600 flex-shrink-0">{group.category}</span>
                     </button>
-                    <span className={`text-[9px] font-mono flex-shrink-0 ${selectedCount > 0 ? "text-[var(--module-accent)]" : "text-slate-600"}`}>
+                    <span className={`text-micro font-mono flex-shrink-0 ${selectedCount > 0 ? "text-[var(--module-accent)]" : "text-slate-600"}`}>
                       {selectedCount}/{total}
                     </span>
                   </div>
@@ -485,8 +485,8 @@ export default function RouteAggregate() {
                               className="w-full text-left flex items-center gap-2 pl-6 pr-2 py-1 rounded-md border border-transparent opacity-50 cursor-not-allowed"
                             >
                               <input type="checkbox" checked={false} readOnly className="w-3 h-3 pointer-events-none" />
-                              <span className="text-[10px] text-slate-400 font-mono truncate flex-grow min-w-0">{v.model_name}</span>
-                              <span className="text-[9px] text-red-400/80 flex-shrink-0">{t("aggregate.selfReferential")}</span>
+                              <span className="text-tiny text-slate-400 font-mono truncate flex-grow min-w-0">{v.model_name}</span>
+                              <span className="text-micro text-red-400/80 flex-shrink-0">{t("aggregate.selfReferential")}</span>
                             </div>
                           );
                         }
@@ -506,9 +506,9 @@ export default function RouteAggregate() {
                               onChange={() => {}}
                               className="w-3 h-3 accent-[var(--module-accent)] pointer-events-none"
                             />
-                            <span className="text-[10px] text-slate-300 font-mono truncate flex-grow min-w-0">{v.model_name}</span>
+                            <span className="text-tiny text-slate-300 font-mono truncate flex-grow min-w-0">{v.model_name}</span>
                             {inChain && (
-                              <span className="text-[9px] font-mono text-[var(--module-accent)] flex-shrink-0">#{v.order}</span>
+                              <span className="text-micro font-mono text-[var(--module-accent)] flex-shrink-0">#{v.order}</span>
                             )}
                           </button>
                         );
@@ -524,14 +524,14 @@ export default function RouteAggregate() {
         {/* 右：链路顺序（拖拽排序） */}
         <div className="flex flex-col min-h-0 rounded-card border border-white/5 bg-white/[0.02] overflow-hidden">
           <div className="px-3 py-2 border-b border-white/5 flex items-center justify-between gap-2">
-            <span className="text-[11px] font-bold text-slate-300">{t("aggregate.chainTitle")}</span>
-            <span className="text-[9px] text-slate-600">{t("aggregate.count", { count: chain.length })}</span>
+            <span className="text-caption font-bold text-slate-300">{t("aggregate.chainTitle")}</span>
+            <span className="text-micro text-slate-600">{t("aggregate.count", { count: chain.length })}</span>
           </div>
           <div className="flex-1 min-h-0 overflow-y-auto p-2">
             {chain.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-slate-600 gap-1.5 py-8">
                 <RouteIcon className="w-6 h-6" />
-                <span className="text-[10px] text-center px-4">{t("aggregate.emptyChain")}</span>
+                <span className="text-tiny text-center px-4">{t("aggregate.emptyChain")}</span>
               </div>
             ) : (
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
@@ -560,8 +560,8 @@ export default function RouteAggregate() {
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[11px] font-bold text-slate-200">{t("aggregate.headroomTitle")}</span>
-                <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${!headroom.enabled
+                <span className="text-caption font-bold text-slate-200">{t("aggregate.headroomTitle")}</span>
+                <span className={`px-1.5 py-0.5 rounded text-micro font-bold ${!headroom.enabled
                   ? "bg-slate-500/15 text-slate-400"
                   : headroomHealth?.alive
                     ? "bg-emerald-500/15 text-emerald-400"
@@ -573,7 +573,7 @@ export default function RouteAggregate() {
                       : t("aggregate.headroomDown")}
                 </span>
               </div>
-              <p className="text-[10px] text-slate-500 mt-0.5 leading-relaxed">{t("aggregate.headroomHint")}</p>
+              <p className="text-tiny text-slate-500 mt-0.5 leading-relaxed">{t("aggregate.headroomHint")}</p>
             </div>
             <label className="flex items-center gap-2 cursor-pointer flex-shrink-0">
               <input type="checkbox" checked={headroom.enabled}
@@ -585,18 +585,18 @@ export default function RouteAggregate() {
           {headroom.enabled && (
             <div className="space-y-2 pt-2 border-t border-white/5">
               <div className="flex items-center gap-2 flex-wrap">
-                <label className="text-[10px] text-slate-500 w-14 flex-shrink-0">{t("aggregate.headroomPort")}</label>
+                <label className="text-tiny text-slate-500 w-14 flex-shrink-0">{t("aggregate.headroomPort")}</label>
                 <input type="number" min={1} max={65535} value={headroom.port}
                   onChange={e => setHeadroom({ ...headroom, port: Number(e.target.value) || 0 })}
                   onBlur={e => patchHeadroom({ port: Number(e.target.value) || 8791 })}
-                  className="w-20 bg-slate-900 border border-white/10 rounded-ctl px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
+                  className="w-20 ui-input rounded-ctl px-2 py-1 text-tiny text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
                 <button onClick={() => void checkHeadroom(headroom.port)} disabled={checkingHeadroom}
-                  className="px-2 py-1 rounded-ctl bg-white/5 border border-white/10 text-[10px] text-slate-300 hover:text-white cursor-pointer transition-all flex items-center gap-1 disabled:opacity-40">
+                  className="px-2 py-1 rounded-ctl bg-white/5 border border-white/10 text-tiny text-slate-300 hover:text-white cursor-pointer transition-all flex items-center gap-1 disabled:opacity-40">
                   <RefreshCw className={`w-3 h-3 ${checkingHeadroom ? "animate-spin" : ""}`} />
                   {t("aggregate.headroomCheck")}
                 </button>
                 {headroomHealth && (
-                  <span className={`text-[9px] truncate max-w-[320px] ${headroomHealth.alive ? "text-emerald-400/80" : "text-amber-400/90"}`}
+                  <span className={`text-micro truncate max-w-[320px] ${headroomHealth.alive ? "text-emerald-400/80" : "text-amber-400/90"}`}
                     title={headroomHealth.detail}>
                     {headroomHealth.alive
                       ? `${headroomHealth.base_url}${headroomHealth.path} · HTTP ${headroomHealth.status}`
@@ -606,19 +606,19 @@ export default function RouteAggregate() {
               </div>
 
               <div className="flex items-center gap-2 flex-wrap">
-                <label className="text-[10px] text-slate-500 w-14 flex-shrink-0">{t("aggregate.headroomOnUnavailable")}</label>
+                <label className="text-tiny text-slate-500 w-14 flex-shrink-0">{t("aggregate.headroomOnUnavailable")}</label>
                 <select value={headroom.on_unavailable}
                   onChange={e => patchHeadroom({ on_unavailable: e.target.value })}
-                  className="bg-slate-900 border border-white/10 rounded-ctl px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)] cursor-pointer">
+                  className="ui-input rounded-ctl px-2 py-1 text-tiny text-slate-200 focus:outline-none focus:border-[var(--module-accent)] cursor-pointer">
                   <option value="failOpen">{t("aggregate.headroomFailOpen")}</option>
                   <option value="failClosed">{t("aggregate.headroomFailClosed")}</option>
                 </select>
-                <span className="text-[9px] text-slate-600">
+                <span className="text-micro text-slate-600">
                   {headroom.on_unavailable === "failClosed" ? t("aggregate.headroomFailClosedHint") : t("aggregate.headroomFailOpenHint")}
                 </span>
               </div>
 
-              <label className="flex items-center gap-2 text-[10px] text-slate-400 cursor-pointer">
+              <label className="flex items-center gap-2 text-tiny text-slate-400 cursor-pointer">
                 <input type="checkbox" checked={headroom.disable_kompress}
                   onChange={e => patchHeadroom({ disable_kompress: e.target.checked })}
                   className="w-3.5 h-3.5 accent-[var(--module-accent)] cursor-pointer" />
@@ -635,18 +635,18 @@ export default function RouteAggregate() {
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[11px] font-bold text-slate-200">{t("aggregate.serviceTitle")}</span>
-                <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${aggStatus?.running
+                <span className="text-caption font-bold text-slate-200">{t("aggregate.serviceTitle")}</span>
+                <span className={`px-1.5 py-0.5 rounded text-micro font-bold ${aggStatus?.running
                   ? "bg-emerald-500/15 text-emerald-400"
                   : "bg-slate-500/15 text-slate-400"}`}>
                   {aggStatus?.running ? t("aggregate.serviceRunning") : t("aggregate.serviceStopped")}
                 </span>
                 {aggStatus?.running && (
-                  <span className="text-[9px] font-mono text-slate-500">http://127.0.0.1:{aggStatus.port}</span>
+                  <span className="text-micro font-mono text-slate-500">http://127.0.0.1:{aggStatus.port}</span>
                 )}
               </div>
-              <p className="text-[10px] text-slate-500 mt-0.5 leading-relaxed">{t("aggregate.serviceHint")}</p>
-              <label className="flex items-center gap-1.5 text-[10px] text-slate-400 cursor-pointer mt-1">
+              <p className="text-tiny text-slate-500 mt-0.5 leading-relaxed">{t("aggregate.serviceHint")}</p>
+              <label className="flex items-center gap-1.5 text-tiny text-slate-400 cursor-pointer mt-1">
                 <input type="checkbox" checked={autoStart}
                   onChange={() => void toggleAutoStart()}
                   className="w-3 h-3 accent-[var(--module-accent)] cursor-pointer" />
@@ -655,12 +655,12 @@ export default function RouteAggregate() {
             </div>
             {aggStatus?.running ? (
               <button onClick={() => void stopAggregate()} disabled={aggBusy}
-                className="px-2.5 py-1 rounded-ctl bg-red-500/10 border border-red-500/20 text-[10px] font-semibold text-red-400 hover:bg-red-500/20 cursor-pointer transition-all flex items-center gap-1 disabled:opacity-40">
+                className="px-2.5 py-1 rounded-ctl bg-red-500/10 border border-red-500/20 text-tiny font-semibold text-red-400 hover:bg-red-500/20 cursor-pointer transition-all flex items-center gap-1 disabled:opacity-40">
                 <Square className="w-3 h-3" /> {t("aggregate.serviceStop")}
               </button>
             ) : (
               <button onClick={() => void startAggregate()} disabled={aggBusy || chain.length === 0}
-                className="px-2.5 py-1 rounded-ctl bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-semibold text-emerald-400 hover:bg-emerald-500/20 cursor-pointer transition-all flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="px-2.5 py-1 rounded-ctl bg-emerald-500/10 border border-emerald-500/20 text-tiny font-semibold text-emerald-400 hover:bg-emerald-500/20 cursor-pointer transition-all flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
                 title={chain.length === 0 ? t("aggregate.needCandidates") : undefined}>
                 <Play className="w-3 h-3" /> {t("aggregate.serviceStart")}
               </button>
@@ -669,36 +669,36 @@ export default function RouteAggregate() {
 
           <div className="flex items-center gap-3 flex-wrap pt-2 border-t border-white/5">
             <div className="flex items-center gap-2">
-              <label className="text-[10px] text-slate-500 flex-shrink-0">{t("aggregate.servicePort")}</label>
+              <label className="text-tiny text-slate-500 flex-shrink-0">{t("aggregate.servicePort")}</label>
               <input type="number" min={1} max={65535} value={aggregate.port} disabled={!!aggStatus?.running}
                 onChange={e => setAggregate({ ...aggregate, port: Number(e.target.value) || 0 })}
                 onBlur={e => patchAggregate({ port: Number(e.target.value) || 15888 })}
-                className="w-20 bg-slate-900 border border-white/10 rounded-ctl px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)] disabled:opacity-50" />
+                className="w-20 ui-input rounded-ctl px-2 py-1 text-tiny text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)] disabled:opacity-50" />
             </div>
             <div className="flex items-center gap-2">
-              <label className="text-[10px] text-slate-500 flex-shrink-0">{t("aggregate.contextLimit")}</label>
+              <label className="text-tiny text-slate-500 flex-shrink-0">{t("aggregate.contextLimit")}</label>
               <input type="number" min={1000} step={1000} value={aggregate.context_limit}
                 onChange={e => setAggregate({ ...aggregate, context_limit: Number(e.target.value) || 0 })}
                 onBlur={e => patchAggregate({ context_limit: Number(e.target.value) || 128000 })}
-                className="w-24 bg-slate-900 border border-white/10 rounded-ctl px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
-              <span className="text-[9px] text-slate-600">tokens</span>
+                className="w-24 ui-input rounded-ctl px-2 py-1 text-tiny text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
+              <span className="text-micro text-slate-600">tokens</span>
             </div>
             <div className="flex items-center gap-2">
-              <label className="text-[10px] text-slate-500 flex-shrink-0">{t("aggregate.retryCount")}</label>
+              <label className="text-tiny text-slate-500 flex-shrink-0">{t("aggregate.retryCount")}</label>
               <input type="number" min={1} max={5} value={aggregate.retry_count}
                 onChange={e => setAggregate({ ...aggregate, retry_count: Number(e.target.value) || 1 })}
                 onBlur={e => patchAggregate({ retry_count: Math.min(5, Math.max(1, Number(e.target.value) || 2)) })}
-                className="w-14 bg-slate-900 border border-white/10 rounded-ctl px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
-              <span className="text-[9px] text-slate-600">{t("aggregate.retryCountHint")}</span>
+                className="w-14 ui-input rounded-ctl px-2 py-1 text-tiny text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
+              <span className="text-micro text-slate-600">{t("aggregate.retryCountHint")}</span>
             </div>
             <div className="flex items-center gap-2">
-              <label className="text-[10px] text-slate-500 flex-shrink-0">{t("aggregate.entryModel")}</label>
+              <label className="text-tiny text-slate-500 flex-shrink-0">{t("aggregate.entryModel")}</label>
               <input value={aggregate.entry_model ?? ""}
                 onChange={e => setAggregate({ ...aggregate, entry_model: e.target.value })}
                 onBlur={e => patchAggregate({ entry_model: e.target.value.trim() || "kiro-proxy" })}
                 placeholder="kiro-proxy"
-                className="w-32 bg-slate-900 border border-white/10 rounded-ctl px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
-              <span className="text-[9px] text-slate-600">{t("aggregate.entryModelHint")}</span>
+                className="w-32 ui-input rounded-ctl px-2 py-1 text-tiny text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
+              <span className="text-micro text-slate-600">{t("aggregate.entryModelHint")}</span>
             </div>
           </div>
 

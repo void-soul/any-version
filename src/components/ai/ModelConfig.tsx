@@ -434,7 +434,7 @@ export default function ModelConfig() {
   const detailProvider = config?.providers.find(p => p.id === detailId) ?? null;
 
   if (loading) {
-    return <div className="h-full flex items-center justify-center text-slate-500"><RefreshCw className="w-5 h-5 animate-spin mr-2" /><span className="text-xs">{t("modelcfg.loading")}</span></div>;
+    return <div className="h-full flex items-center justify-center text-slate-500"><RefreshCw className="w-5 h-5 animate-spin mr-2" /><span className="text-body">{t("modelcfg.loading")}</span></div>;
   }
 
   return (
@@ -443,7 +443,7 @@ export default function ModelConfig() {
       <div className="rounded-card border border-white/5 bg-slate-900/30 p-3.5 space-y-2">
         <div className="flex items-center gap-2">
           <FolderOpen className="w-3.5 h-3.5 text-[var(--module-accent)]" />
-          <span className="text-[11px] font-semibold text-slate-200">
+          <span className="text-caption font-semibold text-slate-200">
             {t("modelcfg.defaultProject")}
           </span>
         </div>
@@ -456,7 +456,7 @@ export default function ModelConfig() {
               if (e.key === "Enter") commitDefaultProject();
             }}
             placeholder={t("modelcfg.defaultProjectPh")}
-            className="flex-1 h-9 px-2.5 rounded-card bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
+            className="flex-1 h-9 px-2.5 rounded-card bg-white/5 border border-white/10 text-body text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
           />
           <button
             type="button"
@@ -467,7 +467,7 @@ export default function ModelConfig() {
             <FolderOpen className="w-4 h-4" />
           </button>
         </div>
-        <p className="text-[10px] text-slate-500 leading-relaxed">
+        <p className="text-tiny text-slate-500 leading-relaxed">
           {t("modelcfg.defaultProjectHint")}
         </p>
       </div>
@@ -480,7 +480,7 @@ export default function ModelConfig() {
           setPresetSearch("");
           setPresetCategory("all");
           setShowPresetPicker(true);
-        }} className="px-3.5 py-2 rounded-card bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer shadow-lg shadow-[var(--module-accent-ring)] flex-shrink-0">
+        }} className="px-3.5 py-2 rounded-card bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-caption font-semibold flex items-center gap-1.5 cursor-pointer shadow-lg shadow-[var(--module-accent-ring)] flex-shrink-0">
           <Plus className="w-3.5 h-3.5" /> {t("modelcfg.addProvider")}
         </button>
         {/* 一个供应商都没添加时不显示搜索框：没有东西可筛 */}
@@ -491,7 +491,7 @@ export default function ModelConfig() {
               value={providerSearch}
               onChange={e => setProviderSearch(e.target.value)}
               placeholder={t("modelcfg.searchAddedPh")}
-              className="w-full h-9 rounded-card bg-white/5 border border-white/10 pl-8 pr-7 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
+              className="w-full h-9 rounded-card bg-white/5 border border-white/10 pl-8 pr-7 text-body text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
             />
             {providerSearch && (
               <button
@@ -511,13 +511,13 @@ export default function ModelConfig() {
       {config?.providers.length === 0 ? (
         <div className="h-64 border border-dashed border-white/5 rounded-panel flex flex-col items-center justify-center text-slate-500">
           <Key className="w-8 h-8 text-slate-700 mb-2" />
-          <span className="text-xs font-bold text-slate-400">{t("modelcfg.noProviders")}</span>
+          <span className="text-body font-bold text-slate-400">{t("modelcfg.noProviders")}</span>
         </div>
       ) : filteredProviders.length === 0 ? (
         // 搜索没命中：与预设弹窗的空态同一套视觉
         <div className="h-32 border border-dashed border-white/5 rounded-panel flex flex-col items-center justify-center text-slate-600">
           <Search className="w-6 h-6 mb-2" />
-          <span className="text-[10px] font-bold">{t("modelcfg.searchNoMatch")}</span>
+          <span className="text-tiny font-bold">{t("modelcfg.searchNoMatch")}</span>
         </div>
       ) : (
         <div className="rounded-card border border-white/5 overflow-hidden divide-y divide-white/[0.04]">
@@ -529,7 +529,7 @@ export default function ModelConfig() {
                   className="flex items-center gap-2 px-2.5 py-1.5 bg-slate-900/20 hover:bg-white/[0.04] cursor-pointer transition-all"
                   onClick={() => openDetail(provider)}
                 >
-                  <span className="text-[11px] font-bold text-white truncate max-w-[160px]">{provider.name}</span>
+                  <span className="text-caption font-bold text-white truncate max-w-[160px]">{provider.name}</span>
                   {provider.website && (
                     <a href={provider.website} target="_blank" rel="noopener noreferrer"
                       onClick={(e) => { e.preventDefault(); e.stopPropagation(); void openUrl(provider.website); }}
@@ -543,7 +543,7 @@ export default function ModelConfig() {
                   {provider.openai_url && <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-blue-500/15 text-blue-300/80 flex-shrink-0">OA</span>}
                   {provider.anthropic_url && <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-amber-500/15 text-amber-300/80 flex-shrink-0">ANT</span>}
                   {provider.google_url && <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-green-500/15 text-green-300/80 flex-shrink-0">GG</span>}
-                  <span className="ml-auto text-[9px] text-slate-500 flex-shrink-0">{t("modelcfg.modelCount", { count: provider.models.length })}</span>
+                  <span className="ml-auto text-micro text-slate-500 flex-shrink-0">{t("modelcfg.modelCount", { count: provider.models.length })}</span>
                   {BALANCE_CAPABLE.has(provider.id) && (
                     <button onClick={(e) => { e.stopPropagation(); openDetail(provider, true); }}
                       className="p-1 rounded-md text-slate-600 hover:text-emerald-400 hover:bg-emerald-500/10 cursor-pointer transition-all"
@@ -567,7 +567,7 @@ export default function ModelConfig() {
                 </div>
                 {/* 测速结果：单行内联，省空间 */}
                 {testResult?.id === provider.id && (
-                  <div className={`px-2.5 pb-1.5 text-[9px] flex items-center gap-1 ${testResult.ok ? "text-emerald-400" : "text-red-400"}`}
+                  <div className={`px-2.5 pb-1.5 text-micro flex items-center gap-1 ${testResult.ok ? "text-emerald-400" : "text-red-400"}`}
                     title={testResult.msg}>
                     {testResult.ok ? <CheckCircle className="w-3 h-3 flex-shrink-0" /> : <AlertTriangle className="w-3 h-3 flex-shrink-0" />}
                     <span className="truncate">{testResult.ok ? t("modelcfg.testOk") : `${t("modelcfg.testFail")} — ${testResult.msg}`}</span>
@@ -586,7 +586,7 @@ export default function ModelConfig() {
             {/* Header */}
             <div className="p-4 pb-3 border-b border-white/5 space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold text-slate-200">{t("modelcfg.pickerTitle")}</h3>
+                <h3 className="text-body font-bold text-slate-200">{t("modelcfg.pickerTitle")}</h3>
                 <button onClick={() => setShowPresetPicker(false)} className="text-slate-500 hover:text-slate-300 cursor-pointer"><X className="w-4 h-4" /></button>
               </div>
               {/* 关键词搜索 */}
@@ -594,13 +594,13 @@ export default function ModelConfig() {
                 <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input autoFocus value={presetSearch} onChange={e => setPresetSearch(e.target.value)}
                   placeholder={t("modelcfg.pickerSearchPh")}
-                  className="w-full bg-slate-900 border border-white/10 rounded-ctl pl-8 pr-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
+                  className="w-full ui-input rounded-ctl pl-8 pr-2.5 py-1.5 text-body text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
               </div>
               {/* 分类过滤 */}
               <div className="flex items-center gap-1.5 flex-wrap">
                 {([["all", t("modelcfg.filterAll")], ["provider", t("modelcfg.filterProvider")], ["relay", t("modelcfg.filterRelay")], ["local", t("modelcfg.filterLocal")]] as const).map(([key, label]) => (
                   <button key={key} type="button" onClick={() => setPresetCategory(key)}
-                    className={`px-2.5 py-1 rounded-full text-[10px] font-semibold border transition-colors ${presetCategory === key ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white" : "bg-slate-900 border-white/10 text-slate-400 hover:border-white/20 hover:text-slate-200"}`}>
+                    className={`px-2.5 py-1 rounded-full text-tiny font-semibold border transition-colors ${presetCategory === key ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white" : "bg-slate-900 border-white/10 text-slate-400 hover:border-white/20 hover:text-slate-200"}`}>
                     {label} <span className="opacity-60">{presetCategoryCounts[key]}</span>
                   </button>
                 ))}
@@ -612,7 +612,7 @@ export default function ModelConfig() {
               {filteredPresets.length === 0 ? (
                 <div className="h-32 flex flex-col items-center justify-center text-slate-600">
                   <Search className="w-6 h-6 mb-2" />
-                  <span className="text-[10px]">{t("modelcfg.pickerNoMatch")}</span>
+                  <span className="text-tiny">{t("modelcfg.pickerNoMatch")}</span>
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-2">
@@ -625,7 +625,7 @@ export default function ModelConfig() {
                         className="text-left p-2.5 rounded-card border border-white/5 bg-slate-900/40 hover:bg-white/5 hover:border-white/15 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-all group">
                         <div className="flex items-center gap-2 min-w-0">
                           {isLocal ? <Laptop className="w-3.5 h-3.5 text-purple-400/70 flex-shrink-0" /> : isRelay ? <Server className="w-3.5 h-3.5 text-cyan-400/70 flex-shrink-0" /> : <Globe className="w-3.5 h-3.5 text-emerald-400/70 flex-shrink-0" />}
-                          <span className="text-[11px] font-bold text-slate-200 truncate">{p.name}</span>
+                          <span className="text-caption font-bold text-slate-200 truncate">{p.name}</span>
                           {added && <span className="ml-auto text-[8px] text-slate-600 flex-shrink-0">{t("modelcfg.added")}</span>}
                           {!added && p.website && (
                             <a href={p.website} target="_blank" rel="noopener noreferrer" onClick={(e) => { e.preventDefault(); e.stopPropagation(); void openUrl(p.website); }}
@@ -652,11 +652,11 @@ export default function ModelConfig() {
             {/* Footer：自定义入口 */}
             <div className="p-3 border-t border-white/5 bg-slate-900/20 flex justify-end gap-2">
               <button onClick={() => openAddModal()}
-                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-[10px] font-semibold cursor-pointer flex items-center gap-1">
+                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-tiny font-semibold cursor-pointer flex items-center gap-1">
                 <Plus className="w-3 h-3" />{t("modelcfg.customProvider")}
               </button>
               <button onClick={() => openAddModal({ id: "", name: "", category: "relay", website: "", openai_url: "", anthropic_url: "", google_url: "" })}
-                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-[10px] font-semibold cursor-pointer flex items-center gap-1">
+                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-tiny font-semibold cursor-pointer flex items-center gap-1">
                 <Plus className="w-3 h-3" />{t("modelcfg.customRelay")}
               </button>
             </div>
@@ -671,7 +671,7 @@ export default function ModelConfig() {
             {/* Header */}
             <div className="p-4 border-b border-white/5 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 min-w-0">
-                <h3 className="text-xs font-bold text-slate-200 truncate">{detailProvider.name}</h3>
+                <h3 className="text-body font-bold text-slate-200 truncate">{detailProvider.name}</h3>
                 <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold flex-shrink-0 ${detailProvider.category === "relay" ? "bg-cyan-500/15 text-cyan-400" : detailProvider.category === "local" ? "bg-purple-500/15 text-purple-400" : "bg-emerald-500/15 text-emerald-400"}`}>
                   {detailProvider.category === "relay" ? t("modelcfg.relay") : detailProvider.category === "local" ? t("modelcfg.local") : t("modelcfg.vendor")}
                 </span>
@@ -692,23 +692,23 @@ export default function ModelConfig() {
               {BALANCE_CAPABLE.has(detailProvider.id) && (
                 <div className="p-3 rounded-ctl bg-slate-900/50 border border-white/5 space-y-2">
                   <div className="flex items-center justify-between">
-                    <label className="text-[10px] text-slate-400 font-semibold">{t("modelcfg.balance")}</label>
+                    <label className="text-tiny text-slate-400 font-semibold">{t("modelcfg.balance")}</label>
                     <button onClick={() => void runBalance(detailProvider)} disabled={balanceState?.pid === detailProvider.id && balanceState.loading}
-                      className="px-2 py-0.5 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-[9px] font-semibold text-emerald-400 cursor-pointer transition-all flex items-center gap-0.5 disabled:opacity-40 disabled:cursor-not-allowed">
+                      className="px-2 py-0.5 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-micro font-semibold text-emerald-400 cursor-pointer transition-all flex items-center gap-0.5 disabled:opacity-40 disabled:cursor-not-allowed">
                       <RefreshCw className={`w-3 h-3 ${balanceState?.pid === detailProvider.id && balanceState.loading ? "animate-spin" : ""}`} />
                       {t("modelcfg.balanceQuery")}
                     </button>
                   </div>
                   {balanceState?.pid === detailProvider.id && balanceState.loading && (
-                    <p className="text-[10px] text-slate-500">{t("modelcfg.loading")}</p>
+                    <p className="text-tiny text-slate-500">{t("modelcfg.loading")}</p>
                   )}
                   {balanceState?.pid === detailProvider.id && balanceState.error && (
-                    <p className="text-[10px] text-red-400 whitespace-pre-line">{balanceState.error}</p>
+                    <p className="text-tiny text-red-400 whitespace-pre-line">{balanceState.error}</p>
                   )}
                   {balanceState?.pid === detailProvider.id && !balanceState.loading && !balanceState.error && (
                     <div className="space-y-1">
                       {balanceState.items.map((it) => (
-                        <div key={it.key} className="flex items-center justify-between text-[10px]">
+                        <div key={it.key} className="flex items-center justify-between text-tiny">
                           <span className="text-slate-500">{balanceLabel(it.key)}</span>
                           <span className="font-mono text-slate-200">{it.value === "ok" ? t("modelcfg.balOk") : it.value === "disabled" ? t("modelcfg.balDisabled") : it.value}</span>
                         </div>
@@ -720,13 +720,13 @@ export default function ModelConfig() {
 
               {/* 协议端点 */}
               <div className="p-3 rounded-ctl bg-slate-900/50 border border-white/5 space-y-1.5">
-                <label className="text-[10px] text-slate-400 font-semibold">{t("modelcfg.endpoints")}</label>
+                <label className="text-tiny text-slate-400 font-semibold">{t("modelcfg.endpoints")}</label>
                 {([
                   [t("modelcfg.openaiUrl"), detailProvider.openai_url, "text-blue-300", detailProvider.openai_include_v1 ?? null],
                   [t("modelcfg.anthropicUrl"), detailProvider.anthropic_url, "text-amber-300", detailProvider.anthropic_include_v1 ?? null],
                   [t("modelcfg.googleUrl"), detailProvider.google_url, "text-green-300", null],
                 ] as const).map(([label, url, cls, includeV1]) => url ? (
-                  <div key={label} className="flex items-start gap-2 text-[10px]">
+                  <div key={label} className="flex items-start gap-2 text-tiny">
                     <span className={`${cls} font-semibold flex-shrink-0 w-24`}>{label}</span>
                     <span className="font-mono text-slate-400 break-all">{url}</span>
                     {/* 只有显式改过才标出来：「自动」是默认行为，写出来反而像配置项丢了 */}
@@ -741,15 +741,15 @@ export default function ModelConfig() {
 
               {/* 模型列表 */}
               <div>
-                <label className="text-[10px] text-slate-500 font-semibold block mb-1.5">
+                <label className="text-tiny text-slate-500 font-semibold block mb-1.5">
                   {t("modelcfg.modelList", { count: detailProvider.models.length })}
                 </label>
                 {detailProvider.models.length === 0 ? (
-                  <div className="text-[10px] text-slate-600 py-2 text-center">{t("modelcfg.noModelsHint")}</div>
+                  <div className="text-tiny text-slate-600 py-2 text-center">{t("modelcfg.noModelsHint")}</div>
                 ) : (
                   <div className="max-h-48 overflow-y-auto rounded-ctl border border-white/5 divide-y divide-white/[0.03]">
                     {detailProvider.models.map((model) => (
-                      <div key={model.id} className="px-2.5 py-1 text-[10px] bg-white/[0.02]">
+                      <div key={model.id} className="px-2.5 py-1 text-tiny bg-white/[0.02]">
                         <span className="font-mono text-slate-300">{model.id}</span>
                       </div>
                     ))}
@@ -761,9 +761,9 @@ export default function ModelConfig() {
             {/* Footer */}
             <div className="p-4 border-t border-white/5 bg-slate-900/20 flex justify-end gap-2">
               <button onClick={() => { setDetailId(null); openEditModal(detailProvider); }}
-                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-300 hover:text-white text-[10px] font-semibold cursor-pointer">{t("modelcfg.edit")}</button>
+                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-300 hover:text-white text-tiny font-semibold cursor-pointer">{t("modelcfg.edit")}</button>
               <button onClick={() => setDetailId(null)}
-                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-[10px] font-semibold cursor-pointer">{t("modelcfg.cancel")}</button>
+                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-tiny font-semibold cursor-pointer">{t("modelcfg.cancel")}</button>
             </div>
           </div>
         </div>
@@ -775,7 +775,7 @@ export default function ModelConfig() {
           <div className="w-full max-w-lg bg-slate-950/95 border border-white/10 rounded-panel shadow-2xl flex flex-col max-h-[85vh] overflow-hidden" onClick={e => e.stopPropagation()}>
             {/* Header */}
             <div className="p-4 border-b border-white/5 flex items-center justify-between">
-              <h3 className="text-xs font-bold text-slate-200">{modalMode === "add" ? t("modelcfg.modalAdd") : t("modelcfg.modalEdit")}</h3>
+              <h3 className="text-body font-bold text-slate-200">{modalMode === "add" ? t("modelcfg.modalAdd") : t("modelcfg.modalEdit")}</h3>
               <button onClick={() => setShowModal(false)} className="text-slate-500 hover:text-slate-300 cursor-pointer"><X className="w-4 h-4" /></button>
             </div>
 
@@ -783,24 +783,24 @@ export default function ModelConfig() {
             <div className="flex-grow overflow-y-auto p-4 space-y-4">
               {/* Name */}
               <div>
-                <label className="text-[10px] text-slate-500 font-semibold block mb-1">{t("modelcfg.name")}</label>
+                <label className="text-tiny text-slate-500 font-semibold block mb-1">{t("modelcfg.name")}</label>
                 <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
-                  className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
+                  className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
               </div>
 
               {/* Website */}
               <div>
-                <label className="text-[10px] text-slate-500 font-semibold block mb-1">{t("modelcfg.website")}</label>
+                <label className="text-tiny text-slate-500 font-semibold block mb-1">{t("modelcfg.website")}</label>
                 <input value={form.website} onChange={e => setForm({ ...form, website: e.target.value })} placeholder="https://..."
-                  className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500" />
+                  className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 font-mono focus:outline-none focus:border-blue-500" />
               </div>
 
               {/* API Key */}
               <div>
-                <label className="text-[10px] text-slate-500 font-semibold block mb-1">API Key</label>
+                <label className="text-tiny text-slate-500 font-semibold block mb-1">API Key</label>
                 <div className="relative">
                   <input type={showApiKey ? "text" : "password"} value={form.api_key} onChange={e => setForm({ ...form, api_key: e.target.value })} placeholder="sk-..."
-                    className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 pr-9 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
+                    className="w-full ui-input rounded-ctl px-2.5 py-1.5 pr-9 text-body text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
                   <button
                     type="button"
                     onClick={() => setShowApiKey(v => !v)}
@@ -816,18 +816,18 @@ export default function ModelConfig() {
               {/* 自定义上游请求头 */}
               <div className="p-3 rounded-ctl bg-slate-900/50 border border-white/5 space-y-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-[10px] text-slate-400 font-semibold">{t("modelcfg.customHeaders")}</label>
+                  <label className="text-tiny text-slate-400 font-semibold">{t("modelcfg.customHeaders")}</label>
                   <button
                     type="button"
                     onClick={addCustomHeader}
-                    className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-200 cursor-pointer transition-all"
+                    className="flex items-center gap-1 text-tiny text-slate-400 hover:text-slate-200 cursor-pointer transition-all"
                   >
                     <Plus className="w-3 h-3" /> {t("modelcfg.addHeader")}
                   </button>
                 </div>
-                <p className="text-[9px] text-slate-600">{t("modelcfg.customHeadersHint")}</p>
+                <p className="text-micro text-slate-600">{t("modelcfg.customHeadersHint")}</p>
                 {form.custom_headers.length === 0 ? (
-                  <p className="text-[10px] text-slate-600">{t("modelcfg.noCustomHeaders")}</p>
+                  <p className="text-tiny text-slate-600">{t("modelcfg.noCustomHeaders")}</p>
                 ) : (
                   <div className="space-y-1.5">
                     {form.custom_headers.map((h, idx) => (
@@ -836,13 +836,13 @@ export default function ModelConfig() {
                           value={h.key}
                           onChange={e => updateCustomHeader(idx, { key: e.target.value })}
                           placeholder={t("modelcfg.headerName")}
-                          className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded-ctl px-2 py-1 text-[11px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
+                          className="flex-1 min-w-0 ui-input rounded-ctl px-2 py-1 text-caption text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
                         />
                         <input
                           value={h.value}
                           onChange={e => updateCustomHeader(idx, { value: e.target.value })}
                           placeholder={t("modelcfg.headerValue")}
-                          className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded-ctl px-2 py-1 text-[11px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
+                          className="flex-1 min-w-0 ui-input rounded-ctl px-2 py-1 text-caption text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
                         />
                         <button
                           type="button"
@@ -860,20 +860,20 @@ export default function ModelConfig() {
 
               {/* 协议端点 URL（每个支持的协议一个地址） */}
               <div className="p-3 rounded-ctl bg-slate-900/50 border border-white/5 space-y-3">
-                <label className="text-[10px] text-slate-400 font-semibold block">{t("modelcfg.endpoints")}</label>
-                <p className="text-[9px] text-slate-600">{t("modelcfg.endpointsHint")}</p>
+                <label className="text-tiny text-slate-400 font-semibold block">{t("modelcfg.endpoints")}</label>
+                <p className="text-micro text-slate-600">{t("modelcfg.endpointsHint")}</p>
 
                 <div className="space-y-1">
-                  <label className="text-[9px] text-blue-300 font-semibold block">{t("modelcfg.openaiUrl")}</label>
+                  <label className="text-micro text-blue-300 font-semibold block">{t("modelcfg.openaiUrl")}</label>
                   <input value={form.openai_url} onChange={e => setForm({ ...form, openai_url: e.target.value })}
                     placeholder="https://api.openai.com/v1"
-                    className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500" />
+                    className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 font-mono focus:outline-none focus:border-blue-500" />
                   {/* 兼容层差异：有的端点要 `{base}/v1/chat/completions`，有的是 `{base}/chat/completions` */}
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[9px] text-slate-500">{t("modelcfg.includeV1")}</span>
+                    <span className="text-micro text-slate-500">{t("modelcfg.includeV1")}</span>
                     <select value={v1ToSelect(form.openai_include_v1)}
                       onChange={e => setForm({ ...form, openai_include_v1: selectToV1(e.target.value) })}
-                      className="bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-[9px] text-slate-300 cursor-pointer focus:outline-none focus:border-blue-500"
+                      className="ui-input rounded px-1.5 py-0.5 text-micro text-slate-300 cursor-pointer focus:outline-none focus:border-blue-500"
                       title={t("modelcfg.includeV1Hint")}>
                       <option value="auto">{t("modelcfg.v1Auto")}</option>
                       <option value="yes">{t("modelcfg.v1Yes")}</option>
@@ -883,15 +883,15 @@ export default function ModelConfig() {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[9px] text-amber-300 font-semibold block">{t("modelcfg.anthropicUrl")}</label>
+                  <label className="text-micro text-amber-300 font-semibold block">{t("modelcfg.anthropicUrl")}</label>
                   <input value={form.anthropic_url} onChange={e => setForm({ ...form, anthropic_url: e.target.value })}
                     placeholder="https://api.anthropic.com"
-                    className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-amber-500" />
+                    className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 font-mono focus:outline-none focus:border-amber-500" />
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[9px] text-slate-500">{t("modelcfg.includeV1")}</span>
+                    <span className="text-micro text-slate-500">{t("modelcfg.includeV1")}</span>
                     <select value={v1ToSelect(form.anthropic_include_v1)}
                       onChange={e => setForm({ ...form, anthropic_include_v1: selectToV1(e.target.value) })}
-                      className="bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-[9px] text-slate-300 cursor-pointer focus:outline-none focus:border-amber-500"
+                      className="ui-input rounded px-1.5 py-0.5 text-micro text-slate-300 cursor-pointer focus:outline-none focus:border-amber-500"
                       title={t("modelcfg.includeV1Hint")}>
                       <option value="auto">{t("modelcfg.v1Auto")}</option>
                       <option value="yes">{t("modelcfg.v1Yes")}</option>
@@ -901,23 +901,23 @@ export default function ModelConfig() {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[9px] text-green-300 font-semibold block">{t("modelcfg.googleUrl")}</label>
+                  <label className="text-micro text-green-300 font-semibold block">{t("modelcfg.googleUrl")}</label>
                   <input value={form.google_url} onChange={e => setForm({ ...form, google_url: e.target.value })}
                     placeholder="https://generativelanguage.googleapis.com"
-                    className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-green-500" />
+                    className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 font-mono focus:outline-none focus:border-green-500" />
                 </div>
               </div>
 
               {/* 模型列表 */}
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-[10px] text-slate-500 font-semibold">
+                  <label className="text-tiny text-slate-500 font-semibold">
                     {t("modelcfg.modelListLabel")} <span className="text-slate-600">{t("modelcfg.onePerLine")}</span>
                   </label>
                   <button
                     onClick={handleFetchModels}
                     disabled={fetchingModels || (!form.openai_url && !form.anthropic_url && !form.google_url) || !form.api_key}
-                    className="px-2 py-0.5 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-[9px] font-semibold text-emerald-400 cursor-pointer transition-all flex items-center gap-0.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="px-2 py-0.5 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-micro font-semibold text-emerald-400 cursor-pointer transition-all flex items-center gap-0.5 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <RefreshCw className={`w-3 h-3 ${fetchingModels ? "animate-spin" : ""}`} />
                     {fetchingModels ? t("modelcfg.fetching") : t("modelcfg.autoFetch")}
@@ -928,9 +928,9 @@ export default function ModelConfig() {
                   onChange={e => setModelsText(e.target.value)}
                   rows={6}
                   placeholder={"gpt-4o\ngpt-4o-mini\nclaude-sonnet-4-20250514\ndeepseek-chat\ndeepseek-v4-pro"}
-                  className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)] resize-y leading-5"
+                  className="w-full ui-input rounded-ctl px-2.5 py-2 text-body text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)] resize-y leading-5"
                 />
-                <div className="text-[9px] text-slate-600 mt-1">
+                <div className="text-micro text-slate-600 mt-1">
                   {t("modelcfg.enteredModels", { count: modelsText.split("\n").filter(l => l.trim()).length })}
                 </div>
               </div>
@@ -938,29 +938,29 @@ export default function ModelConfig() {
               {/* 模型自定义启动参数 */}
               {modelsText.split("\n").map(l => l.trim()).filter(Boolean).length > 0 && (
                 <div className="rounded-ctl border border-white/5 bg-slate-900/30 p-3 space-y-3">
-                  <div className="text-[10px] text-slate-500 font-semibold">
+                  <div className="text-tiny text-slate-500 font-semibold">
                     {t("modelcfg.customParams")}
                     <span className="text-slate-600 font-normal">{t("modelcfg.customParamsHint")}</span>
                   </div>
                   {modelsText.split("\n").map(l => l.trim()).filter(Boolean).map((mid) => (
                     <div key={mid} className="rounded-md border border-white/5 bg-slate-900/40 p-2.5">
-                      <div className="text-[10px] text-[var(--module-accent)] font-mono mb-2">{mid}</div>
+                      <div className="text-tiny text-[var(--module-accent)] font-mono mb-2">{mid}</div>
                       {(modelParams[mid] || []).map((cp, ci) => (
                         <div key={ci} className="mb-2 p-2 rounded bg-slate-800/40 border border-white/5 space-y-1.5">
                           <div className="flex gap-1.5">
                             <input value={cp.label} onChange={e => updateModelParam(mid, ci, { label: e.target.value })}
-                              placeholder={t("modelcfg.paramNamePh")} className="w-37 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
+                              placeholder={t("modelcfg.paramNamePh")} className="w-37 min-w-0 ui-input rounded px-2 py-1 text-tiny text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
                             <input value={cp.key} onChange={e => updateModelParam(mid, ci, { key: e.target.value })}
-                              placeholder={t("modelcfg.paramKeyPh")} className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
+                              placeholder={t("modelcfg.paramKeyPh")} className="flex-1 min-w-0 ui-input rounded px-2 py-1 text-tiny text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
                             <button onClick={() => removeModelParam(mid, ci)}
-                              className="shrink-0 w-6 h-6 flex items-center justify-center rounded bg-red-500/10 hover:bg-red-500/20 text-[11px] text-red-400">×</button>
+                              className="shrink-0 w-6 h-6 flex items-center justify-center rounded bg-red-500/10 hover:bg-red-500/20 text-caption text-red-400">×</button>
                           </div>
                           <div className="flex gap-1.5 items-stretch">
                             <div className="flex items-center gap-1.5 shrink-0 rounded-md border border-cyan-500/20 bg-cyan-500/5 px-2 py-1">
                               <div className="flex items-center gap-1 mr-2">
                                 {([["enum", t("modelcfg.paramEnum")],["text", t("modelcfg.paramText")],["bool", t("modelcfg.paramBool")]] as const).map(([v,l]) => (
                                   <button key={v} type="button" onClick={() => updateModelParam(mid, ci, { paramType: v })}
-                                    className={`px-2 py-0.5 rounded-full text-[10px] border transition-colors ${cp.paramType === v ? "bg-cyan-500/20 border-cyan-500 text-cyan-200" : "bg-slate-900 border-white/10 text-slate-400 hover:border-white/20"}`}>
+                                    className={`px-2 py-0.5 rounded-full text-tiny border transition-colors ${cp.paramType === v ? "bg-cyan-500/20 border-cyan-500 text-cyan-200" : "bg-slate-900 border-white/10 text-slate-400 hover:border-white/20"}`}>
                                     {l}
                                   </button>
                                 ))}
@@ -968,17 +968,17 @@ export default function ModelConfig() {
                             </div>
                             {cp.paramType === "enum" && (
                               <input value={(cp.options || []).join(",")} onChange={e => updateModelParam(mid, ci, { options: e.target.value.split(",").map(s => s.trim()).filter(Boolean) })}
-                                placeholder={t("modelcfg.paramValuesPh")} className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
+                                placeholder={t("modelcfg.paramValuesPh")} className="flex-1 min-w-0 ui-input rounded px-2 py-1 text-tiny text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
                             )}
                             <input value={cp.defaultValue || ""} onChange={e => updateModelParam(mid, ci, { defaultValue: e.target.value })}
-                              placeholder={t("modelcfg.paramDefaultPh")} className="w-24 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
+                              placeholder={t("modelcfg.paramDefaultPh")} className="w-24 ui-input rounded px-2 py-1 text-tiny text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
                           </div>
                           <div className="flex gap-1.5 items-stretch">
                             <div className="flex items-center gap-1.5 shrink-0 rounded-md border border-amber-500/20 bg-amber-500/5 px-2 py-1">
                               <div className="flex items-center gap-1">
                                 {([["env", t("modelcfg.paramEnv")],["config", t("modelcfg.paramConfig")]] as const).map(([v,l]) => (
                                   <button key={v} type="button" onClick={() => updateModelParam(mid, ci, { target: v })}
-                                    className={`px-2 py-0.5 rounded-full text-[10px] border transition-colors ${cp.target === v ? "bg-amber-500/20 border-amber-500 text-amber-200" : "bg-slate-900 border-white/10 text-slate-400 hover:border-white/20"}`}>
+                                    className={`px-2 py-0.5 rounded-full text-tiny border transition-colors ${cp.target === v ? "bg-amber-500/20 border-amber-500 text-amber-200" : "bg-slate-900 border-white/10 text-slate-400 hover:border-white/20"}`}>
                                     {l}
                                   </button>
                                 ))}
@@ -989,12 +989,12 @@ export default function ModelConfig() {
                                 ? updateModelParam(mid, ci, { configPath: e.target.value })
                                 : updateModelParam(mid, ci, { envKey: e.target.value })}
                               placeholder={cp.target === "config" ? t("modelcfg.paramTargetPh") : t("modelcfg.paramEnvPh")}
-                              className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
+                              className="flex-1 min-w-0 ui-input rounded px-2 py-1 text-tiny text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
                           </div>
                         </div>
                       ))}
                       <button onClick={() => addModelParam(mid)}
-                        className="text-[10px] text-[var(--module-accent)] hover:text-[var(--module-accent-strong)] cursor-pointer">{t("modelcfg.addParam")}</button>
+                        className="text-tiny text-[var(--module-accent)] hover:text-[var(--module-accent-strong)] cursor-pointer">{t("modelcfg.addParam")}</button>
                     </div>
                   ))}
                 </div>
@@ -1002,7 +1002,7 @@ export default function ModelConfig() {
 
               {/* Error */}
               {formError && (
-                <div className="p-2 rounded-ctl bg-red-500/10 border border-red-500/20 text-[10px] text-red-400 flex items-center gap-1.5">
+                <div className="p-2 rounded-ctl bg-red-500/10 border border-red-500/20 text-tiny text-red-400 flex items-center gap-1.5">
                   <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />{formError}
                 </div>
               )}
@@ -1011,9 +1011,9 @@ export default function ModelConfig() {
             {/* Footer */}
             <div className="p-4 border-t border-white/5 bg-slate-900/20 flex justify-end gap-2">
               <button onClick={() => setShowModal(false)}
-                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-[10px] font-semibold cursor-pointer">{t("modelcfg.cancel")}</button>
+                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-tiny font-semibold cursor-pointer">{t("modelcfg.cancel")}</button>
               <button onClick={handleModalConfirm}
-                className="px-3.5 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[10px] font-semibold cursor-pointer">{t("modelcfg.confirm")}</button>
+                className="px-3.5 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-tiny font-semibold cursor-pointer">{t("modelcfg.confirm")}</button>
             </div>
           </div>
         </div>
@@ -1026,15 +1026,15 @@ export default function ModelConfig() {
             <div className="flex items-center gap-3 mb-4">
               <div className="p-2 rounded-ctl bg-red-500/10"><Trash2 className="w-4 h-4 text-red-400" /></div>
               <div>
-                <h3 className="text-xs font-bold text-slate-200">{t("modelcfg.deleteTitle")}</h3>
-                <p className="text-[10px] text-slate-500 mt-0.5">{t("modelcfg.deleteHint", { name: config?.providers.find(p => p.id === deleteTarget)?.name ?? "" })}</p>
+                <h3 className="text-body font-bold text-slate-200">{t("modelcfg.deleteTitle")}</h3>
+                <p className="text-tiny text-slate-500 mt-0.5">{t("modelcfg.deleteHint", { name: config?.providers.find(p => p.id === deleteTarget)?.name ?? "" })}</p>
               </div>
             </div>
             <div className="flex justify-end gap-2">
               <button onClick={() => setDeleteTarget(null)}
-                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-[10px] font-semibold cursor-pointer">{t("modelcfg.cancel")}</button>
+                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-tiny font-semibold cursor-pointer">{t("modelcfg.cancel")}</button>
               <button onClick={() => handleDelete(deleteTarget)}
-                className="px-3.5 py-1.5 rounded-ctl bg-red-600 hover:bg-red-500 text-white text-[10px] font-semibold cursor-pointer">{t("modelcfg.deleteBtn")}</button>
+                className="px-3.5 py-1.5 rounded-ctl bg-red-600 hover:bg-red-500 text-white text-tiny font-semibold cursor-pointer">{t("modelcfg.deleteBtn")}</button>
             </div>
           </div>
         </div>

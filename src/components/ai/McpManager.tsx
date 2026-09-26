@@ -254,7 +254,7 @@ export default function McpManager() {
     return (
       <div className="h-full flex items-center justify-center text-slate-500">
         <RefreshCw className="w-5 h-5 animate-spin mr-2" />
-        <span className="text-xs">{t("mcp.loading")}</span>
+        <span className="text-body">{t("mcp.loading")}</span>
       </div>
     );
   }
@@ -265,18 +265,18 @@ export default function McpManager() {
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-sm font-bold text-white">{t("mcp.title")}</h3>
-          <p className="text-[10px] text-slate-500 mt-0.5">{t("mcp.subtitle")}</p>
+          <p className="text-tiny text-slate-500 mt-0.5">{t("mcp.subtitle")}</p>
         </div>
         <div className="flex gap-2">
           <button
             onClick={load}
-            className="px-2.5 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-[10px] text-slate-400 hover:text-white cursor-pointer transition-all flex items-center gap-1"
+            className="px-2.5 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-tiny text-slate-400 hover:text-white cursor-pointer transition-all flex items-center gap-1"
           >
             <RefreshCw className="w-3 h-3" /> {t("mcp.refresh")}
           </button>
           <button
             onClick={openAdd}
-            className="px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[10px] font-semibold cursor-pointer transition-all flex items-center gap-1 shadow-lg shadow-[var(--module-accent-ring)]"
+            className="px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-tiny font-semibold cursor-pointer transition-all flex items-center gap-1 shadow-lg shadow-[var(--module-accent-ring)]"
           >
             <Plus className="w-3 h-3" /> {t("mcp.addServer")}
           </button>
@@ -287,7 +287,7 @@ export default function McpManager() {
       {showForm && (
         <div className="p-3 rounded-card bg-slate-900/40 border border-[var(--module-accent-ring)] space-y-3">
           <div className="flex items-center justify-between">
-            <h4 className="text-xs font-bold text-[var(--module-accent)] flex items-center gap-1.5">
+            <h4 className="text-body font-bold text-[var(--module-accent)] flex items-center gap-1.5">
               <Plug className="w-3.5 h-3.5" /> {editingId ? t("mcp.editServer") : t("mcp.addMcpServer")}
             </h4>
             <button onClick={() => { setShowForm(false); resetForm(); }} className="text-slate-500 hover:text-slate-300 cursor-pointer">
@@ -298,7 +298,7 @@ export default function McpManager() {
           {/* 从预设添加：只预填表单，落库/改动仍由用户确认 */}
           {!editingId && presets.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[10px] text-slate-500">{t("mcp.fromPreset")}</span>
+              <span className="text-tiny text-slate-500">{t("mcp.fromPreset")}</span>
               {presets.map((preset) => {
                 const used = servers.some((s) => s.name === preset.name);
                 return (
@@ -306,7 +306,7 @@ export default function McpManager() {
                     key={preset.id}
                     onClick={() => applyPreset(preset)}
                     title={used ? `${preset.description}${t("mcp.presetAlreadyAdded")}` : preset.description}
-                    className={`px-2 py-0.5 rounded-md text-[10px] bg-white/5 border border-white/10 cursor-pointer transition-all hover:text-white hover:border-[var(--module-accent-ring)] ${
+                    className={`px-2 py-0.5 rounded-md text-tiny bg-white/5 border border-white/10 cursor-pointer transition-all hover:text-white hover:border-[var(--module-accent-ring)] ${
                       used ? "text-slate-600" : "text-slate-300"
                     }`}
                   >
@@ -319,20 +319,20 @@ export default function McpManager() {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[9px] text-slate-500 block mb-1">{t("mcp.nameLabel")}</label>
+              <label className="text-micro text-slate-500 block mb-1">{t("mcp.nameLabel")}</label>
               <input
                 value={fName}
                 onChange={(e) => setFName(e.target.value)}
                 placeholder={t("mcp.namePh")}
-                className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
+                className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
               />
             </div>
             <div>
-              <label className="text-[9px] text-slate-500 block mb-1">{t("mcp.transportLabel")}</label>
+              <label className="text-micro text-slate-500 block mb-1">{t("mcp.transportLabel")}</label>
               <select
                 value={fTransport}
                 onChange={(e) => setFTransport(e.target.value)}
-                className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
+                className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
               >
                 <option value="stdio">{t("mcp.transportStdio")}</option>
                 <option value="http">HTTP</option>
@@ -344,79 +344,79 @@ export default function McpManager() {
           {fTransport === "stdio" ? (
             <>
               <div>
-                <label className="text-[9px] text-slate-500 block mb-1">{t("mcp.commandLabel")}</label>
+                <label className="text-micro text-slate-500 block mb-1">{t("mcp.commandLabel")}</label>
                 <input
                   value={fCommand}
                   onChange={(e) => setFCommand(e.target.value)}
                   placeholder={t("mcp.commandPh")}
-                  className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
+                  className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
                 />
               </div>
               <div>
-                <label className="text-[9px] text-slate-500 block mb-1">{t("mcp.argsLabel")}</label>
+                <label className="text-micro text-slate-500 block mb-1">{t("mcp.argsLabel")}</label>
                 <textarea
                   value={fArgs}
                   onChange={(e) => setFArgs(e.target.value)}
                   rows={2}
                   placeholder={"-y\n@modelcontextprotocol/server-everything"}
-                  className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)] resize-none"
+                  className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)] resize-none"
                 />
               </div>
               <div>
-                <label className="text-[9px] text-slate-500 block mb-1">{t("mcp.cwdLabel")}</label>
+                <label className="text-micro text-slate-500 block mb-1">{t("mcp.cwdLabel")}</label>
                 <input
                   value={fCwd}
                   onChange={(e) => setFCwd(e.target.value)}
                   placeholder={t("mcp.cwdPh")}
-                  className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
+                  className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
                 />
               </div>
               <div>
-                <label className="text-[9px] text-slate-500 block mb-1">{t("mcp.envLabel")}</label>
+                <label className="text-micro text-slate-500 block mb-1">{t("mcp.envLabel")}</label>
                 <textarea
                   value={fEnv}
                   onChange={(e) => setFEnv(e.target.value)}
                   rows={2}
                   placeholder={"API_KEY=xxx"}
-                  className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)] resize-none"
+                  className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)] resize-none"
                 />
               </div>
             </>
           ) : (
             <>
               <div>
-                <label className="text-[9px] text-slate-500 block mb-1">URL</label>
+                <label className="text-micro text-slate-500 block mb-1">URL</label>
                 <input
                   value={fUrl}
                   onChange={(e) => setFUrl(e.target.value)}
                   placeholder={t("mcp.urlPh")}
-                  className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
+                  className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
                 />
               </div>
               <div>
-                <label className="text-[9px] text-slate-500 block mb-1">{t("mcp.headersLabel")}</label>
+                <label className="text-micro text-slate-500 block mb-1">{t("mcp.headersLabel")}</label>
                 <textarea
                   value={fHeaders}
                   onChange={(e) => setFHeaders(e.target.value)}
                   rows={2}
                   placeholder={"Authorization=Bearer xxx"}
-                  className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)] resize-none"
+                  className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)] resize-none"
                 />
               </div>
             </>
           )}
 
           <div>
-            <label className="text-[9px] text-slate-500 block mb-1">{t("mcp.descLabel")}</label>
+            <label className="text-micro text-slate-500 block mb-1">{t("mcp.descLabel")}</label>
             <input
               value={fDescription}
               onChange={(e) => setFDescription(e.target.value)}
               placeholder={t("mcp.descPh")}
-              className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
+              className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
             />
           </div>
 
-          <label className="flex items-center gap-2 text-[10px] text-slate-400 cursor-pointer">
+          <label className="flex items-center gap-2 text-tiny text-slate-400 cursor-pointer">
             <input type="checkbox" checked={fEnabled} onChange={(e) => setFEnabled(e.target.checked)} className="accent-[var(--module-accent)]" />
             {t("mcp.globalEnable")}
           </label>
@@ -424,14 +424,14 @@ export default function McpManager() {
           <div className="flex justify-end gap-2 pt-1">
             <button
               onClick={() => { setShowForm(false); resetForm(); }}
-              className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-[10px] text-slate-400 hover:text-white cursor-pointer"
+              className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-tiny text-slate-400 hover:text-white cursor-pointer"
             >
               {t("mcp.cancel")}
             </button>
             <button
               onClick={handleSave}
               disabled={saving}
-              className="px-4 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-40 text-white text-[10px] font-semibold cursor-pointer flex items-center gap-1"
+              className="px-4 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-40 text-white text-tiny font-semibold cursor-pointer flex items-center gap-1"
             >
               {saving ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
               {saving ? t("mcp.saving") : t("mcp.saveDeploy")}
@@ -444,8 +444,8 @@ export default function McpManager() {
       {servers.length === 0 ? (
         <div className="h-48 border border-dashed border-white/5 rounded-panel flex flex-col items-center justify-center text-slate-500">
           <Server className="w-8 h-8 text-slate-700 mb-2" />
-          <span className="text-xs font-bold text-slate-400">{t("mcp.noServers")}</span>
-          <span className="text-[10px] text-slate-600 mt-1">{t("mcp.noServersHint")}</span>
+          <span className="text-body font-bold text-slate-400">{t("mcp.noServers")}</span>
+          <span className="text-tiny text-slate-600 mt-1">{t("mcp.noServersHint")}</span>
         </div>
       ) : (
         <div className="space-y-2">
@@ -457,7 +457,7 @@ export default function McpManager() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs font-bold text-slate-200">{s.name}</span>
+                    <span className="text-body font-bold text-slate-200">{s.name}</span>
                     <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400">
                       {t(`mcp.${TRANSPORT_KEY[s.transport] || s.transport}`) || s.transport}
                     </span>
@@ -482,14 +482,14 @@ export default function McpManager() {
                     </div>
                   </div>
 
-                  <p className="text-[10px] text-slate-400 mt-1 truncate font-mono">
+                  <p className="text-tiny text-slate-400 mt-1 truncate font-mono">
                     {s.transport === "stdio"
                       ? `${s.command} ${s.args.join(" ")}`.trim()
                       : s.url}
                   </p>
 
                   <div className="flex items-center gap-3 mt-3 pt-2 border-t border-white/[0.03]">
-                    <span className="text-[9px] text-slate-500 flex-shrink-0">{t("mcp.deployTo")}</span>
+                    <span className="text-micro text-slate-500 flex-shrink-0">{t("mcp.deployTo")}</span>
                     <div className="flex flex-wrap gap-1.5">
                       {mcpTools.map((t) => {
                         const enabled = s.enabledTools.includes(t.id);
@@ -500,7 +500,7 @@ export default function McpManager() {
                             key={t.id}
                             onClick={() => handleToggle(s.id, t.id, enabled)}
                             disabled={toggling || !s.enabled}
-                            className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-semibold cursor-pointer transition-all border disabled:opacity-40 disabled:cursor-not-allowed ${
+                            className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-micro font-semibold cursor-pointer transition-all border disabled:opacity-40 disabled:cursor-not-allowed ${
                               enabled
                                 ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-400"
                                 : "bg-slate-800 border-white/5 text-slate-600 hover:text-slate-400 hover:border-white/10"
@@ -523,24 +523,24 @@ export default function McpManager() {
       {/* 发现：工具配置里已有、但尚未由 Kira 托管的服务器 */}
       {discovered.length > 0 && (
         <div className="p-3 rounded-card bg-amber-500/5 border border-amber-500/20 space-y-2">
-          <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-300">
+          <div className="flex items-center gap-1.5 text-tiny font-bold text-amber-300">
             <Search className="w-3.5 h-3.5" /> {t("mcp.discover", { count: discovered.length })}
-            <span className="text-[9px] font-normal text-slate-500 ml-1">{t("mcp.discoverHint")}</span>
+            <span className="text-micro font-normal text-slate-500 ml-1">{t("mcp.discoverHint")}</span>
           </div>
           <div className="space-y-1.5">
             {discovered.map((d) => (
               <div key={`${d.toolId}:${d.name}`} className="flex items-center gap-2 rounded-ctl bg-slate-900/40 border border-white/5 px-2.5 py-1.5">
                 <Plug className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
-                <span className="text-[10px] font-bold text-slate-200 font-mono truncate">{d.name}</span>
+                <span className="text-tiny font-bold text-slate-200 font-mono truncate">{d.name}</span>
                 <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400 flex-shrink-0">
                   {t(`mcp.${TRANSPORT_KEY[d.transport] || d.transport}`) || d.transport}
                 </span>
-                <span className="text-[9px] text-slate-500 truncate flex-1">
+                <span className="text-micro text-slate-500 truncate flex-1">
                   {mcpTools.find((t) => t.id === d.toolId)?.label ?? d.toolId}
                 </span>
                 <button
                   onClick={() => handleAdopt(d)}
-                  className="px-2 py-1 rounded-md text-[9px] font-semibold bg-amber-600 hover:bg-amber-500 text-white cursor-pointer transition-all flex items-center gap-1 flex-shrink-0"
+                  className="px-2 py-1 rounded-md text-micro font-semibold bg-amber-600 hover:bg-amber-500 text-white cursor-pointer transition-all flex items-center gap-1 flex-shrink-0"
                 >
                   <Link2 className="w-2.5 h-2.5" /> {t("mcp.adopt")}
                 </button>
@@ -551,7 +551,7 @@ export default function McpManager() {
       )}
 
       {/* Info */}
-      <div className="p-3 rounded-card bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] border border-[var(--module-accent-ring)] text-[10px] text-slate-400 space-y-1">
+      <div className="p-3 rounded-card bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] border border-[var(--module-accent-ring)] text-tiny text-slate-400 space-y-1">
         <p className="font-semibold text-[var(--module-accent)]">{t("mcp.aboutDeploy")}</p>
         <p>{t("mcp.aboutDeployDesc")}</p>
       </div>

@@ -96,7 +96,7 @@ function TaskBadge({ status }: { status: string }) {
     done: "collab.done",
   };
   return (
-    <span className={`px-1.5 py-0.5 rounded text-[9px] text-white ${map[status] || "bg-slate-600"}`}>
+    <span className={`px-1.5 py-0.5 rounded text-micro text-white ${map[status] || "bg-slate-600"}`}>
       {label[status] ? t(label[status]) : status}
     </span>
   );
@@ -877,7 +877,7 @@ export default function CollabRoom() {
       {/* 房间侧栏 */}
       <div className="w-48 flex-shrink-0 border-r border-white/5 py-3 px-2 flex flex-col">
         <div className="flex items-center justify-between px-1 mb-2">
-          <span className="text-[11px] font-bold text-slate-300">{t("collab.sessionList")}</span>
+          <span className="text-caption font-bold text-slate-300">{t("collab.sessionList")}</span>
           <button
             onClick={() => setCreating(true)}
             className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-[var(--module-accent)] cursor-pointer"
@@ -893,11 +893,11 @@ export default function CollabRoom() {
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               placeholder={t("collab.sessionNamePh")}
-              className="w-full bg-slate-800 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
+              className="w-full bg-slate-800 border border-white/10 rounded px-2 py-1 text-tiny text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
             />
             <button
               onClick={handlePickProject}
-              className={`w-full px-2 py-1 rounded text-left text-[10px] border border-white/10 truncate cursor-pointer ${
+              className={`w-full px-2 py-1 rounded text-left text-tiny border border-white/10 truncate cursor-pointer ${
                 newProject
                   ? "bg-slate-800 text-slate-200"
                   : "bg-slate-800/60 text-slate-500 hover:text-slate-300"
@@ -909,13 +909,13 @@ export default function CollabRoom() {
             <div className="flex gap-1">
               <button
                 onClick={createRoom}
-                className="flex-1 px-2 py-1 rounded bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-[10px] font-semibold cursor-pointer"
+                className="flex-1 px-2 py-1 rounded bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-tiny font-semibold cursor-pointer"
               >
                 {t("collab.create")}
               </button>
               <button
                 onClick={() => setCreating(false)}
-                className="px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-[10px] cursor-pointer"
+                className="px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-tiny cursor-pointer"
               >
                 {t("collab.cancel")}
               </button>
@@ -936,7 +936,7 @@ export default function CollabRoom() {
           {rooms.map((r) => (
             <div
               key={r.id}
-              className={`group flex items-center gap-1 px-2 py-1.5 rounded-ctl cursor-pointer text-[11px] ${
+              className={`group flex items-center gap-1 px-2 py-1.5 rounded-ctl cursor-pointer text-caption ${
                 activeRoom?.id === r.id
                   ? "bg-[color-mix(in_srgb,var(--module-accent)_30%,transparent)] text-[var(--module-accent)]"
                   : "text-slate-400 hover:bg-white/5"
@@ -960,7 +960,7 @@ export default function CollabRoom() {
             </div>
           ))}
           {loadingMore && (
-            <div className="flex items-center justify-center gap-1.5 py-2 text-[9px] text-slate-500">
+            <div className="flex items-center justify-center gap-1.5 py-2 text-micro text-slate-500">
               <Loader2 className="w-3 h-3 animate-spin" /> {t("collab.loading")}
             </div>
           )}
@@ -975,7 +975,7 @@ export default function CollabRoom() {
         {!activeRoom ? (
           <div className="flex-1 flex flex-col items-center justify-center text-slate-500 gap-2">
             <MessagesSquare className="w-10 h-10 opacity-30" />
-            <p className="text-xs">{t("collab.pickSessionHint")}</p>
+            <p className="text-body">{t("collab.pickSessionHint")}</p>
           </div>
         ) : (
           <>
@@ -1009,7 +1009,7 @@ export default function CollabRoom() {
                 </div>
               ))}
               {messages.length === 0 && (
-                <p className="text-[11px] text-slate-500 text-center mt-8">
+                <p className="text-caption text-slate-500 text-center mt-8">
                   {t("collab.emptyThreadHint")}
                 </p>
               )}
@@ -1019,7 +1019,7 @@ export default function CollabRoom() {
             <div className="flex-shrink-0 border-t border-white/5 bg-slate-900/30">
               <button
                 onClick={() => setTasksOpen((o) => !o)}
-                className="w-full flex items-center justify-between px-3 py-1.5 text-[9px] text-slate-400 hover:text-slate-200 cursor-pointer transition-all"
+                className="w-full flex items-center justify-between px-3 py-1.5 text-micro text-slate-400 hover:text-slate-200 cursor-pointer transition-all"
               >
                 <span className="flex items-center gap-1.5 font-semibold">
                   <ListChecks className="w-3 h-3" /> {t("collab.tasksTitle", { count: tasks.length })}
@@ -1029,16 +1029,16 @@ export default function CollabRoom() {
               {tasksOpen && (
                 <div className="px-3 pb-3 space-y-2">
                   {tasks.length === 0 && (
-                    <p className="text-[10px] text-slate-500">{t("collab.noTasks")}</p>
+                    <p className="text-tiny text-slate-500">{t("collab.noTasks")}</p>
                   )}
                   {tasks.map((task) => (
                     <div key={task.id} className="rounded border border-white/5 bg-slate-800/40 p-2 space-y-1">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-[11px] text-slate-200 font-medium truncate">{task.title}</span>
+                        <span className="text-caption text-slate-200 font-medium truncate">{task.title}</span>
                         <TaskBadge status={task.status} />
                       </div>
-                      {task.description && <p className="text-[10px] text-slate-400 line-clamp-2">{task.description}</p>}
-                      <div className="flex items-center justify-between text-[9px] text-slate-500">
+                      {task.description && <p className="text-tiny text-slate-400 line-clamp-2">{task.description}</p>}
+                      <div className="flex items-center justify-between text-micro text-slate-500">
                         <span>{task.assignee ? t("collab.assignedTo", { name: task.assignee }) : t("collab.unassigned")}</span>
                         <div className="flex gap-1">
                           {task.status !== "done" && (
@@ -1066,11 +1066,11 @@ export default function CollabRoom() {
                       value={newTaskTitle}
                       onChange={(e) => setNewTaskTitle(e.target.value)}
                       placeholder={t("collab.taskTitlePh")}
-                      className="flex-1 bg-slate-800 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
+                      className="flex-1 bg-slate-800 border border-white/10 rounded px-2 py-1 text-tiny text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
                     />
                     <button
                       onClick={createTask}
-                      className="px-2 py-1 rounded bg-[var(--module-accent)] text-white text-[10px] hover:bg-[var(--module-accent-strong)] cursor-pointer"
+                      className="px-2 py-1 rounded bg-[var(--module-accent)] text-white text-tiny hover:bg-[var(--module-accent-strong)] cursor-pointer"
                     >
                       {t("collab.create")}
                     </button>
@@ -1083,8 +1083,8 @@ export default function CollabRoom() {
             <div className="flex-shrink-0 border-t border-white/5 p-3 space-y-2 bg-slate-900/40">
               {/* @ 工具选择（单选） */}
               <div className="flex flex-wrap gap-1 items-center">
-                <span className="text-[9px] text-slate-500 mr-1">{t("collab.atTool")}</span>
-                {toolsLoading && <span className="text-[9px] text-slate-400 animate-pulse">{t("collab.loading")}</span>}
+                <span className="text-micro text-slate-500 mr-1">{t("collab.atTool")}</span>
+                {toolsLoading && <span className="text-micro text-slate-400 animate-pulse">{t("collab.loading")}</span>}
                 {/* 协同只带得上 CLI 工具：桌面端是 GUI 程序，@ 它没法接任务
                     （后端 dispatch 也会拦一道，这里先在 UI 上不让它出现） */}
                 {tools.filter((tl) => tl.installed && (tl.tool_kind ?? "other") === "cli").map((tl) => {
@@ -1099,7 +1099,7 @@ export default function CollabRoom() {
                       />
                       <button
                         onClick={() => setSelectedTool(on ? "" : tl.id)}
-                        className={`px-2 py-0.5 rounded-full text-[9px] font-semibold transition-all cursor-pointer ${
+                        className={`px-2 py-0.5 rounded-full text-micro font-semibold transition-all cursor-pointer ${
                           on
                             ? "bg-[var(--module-accent)] text-white"
                             : "text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-white/10"
@@ -1120,7 +1120,7 @@ export default function CollabRoom() {
                     <select
                       value={providerId}
                       onChange={(e) => onProviderChange(e.target.value)}
-                      className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
+                      className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-tiny text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
                     >
                       {providers.map((p) => (
                         <option key={p.id} value={p.id}>
@@ -1131,7 +1131,7 @@ export default function CollabRoom() {
                     <select
                       value={modelId}
                       onChange={(e) => { setModelId(e.target.value); const m = activeProvider?.models.find(x => x.id === e.target.value); resetCustomParamValues(m?.customParams || []); }}
-                      className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
+                      className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-tiny text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
                     >
                       {activeProvider?.models.map((m) => (
                         <option key={m.id} value={m.id}>
@@ -1150,7 +1150,7 @@ export default function CollabRoom() {
                   <div className="rounded-ctl border border-white/5 bg-slate-900/30 overflow-hidden">
                     <button
                       onClick={() => setShowAdvanced(!showAdvanced)}
-                      className="w-full flex items-center justify-between px-2.5 py-1.5 text-[9px] text-slate-400 hover:text-slate-200 cursor-pointer transition-all"
+                      className="w-full flex items-center justify-between px-2.5 py-1.5 text-micro text-slate-400 hover:text-slate-200 cursor-pointer transition-all"
                     >
                       <span className="flex items-center gap-1.5 font-semibold">
                         <Settings className="w-3 h-3" /> {t("collab.advancedSettings")}
@@ -1162,10 +1162,10 @@ export default function CollabRoom() {
                         {/* 模型自定义启动参数（用户定义，运行时渲染为控件） */}
                         {currentModelCustomParams.length > 0 && (
                           <div className="space-y-1.5 pt-0.5">
-                            <div className="text-[9px] text-slate-500 font-semibold">{t("collab.customParams")}</div>
+                            <div className="text-micro text-slate-500 font-semibold">{t("collab.customParams")}</div>
                             {currentModelCustomParams.map(cp => (
                               <div key={cp.key} className="flex items-center gap-2">
-                                <label className="text-[9px] text-slate-400 w-20 flex-shrink-0 truncate" title={cp.key}>{cp.label || cp.key}</label>
+                                <label className="text-micro text-slate-400 w-20 flex-shrink-0 truncate" title={cp.key}>{cp.label || cp.key}</label>
                                 {cp.paramType === "bool" ? (
                                   <input type="checkbox" checked={customParamValues[cp.key] !== "false"}
                                     onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.checked ? "true" : "false" }))}
@@ -1174,11 +1174,11 @@ export default function CollabRoom() {
                                   <input type="text" value={customParamValues[cp.key] || ""}
                                     onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.value }))}
                                     placeholder={cp.defaultValue || ""}
-                                    className="flex-1 min-w-0 bg-slate-800 border border-white/10 rounded px-1.5 py-0.5 text-[9px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
+                                    className="flex-1 min-w-0 bg-slate-800 border border-white/10 rounded px-1.5 py-0.5 text-micro text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
                                 ) : (
                                   <select value={customParamValues[cp.key] || cp.defaultValue || ""}
                                     onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.value }))}
-                                    className="flex-1 min-w-0 bg-slate-800 border border-white/10 rounded px-1.5 py-0.5 text-[9px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]">
+                                    className="flex-1 min-w-0 bg-slate-800 border border-white/10 rounded px-1.5 py-0.5 text-micro text-slate-200 focus:outline-none focus:border-[var(--module-accent)]">
                                     {(cp.options && cp.options.length > 0 ? cp.options : [cp.defaultValue || ""]).filter(Boolean).map(o => (
                                       <option key={o} value={o}>{o}</option>
                                     ))}
@@ -1194,11 +1194,11 @@ export default function CollabRoom() {
                         {/* 模型伪装 */}
                         {tool.builtin_models.length > 0 && (
                           <div className="flex items-center gap-2">
-                            <span className="text-[9px] text-slate-500 w-16 flex-shrink-0">{t("collab.spoofModel")}</span>
+                            <span className="text-micro text-slate-500 w-16 flex-shrink-0">{t("collab.spoofModel")}</span>
                             <select
                               value={masqueradeModel}
                               onChange={(e) => setMasqueradeModel(e.target.value)}
-                              className="flex-1 bg-slate-800 border border-white/10 rounded px-1.5 py-0.5 text-[9px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
+                              className="flex-1 bg-slate-800 border border-white/10 rounded px-1.5 py-0.5 text-micro text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
                             >
                               <option value="">{t("collab.noSpoof")}</option>
                               {tool.builtin_models.map((m) => (
@@ -1216,7 +1216,7 @@ export default function CollabRoom() {
                               onChange={(e) => setOneMContext(e.target.checked)}
                               className="w-3 h-3 rounded accent-[var(--module-accent)]"
                             />
-                            <span className="text-[9px] text-slate-400">{t("collab.ctx1m")}</span>
+                            <span className="text-micro text-slate-400">{t("collab.ctx1m")}</span>
                           </label>
                         )}
                         {/* 优化器 */}
@@ -1228,7 +1228,7 @@ export default function CollabRoom() {
                               onChange={(e) => setOptimizerEnabled(e.target.checked)}
                               className="w-3 h-3 rounded accent-[var(--module-accent)]"
                             />
-                            <span className="text-[9px] text-slate-400">{t("collab.optimizer")}</span>
+                            <span className="text-micro text-slate-400">{t("collab.optimizer")}</span>
                           </label>
                         )}
                         {/* 整流器 */}
@@ -1240,7 +1240,7 @@ export default function CollabRoom() {
                               onChange={(e) => setRectifierEnabled(e.target.checked)}
                               className="w-3 h-3 rounded accent-[var(--module-accent)]"
                             />
-                            <span className="text-[9px] text-slate-400">{t("collab.rectifier")}</span>
+                            <span className="text-micro text-slate-400">{t("collab.rectifier")}</span>
                           </label>
                         )}
                       </div>
@@ -1284,19 +1284,19 @@ export default function CollabRoom() {
                   onKeyDown={onContentKeyDown}
                   rows={2}
                   placeholder={t("collab.inputPh")}
-                  className="flex-1 bg-slate-800 border border-white/10 rounded-ctl px-3 py-2 text-[11px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)] resize-none"
+                  className="flex-1 bg-slate-800 border border-white/10 rounded-ctl px-3 py-2 text-caption text-slate-200 focus:outline-none focus:border-[var(--module-accent)] resize-none"
                 />
                 {busy ? (
                   <button
                     onClick={stopDispatch}
-                    className="px-4 py-2 rounded-ctl bg-red-600 hover:bg-red-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                    className="px-4 py-2 rounded-ctl bg-red-600 hover:bg-red-500 text-white text-body font-semibold flex items-center gap-1.5 cursor-pointer"
                   >
                     <Square className="w-3.5 h-3.5" /> {t("collab.stop")}
                   </button>
                 ) : (
                   <button
                     onClick={send}
-                    className="px-4 py-2 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                    className="px-4 py-2 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-body font-semibold flex items-center gap-1.5 cursor-pointer"
                   >
                     <Send className="w-3.5 h-3.5" /> {t("collab.send")}
                   </button>
@@ -1305,7 +1305,7 @@ export default function CollabRoom() {
                   onClick={compact}
                   disabled={!selectedTool || busy || compacting}
                   title={t("collab.compactTitle")}
-                  className="px-2 py-2 rounded-ctl bg-white/5 hover:bg-white/10 disabled:opacity-40 text-slate-300 text-[10px] cursor-pointer"
+                  className="px-2 py-2 rounded-ctl bg-white/5 hover:bg-white/10 disabled:opacity-40 text-slate-300 text-tiny cursor-pointer"
                 >
                   {compacting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Archive className="w-3.5 h-3.5" />}
                 </button>
@@ -1313,7 +1313,7 @@ export default function CollabRoom() {
                   onClick={resetSession}
                   disabled={!selectedTool}
                   title={t("collab.resetCtxTitle")}
-                  className="px-2 py-2 rounded-ctl bg-white/5 hover:bg-white/10 disabled:opacity-40 text-slate-300 text-[10px] cursor-pointer"
+                  className="px-2 py-2 rounded-ctl bg-white/5 hover:bg-white/10 disabled:opacity-40 text-slate-300 text-tiny cursor-pointer"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
                 </button>
@@ -1348,8 +1348,8 @@ function PromptResponse({
   return (
     <div className="mt-2 rounded-ctl border border-amber-500/30 bg-amber-500/5 p-2.5 space-y-2">
       <div className="flex items-start gap-1.5">
-        <span className="text-amber-400 text-[10px] font-bold mt-0.5">{t("collab.askBadge")}</span>
-        <span className="text-[10px] text-slate-300 whitespace-pre-wrap break-words flex-1">
+        <span className="text-amber-400 text-tiny font-bold mt-0.5">{t("collab.askBadge")}</span>
+        <span className="text-tiny text-slate-300 whitespace-pre-wrap break-words flex-1">
           {prompt.question}
         </span>
       </div>
@@ -1358,7 +1358,7 @@ function PromptResponse({
           <button
             key={opt}
             onClick={() => onRespond(opt)}
-            className="px-2.5 py-1 rounded-md bg-amber-600/80 hover:bg-amber-500 text-white text-[10px] font-semibold transition-colors cursor-pointer"
+            className="px-2.5 py-1 rounded-md bg-amber-600/80 hover:bg-amber-500 text-white text-tiny font-semibold transition-colors cursor-pointer"
           >
             {opt}
           </button>
@@ -1373,7 +1373,7 @@ function PromptResponse({
             }
           }}
           placeholder={t("collab.customReplyPh")}
-          className="flex-1 min-w-[80px] bg-slate-800 border border-white/10 rounded-md px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-amber-500"
+          className="flex-1 min-w-[80px] bg-slate-800 border border-white/10 rounded-md px-2 py-1 text-tiny text-slate-200 focus:outline-none focus:border-amber-500"
         />
         {customResponse.trim() && (
           <button
@@ -1381,7 +1381,7 @@ function PromptResponse({
               onRespond(customResponse.trim());
               setCustomResponse("");
             }}
-            className="px-2 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-slate-200 text-[10px] cursor-pointer"
+            className="px-2 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-slate-200 text-tiny cursor-pointer"
           >
             {t("collab.send")}
           </button>
@@ -1455,7 +1455,7 @@ function MessageView({
     <div className="flex gap-2.5">
       {/* 头像 */}
       <div
-        className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-[11px] font-bold flex-shrink-0 ${color}`}
+        className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-caption font-bold flex-shrink-0 ${color}`}
       >
         {isUser ? (
           <UserIcon className="w-3.5 h-3.5" />
@@ -1468,7 +1468,7 @@ function MessageView({
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-0.5">
-          <span className="text-[11px] font-semibold text-slate-200">
+          <span className="text-caption font-semibold text-slate-200">
             {displayName}
           </span>
           <span className="text-[8px] text-slate-500">{m.created_at}</span>
@@ -1513,7 +1513,7 @@ function MessageView({
 
         {/* 内容 */}
         <div
-          className={`rounded-ctl px-3 py-2 text-[11px] leading-relaxed break-words ${
+          className={`rounded-ctl px-3 py-2 text-caption leading-relaxed break-words ${
             isUser
               ? "bg-blue-500/10 border border-blue-500/20 whitespace-pre-wrap"
               : running
@@ -1531,7 +1531,7 @@ function MessageView({
             m.content || <span className="text-slate-600">{t("collab.emptyContent")}</span>
           ) : isError ? (
             <div className="flex items-center gap-1.5 text-red-400">
-              <span className="text-[10px]">{t("collab.errPrefix", { phrase: errorPhrase })}</span>
+              <span className="text-tiny">{t("collab.errPrefix", { phrase: errorPhrase })}</span>
               <span className="flex-1">
                 <MarkdownRenderer content={m.content} />
               </span>
@@ -1543,7 +1543,7 @@ function MessageView({
 
         {/* 活动状态指示器：思考中/调用工具等实时状态 */}
         {running && activity && (
-          <div className="mt-1.5 flex items-center gap-1.5 text-[9px] text-slate-400">
+          <div className="mt-1.5 flex items-center gap-1.5 text-micro text-slate-400">
             <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--module-accent)] opacity-60"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-[var(--module-accent)]"></span>
@@ -1557,7 +1557,7 @@ function MessageView({
 
         {/* 代理层实时状态：当 stdout 无输出但代理已收到响应时显示 */}
         {running && !m.content && proxy && proxy.status !== "complete" && (
-          <div className="mt-1.5 rounded-md border border-cyan-500/20 bg-cyan-500/5 px-2 py-1 text-[9px] text-cyan-300/80">
+          <div className="mt-1.5 rounded-md border border-cyan-500/20 bg-cyan-500/5 px-2 py-1 text-micro text-cyan-300/80">
             <span className="flex items-center gap-1">
               <span className="relative flex h-1.5 w-1.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-60"></span>
@@ -1568,7 +1568,7 @@ function MessageView({
           </div>
         )}
         {running && !m.content && proxy?.status === "complete" && proxy.text && (
-          <div className="mt-1.5 rounded-md border border-emerald-500/20 bg-emerald-500/5 px-2 py-1.5 text-[9px] text-emerald-300/80">
+          <div className="mt-1.5 rounded-md border border-emerald-500/20 bg-emerald-500/5 px-2 py-1.5 text-micro text-emerald-300/80">
             <div className="flex items-center gap-1 mb-1">
               <Zap className="w-2.5 h-2.5" />
               <span>{t("collab.proxyReceived", { count: proxy.text.length, elapsed: proxy.elapsed ? t("collab.elapsedMs", { ms: proxy.elapsed }) : "" })}</span>
@@ -1634,7 +1634,7 @@ function ReferenceCard({
   const isInput = variant === "input";
   return (
     <div
-      className={`flex items-start gap-2 p-1.5 rounded border-l-2 border-[var(--module-accent)] text-[9px] ${
+      className={`flex items-start gap-2 p-1.5 rounded border-l-2 border-[var(--module-accent)] text-micro ${
         isInput ? "bg-slate-800/60 text-slate-300" : "bg-slate-800/50 text-slate-400"
       }`}
     >
@@ -1671,7 +1671,7 @@ function FileBadge({
   const colorClass = color === "cyan" ? "text-cyan-300" : "text-slate-300";
   return (
     <div
-      className={`flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-800/60 border border-white/10 text-[9px] ${colorClass} max-w-[200px]`}
+      className={`flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-800/60 border border-white/10 text-micro ${colorClass} max-w-[200px]`}
       title={path}
     >
       <span className="truncate">@ {path.split(/[\\/]/).pop()}</span>

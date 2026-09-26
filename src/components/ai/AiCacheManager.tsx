@@ -125,7 +125,7 @@ export default function AiCacheManager() {
     return (
       <div className="h-full flex items-center justify-center text-slate-500">
         <RefreshCw className="w-5 h-5 animate-spin mr-2" />
-        <span className="text-xs">{t("aicache.loading")}</span>
+        <span className="text-body">{t("aicache.loading")}</span>
       </div>
     );
   }
@@ -135,12 +135,12 @@ export default function AiCacheManager() {
       {migrating && (
         <div className="p-4 rounded-card border border-emerald-500/20 bg-emerald-600/5 space-y-3 animate-fadeIn">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-semibold text-emerald-300 flex items-center gap-1.5">
+            <span className="text-caption font-semibold text-emerald-300 flex items-center gap-1.5">
               <FolderSync className="w-3.5 h-3.5 animate-spin" />
               {migrateProgress?.stage || t("aicache.migrating")}
             </span>
             {migrateProgress && migrateProgress.total > 0 && (
-              <span className="text-[11px] font-mono text-emerald-400">
+              <span className="text-caption font-mono text-emerald-400">
                 {Math.round((migrateProgress.current / migrateProgress.total) * 100)}%
               </span>
             )}
@@ -157,14 +157,14 @@ export default function AiCacheManager() {
                   style={{ width: `${Math.min(Math.round((migrateProgress.current / migrateProgress.total) * 100), 100)}%` }}
                 />
               </div>
-              <div className="text-[10px] text-slate-500 font-mono flex justify-between">
+              <div className="text-tiny text-slate-500 font-mono flex justify-between">
                 <span className="truncate max-w-[60%]">{migrateProgress.file_name || "-"}</span>
                 <span>{migrateProgress.current} / {migrateProgress.total}</span>
               </div>
             </>
           )}
           {!migrateProgress && (
-            <div className="flex items-center gap-2 text-[10px] text-slate-500">
+            <div className="flex items-center gap-2 text-tiny text-slate-500">
               <RefreshCw className="w-3 h-3 animate-spin" />
               {t("aicache.preparing")}
             </div>
@@ -176,12 +176,12 @@ export default function AiCacheManager() {
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-sm font-bold text-white">{t("aicache.cachePath")}</h3>
-          <p className="text-[10px] text-slate-500 mt-0.5">
+          <p className="text-tiny text-slate-500 mt-0.5">
             {t("aicache.summary", { count: cacheInfos.length, size: totalSize })}
             {junctionCount > 0 && <span className="text-blue-400">{t("aicache.junctionCount", { count: junctionCount })}</span>}
           </p>
         </div>
-        <button onClick={load} className="px-2.5 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-[10px] text-slate-400 hover:text-white cursor-pointer transition-all flex items-center gap-1">
+        <button onClick={load} className="px-2.5 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-tiny text-slate-400 hover:text-white cursor-pointer transition-all flex items-center gap-1">
           <RefreshCw className="w-3 h-3" /> {t("aicache.refresh")}
         </button>
       </div>
@@ -189,8 +189,8 @@ export default function AiCacheManager() {
       {cacheInfos.length === 0 ? (
         <div className="h-48 border border-dashed border-white/5 rounded-panel flex flex-col items-center justify-center text-slate-500">
           <HardDrive className="w-8 h-8 text-slate-700 mb-2" />
-          <span className="text-xs font-bold text-slate-400">{t("aicache.noCache")}</span>
-          <span className="text-[10px] text-slate-600 mt-1">{t("aicache.noCacheHint")}</span>
+          <span className="text-body font-bold text-slate-400">{t("aicache.noCache")}</span>
+          <span className="text-tiny text-slate-600 mt-1">{t("aicache.noCacheHint")}</span>
         </div>
       ) : (
         <div className="space-y-4">
@@ -207,9 +207,9 @@ export default function AiCacheManager() {
                 <div className="px-4 py-2.5 bg-white/[0.02] border-b border-white/5 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <HardDrive className="w-3.5 h-3.5 text-[var(--module-accent)]" />
-                    <span className="text-xs font-bold text-slate-200">{group.displayName}</span>
+                    <span className="text-body font-bold text-slate-200">{group.displayName}</span>
                   </div>
-                  <span className="text-[9px] text-slate-500">{toolTotalStr}</span>
+                  <span className="text-micro text-slate-500">{toolTotalStr}</span>
                 </div>
 
                 {/* 缓存条目 */}
@@ -221,7 +221,7 @@ export default function AiCacheManager() {
                         <FolderOpen className="w-3.5 h-3.5 text-slate-600 flex-shrink-0" />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="text-[11px] text-slate-300 font-mono truncate">{cache.dir_name}</span>
+                            <span className="text-caption text-slate-300 font-mono truncate">{cache.dir_name}</span>
                             {cache.is_junction && (
                               <span
                                 className="text-[8px] font-bold bg-blue-500/15 text-blue-400 px-1.5 py-0.5 rounded cursor-help"
@@ -233,10 +233,10 @@ export default function AiCacheManager() {
                             )}
                           </div>
                           <div className="flex items-center gap-2 mt-0.5">
-                            <span className="text-[9px] text-slate-500 font-mono truncate max-w-[280px]">
+                            <span className="text-micro text-slate-500 font-mono truncate max-w-[280px]">
                               {cache.full_path}
                             </span>
-                            <span className={`text-[9px] font-semibold ${cache.size_bytes > 0 ? "text-amber-400" : "text-slate-600"}`}>
+                            <span className={`text-micro font-semibold ${cache.size_bytes > 0 ? "text-amber-400" : "text-slate-600"}`}>
                               {cache.exists ? cache.size : t("aicache.notExists")}
                             </span>
                           </div>
@@ -284,7 +284,7 @@ export default function AiCacheManager() {
       )}
 
       {/* 说明 */}
-      <div className="p-3 rounded-card bg-blue-500/5 border border-blue-500/10 text-[10px] text-slate-400 space-y-1">
+      <div className="p-3 rounded-card bg-blue-500/5 border border-blue-500/10 text-tiny text-slate-400 space-y-1">
         <p className="font-semibold text-blue-300 flex items-center gap-1">
           <Link2 className="w-3 h-3" /> {t("aicache.junctionOnly")}
         </p>

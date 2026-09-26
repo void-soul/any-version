@@ -623,17 +623,17 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
           <div>{t("toollaunch.uninstallConfirmDesc", { name: tool.display_name })}</div>
           {dirs.length > 0 ? (
             <>
-              <div className="text-[10px] text-slate-400">{t("toollaunch.dataDirsHint")}</div>
+              <div className="text-tiny text-slate-400">{t("toollaunch.dataDirsHint")}</div>
               <div className="max-h-32 overflow-y-auto rounded-ctl border border-white/10 bg-black/30 divide-y divide-white/5">
                 {dirs.map((d) => (
-                  <div key={d.dir_name} className="flex items-center gap-2 px-2 py-1.5 text-[10px]">
+                  <div key={d.dir_name} className="flex items-center gap-2 px-2 py-1.5 text-tiny">
                     <FolderOpen className="w-3 h-3 flex-shrink-0 text-slate-500" />
                     <span className="min-w-0 flex-1 break-all text-slate-300">{d.full_path}</span>
                     <span className="flex-shrink-0 text-slate-500">{d.size}</span>
                   </div>
                 ))}
               </div>
-              <label className="flex items-start gap-2 text-[10px] text-slate-300 cursor-pointer select-none">
+              <label className="flex items-start gap-2 text-tiny text-slate-300 cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={removeDataDirs}
@@ -642,10 +642,10 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                 />
                 <span>{t("toollaunch.removeDataDirsCheckbox", { count: dirs.length })}</span>
               </label>
-              <div className="text-[9px] text-slate-500">{t("toollaunch.removeDataDirsHint")}</div>
+              <div className="text-micro text-slate-500">{t("toollaunch.removeDataDirsHint")}</div>
             </>
           ) : (
-            <div className="text-[10px] text-slate-500">{t("toollaunch.noDataDirs")}</div>
+            <div className="text-tiny text-slate-500">{t("toollaunch.noDataDirs")}</div>
           )}
         </div>
       ),
@@ -762,7 +762,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
   };
 
   if (loading) {
-    return <div className="h-full flex items-center justify-center text-slate-500"><RefreshCw className="w-5 h-5 animate-spin mr-2" /><span className="text-xs">{t("toollaunch.loading")}</span></div>;
+    return <div className="h-full flex items-center justify-center text-slate-500"><RefreshCw className="w-5 h-5 animate-spin mr-2" /><span className="text-body">{t("toollaunch.loading")}</span></div>;
   }
 
   const getVerStatus = (toolId: string): { label: string; color: string; icon: React.ReactNode } | null => {
@@ -841,7 +841,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
             标题只是重复这句话，还占掉两行高度。 */}
         {/* 筛选后一个都不剩：明说原因，别让整段静默消失 */}
         {notInstalledTools.length > 0 && visibleNotInstalled.length === 0 && (
-          <div className="px-1 py-1.5 text-[9px] text-slate-600">{t("toollaunch.kindEmpty")}</div>
+          <div className="px-1 py-1.5 text-micro text-slate-600">{t("toollaunch.kindEmpty")}</div>
         )}
         {visibleTools.map((tool) => {
           const vs = getVerStatus(tool.id);
@@ -923,7 +923,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
               }`}
             >
               <div className="flex items-center gap-2">
-                <span className="w-4 h-4 flex-shrink-0 flex items-center justify-center text-xs">{tool.avatar || '🤖'}</span>
+                <span className="w-4 h-4 flex-shrink-0 flex items-center justify-center text-body">{tool.avatar || '🤖'}</span>
                 <div className="flex items-center gap-1 min-w-0 flex-1">
                   {/* 形态徽标：一行就能看出是 CLI 还是桌面工具。
                       选中态底色是纯 accent，所以徽标也走 text-white/70 + bg-white/10 */}
@@ -942,11 +942,11 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                         ? t("toollaunch.kindCli")
                         : t("toollaunch.kindOther")}
                   </span>
-                  <span className="text-[11px] font-semibold truncate">{tool.nickname || tool.display_name}</span>
+                  <span className="text-caption font-semibold truncate">{tool.nickname || tool.display_name}</span>
                   {/* 真实名称：选中态背景就是纯 accent，再叠 accent 半透明等于看不见，
                       一律用白色半透明（任何主题色下都清晰） */}
                   {tool.nickname && tool.nickname !== tool.display_name && (
-                    <span className={`text-[9px] truncate flex-shrink-0 ${
+                    <span className={`text-micro truncate flex-shrink-0 ${
                       selectedToolId === tool.id ? "text-white/70" : "text-slate-500"
                     }`}>
                       ({tool.display_name})
@@ -954,12 +954,12 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                   )}
                 </div>
                 {getBusy(tool.id) ? (
-                  <span className="text-[9px] font-semibold flex items-center gap-0.5 ml-auto flex-shrink-0 text-blue-300">
+                  <span className="text-micro font-semibold flex items-center gap-0.5 ml-auto flex-shrink-0 text-blue-300">
                     <RefreshCw className="w-2.5 h-2.5 animate-spin" />
                     {getBusy(tool.id) === "upgrading" ? t("toollaunch.upgrading") : getBusy(tool.id) === "installing" ? t("toollaunch.installing") : t("toollaunch.uninstalling")}
                   </span>
                 ) : vs && (
-                  <span className={`text-[9px] font-semibold flex items-center gap-0.5 ml-auto flex-shrink-0 ${vs.color}`}>
+                  <span className={`text-micro font-semibold flex items-center gap-0.5 ml-auto flex-shrink-0 ${vs.color}`}>
                     {vs.icon}
                     {vs.label}
                   </span>
@@ -972,17 +972,17 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
               </div>
               <div className="flex items-center gap-1.5 mt-0.5 ml-5.5">
                 {getBusy(tool.id) === "installing" ? (
-                  <span className="text-[9px] text-blue-300 animate-pulse">{t("toollaunch.installing")}...</span>
+                  <span className="text-micro text-blue-300 animate-pulse">{t("toollaunch.installing")}...</span>
                 ) : getBusy(tool.id) === "upgrading" ? (
-                  <span className="text-[9px] text-blue-300 animate-pulse">{t("toollaunch.upgrading")}...</span>
+                  <span className="text-micro text-blue-300 animate-pulse">{t("toollaunch.upgrading")}...</span>
                 ) : getBusy(tool.id) === "uninstalling" ? (
-                  <span className="text-[9px] text-blue-300 animate-pulse">{t("toollaunch.uninstalling")}...</span>
+                  <span className="text-micro text-blue-300 animate-pulse">{t("toollaunch.uninstalling")}...</span>
                 ) : tool.installed ? (
                   // 与真实名称同理：选中态底色就是 accent，文字不能再用 accent。
                   // 版本号取不到时**不写「已安装」**：装没装从头像的明暗/右侧状态就看得出来，
                   // 写一行字反而把列表塞满重复信息。
                   tool.version ? (
-                    <span className={`text-[9px] ${selectedToolId === tool.id ? "text-white/70" : "text-slate-500"} font-mono`}>
+                    <span className={`text-micro ${selectedToolId === tool.id ? "text-white/70" : "text-slate-500"} font-mono`}>
                       {tool.version}
                     </span>
                   ) : null
@@ -1016,26 +1016,26 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                 {lastLaunchConfigs[tool.id] && tool.installed && (
                   <div className={`flex items-center gap-1 mt-0.5 ml-5.5 flex-wrap ${selectedToolId === tool.id ? "text-white/70" : "text-slate-600"}`}>
                     {lastLaunchConfigs[tool.id].use_official_model ? (
-                      <span className="text-[9px]">{t("toollaunch.official")}</span>
+                      <span className="text-micro">{t("toollaunch.official")}</span>
                     ) : (
                       <>
-                        <span className="text-[9px] truncate max-w-[60px]">
+                        <span className="text-micro truncate max-w-[60px]">
                           {lastLaunchConfigs[tool.id].provider_name || lastLaunchConfigs[tool.id].provider_id || "-"}
                         </span>
                         {lastLaunchConfigs[tool.id].model_id && (
-                          <span className="text-[9px] truncate max-w-[50px] opacity-70">
+                          <span className="text-micro truncate max-w-[50px] opacity-70">
                             · {lastLaunchConfigs[tool.id].model_id}
                           </span>
                         )}
                         {lastLaunchConfigs[tool.id].fallback_model_id && (
-                          <span className="text-[9px] text-amber-400/80 truncate max-w-[50px]">
+                          <span className="text-micro text-amber-400/80 truncate max-w-[50px]">
                             ※ {lastLaunchConfigs[tool.id].fallback_model_id}
                           </span>
                         )}
                       </>
                     )}
                     {lastLaunchConfigs[tool.id].last_launched_at && (
-                      <span className="text-[9px] opacity-50 ml-auto">
+                      <span className="text-micro opacity-50 ml-auto">
                         {formatRelativeTime(lastLaunchConfigs[tool.id].last_launched_at, t)}
                       </span>
                     )}
@@ -1062,7 +1062,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
         {!selectedTool ? (
           <div className="h-full flex flex-col items-center justify-center text-slate-500">
             <Bot className="w-8 h-8 text-slate-700 mb-2" />
-            <span className="text-xs font-bold text-slate-400">{t("toollaunch.selectToolHint")}</span>
+            <span className="text-body font-bold text-slate-400">{t("toollaunch.selectToolHint")}</span>
           </div>
         ) : (
           <>
@@ -1076,18 +1076,18 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                   <h3 className="text-sm font-bold text-white">{selectedTool.display_name}</h3>
                   <div className="flex items-center gap-2 mt-0.5">
                     {getBusy(selectedTool.id) && (
-                      <span className="flex items-center gap-1 text-[10px] font-semibold text-blue-300">
+                      <span className="flex items-center gap-1 text-tiny font-semibold text-blue-300">
                         <RefreshCw className="w-3 h-3 animate-spin" />
                         {getBusy(selectedTool.id) === "upgrading" ? `${t("toollaunch.upgrading")}...` : getBusy(selectedTool.id) === "installing" ? `${t("toollaunch.installing")}...` : `${t("toollaunch.uninstalling")}...`}
                       </span>
                     )}
                     {selectedTool.installed ? (
                       <>
-                        <span className="text-[10px] text-emerald-400"><CheckCircle className="w-3 h-3 inline mr-0.5" />{selectedTool.version || t("toollaunch.installed")}</span>
+                        <span className="text-tiny text-emerald-400"><CheckCircle className="w-3 h-3 inline mr-0.5" />{selectedTool.version || t("toollaunch.installed")}</span>
                         {!selectedTool.pm_managed && (
                           // 只是提示，不拦操作：升级/卸载照旧可用（包管理器 → 官方渠道 → 按文件清理）
                           <span
-                            className="text-[10px] text-amber-400/80 cursor-help"
+                            className="text-tiny text-amber-400/80 cursor-help"
                             title={selectedTool.detected_path || selectedTool.uninstall_cmd || selectedTool.upgrade_cmd || undefined}
                           >
                             {t("toollaunch.externalInstallHint")}
@@ -1095,11 +1095,11 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                         )}
                         {!getBusy(selectedTool.id) && versionStatuses[selectedTool.id]?.latest && versionStatuses[selectedTool.id]?.status === "outdated" && (
                           <>
-                            <span className="text-[10px] text-amber-400 ml-1">→ {t("toollaunch.latest")}: {versionStatuses[selectedTool.id].latest}</span>
+                            <span className="text-tiny text-amber-400 ml-1">→ {t("toollaunch.latest")}: {versionStatuses[selectedTool.id].latest}</span>
                             <button
                               onClick={() => handleUpgrade(selectedTool)}
                               disabled={getBusy(selectedTool.id) === "upgrading"}
-                              className="px-2 py-0.5 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-[9px] font-semibold text-emerald-400 cursor-pointer transition-all flex items-center gap-0.5 disabled:opacity-50"
+                              className="px-2 py-0.5 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-micro font-semibold text-emerald-400 cursor-pointer transition-all flex items-center gap-0.5 disabled:opacity-50"
                               title={t("toollaunch.upgradeLatest")}
                             >
                               <Download className={`w-3 h-3 ${getBusy(selectedTool.id) === "upgrading" ? "animate-spin" : ""}`} />
@@ -1108,7 +1108,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                             <button
                               onClick={() => void askUninstall(selectedTool)}
                               disabled={getBusy(selectedTool.id) === "uninstalling"}
-                              className="px-2 py-0.5 rounded-md bg-red-500/10 hover:bg-red-500/20 text-[9px] font-semibold text-red-400 cursor-pointer transition-all flex items-center gap-0.5 disabled:opacity-50"
+                              className="px-2 py-0.5 rounded-md bg-red-500/10 hover:bg-red-500/20 text-micro font-semibold text-red-400 cursor-pointer transition-all flex items-center gap-0.5 disabled:opacity-50"
                               title={t("toollaunch.uninstallTitle")}
                             >
                               <Trash2 className={`w-3 h-3 ${getBusy(selectedTool.id) === "uninstalling" ? "animate-spin" : ""}`} />
@@ -1118,12 +1118,12 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                         )}
                       </>
                     ) : (
-                      <span className="text-[10px] text-slate-500">{t("toollaunch.notInstalled")}</span>
+                      <span className="text-tiny text-slate-500">{t("toollaunch.notInstalled")}</span>
                     )}
-                    <span className="text-[10px] text-slate-500">· {selectedTool.api_protocol === "none" ? t("toollaunch.modelNone") : PROTOCOL_LABELS[selectedTool.api_protocol]}</span>
+                    <span className="text-tiny text-slate-500">· {selectedTool.api_protocol === "none" ? t("toollaunch.modelNone") : PROTOCOL_LABELS[selectedTool.api_protocol]}</span>
                     <a href={selectedTool.website} target="_blank" rel="noopener noreferrer"
                       onClick={(e) => { e.preventDefault(); void openUrl(selectedTool.website); }}
-                      className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-0.5 ml-1"
+                      className="text-tiny text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-0.5 ml-1"
                       title={t("toollaunch.openSite")}>
                       <ExternalLink className="w-3 h-3" /> {t("toollaunch.site")}
                     </a>
@@ -1135,14 +1135,14 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                 <div className="mt-2 px-2 py-1.5 rounded-ctl bg-slate-800/50 border border-white/5">
                   <div className="flex items-center gap-1 mb-1">
                     <History className="w-3 h-3 text-slate-500" />
-                    <span className="text-[9px] text-slate-500 font-semibold">{t("toollaunch.lastLaunch")}</span>
+                    <span className="text-micro text-slate-500 font-semibold">{t("toollaunch.lastLaunch")}</span>
                     {lastLaunchConfigs[selectedTool.id].last_launched_at && (
-                      <span className="text-[9px] text-slate-600 ml-auto">
+                      <span className="text-micro text-slate-600 ml-auto">
                         {formatRelativeTime(lastLaunchConfigs[selectedTool.id].last_launched_at, t)}
                       </span>
                     )}
                   </div>
-                  <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[9px]">
+                  <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-micro">
                     {lastLaunchConfigs[selectedTool.id].use_official_model ? (
                       <span className="text-slate-400">{t("toollaunch.officialModel")}</span>
                     ) : (
@@ -1175,18 +1175,18 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
               )}
               {!selectedTool.installed && (
                 <div className="mt-3 flex items-center gap-2">
-                  <code className="flex-1 text-[10px] text-slate-300 bg-slate-900 rounded px-2 py-1.5 font-mono truncate">{selectedTool.install_cmd}</code>
+                  <code className="flex-1 text-tiny text-slate-300 bg-slate-900 rounded px-2 py-1.5 font-mono truncate">{selectedTool.install_cmd}</code>
                   <button
                     onClick={() => handleInstall(selectedTool)}
                     disabled={getBusy(selectedTool.id) === "installing"}
-                    className="px-2 py-1.5 rounded-md bg-[var(--module-accent-soft)] hover:bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] text-[10px] text-[var(--module-accent)] hover:text-[var(--module-accent-strong)] cursor-pointer transition-all flex items-center gap-1 flex-shrink-0 disabled:opacity-50"
+                    className="px-2 py-1.5 rounded-md bg-[var(--module-accent-soft)] hover:bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] text-tiny text-[var(--module-accent)] hover:text-[var(--module-accent-strong)] cursor-pointer transition-all flex items-center gap-1 flex-shrink-0 disabled:opacity-50"
                     title={t("toollaunch.installTitle")}
                   >
                     <Download className={`w-3.5 h-3.5 ${getBusy(selectedTool.id) === "installing" ? "animate-spin" : ""}`} />
                     {getBusy(selectedTool.id) === "installing" ? `${t("toollaunch.installing")}...` : t("toollaunch.install")}
                   </button>
                   <button onClick={() => navigator.clipboard.writeText(selectedTool.install_cmd)}
-                    className="px-2 py-1.5 rounded-md bg-white/5 hover:bg-white/10 text-[10px] text-slate-400 hover:text-white cursor-pointer transition-all flex-shrink-0">
+                    className="px-2 py-1.5 rounded-md bg-white/5 hover:bg-white/10 text-tiny text-slate-400 hover:text-white cursor-pointer transition-all flex-shrink-0">
                     <Copy className="w-3.5 h-3.5" />
                   </button>
                 </div>
@@ -1196,11 +1196,11 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
             {/* 安装路径：自动检测认不出来时手动指定（可执行文件本身或其所在目录） */}
             <div className="p-3 rounded-card bg-slate-900/30 border border-white/5 space-y-2">
               <div className="flex items-center justify-between">
-                <div className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                <div className="text-body font-semibold text-slate-300 flex items-center gap-1.5">
                   <FolderOpen className="w-3.5 h-3.5" /> {t("toollaunch.installPath")}
                 </div>
                 {selectedTool.custom_path && (
-                  <span className="text-[9px] px-1.5 py-px rounded bg-[var(--module-accent)]/20 text-[var(--module-accent)]">
+                  <span className="text-micro px-1.5 py-px rounded bg-[var(--module-accent)]/20 text-[var(--module-accent)]">
                     {t("toollaunch.pathManual")}
                   </span>
                 )}
@@ -1210,26 +1210,26 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                   value={pathInput}
                   onChange={(e) => setPathInput(e.target.value)}
                   placeholder={selectedTool.detected_path || t("toollaunch.pathPlaceholder")}
-                  className="flex-1 min-w-0 px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[11px] text-slate-200 placeholder-slate-600 font-mono truncate focus:outline-none focus:border-[var(--module-accent)]/50"
+                  className="flex-1 min-w-0 px-2 py-1 rounded-md bg-white/5 border border-white/10 text-caption text-slate-200 placeholder-slate-600 font-mono truncate focus:outline-none focus:border-[var(--module-accent)]/50"
                 />
                 <button onClick={() => void browseCustomPath()} disabled={pathSaving}
-                  className="px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-[10px] text-slate-300 flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  className="px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-tiny text-slate-300 flex items-center gap-1 cursor-pointer disabled:opacity-50"
                   title={t("toollaunch.pathBrowse")}>
                   <FolderOpen className="w-3 h-3" />
                 </button>
                 <button onClick={() => void saveCustomPath(pathInput.trim() || null)} disabled={pathSaving}
-                  className="px-2 py-1 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 text-[10px] text-emerald-200 flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  className="px-2 py-1 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 text-tiny text-emerald-200 flex items-center gap-1 cursor-pointer disabled:opacity-50"
                   title={t("toollaunch.pathSaveHint")}>
                   <Check className="w-3 h-3" /> {t("toollaunch.save")}
                 </button>
                 <button onClick={() => { setPathInput(""); void saveCustomPath(null); }}
                   disabled={pathSaving || !selectedTool.custom_path}
-                  className="px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-[10px] text-slate-300 cursor-pointer disabled:opacity-40"
+                  className="px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-tiny text-slate-300 cursor-pointer disabled:opacity-40"
                   title={t("toollaunch.pathClearHint")}>
                   {t("toollaunch.clear")}
                 </button>
               </div>
-              <div className="text-[10px] text-slate-500 truncate">
+              <div className="text-tiny text-slate-500 truncate">
                 {selectedTool.detected_path ? (
                   `${t("toollaunch.pathDetected")}: ${selectedTool.detected_path}`
                 ) : selectedTool.custom_path ? (
@@ -1243,7 +1243,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                 )}
               </div>
               {pathMsg && (
-                <div className={`text-[10px] ${pathMsg.ok ? "text-emerald-400" : "text-red-400"}`}>{pathMsg.msg}</div>
+                <div className={`text-tiny ${pathMsg.ok ? "text-emerald-400" : "text-red-400"}`}>{pathMsg.msg}</div>
               )}
             </div>
 
@@ -1257,7 +1257,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                       if (!showCacheManager) { await loadCacheInfos(); }
                       setShowCacheManager(!showCacheManager);
                     }}
-                    className="w-full flex items-center justify-between px-3 py-2 rounded-ctl bg-slate-900/30 border border-white/5 text-[10px] text-slate-400 hover:text-slate-200 cursor-pointer transition-all"
+                    className="w-full flex items-center justify-between px-3 py-2 rounded-ctl bg-slate-900/30 border border-white/5 text-tiny text-slate-400 hover:text-slate-200 cursor-pointer transition-all"
                   >
                     <div className="flex items-center gap-2">
                       <HardDrive className="w-3.5 h-3.5" />
@@ -1273,21 +1273,21 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                     <div className="mt-2 rounded-ctl border border-white/5 bg-slate-900/30 overflow-hidden">
                       <div className="max-h-56 overflow-y-auto divide-y divide-white/[0.03]">
                         {cacheInfos.length === 0 ? (
-                          <div className="px-3 py-4 text-[10px] text-slate-600 text-center">{t("toollaunch.loading")}</div>
+                          <div className="px-3 py-4 text-tiny text-slate-600 text-center">{t("toollaunch.loading")}</div>
                         ) : selectedToolCaches.length === 0 ? (
-                          <div className="px-3 py-4 text-[10px] text-slate-600 text-center">{t("toollaunch.noCache")}</div>
+                          <div className="px-3 py-4 text-tiny text-slate-600 text-center">{t("toollaunch.noCache")}</div>
                         ) : (
                           selectedToolCaches.map(cache => (
                             <div key={`${cache.tool_id}:${cache.dir_name}`} className="px-3 py-2 flex items-center gap-3">
                               <HardDrive className="w-3 h-3 text-slate-600 flex-shrink-0" />
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2">
-                                  <span className="text-[10px] text-slate-300 font-mono truncate">{cache.dir_name}</span>
+                                  <span className="text-tiny text-slate-300 font-mono truncate">{cache.dir_name}</span>
                                   {cache.is_junction && (
                                     <span className="text-[8px] text-blue-400 bg-blue-500/10 px-1 rounded">JUNCTION</span>
                                   )}
                                 </div>
-                                <div className="text-[9px] text-slate-500 font-mono truncate mt-0.5" title={cache.full_path}>
+                                <div className="text-micro text-slate-500 font-mono truncate mt-0.5" title={cache.full_path}>
                                   {cache.exists ? cache.full_path : t("toollaunch.notExists")}
                                 </div>
                                 {cache.is_junction && cache.junction_target && (
@@ -1332,7 +1332,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                     <div className="flex items-center gap-2">
                       <Cpu className="w-3.5 h-3.5 text-blue-400" />
                       <div>
-                        <span className="text-[10px] font-semibold text-blue-300">{t("toollaunch.useOfficial")}</span>
+                        <span className="text-tiny font-semibold text-blue-300">{t("toollaunch.useOfficial")}</span>
                         <p className="text-[8px] text-slate-500 mt-0.5">{t("toollaunch.useOfficialHint")}</p>
                       </div>
                     </div>
@@ -1352,7 +1352,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                     {/* 模型供应商 — 统一列表（代理自动转换协议，任意供应商可选） */}
                     {eligibleProviders.length > 0 && (
                       <div>
-                        <label className="text-xs font-bold text-slate-300 mb-1.5 block">{t("toollaunch.modelVendor")}</label>
+                        <label className="text-body font-bold text-slate-300 mb-1.5 block">{t("toollaunch.modelVendor")}</label>
                         <div className="rounded-ctl border border-white/5 bg-slate-900/30">
                           {eligibleProviders.map(group => {
                             const isSelected = selectedModelProvider === group.provider_id;
@@ -1365,7 +1365,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                                     if (expanded) next.delete(group.provider_id); else next.add(group.provider_id);
                                     setExpandedModelGroups(next);
                                   }}
-                                  className="w-full flex items-center justify-between px-3 py-2 text-[10px] hover:bg-white/[0.02] cursor-pointer transition-all"
+                                  className="w-full flex items-center justify-between px-3 py-2 text-tiny hover:bg-white/[0.02] cursor-pointer transition-all"
                                 >
                                   <div className="flex items-center gap-2 min-w-0">
                                     <ChevronRight className={`w-3 h-3 text-slate-500 transition-transform ${expanded ? "rotate-90" : ""}`} />
@@ -1374,7 +1374,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                                     {providerProtocolBadges(config?.providers.find(p => p.id === group.provider_id))}
                                   </div>
                                   {isSelected && selectedModel && (
-                                    <span className="text-[9px] text-[var(--module-accent)] font-mono truncate ml-2">{selectedModel}</span>
+                                    <span className="text-micro text-[var(--module-accent)] font-mono truncate ml-2">{selectedModel}</span>
                                   )}
                                 </button>
                                 {expanded && (
@@ -1387,7 +1387,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                                             if (isSelModel) { setSelectedModel(""); setSelectedModelProvider(""); resetCustomParamValues([]); }
                                             else { setSelectedModel(m.id); setSelectedModelProvider(group.provider_id); resetCustomParamValues(m.customParams || []); }
                                           }}
-                                          className={`w-full text-left px-5 py-1.5 text-[11px] transition-all cursor-pointer flex items-center gap-2 ${
+                                          className={`w-full text-left px-5 py-1.5 text-caption transition-all cursor-pointer flex items-center gap-2 ${
                                             isSelModel
                                               ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)] font-semibold"
                                               : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
@@ -1404,16 +1404,16 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                           })}
                         </div>
                         {selectedModel && (
-                          <div className="mt-1 text-[10px] text-[var(--module-accent)]">{t("toollaunch.selected")}<span className="font-mono">{selectedModel}</span> <span className="text-slate-500">（{config?.providers.find(p => p.id === selectedModelProvider)?.name}）</span></div>
+                          <div className="mt-1 text-tiny text-[var(--module-accent)]">{t("toollaunch.selected")}<span className="font-mono">{selectedModel}</span> <span className="text-slate-500">（{config?.providers.find(p => p.id === selectedModelProvider)?.name}）</span></div>
                         )}
 
                         {/* 模型自定义启动参数（用户定义，运行时渲染为控件） */}
                         {currentModelCustomParams.length > 0 && (
                           <div className="mt-3 space-y-2">
-                            <div className="text-[10px] text-slate-500 font-semibold">{t("toollaunch.customParams")}</div>
+                            <div className="text-tiny text-slate-500 font-semibold">{t("toollaunch.customParams")}</div>
                             {currentModelCustomParams.map(cp => (
                               <div key={cp.key} className="flex items-center gap-2">
-                                <label className="text-[10px] text-slate-400 w-28 flex-shrink-0 truncate" title={cp.key}>{cp.label || cp.key}</label>
+                                <label className="text-tiny text-slate-400 w-28 flex-shrink-0 truncate" title={cp.key}>{cp.label || cp.key}</label>
                                 {cp.paramType === "bool" ? (
                                   <input type="checkbox" checked={customParamValues[cp.key] !== "false"}
                                     onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.checked ? "true" : "false" }))}
@@ -1422,11 +1422,11 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                                   <input type="text" value={customParamValues[cp.key] || ""}
                                     onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.value }))}
                                     placeholder={cp.defaultValue || ""}
-                                    className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
+                                    className="flex-1 min-w-0 ui-input rounded px-2 py-1 text-tiny text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
                                 ) : (
                                   <select value={customParamValues[cp.key] || cp.defaultValue || ""}
                                     onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.value }))}
-                                    className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]">
+                                    className="flex-1 min-w-0 ui-input rounded px-2 py-1 text-tiny text-slate-200 focus:outline-none focus:border-[var(--module-accent)]">
                                     {(cp.options && cp.options.length > 0 ? cp.options : [cp.defaultValue || ""]).filter(Boolean).map(o => (
                                       <option key={o} value={o}>{o}</option>
                                     ))}
@@ -1450,12 +1450,12 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                     {/* 模型伪装（仅当工具内置模型名列表非空） */}
                     {selectedModel && selectedTool.builtin_models.length > 0 && (
                       <div className="mt-3">
-                        <label className="text-xs font-bold text-slate-300 mb-1.5 block">{t("toollaunch.masqueradeLabel")} <span className="text-[9px] text-slate-500 font-normal">{t("toollaunch.optional")}</span></label>
-                        <p className="text-[9px] text-slate-500 mb-1.5">{t("toollaunch.masqueradeHint", { model: selectedModel })}</p>
+                        <label className="text-body font-bold text-slate-300 mb-1.5 block">{t("toollaunch.masqueradeLabel")} <span className="text-micro text-slate-500 font-normal">{t("toollaunch.optional")}</span></label>
+                        <p className="text-micro text-slate-500 mb-1.5">{t("toollaunch.masqueradeHint", { model: selectedModel })}</p>
                         <input type="text" list={`masq-list-${selectedTool.id}`} value={masqueradeModel}
                           onChange={e => setMasqueradeModel(e.target.value)}
                           placeholder={t("toollaunch.noMasqueradePh", { model: selectedModel })}
-                          className="w-full bg-slate-900 border border-white/10 rounded-ctl px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
+                          className="w-full ui-input rounded-ctl px-3 py-2 text-body text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
                         <datalist id={`masq-list-${selectedTool.id}`}>
                           {selectedTool.builtin_models.map(c => (
                             <option key={c} value={c} />
@@ -1469,30 +1469,30 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                     {selectedTool.config_file && (
                       <div className="mt-3 rounded-ctl border border-white/5 bg-slate-900/30 p-2.5">
                         <div className="flex items-center gap-2">
-                          <span className="text-[10px] text-slate-400 flex-1 min-w-0">
+                          <span className="text-tiny text-slate-400 flex-1 min-w-0">
                             {t("toollaunch.configAutoHint")}
                           </span>
                           {/* 手动还原：不启动也能清掉 Kira 写进去的自定义模型 */}
                           <button
                             onClick={() => void restoreOfficial()}
                             disabled={applyModelBusy}
-                            className="px-2.5 py-1 rounded-md text-[10px] bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                            className="px-2.5 py-1 rounded-md text-tiny bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                           >
                             {applyModelBusy ? t("toollaunch.restoring") : t("toollaunch.restoreOfficial")}
                           </button>
                         </div>
-                        <div className="mt-1.5 text-[9px] text-slate-500 break-all">
+                        <div className="mt-1.5 text-micro text-slate-500 break-all">
                           {t("toollaunch.configFileLabel")}
                           <span className="font-mono text-slate-400">{selectedTool.config_file.path}</span>
                         </div>
                         {appliedModel !== null && (
-                          <div className="mt-1 text-[9px] text-slate-500">
+                          <div className="mt-1 text-micro text-slate-500">
                             {t("toollaunch.currentConfigModel")}
                             <span className="font-mono text-slate-300">{appliedModel || t("toollaunch.unknownModel")}</span>
                           </div>
                         )}
                         {applyModelMsg && (
-                          <div className={`mt-1 text-[9px] break-all ${applyModelMsg.ok ? "text-emerald-400" : "text-rose-400"}`}>
+                          <div className={`mt-1 text-micro break-all ${applyModelMsg.ok ? "text-emerald-400" : "text-rose-400"}`}>
                             {applyModelMsg.text}
                           </div>
                         )}
@@ -1504,12 +1504,12 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                 {/* Fallback 模型 — 按供应商分组，可折叠 */}
                 {selectedTool.supports_fallback_model && selectedTool.installed && !useOfficialModel && fallbackGroups.length > 0 && (
                   <div>
-                    <label className="text-xs font-bold text-slate-300 mb-2 block">
+                    <label className="text-body font-bold text-slate-300 mb-2 block">
                       {t("toollaunch.fallbackLabel")}
-                      <span className="text-[9px] text-slate-500 font-normal ml-1">{t("toollaunch.fallbackHint")}</span>
+                      <span className="text-micro text-slate-500 font-normal ml-1">{t("toollaunch.fallbackHint")}</span>
                     </label>
                     <div className="rounded-ctl border border-white/5 bg-slate-900/30 overflow-hidden">
-                      <div className="px-3 py-1.5 text-[9px] text-slate-600 font-mono cursor-pointer hover:bg-white/[0.05] border-b border-white/[0.03]"
+                      <div className="px-3 py-1.5 text-micro text-slate-600 font-mono cursor-pointer hover:bg-white/[0.05] border-b border-white/[0.03]"
                         onClick={() => { setSelectedFallbackModel(""); setSelectedFallbackProvider(""); setFallbackOneMContext(false); }}>
                         {t("toollaunch.noFallback")}
                       </div>
@@ -1524,7 +1524,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                                 if (expanded) next.delete(group.provider_id); else next.add(group.provider_id);
                                 setExpandedFallbackGroups(next);
                               }}
-                              className="w-full flex items-center justify-between px-3 py-1.5 text-[10px] hover:bg-white/[0.02] cursor-pointer transition-all border-b border-white/[0.03]"
+                              className="w-full flex items-center justify-between px-3 py-1.5 text-tiny hover:bg-white/[0.02] cursor-pointer transition-all border-b border-white/[0.03]"
                             >
                               <div className="flex items-center gap-2">
                                 <ChevronRight className={`w-3 h-3 text-slate-500 transition-transform ${expanded ? "rotate-90" : ""}`} />
@@ -1532,7 +1532,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                                 <span className="text-[8px] text-slate-600">{t("toollaunch.itemsCount", { count: group.models.length })}</span>
                               </div>
                               {selectedInGroup && (
-                                <span className="text-[9px] text-amber-400 font-mono truncate ml-2">{selectedFallbackModel}</span>
+                                <span className="text-micro text-amber-400 font-mono truncate ml-2">{selectedFallbackModel}</span>
                               )}
                             </button>
                             {expanded && (
@@ -1545,7 +1545,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                                         if (isSelected) { setSelectedFallbackModel(""); setSelectedFallbackProvider(""); setFallbackOneMContext(false); }
                                         else { setSelectedFallbackModel(m.id); setSelectedFallbackProvider(group.provider_id); }
                                       }}
-                                      className={`w-full text-left px-5 py-1.5 text-[10px] transition-all cursor-pointer flex items-center gap-2 ${
+                                      className={`w-full text-left px-5 py-1.5 text-tiny transition-all cursor-pointer flex items-center gap-2 ${
                                         isSelected ? "bg-amber-500/10 text-amber-300 font-semibold" : "text-slate-400 hover:bg-white/5 hover:text-slate-300"
                                       }`}>
                                       <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: isSelected ? "#f59e0b" : "#334155" }} />
@@ -1561,12 +1561,12 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                     </div>
                     {selectedFallbackModel && selectedTool.builtin_models.length > 0 && (
                       <div className="mt-3">
-                        <label className="text-[11px] font-bold text-slate-300 mb-1.5 block">{t("toollaunch.fallbackMqLabel")} <span className="text-[9px] text-slate-500 font-normal">{t("toollaunch.optional")}</span></label>
-                        <p className="text-[9px] text-slate-500 mb-1.5">{t("toollaunch.fallbackMqHint", { model: selectedFallbackModel })}</p>
+                        <label className="text-caption font-bold text-slate-300 mb-1.5 block">{t("toollaunch.fallbackMqLabel")} <span className="text-micro text-slate-500 font-normal">{t("toollaunch.optional")}</span></label>
+                        <p className="text-micro text-slate-500 mb-1.5">{t("toollaunch.fallbackMqHint", { model: selectedFallbackModel })}</p>
                         <input type="text" list={`fb-masq-list-${selectedTool.id}`} value={fallbackMasqueradeModel}
                           onChange={e => setFallbackMasqueradeModel(e.target.value)}
                           placeholder={t("toollaunch.noFallbackMqPh", { model: selectedFallbackModel })}
-                          className="w-full bg-slate-900 border border-white/10 rounded-ctl px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
+                          className="w-full ui-input rounded-ctl px-3 py-2 text-body text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
                         <datalist id={`fb-masq-list-${selectedTool.id}`}>
                           {selectedTool.builtin_models.map(c => (
                             <option key={c} value={c} />
@@ -1577,13 +1577,13 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                     {selectedFallbackModel && (
                       <>
                         {selectedTool.support_one_m_context && (
-                          <label className="flex items-center gap-2 mt-2 text-[10px] text-slate-400 cursor-pointer select-none">
+                          <label className="flex items-center gap-2 mt-2 text-tiny text-slate-400 cursor-pointer select-none">
                             <input type="checkbox" checked={fallbackOneMContext} onChange={e => setFallbackOneMContext(e.target.checked)}
                               className="accent-[var(--module-accent)]" />
                             {t("toollaunch.fallbackOneM")}
                           </label>
                         )}
-                        <div className="mt-1 text-[10px] text-amber-400">{t("toollaunch.fallbackPreview", { model: `${selectedFallbackModel}${fallbackOneMContext ? "[1m]" : ""}` })}{fallbackMasqueradeModel && <>{t("toollaunch.masqueradeAs", { model: `${fallbackMasqueradeModel}${fallbackOneMContext ? "[1m]" : ""}` })}</>}</div>
+                        <div className="mt-1 text-tiny text-amber-400">{t("toollaunch.fallbackPreview", { model: `${selectedFallbackModel}${fallbackOneMContext ? "[1m]" : ""}` })}{fallbackMasqueradeModel && <>{t("toollaunch.masqueradeAs", { model: `${fallbackMasqueradeModel}${fallbackOneMContext ? "[1m]" : ""}` })}</>}</div>
                       </>
                     )}
                   </div>
@@ -1593,7 +1593,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                 {selectedTool.supports_model && selectedTool.support_one_m_context && (
                   <div className="flex items-center justify-between p-2.5 rounded-ctl bg-slate-900/30 border border-white/5">
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-semibold text-slate-300">1M Context</span>
+                      <span className="text-tiny font-semibold text-slate-300">1M Context</span>
                       <span className="text-[8px] text-slate-500 hidden sm:inline">{t("toollaunch.oneMHint")}</span>
                     </div>
                     <button
@@ -1610,7 +1610,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                   <div className="rounded-ctl bg-slate-900/30 border border-white/5 overflow-hidden">
                     <div className="flex items-center justify-between p-2.5">
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-semibold text-slate-300">{t("toollaunch.liveSearch")}</span>
+                        <span className="text-tiny font-semibold text-slate-300">{t("toollaunch.liveSearch")}</span>
                         <span className="text-[8px] text-slate-500 hidden sm:inline">{t("toollaunch.liveSearchHint")}</span>
                       </div>
                       <button onClick={() => setWebSearchEnabled(!webSearchEnabled)}
@@ -1628,7 +1628,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                       <div className="rounded-ctl bg-slate-900/30 border border-white/5 overflow-hidden">
                         <div className="flex items-center justify-between p-2.5">
                           <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-semibold text-slate-300">{t("toollaunch.optimizer")}</span>
+                            <span className="text-tiny font-semibold text-slate-300">{t("toollaunch.optimizer")}</span>
                             <span className="text-[8px] text-slate-500 hidden sm:inline">{t("toollaunch.optimizerHint")}</span>
                           </div>
                           <button onClick={() => setOptimizerEnabled(!optimizerEnabled)}
@@ -1650,8 +1650,8 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                                   onChange={() => setOptimizerStrategies(prev => ({ ...prev, [item.key]: !prev[item.key] }))}
                                   className="accent-[var(--module-accent)]"
                                 />
-                                <span className="text-[10px] text-slate-300">{item.label}</span>
-                                <span className="text-[9px] text-slate-600">{item.desc}</span>
+                                <span className="text-tiny text-slate-300">{item.label}</span>
+                                <span className="text-micro text-slate-600">{item.desc}</span>
                               </label>
                             ))}
                           </div>
@@ -1662,7 +1662,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                       <div className="rounded-ctl bg-slate-900/30 border border-white/5 overflow-hidden">
                         <div className="flex items-center justify-between p-2.5">
                           <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-semibold text-slate-300">{t("toollaunch.rectifier")}</span>
+                            <span className="text-tiny font-semibold text-slate-300">{t("toollaunch.rectifier")}</span>
                             <span className="text-[8px] text-slate-500 hidden sm:inline">{t("toollaunch.rectifierHint")}</span>
                           </div>
                           <button onClick={() => setRectifierEnabled(!rectifierEnabled)}
@@ -1686,8 +1686,8 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                                   onChange={() => setRectifierStrategies(prev => ({ ...prev, [item.key]: !prev[item.key] }))}
                                   className="accent-[var(--module-accent)]"
                                 />
-                                <span className="text-[10px] text-slate-300">{item.label}</span>
-                                <span className="text-[9px] text-slate-600">{item.desc}</span>
+                                <span className="text-tiny text-slate-300">{item.label}</span>
+                                <span className="text-micro text-slate-600">{item.desc}</span>
                               </label>
                             ))}
                           </div>
@@ -1700,7 +1700,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                 {/* 会话 */}
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs font-bold text-slate-300">{t("toollaunch.sessions")}</label>
+                    <label className="text-body font-bold text-slate-300">{t("toollaunch.sessions")}</label>
                     {sessions.length > 0 && (
                       <div className="flex items-center gap-1">
                         <button
@@ -1722,14 +1722,14 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
 
                   <div className="flex gap-2 flex-wrap mb-2">
                     <button onClick={() => { setSessionMode("new"); setSelectedSession(null); setShowSessionPicker(false); }}
-                      className={`px-3 py-1.5 rounded-ctl text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-all ${
+                      className={`px-3 py-1.5 rounded-ctl text-tiny font-semibold flex items-center gap-1 cursor-pointer transition-all ${
                         sessionMode === "new" ? "bg-[var(--module-accent)] text-white" : "bg-white/5 text-slate-400 hover:text-slate-200"
                       }`}>
                       {t("toollaunch.newSession")}
                     </button>
                     {sessions.length > 0 && (
                       <button onClick={() => { setSessionMode("resume"); setShowSessionPicker(!showSessionPicker); setSelectedSession(null); }}
-                        className={`px-3 py-1.5 rounded-ctl text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-all ${
+                        className={`px-3 py-1.5 rounded-ctl text-tiny font-semibold flex items-center gap-1 cursor-pointer transition-all ${
                           sessionMode === "resume" ? "bg-[var(--module-accent)] text-white" : "bg-white/5 text-slate-400 hover:text-slate-200"
                         }`}>
                         <Clock className="w-3 h-3" /> {t("toollaunch.historySessions", { count: sessions.length })}
@@ -1739,7 +1739,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                         复制一份会话再进入，原会话保持不动 */}
                     {sessions.length > 0 && selectedTool?.fork_cmd && (
                       <button onClick={() => { setSessionMode("fork"); setShowSessionPicker(true); setSelectedSession(null); }}
-                        className={`px-3 py-1.5 rounded-ctl text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-all ${
+                        className={`px-3 py-1.5 rounded-ctl text-tiny font-semibold flex items-center gap-1 cursor-pointer transition-all ${
                           sessionMode === "fork" ? "bg-[var(--module-accent)] text-white" : "bg-white/5 text-slate-400 hover:text-slate-200"
                         }`}
                         title={t("toollaunch.forkSessionTip")}>
@@ -1754,7 +1754,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                         <div className="flex-1 relative">
                           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500" />
                           <input value={sessionSearch} onChange={e => setSessionSearch(e.target.value)}
-                            placeholder={t("toollaunch.searchSessions")} className="w-full bg-slate-900 border border-white/10 rounded-ctl pl-7 pr-7 py-1.5 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
+                            placeholder={t("toollaunch.searchSessions")} className="w-full ui-input rounded-ctl pl-7 pr-7 py-1.5 text-tiny text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
                           {sessionSearch && (
                             <button onClick={() => setSessionSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
                               <X className="w-3 h-3" />
@@ -1763,11 +1763,11 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                         </div>
                         {selectionMode && (
                           <>
-                            <button onClick={handleSelectAll} className="px-2 py-1 rounded text-[9px] font-semibold bg-white/5 text-slate-400 hover:text-slate-200 cursor-pointer whitespace-nowrap">
+                            <button onClick={handleSelectAll} className="px-2 py-1 rounded text-micro font-semibold bg-white/5 text-slate-400 hover:text-slate-200 cursor-pointer whitespace-nowrap">
                               {selectedSessionIds.size === filteredSessions.length ? t("toollaunch.cancelSelectAll") : t("toollaunch.selectAll")}
                             </button>
                             <button onClick={handleDeleteSessions} disabled={selectedSessionIds.size === 0}
-                              className="px-2 py-1 rounded text-[9px] font-semibold bg-red-500/10 text-red-400 hover:bg-red-500/20 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed whitespace-nowrap flex items-center gap-1">
+                              className="px-2 py-1 rounded text-micro font-semibold bg-red-500/10 text-red-400 hover:bg-red-500/20 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed whitespace-nowrap flex items-center gap-1">
                               <Trash2 className="w-3 h-3" /> {t("toollaunch.delete", { count: selectedSessionIds.size })}
                             </button>
                           </>
@@ -1780,13 +1780,13 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                     <div className="rounded-ctl border border-white/5 bg-slate-900/30 overflow-hidden">
                       <div className="max-h-72 overflow-y-auto divide-y divide-white/[0.03]">
                         {filteredSessions.length === 0 ? (
-                          <div className="px-3 py-6 text-[10px] text-slate-600 text-center">
+                          <div className="px-3 py-6 text-tiny text-slate-600 text-center">
                             {sessionSearch ? t("toollaunch.noMatchSessions") : t("toollaunch.noHistorySessions")}
                           </div>
                         ) : sessionViewMode === "flat" ? (
                           filteredSessions.map(s => (
                             <div key={s.session_id}
-                              className={`flex items-center px-3 py-2 text-[10px] transition-all group ${
+                              className={`flex items-center px-3 py-2 text-tiny transition-all group ${
                                 selectedSession?.session_id === s.session_id ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]" : "text-slate-400 hover:bg-white/[0.03] hover:text-slate-200"
                               }`}>
                               {selectionMode && (
@@ -1801,9 +1801,9 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                                 className="flex-1 text-left flex items-center justify-between min-w-0">
                                 <div className="flex-1 min-w-0">
                                   <span className="font-mono text-slate-300 break-all block truncate">{s.project_path}</span>
-                                  {s.summary && <div className="text-[9px] text-slate-500 mt-0.5 truncate italic">{s.summary}</div>}
+                                  {s.summary && <div className="text-micro text-slate-500 mt-0.5 truncate italic">{s.summary}</div>}
                                 </div>
-                                <span className="text-[9px] text-slate-600 flex-shrink-0 ml-3">{s.last_used}</span>
+                                <span className="text-micro text-slate-600 flex-shrink-0 ml-3">{s.last_used}</span>
                               </button>
                             </div>
                           ))
@@ -1811,15 +1811,15 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                           sessionDirGroups.map(group => (
                             <div key={group.dir}>
                               <button onClick={() => toggleDirExpand(group.dir)}
-                                className="w-full flex items-center gap-2 px-3 py-2 text-[10px] bg-white/[0.02] hover:bg-white/[0.04] text-slate-400 hover:text-slate-200 cursor-pointer sticky top-0 z-10">
+                                className="w-full flex items-center gap-2 px-3 py-2 text-tiny bg-white/[0.02] hover:bg-white/[0.04] text-slate-400 hover:text-slate-200 cursor-pointer sticky top-0 z-10">
                                 <ChevronRight className={`w-3 h-3 flex-shrink-0 transition-transform ${expandedDirs.has(group.dir) ? "rotate-90" : ""}`} />
                                 <Folder className="w-3 h-3 flex-shrink-0 text-amber-500/70" />
                                 <span className="font-semibold truncate">{group.label}</span>
-                                <span className="text-[9px] text-slate-600 ml-auto">{group.sessions.length}</span>
+                                <span className="text-micro text-slate-600 ml-auto">{group.sessions.length}</span>
                               </button>
                               {expandedDirs.has(group.dir) && group.sessions.map(s => (
                                 <div key={s.session_id}
-                                  className={`flex items-center pl-9 pr-3 py-2 text-[10px] transition-all group ${
+                                  className={`flex items-center pl-9 pr-3 py-2 text-tiny transition-all group ${
                                     selectedSession?.session_id === s.session_id ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]" : "text-slate-400 hover:bg-white/[0.03] hover:text-slate-200"
                                   }`}>
                                   {selectionMode && (
@@ -1835,10 +1835,10 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                                     <div className="flex-1 min-w-0">
                                       <span className="text-slate-400 truncate block">
                                         {s.session_id.slice(0, 8)}...
-                                        {s.summary && <span className="text-[9px] text-slate-500 ml-2 italic truncate">{s.summary}</span>}
+                                        {s.summary && <span className="text-micro text-slate-500 ml-2 italic truncate">{s.summary}</span>}
                                       </span>
                                     </div>
-                                    <span className="text-[9px] text-slate-600 flex-shrink-0 ml-3">{s.last_used}</span>
+                                    <span className="text-micro text-slate-600 flex-shrink-0 ml-3">{s.last_used}</span>
                                   </button>
                                 </div>
                               ))}
@@ -1850,7 +1850,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                   )}
 
                   {sessionMode === "resume" && selectedSession && (
-                    <div className="mt-2 p-2 rounded-ctl bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] border border-[var(--module-accent-ring)] text-[10px] text-[var(--module-accent)] flex items-center gap-2">
+                    <div className="mt-2 p-2 rounded-ctl bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] border border-[var(--module-accent-ring)] text-tiny text-[var(--module-accent)] flex items-center gap-2">
                       <CheckCircle className="w-3 h-3 flex-shrink-0" />
                       <span className="truncate">{t("toollaunch.willRestore", { path: selectedSession.project_path })}</span>
                     </div>
@@ -1860,10 +1860,10 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                 {/* 项目目录 */}
                 {sessionMode === "new" && (
                   <div>
-                    <label className="text-xs font-bold text-slate-300 mb-2 block">{t("toollaunch.projectDir")}</label>
+                    <label className="text-body font-bold text-slate-300 mb-2 block">{t("toollaunch.projectDir")}</label>
                     <div className="flex gap-2">
                       <input value={projectPath} onChange={e => setProjectPath(e.target.value)} placeholder={t("toollaunch.projectDirPh")}
-                        className="flex-1 bg-slate-900 border border-white/10 rounded-ctl px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
+                        className="flex-1 ui-input rounded-ctl px-3 py-2 text-body text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
                       <button onClick={handleBrowse}
                         className="px-3 py-2 rounded-ctl bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:bg-white/10 cursor-pointer transition-all">
                         <FolderOpen className="w-4 h-4" />
@@ -1875,9 +1875,9 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                 {/* 终端 */}
                 {terminals.length > 0 && (
                   <div>
-                    <label className="text-xs font-bold text-slate-300 mb-2 block">{t("toollaunch.terminal")}</label>
+                    <label className="text-body font-bold text-slate-300 mb-2 block">{t("toollaunch.terminal")}</label>
                     <select value={selectedTerminal} onChange={e => setSelectedTerminal(e.target.value)}
-                      className="w-full bg-slate-900 border border-white/10 rounded-ctl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]">
+                      className="w-full ui-input rounded-ctl px-3 py-2 text-body text-slate-200 focus:outline-none focus:border-[var(--module-accent)]">
                       {terminals.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                     </select>
                   </div>
@@ -1896,7 +1896,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                   );
                   if (!proxyInfo) return null;
                   return (
-                    <div className="p-2.5 rounded-ctl bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] border border-[var(--module-accent-ring)] text-[10px] flex flex-col gap-1.5">
+                    <div className="p-2.5 rounded-ctl bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] border border-[var(--module-accent-ring)] text-tiny flex flex-col gap-1.5">
                       <div className="flex items-center gap-2 flex-wrap">
                         <Shield className="w-3.5 h-3.5 text-[var(--module-accent)] flex-shrink-0" />
                         <span className="text-slate-300">
@@ -1905,23 +1905,23 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                           {t("toollaunch.outbound")} <span className="font-semibold text-[var(--module-accent)]">{proxyInfo.outbound === "none" ? t("toollaunch.modelNone") : PROTOCOL_LABELS[proxyInfo.outbound]}</span>
                         </span>
                         {proxyInfo.converted ? (
-                          <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[9px] font-semibold">{t("toollaunch.autoConvert")}</span>
+                          <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 text-micro font-semibold">{t("toollaunch.autoConvert")}</span>
                         ) : (
-                          <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 text-[9px] font-semibold">{t("toollaunch.sameProtocol")}</span>
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 text-micro font-semibold">{t("toollaunch.sameProtocol")}</span>
                         )}
-                        <span className="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300 text-[9px] font-semibold">{t("toollaunch.statsOn")}</span>
+                        <span className="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300 text-micro font-semibold">{t("toollaunch.statsOn")}</span>
                         {selectedTool.supports_optimizer && optimizerEnabled && config?.optimizer.enabled && (
-                          <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] text-[9px] font-semibold">{t("toollaunch.optimizerBadge")}</span>
+                          <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] text-micro font-semibold">{t("toollaunch.optimizerBadge")}</span>
                         )}
                         {selectedTool.supports_rectifier && rectifierEnabled && config?.rectifier.enabled && (
-                          <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] text-[9px] font-semibold">{t("toollaunch.rectifierBadge")}</span>
+                          <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] text-micro font-semibold">{t("toollaunch.rectifierBadge")}</span>
                         )}
                       </div>
                       {proxyInfo.aliasEntries.length > 0 && (
                         <div className="flex items-center gap-1.5 flex-wrap text-slate-400">
                           <span className="text-slate-500">{t("toollaunch.masqueradeLabel2")}</span>
                           {proxyInfo.aliasEntries.map(([k, v]) => (
-                            <span key={k} className="font-mono text-[9px] bg-slate-700/40 px-1.5 py-0.5 rounded">{k} → {v}</span>
+                            <span key={k} className="font-mono text-micro bg-slate-700/40 px-1.5 py-0.5 rounded">{k} → {v}</span>
                           ))}
                         </div>
                       )}
@@ -1948,12 +1948,12 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                 现在 npm/pip 的每一行输出都看得见，结束时上面再给结果卡片。 */}
             {getBusy(selectedTool.id) && opLogs[selectedTool.id] && (
               <div className="rounded-card border border-white/10 bg-black/40 p-2.5">
-                <div className="mb-1.5 flex items-center gap-1.5 text-[9px] font-semibold text-slate-400">
+                <div className="mb-1.5 flex items-center gap-1.5 text-micro font-semibold text-slate-400">
                   <Terminal className="w-3 h-3" />
                   {t("toollaunch.opProgress")}
                   <span className="ml-auto text-slate-600">{opLogs[selectedTool.id].lines.length}</span>
                 </div>
-                <div ref={opLogRef} className="max-h-32 overflow-y-auto whitespace-pre-wrap break-all font-mono text-[10px] leading-relaxed text-slate-300">
+                <div ref={opLogRef} className="max-h-32 overflow-y-auto whitespace-pre-wrap break-all font-mono text-tiny leading-relaxed text-slate-300">
                   {opLogs[selectedTool.id].lines.length === 0
                     ? <div className="text-slate-600">{t("toollaunch.opWaiting")}</div>
                     : opLogs[selectedTool.id].lines.slice(-20).map((line, i) => <div key={i}>{line}</div>)}

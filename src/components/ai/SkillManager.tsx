@@ -48,9 +48,9 @@ const MARKET_SOURCES = [
 
 function StatusBadge({ status }: { status: string }) {
   const { t } = useTranslation();
-  if (status === 'managed') return <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-500/15 text-emerald-400">{t("skillmgr.statusLinked")}</span>;
-  if (status === 'unmanaged') return <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-500/15 text-amber-400">{t("skillmgr.statusPrivate")}</span>;
-  return <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-slate-500/15 text-slate-400">{t("skillmgr.statusUnmanaged")}</span>;
+  if (status === 'managed') return <span className="px-1.5 py-0.5 rounded text-micro font-semibold bg-emerald-500/15 text-emerald-400">{t("skillmgr.statusLinked")}</span>;
+  if (status === 'unmanaged') return <span className="px-1.5 py-0.5 rounded text-micro font-semibold bg-amber-500/15 text-amber-400">{t("skillmgr.statusPrivate")}</span>;
+  return <span className="px-1.5 py-0.5 rounded text-micro font-semibold bg-slate-500/15 text-slate-400">{t("skillmgr.statusUnmanaged")}</span>;
 }
 
 export default function SkillManager() {
@@ -346,7 +346,7 @@ export default function SkillManager() {
             <button
               key={k}
               onClick={() => setTab(k)}
-              className={`flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-semibold border-b-2 transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3.5 py-2.5 text-body font-semibold border-b-2 transition-all cursor-pointer ${
                 tab === k
                   ? 'border-[var(--module-accent)] text-white bg-white/[0.03]'
                   : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/[0.01]'
@@ -357,7 +357,7 @@ export default function SkillManager() {
             </button>
           ))}
         </div>
-        <div className="text-[10px] text-slate-500 font-mono">
+        <div className="text-tiny text-slate-500 font-mono">
           {t("skillmgr.publicSkillsDir")}<code className="text-slate-400">~/.agents/skills</code>
         </div>
       </div>
@@ -374,14 +374,14 @@ export default function SkillManager() {
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder={t("skillmgr.searchPh")}
-                  className="w-full pl-8 pr-2 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent-ring)]"
+                  className="w-full pl-8 pr-2 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-body text-slate-200 placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent-ring)]"
                 />
               </div>
               <div className="relative">
                 <select
                   value={selCat ?? ''}
                   onChange={(e) => setSelCat(e.target.value || null)}
-                  className="appearance-none pl-7 pr-7 py-1.5 rounded-ctl bg-slate-800 border border-white/10 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent-ring)] cursor-pointer"
+                  className="appearance-none pl-7 pr-7 py-1.5 rounded-ctl bg-slate-800 border border-white/10 text-body text-slate-200 focus:outline-none focus:border-[var(--module-accent-ring)] cursor-pointer"
                 >
                   <option value="">{t("skillmgr.allCategories")}</option>
                   {allCats.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -390,7 +390,7 @@ export default function SkillManager() {
                 <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
               </div>
               {hasFilter && (
-                <button onClick={clearFilter} className="px-2 py-1.5 rounded-ctl bg-white/5 hover:bg-white/10 text-[10px] text-slate-400 flex items-center gap-1 cursor-pointer">
+                <button onClick={clearFilter} className="px-2 py-1.5 rounded-ctl bg-white/5 hover:bg-white/10 text-tiny text-slate-400 flex items-center gap-1 cursor-pointer">
                   <X className="w-3 h-3" /> {t("skillmgr.clearFilter")}
                 </button>
               )}
@@ -406,7 +406,7 @@ export default function SkillManager() {
                     <button
                       key={t}
                       onClick={() => setSelTags(active ? selTags.filter((x) => x !== t) : [...selTags, t])}
-                      className={`vex-chip px-2 py-0.5 rounded-full text-[10px] font-medium transition-all cursor-pointer ${
+                      className={`vex-chip px-2 py-0.5 rounded-full text-tiny font-medium transition-all cursor-pointer ${
                         active
                           ? 'vex-chip-active bg-[color-mix(in_srgb,var(--module-accent)_30%,transparent)] text-[var(--module-accent)] border border-[var(--module-accent-ring)]'
                           : 'bg-white/5 text-slate-400 hover:bg-white/10 border border-transparent'
@@ -420,7 +420,7 @@ export default function SkillManager() {
             )}
 
             {/* 概览数据提示 */}
-            <div className="flex items-center justify-between text-[10px] text-slate-500">
+            <div className="flex items-center justify-between text-tiny text-slate-500">
               <span>{skillLoading ? t("skillmgr.loading") : `${t("skillmgr.skillsCount", { count: filtered.length })}${hasFilter ? t("skillmgr.filteredCount", { total: skills.length }) : ''}`}</span>
               <span>{t("skillmgr.source")}<code className="text-slate-400">~/.agents/skills</code></span>
             </div>
@@ -440,25 +440,25 @@ export default function SkillManager() {
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="text-sm font-semibold text-slate-100 truncate">{s.name || s.id}</div>
-                      <div className="text-[10px] text-slate-500 font-mono truncate">{s.id}</div>
+                      <div className="text-tiny text-slate-500 font-mono truncate">{s.id}</div>
                     </div>
                     {s.category && (
-                      <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-[var(--module-accent-soft)] text-[var(--module-accent)] flex-shrink-0">
+                      <span className="px-1.5 py-0.5 rounded text-micro font-semibold bg-[var(--module-accent-soft)] text-[var(--module-accent)] flex-shrink-0">
                         {s.category}
                       </span>
                     )}
                   </div>
-                  <p className="text-[11px] text-slate-400 line-clamp-2 min-h-[28px]">{s.description || t("skillmgr.noDesc")}</p>
+                  <p className="text-caption text-slate-400 line-clamp-2 min-h-[28px]">{s.description || t("skillmgr.noDesc")}</p>
                   {s.tags.length > 0 && (
                     <div className="flex flex-wrap gap-1">
                       {s.tags.map((t) => (
-                        <span key={t} className="px-1.5 py-0.5 rounded text-[9px] bg-white/5 text-slate-400">
+                        <span key={t} className="px-1.5 py-0.5 rounded text-micro bg-white/5 text-slate-400">
                           #{t}
                         </span>
                       ))}
                     </div>
                   )}
-                  <div className="flex items-center justify-between pt-2 border-t border-white/5 text-[10px] text-slate-500">
+                  <div className="flex items-center justify-between pt-2 border-t border-white/5 text-tiny text-slate-500">
                     <span>{s.installMethod === 'managed' ? t("skillmgr.managedLib") : s.installMethod}</span>
                     <div className="flex items-center gap-2">
                       <button
@@ -478,22 +478,22 @@ export default function SkillManager() {
                   </div>
                   {deployTargetSkill === s.id && (
                     <div className="rounded-ctl bg-black/20 border border-white/5 p-2 space-y-1">
-                      <div className="text-[9px] text-slate-500 font-semibold">{t("skillmgr.deployToTool")}</div>
+                      <div className="text-micro text-slate-500 font-semibold">{t("skillmgr.deployToTool")}</div>
                       {toolStatus.length === 0 && (
-                        <div className="text-[9px] text-slate-600">{t("skillmgr.noTools")}</div>
+                        <div className="text-micro text-slate-600">{t("skillmgr.noTools")}</div>
                       )}
                       {toolStatus.map((ts) => {
                         const deployed = (deployedMap[ts.toolId] || []).includes(s.id);
                         const busy = deployingKey === `${ts.toolId}:${s.id}`;
                         return (
                           <div key={ts.toolId} className="flex items-center justify-between gap-2">
-                            <span className="text-[10px] text-slate-300 truncate" title={ts.skillsDir}>
+                            <span className="text-tiny text-slate-300 truncate" title={ts.skillsDir}>
                               {ts.label}
                             </span>
                             <button
                               disabled={busy}
                               onClick={() => (deployed ? undeploySkillFromTool(s.id, ts.toolId) : deploySkillToTool(s.id, ts.toolId))}
-                              className={`flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-semibold cursor-pointer transition disabled:opacity-50 ${
+                              className={`flex items-center gap-1 px-2 py-0.5 rounded text-micro font-semibold cursor-pointer transition disabled:opacity-50 ${
                                 deployed
                                   ? 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
                                   : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200'
@@ -513,7 +513,7 @@ export default function SkillManager() {
                     </div>
                   )}
                   {skillMsg?.id === s.id && (
-                    <div className={`text-[10px] ${skillMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>{skillMsg.msg}</div>
+                    <div className={`text-tiny ${skillMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>{skillMsg.msg}</div>
                   )}
                 </div>
               ))}
@@ -530,12 +530,12 @@ export default function SkillManager() {
                 {t("skillmgr.symlinkWarn1")}
                 {t("skillmgr.symlinkWarn2")}
               </p>
-              <p className="text-[10px] text-slate-400">{t("skillmgr.symlinkWarn3")}</p>
+              <p className="text-tiny text-slate-400">{t("skillmgr.symlinkWarn3")}</p>
             </Note>
 
             {/* 工具状态与软链接开关列表 */}
             <div className="space-y-2">
-              <div className="text-xs font-bold text-slate-300 px-1">{t("skillmgr.toolsTitle")}</div>
+              <div className="text-body font-bold text-slate-300 px-1">{t("skillmgr.toolsTitle")}</div>
               <div className="grid grid-cols-1 gap-2.5">
                 {toolRows.map(({ tool, status }) => {
                   const st = status?.status || 'empty';
@@ -552,29 +552,29 @@ export default function SkillManager() {
                         </span>
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="text-xs font-semibold text-slate-100 truncate">{nickname}</span>
+                            <span className="text-body font-semibold text-slate-100 truncate">{nickname}</span>
                             {showOrigName && (
-                              <span className="text-[10px] text-slate-500 font-normal truncate">({tool.display_name})</span>
+                              <span className="text-tiny text-slate-500 font-normal truncate">({tool.display_name})</span>
                             )}
                             <StatusBadge status={st} />
                           </div>
-                          <div className="text-[10px] text-slate-500 font-mono truncate mt-0.5">
+                          <div className="text-tiny text-slate-500 font-mono truncate mt-0.5">
                             {tool.id} · <span className="text-slate-400">{status?.skillsDir || t("skillmgr.noSkillPath")}</span>
                           </div>
                           {readsAgents && (
-                            <div className="text-[9px] text-cyan-400/80 flex items-center gap-1 mt-0.5">
+                            <div className="text-micro text-cyan-400/80 flex items-center gap-1 mt-0.5">
                               <span>{t("skillmgr.builtinHint")}</span>
                             </div>
                           )}
                           {/* per-skill 部署：部署仓库全部技能到此工具 / 移除（非破坏性，不动用户自有技能） */}
                           <div className="flex items-center gap-2 mt-1.5">
-                            <span className="text-[9px] text-slate-500 font-mono">
+                            <span className="text-micro text-slate-500 font-mono">
                               {t("skillmgr.deployedCount", { count: (deployedMap[tool.id] || []).length })}
                             </span>
                             <button
                               onClick={() => deployAllToTool(tool.id)}
                               disabled={deployingKey === `${tool.id}:*`}
-                              className="flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-semibold bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white cursor-pointer transition disabled:opacity-50"
+                              className="flex items-center gap-1 px-2 py-0.5 rounded text-micro font-semibold bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white cursor-pointer transition disabled:opacity-50"
                               title={t("skillmgr.deployAllTitle")}
                             >
                               {deployingKey === `${tool.id}:*` ? (
@@ -587,7 +587,7 @@ export default function SkillManager() {
                             <button
                               onClick={() => undeployAllFromTool(tool.id)}
                               disabled={deployingKey === `${tool.id}:*` || (deployedMap[tool.id] || []).length === 0}
-                              className="flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-semibold bg-white/5 text-slate-400 hover:bg-white/10 hover:text-red-300 cursor-pointer transition disabled:opacity-40"
+                              className="flex items-center gap-1 px-2 py-0.5 rounded text-micro font-semibold bg-white/5 text-slate-400 hover:bg-white/10 hover:text-red-300 cursor-pointer transition disabled:opacity-40"
                               title={t("skillmgr.undeployAllTitle")}
                             >
                               <Unlink className="w-2.5 h-2.5" />
@@ -599,8 +599,8 @@ export default function SkillManager() {
 
                       <div className="flex items-center gap-3 self-end md:self-auto flex-shrink-0 border-t md:border-t-0 pt-2 md:pt-0 border-white/5">
                         <div className="text-right">
-                          <div className="text-[10px] text-slate-400">{t("skillmgr.symlinkStatus")}</div>
-                          <div className="text-[9px] text-slate-500 font-mono">
+                          <div className="text-tiny text-slate-400">{t("skillmgr.symlinkStatus")}</div>
+                          <div className="text-micro text-slate-500 font-mono">
                             {isSymlinkOn ? (
                               <span className="text-emerald-400 font-semibold flex items-center gap-1"><Link2 className="w-2.5 h-2.5" /> {t("skillmgr.linkedPublic")}</span>
                             ) : (
@@ -638,7 +638,7 @@ export default function SkillManager() {
             </div>
 
             {toolMsg && (
-              <div className={`p-2.5 rounded-ctl text-xs flex items-center gap-2 ${toolMsg.ok ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+              <div className={`p-2.5 rounded-ctl text-body flex items-center gap-2 ${toolMsg.ok ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
                 {toolMsg.ok ? <CheckCircle className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
                 <span>{toolMsg.msg}</span>
               </div>
@@ -649,14 +649,14 @@ export default function SkillManager() {
         {/* ════════ 市场 Tab ════════ */}
         {tab === 'market' && (
           <div className="space-y-4 max-w-3xl">
-            <div className="rounded-card bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] border border-[var(--module-accent-ring)] p-3.5 text-[11px] text-[color-mix(in_srgb,var(--module-accent)_80%,transparent)] leading-relaxed">
+            <div className="rounded-card bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] border border-[var(--module-accent-ring)] p-3.5 text-caption text-[color-mix(in_srgb,var(--module-accent)_80%,transparent)] leading-relaxed">
               {t("skillmgr.marketHint1")}
               {t("skillmgr.marketHint2")}
             </div>
 
             {/* 来源列表 */}
             <div>
-              <div className="text-xs font-semibold text-slate-300 mb-2 flex items-center gap-1.5">
+              <div className="text-body font-semibold text-slate-300 mb-2 flex items-center gap-1.5">
                 <Store className="w-3.5 h-3.5 text-[var(--module-accent)]" /> {t("skillmgr.marketSources")}
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
@@ -670,10 +670,10 @@ export default function SkillManager() {
                     className="rounded-card bg-white/[0.03] border border-white/10 p-3.5 hover:border-[var(--module-accent-ring)] transition-all group"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-slate-100">{t(src.name)}</span>
+                      <span className="text-body font-semibold text-slate-100">{t(src.name)}</span>
                       <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-[var(--module-accent)] transition-colors" />
                     </div>
-                    <p className="text-[10px] text-slate-400 mt-1">{t(src.desc)}</p>
+                    <p className="text-tiny text-slate-400 mt-1">{t(src.desc)}</p>
                   </a>
                 ))}
               </div>
@@ -681,7 +681,7 @@ export default function SkillManager() {
 
             {/* 在线安装 */}
             <div>
-              <div className="text-xs font-semibold text-slate-300 mb-2 flex items-center gap-1.5">
+              <div className="text-body font-semibold text-slate-300 mb-2 flex items-center gap-1.5">
                 <Download className="w-3.5 h-3.5 text-[var(--module-accent)]" /> {t("skillmgr.installFrom")}
               </div>
               <div className="rounded-card bg-white/[0.03] border border-white/10 p-3.5 space-y-2.5">
@@ -689,23 +689,23 @@ export default function SkillManager() {
                   value={installInput}
                   onChange={(e) => setInstallInput(e.target.value)}
                   placeholder="如: owner/repo / https://github.com/... / 本地技能路径"
-                  className="w-full px-3 py-2 rounded-ctl bg-white/5 border border-white/10 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent-ring)]"
+                  className="w-full px-3 py-2 rounded-ctl bg-white/5 border border-white/10 text-body text-slate-200 placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent-ring)]"
                 />
                 <button
                   onClick={startInstall}
                   disabled={installing || !installInput.trim()}
-                  className="w-full px-3 py-2.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-xs font-semibold text-white flex items-center justify-center gap-2 transition-all cursor-pointer"
+                  className="w-full px-3 py-2.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-body font-semibold text-white flex items-center justify-center gap-2 transition-all cursor-pointer"
                 >
                   {installing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
                   {installing ? t("skillmgr.installing") : t("skillmgr.installTo")}
                 </button>
                 {installErr && (
-                  <div className="p-2.5 rounded-ctl text-xs flex items-center gap-2 bg-red-500/10 text-red-400">
+                  <div className="p-2.5 rounded-ctl text-body flex items-center gap-2 bg-red-500/10 text-red-400">
                     <AlertTriangle className="w-3.5 h-3.5" /> {installErr}
                   </div>
                 )}
                 {installLog && (
-                  <pre className="text-[10px] text-slate-400 bg-black/30 rounded-ctl p-2.5 max-h-40 overflow-y-auto whitespace-pre-wrap font-mono border border-white/5">{installLog}</pre>
+                  <pre className="text-tiny text-slate-400 bg-black/30 rounded-ctl p-2.5 max-h-40 overflow-y-auto whitespace-pre-wrap font-mono border border-white/5">{installLog}</pre>
                 )}
               </div>
             </div>
@@ -716,30 +716,30 @@ export default function SkillManager() {
       {/* 编辑分类/标签弹窗 */}
       {editing && (
         <div className="fixed inset-0 z-50 modal-mask bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="rounded-card bg-slate-900 border border-white/10 p-4 w-full max-w-md space-y-3 shadow-2xl">
+          <div className="rounded-card ui-input p-4 w-full max-w-md space-y-3 shadow-2xl">
             <div className="flex items-center justify-between border-b border-white/5 pb-2">
-              <span className="text-xs font-bold text-slate-200">{t("skillmgr.editAttr", { id: editing.id })}</span>
+              <span className="text-body font-bold text-slate-200">{t("skillmgr.editAttr", { id: editing.id })}</span>
               <button onClick={() => setEditing(null)} className="text-slate-500 hover:text-slate-300">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="space-y-2 text-xs">
+            <div className="space-y-2 text-body">
               <div>
-                <label className="text-[10px] text-slate-400 mb-1 block">{t("skillmgr.category")}</label>
+                <label className="text-tiny text-slate-400 mb-1 block">{t("skillmgr.category")}</label>
                 <input
                   value={edCat}
                   onChange={(e) => setEdCat(e.target.value)}
                   placeholder={t("skillmgr.categoryPh")}
-                  className="w-full px-2.5 py-1.5 rounded bg-white/5 border border-white/10 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
+                  className="w-full px-2.5 py-1.5 rounded bg-white/5 border border-white/10 text-body text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
                 />
               </div>
 
               <div>
-                <label className="text-[10px] text-slate-400 mb-1 block">{t("skillmgr.tags")}</label>
+                <label className="text-tiny text-slate-400 mb-1 block">{t("skillmgr.tags")}</label>
                 <div className="flex flex-wrap gap-1 mb-2">
                   {edTags.map((t) => (
-                    <span key={t} className="px-2 py-0.5 rounded bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] text-[var(--module-accent)] text-[10px] flex items-center gap-1">
+                    <span key={t} className="px-2 py-0.5 rounded bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] text-[var(--module-accent)] text-tiny flex items-center gap-1">
                       #{t}
                       <button onClick={() => removeTag(t)} className="hover:text-red-300">
                         <X className="w-2.5 h-2.5" />
@@ -753,9 +753,9 @@ export default function SkillManager() {
                     onChange={(e) => setTagInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } }}
                     placeholder={t("skillmgr.tagPh")}
-                    className="flex-1 px-2.5 py-1.5 rounded bg-white/5 border border-white/10 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
+                    className="flex-1 px-2.5 py-1.5 rounded bg-white/5 border border-white/10 text-body text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
                   />
-                  <button onClick={addTag} className="px-3 py-1.5 rounded bg-white/10 hover:bg-white/20 text-xs font-semibold text-slate-200 cursor-pointer">
+                  <button onClick={addTag} className="px-3 py-1.5 rounded bg-white/10 hover:bg-white/20 text-body font-semibold text-slate-200 cursor-pointer">
                     {t("skillmgr.add")}
                   </button>
                 </div>
@@ -763,13 +763,13 @@ export default function SkillManager() {
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/5">
-              <button onClick={() => setEditing(null)} className="px-3 py-1.5 rounded text-xs text-slate-400 hover:text-slate-200 cursor-pointer">
+              <button onClick={() => setEditing(null)} className="px-3 py-1.5 rounded text-body text-slate-400 hover:text-slate-200 cursor-pointer">
                 {t("skillmgr.cancel")}
               </button>
               <button
                 onClick={saveMeta}
                 disabled={savingMeta}
-                className="px-3 py-1.5 rounded bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-xs font-semibold text-white flex items-center gap-1.5 cursor-pointer"
+                className="px-3 py-1.5 rounded bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-body font-semibold text-white flex items-center gap-1.5 cursor-pointer"
               >
                 {savingMeta ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
                 {t("skillmgr.save")}

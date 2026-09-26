@@ -21,7 +21,7 @@ export default function AggregateLogPanel({
   return (
     <div className="rounded-ctl border border-white/5 bg-black/30 overflow-hidden">
       <div className="px-2.5 py-1.5 border-b border-white/5 flex items-center justify-between">
-        <span className="text-[10px] font-bold text-slate-400">{t("aggregate.logTitle")}</span>
+        <span className="text-tiny font-bold text-slate-400">{t("aggregate.logTitle")}</span>
         <button
           onClick={onClear}
           className="text-slate-600 hover:text-slate-300 cursor-pointer transition-colors"
@@ -30,7 +30,7 @@ export default function AggregateLogPanel({
           <Trash2 className="w-3 h-3" />
         </button>
       </div>
-      <div className="max-h-56 overflow-y-auto px-2.5 py-2 font-mono text-[10px] leading-relaxed space-y-0.5">
+      <div className="max-h-56 overflow-y-auto px-2.5 py-2 font-mono text-tiny leading-relaxed space-y-0.5">
         {logs.length === 0 ? (
           <div className="text-slate-600">{t("aggregate.logEmpty")}</div>
         ) : (
