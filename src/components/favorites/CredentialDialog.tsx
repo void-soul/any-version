@@ -85,8 +85,8 @@ export function CredentialDialog({
         className="w-[460px] max-w-full rounded-panel border border-white/10 bg-slate-900 p-4 space-y-3"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="text-[13px] font-bold text-white">{title}</div>
-        <p className="text-[10px] text-slate-400 leading-snug">{hint}</p>
+        <div className="text-title font-bold text-white">{title}</div>
+        <p className="text-tiny text-slate-400 leading-snug">{hint}</p>
         {multiline ? (
           <textarea
             value={value}
@@ -96,7 +96,7 @@ export function CredentialDialog({
             onFocus={(e) => e.currentTarget.select()}
             placeholder={placeholder}
             spellCheck={false}
-            className="w-full h-24 glass-input p-2 text-[10px] font-mono resize-y"
+            className="w-full h-24 glass-input p-2 text-tiny font-mono resize-y"
           />
         ) : (
           <input
@@ -110,10 +110,10 @@ export function CredentialDialog({
             placeholder={placeholder}
             spellCheck={false}
             autoComplete="off"
-            className="w-full bg-black/30 border border-white/10 rounded-ctl px-2.5 py-2 text-[12px] font-mono text-slate-100 outline-none focus:border-[var(--module-accent)]"
+            className="w-full bg-black/30 border border-white/10 rounded-ctl px-2.5 py-2 text-body font-mono text-slate-100 outline-none focus:border-[var(--module-accent)]"
           />
         )}
-        {note && <p className="text-[10px] text-amber-400/80 leading-snug">{note}</p>}
+        {note && <p className="text-tiny text-amber-400/80 leading-snug">{note}</p>}
         <div className="flex justify-end gap-2">
           <SharedButton variant="secondary" onClick={onClose}>
             {t("common.cancel")}

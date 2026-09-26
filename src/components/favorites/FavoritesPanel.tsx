@@ -1043,7 +1043,7 @@ export default function FavoritesPanel() {
             setModelId(mid);
             void persistSettings({ providerId: pid || null, modelId: mid || null });
           }}
-          className="glass-input px-2 h-6 text-[11px] cursor-pointer max-w-[140px]"
+          className="glass-input px-2 h-6 text-caption cursor-pointer max-w-[140px]"
           title={t("favorites.providerHint")}
         >
           <option value="" disabled>{t("favorites.providerPick")}</option>
@@ -1057,7 +1057,7 @@ export default function FavoritesPanel() {
             setModelId(e.target.value);
             void persistSettings({ providerId: providerId || null, modelId: e.target.value || null });
           }}
-          className="glass-input px-2 h-6 text-[11px] cursor-pointer max-w-[170px]"
+          className="glass-input px-2 h-6 text-caption cursor-pointer max-w-[170px]"
           title={t("favorites.modelHint")}
           disabled={!activeProvider}
         >
@@ -1082,7 +1082,7 @@ export default function FavoritesPanel() {
             setAgentRounds(next);
             void persistSettings({ agentRounds: next });
           }}
-          className="glass-input px-1.5 h-6 w-12 text-[11px] text-center"
+          className="glass-input px-1.5 h-6 w-12 text-caption text-center"
           title={t("favorites.agentRoundsHint")}
         />
 
@@ -1156,13 +1156,13 @@ export default function FavoritesPanel() {
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
               placeholder={t("favorites.searchPlaceholder")}
-              className="bg-transparent outline-none text-[11px] w-36"
+              className="bg-transparent outline-none text-caption w-36"
             />
           </div>
           <select
             value={source ?? ""}
             onChange={(e) => setSource(e.target.value || null)}
-            className="glass-input px-2 h-7 text-[11px] cursor-pointer"
+            className="glass-input px-2 h-7 text-caption cursor-pointer"
           >
             <option value="">{t("favorites.allSources")}</option>
             {(stats?.bySource || []).map(([key]) => (
@@ -1175,7 +1175,7 @@ export default function FavoritesPanel() {
           <select
             value={sort}
             onChange={(e) => setSort(e.target.value as FavoritesSort)}
-            className="glass-input px-2 h-7 text-[11px] cursor-pointer"
+            className="glass-input px-2 h-7 text-caption cursor-pointer"
             title={t("favorites.sortTip")}
           >
             <option value="favorited">{t("favorites.sortFavorited")}</option>
@@ -1186,7 +1186,7 @@ export default function FavoritesPanel() {
           <select
             value={since}
             onChange={(e) => setSince(e.target.value as SincePreset)}
-            className="glass-input px-2 h-7 text-[11px] cursor-pointer"
+            className="glass-input px-2 h-7 text-caption cursor-pointer"
             title={t("favorites.sinceTip")}
           >
             <option value="all">{t("favorites.sinceAll")}</option>
@@ -1203,7 +1203,7 @@ export default function FavoritesPanel() {
         <div className="space-y-1">
           {progressRows.map(([key, p]) => (
             <div key={key} className="glass-panel px-3 py-2 space-y-1.5">
-              <div className="flex items-center gap-2 text-[10px] text-slate-300 flex-wrap">
+              <div className="flex items-center gap-2 text-tiny text-slate-300 flex-wrap">
                 <RefreshCw className="w-3 h-3 animate-spin text-[var(--module-accent)]" />
                 {p.stage === "check" ? (
                   <>
@@ -1305,7 +1305,7 @@ export default function FavoritesPanel() {
         >
           <button
             onClick={() => { setCategoryId(null); setCategoryName(null); }}
-            className={`w-full text-left px-2 py-1 rounded text-[11px] cursor-pointer transition-colors ${
+            className={`w-full text-left px-2 py-1 rounded text-caption cursor-pointer transition-colors ${
               categoryId === null
                 ? "bg-[var(--module-accent-soft)] text-white"
                 : "text-slate-400 hover:bg-white/5"
@@ -1332,7 +1332,7 @@ export default function FavoritesPanel() {
 
           <button
             onClick={() => void createCat(null)}
-            className="w-full text-left px-2 py-1 mt-1 rounded text-[10px] text-slate-500 hover:text-slate-200 hover:bg-white/5 cursor-pointer"
+            className="w-full text-left px-2 py-1 mt-1 rounded text-tiny text-slate-500 hover:text-slate-200 hover:bg-white/5 cursor-pointer"
             title={t("favorites.newCategory")}
           >
             <Plus className="w-3 h-3 inline mr-1" />
@@ -1340,7 +1340,7 @@ export default function FavoritesPanel() {
           </button>
 
           {cats.length === 0 && (
-            <p className="text-[10px] text-slate-500 px-2 py-1 leading-snug">
+            <p className="text-tiny text-slate-500 px-2 py-1 leading-snug">
               {t("favorites.noTagsHint")}
             </p>
           )}
@@ -1365,7 +1365,7 @@ export default function FavoritesPanel() {
           className="flex-1 overflow-y-auto glass-panel relative"
         >
           {items.length === 0 && (
-            <div className="h-full flex items-center justify-center text-[11px] text-slate-500">
+            <div className="h-full flex items-center justify-center text-caption text-slate-500">
               {t("favorites.empty")}
             </div>
           )}
@@ -1384,13 +1384,13 @@ export default function FavoritesPanel() {
                     <div className="flex items-center gap-1.5">
                       <button
                         onClick={() => void openUrl(item.url).catch(() => toast(item.url, "err"))}
-                        className="text-[12px] font-medium text-slate-100 hover:text-[var(--module-accent)] cursor-pointer truncate flex items-center gap-1"
+                        className="text-body font-medium text-slate-100 hover:text-[var(--module-accent)] cursor-pointer truncate flex items-center gap-1"
                         title={item.url}
                       >
                         {item.title}
                         <ExternalLink className="w-2.5 h-2.5 opacity-0 group-hover:opacity-60" />
                       </button>
-                      <span className="text-[9px] px-1 rounded bg-white/5 text-slate-500">
+                      <span className="text-micro px-1 rounded bg-white/5 text-slate-500">
                         {SOURCE_LABELS[item.source] ?? item.source}
                       </span>
                       {/* 收藏时间：优先平台记录的时间；老库/平台不返回时回退到入库时间，
@@ -1401,7 +1401,7 @@ export default function FavoritesPanel() {
                         if (!label) return null;
                         return (
                           <span
-                            className="text-[9px] px-1 rounded bg-white/5 text-slate-500 flex items-center gap-0.5 shrink-0"
+                            className="text-micro px-1 rounded bg-white/5 text-slate-500 flex items-center gap-0.5 shrink-0"
                             title={
                               platform
                                 ? t("favorites.favoritedAtTip", { time: item.favoritedAt })
@@ -1414,13 +1414,13 @@ export default function FavoritesPanel() {
                         );
                       })()}
                       {badge && (
-                        <span className={`text-[9px] px-1 rounded ${badge.className}`}>
+                        <span className={`text-micro px-1 rounded ${badge.className}`}>
                           {t(badge.text)}
                         </span>
                       )}
                       {item.aiLocked && (
                         <span
-                          className="text-[9px] px-1 rounded bg-emerald-500/10 text-emerald-400/80"
+                          className="text-micro px-1 rounded bg-emerald-500/10 text-emerald-400/80"
                           title={t("favorites.lockedHint")}
                         >
                           {t("favorites.locked")}
@@ -1428,7 +1428,7 @@ export default function FavoritesPanel() {
                       )}
                     </div>
                     {item.description && (
-                      <p className="text-[10px] text-slate-400 line-clamp-2 mt-0.5">
+                      <p className="text-tiny text-slate-400 line-clamp-2 mt-0.5">
                         {item.description}
                       </p>
                     )}
@@ -1443,7 +1443,7 @@ export default function FavoritesPanel() {
                               setCategoryId(hit?.id ?? null);
                               setCategoryName(hit ? hit.name : name);
                             }}
-                            className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/5 text-slate-300 hover:bg-white/10 cursor-pointer"
+                            className="text-micro px-1.5 py-0.5 rounded-full bg-white/5 text-slate-300 hover:bg-white/10 cursor-pointer"
                             title={hit ? t("favorites.filterByCategory") : name}
                           >
                             {name}
@@ -1492,7 +1492,7 @@ export default function FavoritesPanel() {
                 {expandedId === item.id && (
                   <div className="mt-1.5 rounded-ctl border border-white/10 bg-black/25 p-2">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-[9px] text-slate-500 truncate">
+                      <span className="text-micro text-slate-500 truncate">
                         {contentBusy === item.id
                           ? t("favorites.contentLoading")
                           : content[item.id]?.label ??
@@ -1507,7 +1507,7 @@ export default function FavoritesPanel() {
                         <button
                           onClick={() => void openContent(item, true)}
                           disabled={contentBusy === item.id}
-                          className="ml-auto text-[9px] text-slate-500 hover:text-slate-200 cursor-pointer disabled:opacity-40"
+                          className="ml-auto text-micro text-slate-500 hover:text-slate-200 cursor-pointer disabled:opacity-40"
                           title={t("favorites.contentRefresh")}
                         >
                           {t("favorites.contentRefresh")}
@@ -1515,7 +1515,7 @@ export default function FavoritesPanel() {
                       )}
                     </div>
                     {contentBusy === item.id ? (
-                      <div className="flex items-center gap-2 text-[10px] text-slate-500 py-2">
+                      <div className="flex items-center gap-2 text-tiny text-slate-500 py-2">
                         <RefreshCw className="w-3 h-3 animate-spin" />
                         {t("favorites.contentLoading")}
                       </div>
@@ -1525,13 +1525,13 @@ export default function FavoritesPanel() {
                           <MarkdownRenderer content={content[item.id]!.text} />
                         ) : (
                           // 知乎正文只渲染纯文本：远端 HTML 直接进 DOM 等于把注入面交给知乎
-                          <p className="text-[11px] text-slate-300 leading-relaxed whitespace-pre-wrap">
+                          <p className="text-caption text-slate-300 leading-relaxed whitespace-pre-wrap">
                             {content[item.id]!.text}
                           </p>
                         )}
                       </div>
                     ) : (
-                      <p className="text-[10px] text-slate-500 py-1">
+                      <p className="text-tiny text-slate-500 py-1">
                         {t("favorites.contentEmpty")}
                       </p>
                     )}
@@ -1563,8 +1563,8 @@ export default function FavoritesPanel() {
                     <Bot className="w-3.5 h-3.5 text-[var(--module-accent)]" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-[11px] font-bold text-white truncate">{t("favorites.aiSearchTitle")}</div>
-                    <div className="text-[9px] text-slate-500 truncate">{t("favorites.aiSearchHint")}</div>
+                    <div className="text-caption font-bold text-white truncate">{t("favorites.aiSearchTitle")}</div>
+                    <div className="text-micro text-slate-500 truncate">{t("favorites.aiSearchHint")}</div>
                   </div>
                   <button
                     onClick={toggleAiPanel}
@@ -1581,12 +1581,12 @@ export default function FavoritesPanel() {
                     onChange={(e) => setAiInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void runAiSearch(); } }}
                     placeholder={t("favorites.aiSearchPh")}
-                    className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded-ctl px-2 py-1.5 text-[11px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
+                    className="flex-1 min-w-0 ui-input rounded-ctl px-2 py-1.5 text-caption text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
                   />
                   <button
                     onClick={() => void runAiSearch()}
                     disabled={aiBusy || !aiInput.trim()}
-                    className="px-2 py-1.5 rounded-ctl text-[10px] bg-[var(--module-accent)] hover:opacity-90 text-white font-semibold cursor-pointer disabled:opacity-40 flex items-center gap-1"
+                    className="px-2 py-1.5 rounded-ctl text-tiny ui-btn-primary text-white font-semibold cursor-pointer disabled:opacity-40 flex items-center gap-1"
                   >
                     {aiBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
                     {aiBusy ? t("favorites.aiSearchRunning") : t("favorites.aiSearchGo")}
@@ -1597,7 +1597,7 @@ export default function FavoritesPanel() {
                 {aiSteps.length > 0 && (
                   <div ref={aiLogRef} className="max-h-24 shrink-0 overflow-y-auto rounded-ctl border border-white/5 bg-black/30 p-2 space-y-1">
                     {aiSteps.map((s, i) => (
-                      <div key={i} className="text-[9px] text-slate-500 flex gap-1.5">
+                      <div key={i} className="text-micro text-slate-500 flex gap-1.5">
                         <span className="flex-shrink-0 text-slate-600">{AI_TOOL_LABEL[s.tool ?? ""] ?? "过程"}</span>
                         <span className="min-w-0 break-all">{s.text.slice(0, 160)}</span>
                       </div>
@@ -1607,11 +1607,11 @@ export default function FavoritesPanel() {
 
                 <div className="min-h-0 flex-1 overflow-y-auto rounded-card border border-white/5 bg-slate-900/30 p-2.5">
                   {aiError ? (
-                    <div className="text-[11px] text-rose-400 break-all">{aiError}</div>
+                    <div className="text-caption text-rose-400 break-all">{aiError}</div>
                   ) : aiResult ? (
                     <AiResultMarkdown text={aiResult} />
                   ) : (
-                    <div className="text-[11px] text-slate-500 py-6 text-center">
+                    <div className="text-caption text-slate-500 py-6 text-center">
                       <Sparkles className="w-4 h-4 mx-auto mb-2 text-slate-600" />
                       {t("favorites.aiSearchPlaceholder")}
                     </div>
@@ -1623,7 +1623,7 @@ export default function FavoritesPanel() {
         </div>
       </div>
 
-      <div className="flex items-center gap-3 text-[10px] text-slate-500">
+      <div className="flex items-center gap-3 text-tiny text-slate-500">
         <span>
           {t("favorites.total")}: {stats?.total ?? 0}
         </span>
@@ -1661,25 +1661,25 @@ export default function FavoritesPanel() {
       {/* 已删除条目（墓碑）：重新纳入后，下次导入会把它们再拉进来 */}
       {deletedOpen && (
         <div className="fixed inset-0 z-[300] modal-mask bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-surface-panel border border-white/15 rounded-panel p-4 shadow-2xl space-y-3 text-xs">
+          <div className="w-full max-w-md bg-surface-panel border border-white/15 rounded-panel p-4 shadow-2xl space-y-3 text-body">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-white">{t("favorites.deletedTitle")}</h3>
               <button onClick={() => setDeletedOpen(false)} className="text-slate-400 hover:text-white p-1">
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <p className="text-[10px] text-slate-500 leading-relaxed">{t("favorites.deletedHint")}</p>
+            <p className="text-tiny text-slate-500 leading-relaxed">{t("favorites.deletedHint")}</p>
             <div className="max-h-64 overflow-y-auto space-y-1">
               {deletedRows.map((d) => (
                 <div key={`${d.source}-${d.externalId}`} className="flex items-center gap-2 rounded-ctl border border-white/5 bg-white/[0.02] px-2 py-1.5">
-                  <span className="shrink-0 text-[9px] text-slate-500">{SOURCE_LABELS[d.source] ?? d.source}</span>
+                  <span className="shrink-0 text-micro text-slate-500">{SOURCE_LABELS[d.source] ?? d.source}</span>
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[11px] text-slate-200">{d.title || d.externalId}</div>
-                    <div className="truncate text-[9px] text-slate-600">{d.deletedAt}</div>
+                    <div className="truncate text-caption text-slate-200">{d.title || d.externalId}</div>
+                    <div className="truncate text-micro text-slate-600">{d.deletedAt}</div>
                   </div>
                   <button
                     onClick={() => void restoreDeleted(d.source, d.externalId)}
-                    className="shrink-0 px-2 py-1 rounded-ctl border border-white/10 text-[10px] text-slate-300 hover:text-[var(--module-accent)] cursor-pointer"
+                    className="shrink-0 px-2 py-1 rounded-ctl border border-white/10 text-tiny text-slate-300 hover:text-[var(--module-accent)] cursor-pointer"
                   >
                     {t("favorites.deletedRestore")}
                   </button>
@@ -1689,13 +1689,13 @@ export default function FavoritesPanel() {
             <div className="flex items-center justify-end gap-2 pt-1">
               <button
                 onClick={() => void restoreDeleted()}
-                className="px-2.5 py-1.5 rounded-ctl border border-white/10 text-[10px] text-slate-300 hover:text-white cursor-pointer"
+                className="px-2.5 py-1.5 rounded-ctl border border-white/10 text-tiny text-slate-300 hover:text-white cursor-pointer"
               >
                 {t("favorites.deletedRestoreAll", { count: deletedRows.length })}
               </button>
               <button
                 onClick={() => setDeletedOpen(false)}
-                className="px-2.5 py-1.5 rounded-ctl bg-[var(--module-accent)] text-white text-[10px] font-semibold cursor-pointer"
+                className="px-2.5 py-1.5 rounded-ctl bg-[var(--module-accent)] text-white text-tiny font-semibold cursor-pointer"
               >
                 {t("favorites.deletedClose")}
               </button>
@@ -1752,7 +1752,7 @@ export default function FavoritesPanel() {
       {/* 分类右键菜单 */}
       {catMenu && (
         <div
-          className="fixed z-[300] bg-surface-panel border border-white/15 rounded-ctl shadow-2xl py-1 text-[11px] min-w-[140px]"
+          className="fixed z-[300] bg-surface-panel border border-white/15 rounded-ctl shadow-2xl py-1 text-caption min-w-[140px]"
           style={{ left: catMenu.x, top: catMenu.y }}
           onMouseLeave={() => setCatMenu(null)}
         >
@@ -1789,17 +1789,17 @@ export default function FavoritesPanel() {
       {/* 条目分类选择器：勾选式，支持多级 */}
       {pickerFor && (
         <div className="fixed inset-0 z-[300] modal-mask bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-surface-panel border border-white/15 rounded-panel p-4 shadow-2xl space-y-3 text-xs">
+          <div className="w-full max-w-sm bg-surface-panel border border-white/15 rounded-panel p-4 shadow-2xl space-y-3 text-body">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-white">{t("favorites.pickCategoryTitle")}</h3>
               <button onClick={() => setPickerFor(null)} className="text-slate-400 hover:text-white p-1">
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <p className="text-[10px] text-slate-500 truncate">{pickerFor.title}</p>
+            <p className="text-tiny text-slate-500 truncate">{pickerFor.title}</p>
             <div className="max-h-64 overflow-y-auto space-y-0.5">
               {cats.length === 0 && (
-                <p className="text-[11px] text-slate-500">{t("favorites.noTagsHint")}</p>
+                <p className="text-caption text-slate-500">{t("favorites.noTagsHint")}</p>
               )}
               <CategoryCheckTree
                 nodes={cats}
@@ -1811,11 +1811,11 @@ export default function FavoritesPanel() {
               />
             </div>
             <div className="flex items-center gap-2 pt-1">
-              <SharedButton className="!h-7 !px-3 !text-[11px]" onClick={() => void submitPicker()}>
+              <SharedButton className="!h-7 !px-3 !text-caption" onClick={() => void submitPicker()}>
                 {t("common.save")}
               </SharedButton>
               <button onClick={() => setPickerFor(null)}
-                className="px-3 py-1 rounded-ctl bg-white/5 hover:bg-white/10 text-[11px] text-slate-300 cursor-pointer">
+                className="px-3 py-1 rounded-ctl bg-white/5 hover:bg-white/10 text-caption text-slate-300 cursor-pointer">
                 {t("common.cancel")}
               </button>
             </div>
@@ -1849,8 +1849,8 @@ function CategoryCheckTree({
               onChange={() => onToggle(c.id)}
               className="accent-[var(--module-accent)] cursor-pointer"
             />
-            <span className="text-[11px] text-slate-200 truncate">{c.name}</span>
-            <span className="ml-auto text-[10px] text-slate-500">{c.count}</span>
+            <span className="text-caption text-slate-200 truncate">{c.name}</span>
+            <span className="ml-auto text-tiny text-slate-500">{c.count}</span>
           </label>
           {c.children.length > 0 && (
             <CategoryCheckTree
@@ -1887,7 +1887,7 @@ function CategoryTree({
         return (
           <div key={c.id}>
             <div
-              className={`flex items-center gap-0.5 rounded text-[11px] cursor-pointer transition-colors ${
+              className={`flex items-center gap-0.5 rounded text-caption cursor-pointer transition-colors ${
                 selectedId === c.id
                   ? "bg-[var(--module-accent-soft)] text-white"
                   : "text-slate-400 hover:bg-white/5"
@@ -1940,13 +1940,13 @@ function AiResultMarkdown({ text }: { text: string }) {
             return <div key={i} className="h-1" />;
           case "heading":
             return parsed.level === 2 ? (
-              <div key={i} className="text-xs font-bold text-white mt-2">{parsed.text}</div>
+              <div key={i} className="text-body font-bold text-white mt-2">{parsed.text}</div>
             ) : (
-              <div key={i} className="text-[11px] font-bold text-slate-200 mt-2">{parsed.text}</div>
+              <div key={i} className="text-caption font-bold text-slate-200 mt-2">{parsed.text}</div>
             );
           case "item":
             return (
-              <div key={i} className="flex items-start gap-1.5 text-[11px]">
+              <div key={i} className="flex items-start gap-1.5 text-caption">
                 <span className="text-slate-600 mt-[3px]">•</span>
                 <button
                   onClick={() => { void openUrl(parsed.url).catch(() => {}); }}
@@ -1959,14 +1959,14 @@ function AiResultMarkdown({ text }: { text: string }) {
               </div>
             );
           case "bullet":
-            return <div key={i} className="text-[11px] text-slate-300 pl-2">• {parsed.text}</div>;
+            return <div key={i} className="text-caption text-slate-300 pl-2">• {parsed.text}</div>;
           default:
             return (
-              <div key={i} className="text-[11px] text-slate-300 whitespace-pre-wrap">{parsed.text}</div>
+              <div key={i} className="text-caption text-slate-300 whitespace-pre-wrap">{parsed.text}</div>
             );
         }
       })}
-      <div className="pt-2 text-[9px] text-slate-600">{t("favorites.aiSearchDisclaimer")}</div>
+      <div className="pt-2 text-micro text-slate-600">{t("favorites.aiSearchDisclaimer")}</div>
     </div>
   );
 }
@@ -2012,7 +2012,7 @@ function LinkButton({
       onClick={onClick}
       disabled={disabled || busy}
       title={title}
-      className={`inline-flex items-center gap-1 text-[11px] cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+      className={`inline-flex items-center gap-1 text-caption cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
         danger
           ? "text-rose-400/80 hover:text-rose-300"
           : active
