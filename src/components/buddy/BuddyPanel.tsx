@@ -165,6 +165,17 @@ export interface BuddyPendingConflict {
 /** 用户对冲突的裁决方式：merge 取较新 / overwrite 用来源覆盖目标 / keep 保留目标 */
 type ConflictAction = "merge" | "overwrite" | "keep";
 
+/** 一条冲突的处理结果（后端 session_sync::ConflictResolution） */
+export interface BuddyConflictResolution {
+  id: string;
+  /** merge | overwrite | keep */
+  action: string;
+  /** 处理时间（epoch 毫秒） */
+  atMs: number;
+  /** 后端给的人类可读结果 */
+  message: string;
+}
+
 /** 冲突会话一侧的对话消息预览（后端已从双层 JSON 抽出正文） */
 export interface BuddyConflictMessage {
   role: string;
@@ -862,6 +873,12 @@ export default function BuddyPanel() {
   // 「查看明细」展开到哪一条（两侧账号、IDE、时间都在明细里）
   const [expandedConflictId, setExpandedConflictId] = useState<string | null>(null);
   const [conflictBusyId, setConflictBusyId] = useState<string | null>(null);
+  // 批量处理：勾选的会话 id（点表头「全选」一次勾上当前列表）+ 批量执行中的标记
+  const [conflictSelectedIds, setConflictSelectedIds] = useState<Set<string>>(new Set());
+  const [conflictBatchBusy, setConflictBatchBusy] = useState(false);
+  // 冲突处理结果（key = 会话 id）：会话明细据此显示「已合并 / 已覆盖 / 已保留」，
+  // 而不是永远停在切换那一刻的初始状态
+  const [conflictResolutions, setConflictResolutions] = useState<Record<string, BuddyConflictResolution>>({});
   // 对话内容预览（key = `${conflictId}:${side}`）：点「看对话」才拉取，避免展开就搬全部消息。
   // 读取失败也用消息数组表达（role="error"），就地显示后端的可操作提示。
   const [conflictMessages, setConflictMessages] = useState<Record<string, BuddyConflictMessage[] | "loading">>({});
@@ -1001,6 +1018,18 @@ export default function BuddyPanel() {
     if (tab === "sessions") loadSessions();
   }, [tab, loadSessions]);
 
+  // 冲突处理结果：会话明细要显示「处理过了」而不是初始状态，所以与冲突列表一起拉
+  const loadConflictResolutions = useCallback(async () => {
+    try {
+      const list = await invoke<BuddyConflictResolution[]>("buddy_list_conflict_resolutions", { platform });
+      const map: Record<string, BuddyConflictResolution> = {};
+      for (const r of list) map[r.id] = r;
+      setConflictResolutions(map);
+    } catch {
+      setConflictResolutions({});
+    }
+  }, [platform]);
+
   // 待裁决冲突：进入面板 / 切换平台 / 切换账号后都拉一次（切换时冲突落盘，之后随时可处理）
   const loadConflicts = useCallback(async () => {
     try {
@@ -1010,7 +1039,8 @@ export default function BuddyPanel() {
       // 拉取失败不打扰用户：横幅与处理入口都依赖这份列表，失败时按「无冲突」降级
       setSessionConflicts([]);
     }
-  }, [platform]);
+    await loadConflictResolutions();
+  }, [platform, loadConflictResolutions]);
 
   useEffect(() => {
     void loadConflicts();
@@ -1026,18 +1056,63 @@ export default function BuddyPanel() {
         action,
       });
       setSessionConflicts(remaining);
-      // 全部处理完时同步清掉切换台账里残留的冲突计数：
-      // 否则横幅会拿着过时计数继续亮，让人以为还有冲突没处理
-      if (remaining.length === 0) {
-        setSyncSummary((prev) => (prev && prev.conflict > 0 ? { ...prev, conflict: 0 } : prev));
-      }
+      // 冲突计数按剩余条数同步（不是只在清零时处理）：处理一半时横幅与明细才对得上
+      setSyncSummary((prev) => (prev && prev.conflict !== remaining.length ? { ...prev, conflict: remaining.length } : prev));
+      setConflictSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(conflict.id);
+        return next;
+      });
       setExpandedConflictId(null);
+      void loadConflictResolutions();
       showMsg(true, t("buddy.conflictResolved", { label: conflict.label }));
     } catch (e: any) {
       showMsg(false, String(e));
     } finally {
       setConflictBusyId(null);
     }
+  };
+
+  /** 批量裁决：对勾选的多条执行同一 action。
+   *  走后端批量命令（一次加锁 + 一次备份目录），不在这里串行调单条 ——
+   *  单条命令每次都会清空备份目录，串行下来只剩最后一条能回滚。 */
+  const resolveConflictsBatch = async (action: ConflictAction) => {
+    const ids = [...conflictSelectedIds];
+    if (ids.length === 0) return;
+    setConflictBatchBusy(true);
+    try {
+      const remaining = await invoke<BuddyPendingConflict[]>("buddy_resolve_session_conflicts", {
+        platform,
+        conversationIds: ids,
+        action,
+      });
+      setSessionConflicts(remaining);
+      setSyncSummary((prev) => (prev && prev.conflict !== remaining.length ? { ...prev, conflict: remaining.length } : prev));
+      // 已处理的从勾选里清掉；失败时后端整体报错，勾选保留便于重试
+      const remainingIds = new Set(remaining.map((c) => c.id));
+      setConflictSelectedIds((prev) => new Set([...prev].filter((id) => remainingIds.has(id))));
+      setExpandedConflictId(null);
+      void loadConflictResolutions();
+      showMsg(true, t("buddy.conflictBatchResolved", { count: ids.length - remaining.filter((c) => ids.includes(c.id)).length, action: t(`buddy.conflictAction${action[0].toUpperCase()}${action.slice(1)}`) }));
+    } catch (e: any) {
+      showMsg(false, String(e));
+    } finally {
+      setConflictBatchBusy(false);
+    }
+  };
+
+  const toggleConflictSelect = (id: string) => {
+    setConflictSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleConflictSelectAll = () => {
+    setConflictSelectedIds((prev) =>
+      prev.size === sessionConflicts.length ? new Set() : new Set(sessionConflicts.map((c) => c.id)),
+    );
   };
 
   /** 拉取冲突会话某一侧的对话内容（点「看对话」才加载） */
@@ -1063,7 +1138,14 @@ export default function BuddyPanel() {
    *  每次打开都向后端要最新数据，绝不能让「明明有冲突却打不开处理入口」。 */
   const openConflictPanel = async () => {
     await loadConflicts();
+    // 每次打开都从空勾选开始：上次的勾选对应的冲突可能已经处理掉了
+    setConflictSelectedIds(new Set());
     setConflictPanelOpen(true);
+  };
+
+  const closeConflictPanel = () => {
+    setConflictPanelOpen(false);
+    setConflictSelectedIds(new Set());
   };
 
   // 关键字防抖：输入停止 300ms 后再触发查询
@@ -2137,7 +2219,11 @@ export default function BuddyPanel() {
               {filterSyncDetails(syncSummary.details, syncStatusFilter).length === 0 && !syncSummary.unchanged && (
                 <div className="px-4 py-1.5 text-[11px] text-slate-500">{t("buddy.syncFilterEmpty")}</div>
               )}
-              {filterSyncDetails(syncSummary.details, syncStatusFilter).map((detail, index) => (
+              {filterSyncDetails(syncSummary.details, syncStatusFilter).map((detail, index) => {
+                // 处理结果：裁决过的会话显示「已合并 / 已覆盖 / 已保留」+ 时间，
+                // 而不是永远停在切换那一刻的初始状态（conflict / bothChanged）
+                const resolution = conflictResolutions[detail.id];
+                return (
                 <div
                   key={`${detail.id}-${index}`}
                   className="flex items-start gap-2 px-4 py-1 text-[11px] border-b border-white/5 last:border-b-0"
@@ -2145,6 +2231,14 @@ export default function BuddyPanel() {
                   <span className={`flex-shrink-0 w-16 ${SYNC_STATUS_CLASS[detail.status] ?? "text-slate-400"}`}>
                     {t(`buddy.syncStatus.${detail.status}`)}
                   </span>
+                  {resolution && (
+                    <span
+                      className="flex-shrink-0 px-1.5 py-0.5 rounded-md text-[10px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/25"
+                      title={`${new Date(resolution.atMs).toLocaleString()} · ${resolution.message}`}
+                    >
+                      {t(`buddy.conflictResult.${resolution.action}`)}
+                    </span>
+                  )}
                   {/* 目录列：这条会话属于哪个项目；超长按宽度折叠，悬停看完整路径 */}
                   <span
                     className="flex-shrink-0 w-40 truncate text-slate-500 cursor-help"
@@ -2161,8 +2255,9 @@ export default function BuddyPanel() {
                     {t(`buddy.syncReason.${detail.reason}`)}
                   </span>
                   {/* 冲突行直达处理弹窗：只靠顶部横幅一个入口太脆弱，明细里看到冲突
-                      的人就该在冲突旁边拿到处理入口（弹窗打开前会强制刷新列表） */}
-                  {detail.status === "conflict" && (
+                      的人就该在冲突旁边拿到处理入口（弹窗打开前会强制刷新列表）。
+                      已处理过的（有处理结果）就不再显示这个按钮——它已经不是待办了。 */}
+                  {detail.status === "conflict" && !resolution && (
                     <button
                       onClick={() => void openConflictPanel()}
                       className="flex-shrink-0 px-1.5 py-0.5 rounded-md text-[10px] bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 font-semibold cursor-pointer transition-colors"
@@ -2171,7 +2266,8 @@ export default function BuddyPanel() {
                     </button>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -3732,7 +3828,7 @@ export default function BuddyPanel() {
                 <p className="text-[10px] text-slate-500">{t("buddy.conflictPanelHint")}</p>
               </div>
               <button
-                onClick={() => setConflictPanelOpen(false)}
+                onClick={closeConflictPanel}
                 className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 cursor-pointer"
               >
                 ✕
@@ -3742,6 +3838,38 @@ export default function BuddyPanel() {
             {sessionConflicts.length === 0 ? (
               <div className="py-8 text-center text-xs text-slate-500">{t("buddy.conflictPanelEmpty")}</div>
             ) : (
+              <>
+              {/* 批量处理条：勾选后一次对多条执行同一裁决。
+                  走后端批量命令，避免串行调单条把备份目录清得只剩最后一条。 */}
+              <div className="mb-2 flex flex-wrap items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-2">
+                <button
+                  onClick={toggleConflictSelectAll}
+                  className="px-2 py-1 rounded-md text-[10px] bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer"
+                >
+                  {conflictSelectedIds.size === sessionConflicts.length ? t("buddy.sessions.selectAllClear") : t("buddy.sessions.selectAll")}
+                </button>
+                <span className="text-[10px] text-slate-500">
+                  {t("buddy.conflictSelectedCount", { count: conflictSelectedIds.size, total: sessionConflicts.length })}
+                </span>
+                <span className="flex-1" />
+                {(["merge", "overwrite", "keep"] as ConflictAction[]).map((action) => (
+                  <button
+                    key={action}
+                    disabled={conflictSelectedIds.size === 0 || conflictBatchBusy || conflictBusyId !== null}
+                    onClick={() => void resolveConflictsBatch(action)}
+                    title={t(`buddy.conflictAction${action[0].toUpperCase()}${action.slice(1)}Tip`)}
+                    className={`px-2.5 py-1 rounded-md text-[10px] font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors ${
+                      action === "merge"
+                        ? "bg-[var(--module-accent)]/20 hover:bg-[var(--module-accent)]/30 text-white"
+                        : action === "overwrite"
+                          ? "bg-rose-600/20 hover:bg-rose-600/30 text-rose-300"
+                          : "bg-white/5 hover:bg-white/10 text-slate-300"
+                    }`}
+                  >
+                    {t(`buddy.conflictAction${action[0].toUpperCase()}${action.slice(1)}`)}
+                  </button>
+                ))}
+              </div>
               <div className="min-h-0 flex-1 overflow-y-auto border border-white/5 rounded-xl divide-y divide-white/5">
                 {sessionConflicts.map((conflict) => {
                   const expanded = expandedConflictId === conflict.id;
@@ -3750,6 +3878,13 @@ export default function BuddyPanel() {
                       {/* 主行：真实项目路径 + 会话名，两侧时间一目了然。
                           后端已把 MD5 哈希目录还原成真实路径；还原失败才显示哈希。 */}
                       <div className="flex items-center gap-2 text-[11px]">
+                        <input
+                          type="checkbox"
+                          checked={conflictSelectedIds.has(conflict.id)}
+                          onChange={() => toggleConflictSelect(conflict.id)}
+                          className="flex-shrink-0 h-3.5 w-3.5 cursor-pointer accent-[var(--module-accent)]"
+                          title={t("buddy.conflictSelectTip")}
+                        />
                         <span
                           className="flex-shrink-0 max-w-[220px] truncate text-slate-500 cursor-help"
                           title={conflict.workspacePath || conflict.workspace}
@@ -3889,6 +4024,7 @@ export default function BuddyPanel() {
                   );
                 })}
               </div>
+              </>
             )}
           </div>
         </div>

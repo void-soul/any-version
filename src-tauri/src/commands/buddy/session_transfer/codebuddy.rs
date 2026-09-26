@@ -215,6 +215,15 @@ impl ConflictAction {
             other => Err(format!("未知的冲突处理方式: {}", other)),
         }
     }
+
+    /// 落盘与前端展示用的稳定名字（与 parse 成反函数）。
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Self::Merge => "merge",
+            Self::Overwrite => "overwrite",
+            Self::Keep => "keep",
+        }
+    }
 }
 
 /// 待处理冲突文件所在目录（`{data_dir}/buddy/session-sync/codebuddy-cn/`）。
@@ -301,25 +310,113 @@ pub(crate) fn resolve_conflict_command(
     conversation_id: &str,
     action: ConflictAction,
 ) -> Result<Vec<PendingConflict>, String> {
-    validate_conversation_id(conversation_id)?;
+    resolve_conflicts_command(&[conversation_id.to_string()], action)
+}
 
-    let Some((conflict, stem)) = find_pending_conflict(conversation_id)? else {
-        return Err(format!(
-            "找不到会话 {} 的待处理冲突（可能已经处理过）",
-            conversation_id
-        ));
+/// **批量**裁决：一次对多条执行同一 action，返回当前账号剩余的待处理冲突。
+///
+/// 为什么必须走批量命令而不是前端串行调单条：`prepare_backup_root` 每次都会
+/// `remove_dir_all` 清掉该 uid 的备份目录（见 `session_transfer.rs`），串行 N 次
+/// 的结果就是**只剩最后一条的备份**，前面几条想回滚已经没东西可回。批量在这里
+/// 只加一次锁、每个目标 uid 只准备一次备份目录、共用一份基线，最后统一落盘。
+pub(crate) fn resolve_conflicts_command(
+    conversation_ids: &[String],
+    action: ConflictAction,
+) -> Result<Vec<PendingConflict>, String> {
+    if conversation_ids.is_empty() {
+        return Err("未选择要处理的冲突".to_string());
+    }
+
+    // 1) 定位：逐条找记录，连同它所属的冲突文件 stem（一个 uid 一个文件）
+    let mut found: Vec<(PendingConflict, String)> = Vec::new();
+    for id in conversation_ids {
+        validate_conversation_id(id)?;
+        let Some(item) = find_pending_conflict(id)? else {
+            return Err(format!(
+                "找不到会话 {} 的待处理冲突（可能已经处理过）",
+                id
+            ));
+        };
+        found.push(item);
+    }
+    let extension_data_dir = codebuddy_extension_data_dir()?;
+
+    // 2) 一次加锁，按目标 uid 分组执行
+    let resolved = {
+        let _guard = TRANSFER_LOCK
+            .lock()
+            .map_err(|_| "CodeBuddy CN 会话合并正在进行，请稍后重试".to_string())?;
+
+        let mut grouped: Vec<(String, Vec<PendingConflict>)> = Vec::new();
+        for (conflict, _) in &found {
+            match grouped.iter_mut().find(|(uid, _)| uid == &conflict.target_uid) {
+                Some(entry) => entry.1.push(conflict.clone()),
+                None => grouped.push((conflict.target_uid.clone(), vec![conflict.clone()])),
+            }
+        }
+
+        let mut resolved: Vec<(String, PendingConflict, String)> = Vec::new();
+        for (uid, conflicts) in &grouped {
+            let backup_root = super::prepare_backup_root(BACKUP_PLATFORM_LABEL, uid)?;
+            let mut baseline =
+                super::super::session_sync::load_baseline(BACKUP_PLATFORM_LABEL, uid);
+            for conflict in conflicts {
+                let message = resolve_pending_conflict_at(
+                    &extension_data_dir,
+                    conflict,
+                    action,
+                    &backup_root,
+                    &mut baseline,
+                )?;
+                resolved.push((uid.clone(), conflict.clone(), message));
+            }
+            super::super::session_sync::save_baseline(BACKUP_PLATFORM_LABEL, uid, &baseline);
+        }
+        resolved
     };
-    resolve_pending_conflict(&codebuddy_extension_data_dir()?, &conflict, action)?;
 
-    // 从所属文件移除该条（清空则删文件）
-    let conflicts =
-        super::super::session_sync::load_pending_conflicts(BACKUP_PLATFORM_LABEL, &stem);
-    let remaining: Vec<PendingConflict> = conflicts
-        .into_iter()
-        .filter(|c| c.id != conversation_id)
-        .collect();
-    super::super::session_sync::save_pending_conflicts(BACKUP_PLATFORM_LABEL, &stem, &remaining);
+    // 3) 记录处理结果（会话明细要显示「处理过了、怎么处理的」）
+    let now = super::super::session_sync::now_millis();
+    for (uid, conflict, message) in &resolved {
+        super::super::session_sync::append_conflict_resolutions(
+            BACKUP_PLATFORM_LABEL,
+            uid,
+            &[super::super::session_sync::ConflictResolution {
+                id: conflict.id.clone(),
+                action: action.as_str().to_string(),
+                at_ms: now,
+                message: message.clone(),
+            }],
+        );
+    }
+
+    // 4) 从各自文件里移除已处理的条目（按 stem 分组，清空则删文件）
+    let mut done_ids: Vec<String> = resolved.iter().map(|(_, c, _)| c.id.clone()).collect();
+    done_ids.sort();
+    done_ids.dedup();
+    let mut stems: Vec<String> = found.iter().map(|(_, stem)| stem.clone()).collect();
+    stems.sort();
+    stems.dedup();
+    for stem in stems {
+        let conflicts =
+            super::super::session_sync::load_pending_conflicts(BACKUP_PLATFORM_LABEL, &stem);
+        let remaining: Vec<PendingConflict> = conflicts
+            .into_iter()
+            .filter(|c| !done_ids.contains(&c.id))
+            .collect();
+        super::super::session_sync::save_pending_conflicts(BACKUP_PLATFORM_LABEL, &stem, &remaining);
+    }
+
     Ok(list_pending_conflicts_for_current_account())
+}
+
+/// 列出**当前登录账号**的冲突处理结果（会话明细展示用）。
+pub(crate) fn list_conflict_resolutions_for_current_account(
+) -> Vec<super::super::session_sync::ConflictResolution> {
+    let Some(uid) = current_account_uid() else {
+        return Vec::new();
+    };
+    super::super::session_sync::load_conflict_resolutions(BACKUP_PLATFORM_LABEL, &uid)
 }
 
 /// 执行单条冲突裁决（命令入口）。
@@ -1760,6 +1857,15 @@ mod tests {
             assert!(validate_uid(uid).is_err(), "uid should be rejected: {uid}");
         }
         assert!(validate_uid("384c6dd0-c1bc-4ae2-a0d0-f70350c62f7b").is_ok());
+    }
+
+    /// 批量裁决落盘用的 action 名必须与 parse 成反函数（前端按它做 i18n）。
+    #[test]
+    fn conflict_action_roundtrips_through_as_str() {
+        for action in [ConflictAction::Merge, ConflictAction::Overwrite, ConflictAction::Keep] {
+            assert_eq!(ConflictAction::parse(action.as_str()).unwrap(), action);
+        }
+        assert!(ConflictAction::parse("nope").is_err());
     }
 
     #[test]

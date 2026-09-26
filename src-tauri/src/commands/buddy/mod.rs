@@ -883,6 +883,39 @@ pub fn buddy_resolve_session_conflict(
     }
 }
 
+/// **批量**裁决会话冲突：对选中的多条执行同一 action，返回当前账号剩余的待处理冲突。
+///
+/// 走批量命令而不是前端串行调单条：备份目录在每次 `prepare_backup_root` 时会被清空，
+/// 串行调用只会留下最后一条的备份（前面的无法回滚）。
+#[tauri::command]
+pub fn buddy_resolve_session_conflicts(
+    platform: String,
+    conversation_ids: Vec<String>,
+    action: String,
+) -> Result<Vec<session_sync::PendingConflict>, String> {
+    match platform_from_str(&platform)? {
+        BuddyPlatform::CodebuddyCn => {
+            let action = session_transfer::codebuddy::ConflictAction::parse(&action)?;
+            session_transfer::codebuddy::resolve_conflicts_command(&conversation_ids, action)
+        }
+        BuddyPlatform::Workbuddy => Err("WorkBuddy 的会话合并不产生冲突，无需处理".to_string()),
+    }
+}
+
+/// 列出当前账号的**冲突处理结果**（会话明细据此显示「已合并 / 已覆盖 / 已保留」，
+/// 而不是永远停在切换那一刻的初始状态）。
+#[tauri::command]
+pub fn buddy_list_conflict_resolutions(
+    platform: String,
+) -> Result<Vec<session_sync::ConflictResolution>, String> {
+    match platform_from_str(&platform)? {
+        BuddyPlatform::CodebuddyCn => {
+            Ok(session_transfer::codebuddy::list_conflict_resolutions_for_current_account())
+        }
+        BuddyPlatform::Workbuddy => Ok(Vec::new()),
+    }
+}
+
 /// 读取冲突会话某一侧（source / target）的对话内容预览。
 #[tauri::command]
 pub fn buddy_read_conflict_messages(

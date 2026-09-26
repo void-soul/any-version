@@ -4931,6 +4931,14 @@
     "conflictActionKeep": "Keep target",
     "conflictActionKeepTip": "Keep the target version and discard source-side changes",
     "conflictResolved": "Conflict resolved: {{label}}",
+    "conflictBatchResolved": "Resolved {{count}} conflicts in batch ({{action}})",
+    "conflictSelectTip": "Select conflicts to resolve them with the buttons above",
+    "conflictSelectedCount": "{{count}} / {{total}} selected",
+    "conflictResult": {
+      "merge": "merged",
+      "overwrite": "overwritten",
+      "keep": "target kept"
+    },
     "conflictDialogTitle": "{{count}} conflicting sessions need a decision",
     "conflictDialogHint": "Both sides changed; Kira did not overwrite",
     "conflictDialogDesc": "Both sides changed in these sessions. To avoid discarding your edits in the target account, Kira kept the target version and skipped syncing them. Other sessions were synced as planned.",

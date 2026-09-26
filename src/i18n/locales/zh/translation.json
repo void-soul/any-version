@@ -4859,6 +4859,14 @@
     "conflictActionKeep": "保留目标",
     "conflictActionKeepTip": "保留目标账号的版本，放弃来源侧的改动",
     "conflictResolved": "已处理冲突：{{label}}",
+    "conflictBatchResolved": "已批量处理 {{count}} 条冲突（{{action}}）",
+    "conflictSelectTip": "勾选后可用上方按钮批量处理",
+    "conflictSelectedCount": "已选 {{count}} / {{total}}",
+    "conflictResult": {
+      "merge": "已合并",
+      "overwrite": "已覆盖",
+      "keep": "已保留目标"
+    },
     "conflictDialogTitle": "{{count}} 个会话冲突待确认",
     "conflictDialogHint": "两侧都有改动，Kira 没有自动覆盖",
     "conflictDialogDesc": "这些会话在两边都有改动。为避免丢掉你在目标账号里的修改，Kira 保留了目标版本、跳过这一条没同步。其余会话已按计划同步。",

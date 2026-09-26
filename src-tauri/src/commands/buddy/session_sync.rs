@@ -378,6 +378,128 @@ pub(crate) fn save_pending_conflicts(
     }
 }
 
+// ─── 冲突处理结果 ───
+
+/// 一条冲突的**处理结果**。
+///
+/// 没有它，冲突裁决就是「删掉待办」——会话明细里那条永远停在切换那一刻的
+/// 初始状态（conflict / bothChanged），用户看不出自己处理过、也看不出怎么处理的。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictResolution {
+    /// 会话 id（与 `SessionSyncDetail.id` / `PendingConflict.id` 同一主键）
+    pub id: String,
+    /// merge | overwrite | keep
+    pub action: String,
+    /// 处理时间（epoch 毫秒）
+    pub at_ms: i64,
+    /// 后端给的人类可读结果（如「已用来源会话（…）覆盖目标（…）」）
+    pub message: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ConflictResolutionFile {
+    version: u32,
+    resolutions: Vec<ConflictResolution>,
+}
+
+const CONFLICT_RESOLUTIONS_VERSION: u32 = 1;
+/// 结果只保留最近这些条：它是「本次可追溯的记录」，不是无限增长的审计日志。
+const MAX_RESOLUTIONS: usize = 500;
+
+/// 处理结果文件：`{data_dir}/buddy/session-sync/<platform>/<uid>.resolutions.json`。
+pub(crate) fn conflict_resolutions_file(platform_label: &str, target_uid: &str) -> Result<PathBuf, String> {
+    let dir = crate::commands::config::get_data_dir()
+        .join("buddy")
+        .join("session-sync")
+        .join(platform_label);
+    Ok(dir.join(format!("{}.resolutions.json", sanitize_file_component(target_uid)?)))
+}
+
+/// 从**指定文件**读结果（路径参数化，便于测试注入临时目录）。
+fn load_resolutions_from(path: &Path) -> Vec<ConflictResolution> {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    match serde_json::from_str::<ConflictResolutionFile>(&content) {
+        Ok(file) if file.version == CONFLICT_RESOLUTIONS_VERSION => file.resolutions,
+        Ok(_) => {
+            eprintln!(
+                "[Buddy SessionSync] 冲突处理结果文件版本不认识，忽略: {}",
+                path.display()
+            );
+            Vec::new()
+        }
+        Err(error) => {
+            eprintln!(
+                "[Buddy SessionSync] 冲突处理结果解析失败，忽略: path={}, error={}",
+                path.display(),
+                error
+            );
+            Vec::new()
+        }
+    }
+}
+
+pub(crate) fn load_conflict_resolutions(platform_label: &str, target_uid: &str) -> Vec<ConflictResolution> {
+    let Ok(path) = conflict_resolutions_file(platform_label, target_uid) else {
+        return Vec::new();
+    };
+    load_resolutions_from(&path)
+}
+
+/// 追加（按 id 覆盖）处理结果：同一会话重复裁决时以最近一次为准。
+pub(crate) fn append_conflict_resolutions(
+    platform_label: &str,
+    target_uid: &str,
+    entries: &[ConflictResolution],
+) {
+    if entries.is_empty() {
+        return;
+    }
+    let Ok(path) = conflict_resolutions_file(platform_label, target_uid) else {
+        return;
+    };
+    append_conflict_resolutions_at(&path, entries);
+}
+
+/// 追加核心（路径参数化，便于测试）。
+fn append_conflict_resolutions_at(path: &Path, entries: &[ConflictResolution]) {
+    let mut all = load_resolutions_from(path);
+    for entry in entries {
+        all.retain(|r| r.id != entry.id);
+        all.push(entry.clone());
+    }
+    // 只留最近 N 条（按处理时间，旧的先丢）
+    if all.len() > MAX_RESOLUTIONS {
+        all.sort_by(|a, b| b.at_ms.cmp(&a.at_ms));
+        all.truncate(MAX_RESOLUTIONS);
+        all.sort_by(|a, b| a.at_ms.cmp(&b.at_ms));
+    }
+    let payload = ConflictResolutionFile {
+        version: CONFLICT_RESOLUTIONS_VERSION,
+        resolutions: all,
+    };
+    let Ok(serialized) = serde_json::to_string_pretty(&payload) else {
+        return;
+    };
+    if let Err(error) = super::store::write_atomic(&path.to_path_buf(), &serialized) {
+        eprintln!(
+            "[Buddy SessionSync] 冲突处理结果写入失败: path={}, error={}",
+            path.display(),
+            error
+        );
+    }
+}
+
+/// 当前时间（epoch 毫秒）。
+pub(crate) fn now_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 // ─── 指纹 ───
 
 /// 文件指纹：`长度:修改时间(毫秒)`。取不到返回 None。
@@ -566,6 +688,59 @@ mod tests {
         let (summary, _) = tracker.finish();
         assert_eq!(summary.details.len(), MAX_DETAILS);
         assert_eq!(summary.total, MAX_DETAILS + 20);
+    }
+
+    // ─── 冲突处理结果：会话明细要靠它显示「已处理」而不是初始状态 ───
+
+    fn resolution(id: &str, action: &str, at: i64) -> ConflictResolution {
+        ConflictResolution {
+            id: id.to_string(),
+            action: action.to_string(),
+            at_ms: at,
+            message: format!("已处理 {}", id),
+        }
+    }
+
+    #[test]
+    fn resolutions_roundtrip_and_latest_wins() {
+        let dir = make_temp("resolutions");
+        let path = dir.join("uid.resolutions.json");
+
+        append_conflict_resolutions_at(&path, &[resolution("a", "merge", 100), resolution("b", "keep", 110)]);
+        // 同一会话再次裁决 → 以最近一次为准，不重复
+        append_conflict_resolutions_at(&path, &[resolution("a", "overwrite", 200)]);
+
+        let all = load_resolutions_from(&path);
+        assert_eq!(all.len(), 2);
+        let a = all.iter().find(|r| r.id == "a").unwrap();
+        assert_eq!(a.action, "overwrite");
+        assert_eq!(a.at_ms, 200);
+        assert!(all.iter().any(|r| r.id == "b" && r.action == "keep"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolutions_are_capped_to_the_newest() {
+        let dir = make_temp("resolutions-cap");
+        let path = dir.join("uid.resolutions.json");
+        let mut entries = Vec::new();
+        for index in 0..(MAX_RESOLUTIONS + 25) {
+            entries.push(resolution(&format!("id-{}", index), "merge", index as i64));
+        }
+        append_conflict_resolutions_at(&path, &entries);
+        let all = load_resolutions_from(&path);
+        assert_eq!(all.len(), MAX_RESOLUTIONS);
+        // 丢的是最旧的，保留到最新的
+        assert!(all.iter().all(|r| r.id != "id-0"));
+        assert!(all.iter().any(|r| r.id == format!("id-{}", MAX_RESOLUTIONS + 24)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolutions_file_rejects_unsafe_uid() {
+        assert!(conflict_resolutions_file("codebuddy-cn", "../evil").is_err());
+        assert!(conflict_resolutions_file("codebuddy-cn", "a/b").is_err());
+        assert!(conflict_resolutions_file("codebuddy-cn", "384c6dd0-c1bc-4ae2-a0d0-f70350c62f7b").is_ok());
     }
 
     #[test]
