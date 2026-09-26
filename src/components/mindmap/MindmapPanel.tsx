@@ -983,6 +983,25 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     window.setTimeout(() => fitView({ nodes: [{ id }], padding: 0.4, duration: 300, maxZoom: 1.2 }), 60);
   }, [byId, fitView]);
 
+  // 节点树行首箭头：复用画布节点用的同一份 `collapsed` 集合，
+  // 于是树上折叠 / 展开与画布是同一状态，不会出现「树折了画布还展开」。
+  const toggleTreeCollapse = useCallback((id: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  /** 全部展开：清空折叠集合（画布同步展开，因为两者共用同一份状态） */
+  const expandAllTree = useCallback(() => setCollapsed(new Set()), []);
+
+  /** 全部折叠：折叠所有「有子节点」的节点，只留顶层节点（叶子节点折叠无意义） */
+  const collapseAllTree = useCallback(() => {
+    setCollapsed(() => new Set(childrenCount.keys()));
+  }, [childrenCount]);
+
   // 聚焦当前节点：保留当前缩放级别上限，避免单节点定位后突然放大到难以回看全局。
   const focusSelected = useCallback(() => {
     if (!selectedId || !byId.has(selectedId)) return;
@@ -1595,6 +1614,11 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
             <div className="flex items-center gap-1.5 border-b border-white/10 px-2 py-1.5">
               <ListTree className="h-3 w-3 shrink-0 text-slate-500" />
               <span className="min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-wide text-slate-400">{t("mindmap.treeNavTitle")}</span>
+              {/* 全部展开 / 全部折叠：树上折完想一眼恢复时用，避免逐个点箭头 */}
+              <button type="button" className="shrink-0 rounded border border-white/10 px-1 py-px text-[9px] text-slate-500 transition hover:bg-white/10 hover:text-white"
+                onClick={expandAllTree} title={t("mindmap.treeExpandAll")}>{t("mindmap.treeExpandAllShort")}</button>
+              <button type="button" className="shrink-0 rounded border border-white/10 px-1 py-px text-[9px] text-slate-500 transition hover:bg-white/10 hover:text-white"
+                onClick={collapseAllTree} title={t("mindmap.treeCollapseAll")}>{t("mindmap.treeCollapseAllShort")}</button>
               <button type="button" className="rounded p-0.5 text-slate-500 transition hover:bg-white/10 hover:text-white" onClick={() => setTreeOpen(false)} title={t("mindmap.treeNavHide")}>
                 <ChevronRight className="h-3 w-3" />
               </button>
@@ -1606,18 +1630,31 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
                 return (
                   <div key={x.node.id} data-tree-idx={i} role="button" tabIndex={-1}
                     className={`group/row flex w-full items-center gap-1 py-1 pr-1.5 text-left text-[10px] transition hover:bg-white/[0.06] ${on ? "text-white" : "text-slate-400"}`}
-                    style={{ paddingLeft: 8 + x.depth * 12 }}>
+                    style={{ paddingLeft: 2 + x.depth * 12 }}>
+                    {/* 行首折叠箭头：与文件夹树同一套写法（无子节点时给等宽占位，保证缩进对齐） */}
+                    {childrenCount.get(x.node.id) ? (
+                      <button type="button"
+                        className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded text-slate-500 transition hover:bg-white/10 hover:text-white"
+                        onClick={(e) => { e.stopPropagation(); toggleTreeCollapse(x.node.id); }}
+                        title={collapsed.has(x.node.id) ? t("mindmap.expand") : t("mindmap.collapse")}>
+                        {collapsed.has(x.node.id) ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                      </button>
+                    ) : (
+                      <span className="w-3.5 shrink-0" />
+                    )}
                     {/* 主体：点击 = 导航（展开祖先 + 选中 + 视口聚焦） */}
                     <button type="button"
                       className={`flex min-w-0 flex-1 items-center gap-1 text-left ${on ? "text-white" : "text-slate-400"}`}
                       onClick={() => navToNode(x.node.id)}
                       title={x.node.name}>
-                      {x.depth > 0 && <span className="shrink-0 text-slate-700">└</span>}
                       <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: rowColor, boxShadow: on ? `0 0 5px ${rowColor}` : undefined }} />
                       <span className={`min-w-0 flex-1 truncate ${on ? "font-semibold" : ""}`}
                         style={on ? { color: rowColor } : undefined}>{x.node.name}</span>
-                      {collapsed.has(x.node.id) && childrenCount.get(x.node.id) ? (
-                        <span className="shrink-0 rounded bg-slate-800 px-1 text-[8px] text-slate-500">{childrenCount.get(x.node.id)}</span>
+                      {collapsed.has(x.node.id) && descendantCount.get(x.node.id) ? (
+                        <span className="shrink-0 rounded bg-slate-800 px-1 text-[8px] text-slate-500"
+                          title={t("mindmap.collapsedHint", { count: descendantCount.get(x.node.id) ?? 0 })}>
+                          +{descendantCount.get(x.node.id)}
+                        </span>
                       ) : null}
                     </button>
                     {/* 行尾悬浮操作：预览详细内容 / 打开编辑弹框（与日历定位行为一致） */}
