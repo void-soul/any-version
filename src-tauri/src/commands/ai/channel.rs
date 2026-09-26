@@ -724,6 +724,7 @@ pub async fn complete_chat_json(
     user: &str,
     temperature: f32,
     tools_json: &str,
+    tool_id: &str,
 ) -> Result<(serde_json::Value, Option<serde_json::Value>), String> {
     let should_try_tools = !tools_json.trim().is_empty();
     let mut attempt = 0usize; // 0 = 尝试 tools（若启用），1 = 降级纯文本
@@ -737,6 +738,7 @@ pub async fn complete_chat_json(
             user,
             temperature,
             if use_tools { Some(tools_json) } else { None },
+            tool_id,
         )
         .await;
         let outcome = match outcome {
@@ -895,6 +897,9 @@ pub fn parse_json(text: &str) -> Result<serde_json::Value, String> {
 ///
 /// 与流式不同：非流式没有断点续写能力（拿不到部分输出），重试意味着完整重新计费，
 /// 因此收到 5xx/网络错误时不自动重试，由调用方决定（大多数场景一次失败重试一次足够）。
+///
+/// `tool_id`：谁在调用（落进 `ai_usage.tool_id`，取值见 [`usage::tool_ids`]）。
+/// 必填 —— 记账下沉到通道后，漏传就编译不过，不可能再出现「某个 Agent 没被统计」。
 pub async fn complete_chat(
     hooks: &dyn ChannelHooks,
     provider: &AiProvider,
@@ -903,6 +908,7 @@ pub async fn complete_chat(
     user: &str,
     temperature: f32,
     tools_json: Option<&str>,
+    tool_id: &str,
 ) -> Result<CompleteOutcome, String> {
     complete_chat_messages(
         hooks,
@@ -914,6 +920,7 @@ pub async fn complete_chat(
         ],
         temperature,
         tools_json,
+        tool_id,
     )
     .await
 }
@@ -923,7 +930,44 @@ pub async fn complete_chat(
 /// Agent 工具循环需要把 assistant(tool_calls) 与 tool(result) 消息回传给网关继续
 /// 推理，单轮 (system, user) 签名表达不了这种对话形态，故抽出本函数；
 /// 传输韧性（TTFB 超时 / send 重试 / 空响应与限流处理）与单轮版完全一致。
+///
+/// **所有直连调用的收口点**：拿到 usage 后由这里统一落库（含耗时），
+/// 调用方不必、也不应再自己记一笔 —— 记在自己那边迟早会漏（收藏 Agent、
+/// 安装助手 Agent 都漏过）。`tool_id` 取值见 [`usage::tool_ids`]。
 pub async fn complete_chat_messages(
+    hooks: &dyn ChannelHooks,
+    provider: &AiProvider,
+    model: &str,
+    messages: &[serde_json::Value],
+    temperature: f32,
+    tools_json: Option<&str>,
+    tool_id: &str,
+) -> Result<CompleteOutcome, String> {
+    let started = std::time::Instant::now();
+    let outcome = complete_chat_messages_inner(
+        hooks,
+        provider,
+        model,
+        messages,
+        temperature,
+        tools_json,
+    )
+    .await?;
+    // 统一记账：直连也测得出耗时，记上后这些记录才参与 t/s 与成功率聚合
+    if let Some(u) = &outcome.usage {
+        crate::commands::ai::usage::log_usage_from_json_timed(
+            tool_id,
+            model,
+            Some(&provider.id),
+            u,
+            started.elapsed().as_millis() as u64,
+        );
+    }
+    Ok(outcome)
+}
+
+/// [`complete_chat_messages`] 的传输实现（不含记账）。
+async fn complete_chat_messages_inner(
     hooks: &dyn ChannelHooks,
     provider: &AiProvider,
     model: &str,

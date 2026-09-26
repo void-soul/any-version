@@ -231,6 +231,7 @@ async fn call_ai_json_for_explorer(
         user,
         0.3,
         ai::channel::EXPLORER_TOOL_SPEC,
+        ai::usage::tool_ids::MINDMAP,
     )
     .await;
     let (json, usage) = match outcome {
@@ -705,8 +706,8 @@ fn record_and_emit_usage(app: &Option<tauri::AppHandle>, acc: &UsageAcc, model: 
         acc.input.fetch_add(prompt_tokens, Ordering::Relaxed);
         acc.output.fetch_add(completion_tokens, Ordering::Relaxed);
         acc.total.fetch_add(total_tokens, Ordering::Relaxed);
-        // 全局用量统计（AI 模块用量面板）：按供应商归属；落库失败不阻断导入流程
-        let _ = ai::usage::log_usage_db("mindmap", model, Some(provider_id), prompt_tokens, completion_tokens);
+        // 全局用量统计不再在这里落库：已下沉到 ai::channel（调用必传 tool_id，
+        // 统一记账），这里只管本模块的进度事件与文档级累计。
         emit_progress(app, "usage", serde_json::json!({
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
@@ -2026,7 +2027,9 @@ async fn agent_run(
     let max_rounds = super::settings::load_explorer_settings().agent_rounds as usize;
     for round in 0..max_rounds {
         cancel_err(app, cancel)?;
-        let outcome = ai::channel::complete_chat_messages(&hooks, provider, model, messages, 0.4, Some(AGENT_TOOLS_SPEC))
+        let outcome = ai::channel::complete_chat_messages(
+            &hooks, provider, model, messages, 0.4, Some(AGENT_TOOLS_SPEC), ai::usage::tool_ids::MINDMAP,
+        )
             .await
             .map_err(|e| {
                 if e.contains("tool") && e.contains("400") {

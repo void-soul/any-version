@@ -147,6 +147,7 @@ pub async fn install_agent_chat(
             &messages,
             0.2,
             Some(INSTALL_AGENT_TOOLS),
+            crate::commands::ai::usage::tool_ids::INSTALL_AGENT,
         )
         .await?;
 
@@ -231,6 +232,7 @@ pub async fn install_agent_chat(
         &messages,
         0.2,
         None,
+        crate::commands::ai::usage::tool_ids::INSTALL_AGENT,
     )
     .await?;
     let answer = if final_outcome.text.trim().is_empty() {

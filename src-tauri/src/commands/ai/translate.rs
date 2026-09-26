@@ -369,8 +369,17 @@ pub async fn translate_text(
 
     // 共享 AI 请求通道（ai/channel.rs）：TTFB 超时 + send 重试提供连接韧性；
     // 非流式调用无断点续写能力，失败时在错误上补齐供应商上下文便于定位。
-    let outcome = channel::complete_chat(&channel::NoHooks, &provider, &model, &system_prompt, &text, 0.3, None)
-        .await
+    let outcome = channel::complete_chat(
+        &channel::NoHooks,
+        &provider,
+        &model,
+        &system_prompt,
+        &text,
+        0.3,
+        None,
+        crate::commands::ai::usage::tool_ids::TRANSLATE,
+    )
+    .await
         .map_err(|e| {
             format!(
                 "{}（供应商: {}，模型: {}，地址: {}）",
@@ -381,12 +390,7 @@ pub async fn translate_text(
             )
         })?;
     let content = outcome.text;
-
-    // 用量统计：翻译不经代理，直连共享通道；这里把 usage 归入 AI 模块的用量面板
-    //（tool_id=translate），保证 AI 模块的用量统计完整覆盖所有 AI 调用方。
-    if let Some(u) = &outcome.usage {
-        crate::commands::ai::usage::log_usage_from_json("translate", &model, Some(&provider.id), u);
-    }
+    // 用量已由 ai::channel 统一记账（tool_id=translate），这里不再重复落库
 
     // 记录翻译历史（面板 / 悬浮窗共用），并通知前端刷新
     let ts = std::time::SystemTime::now()

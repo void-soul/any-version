@@ -212,14 +212,11 @@ pub async fn api_import_with_ai(
         &prompt,
         0.2,
         None,
+        crate::commands::ai::usage::tool_ids::API_IMPORT,
     )
     .await?;
     let content = outcome.text;
-
-    // 用量统计：直连共享通道不经代理，把 usage 归入 AI 模块用量面板（tool_id=api-import）
-    if let Some(u) = &outcome.usage {
-        crate::commands::ai::usage::log_usage_from_json("api-import", &model, Some(&provider.id), u);
-    }
+    // 用量已由 ai::channel 统一记账（tool_id=api-import），这里不再重复落库
 
     // 5. 提取 JSON 并导入
     let json = extract_json(&content)?;

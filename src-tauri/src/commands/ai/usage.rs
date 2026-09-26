@@ -319,6 +319,18 @@ pub fn log_usage_db(
 /// 供不经代理、直连共享 AI 通道（ai/channel.rs）的调用方使用：翻译、思维导图、API 智能导入等。
 /// usage 缺失或 token 全为 0 时不记录（与代理侧「有用量才落库」的口径一致）。
 pub fn log_usage_from_json(tool_id: &str, model: &str, provider_id: Option<&str>, usage: &serde_json::Value) {
+    log_usage_from_json_timed(tool_id, model, provider_id, usage, 0);
+}
+
+/// 同上，额外带上耗时 —— 直连调用**测得出耗时**，记上后这些记录才参与 t/s 聚合
+/// （`duration_ms = 0` 的记录按「未测量」处理，不进速度统计，见 [`output_tps`]）。
+pub fn log_usage_from_json_timed(
+    tool_id: &str,
+    model: &str,
+    provider_id: Option<&str>,
+    usage: &serde_json::Value,
+    duration_ms: u64,
+) {
     let in_t = usage
         .get("prompt_tokens")
         .or_else(|| usage.get("input_tokens"))
@@ -335,10 +347,30 @@ pub fn log_usage_from_json(tool_id: &str, model: &str, provider_id: Option<&str>
     }
     let entry = UsageEntry::success(tool_id, model, provider_id)
         .tokens(in_t, out_t)
-        .cache(cache_read, cache_write);
+        .cache(cache_read, cache_write)
+        .timing(duration_ms, 0);
     if let Err(e) = log_usage_entry(&entry) {
         eprintln!("[ai-usage] 记录用量失败 (tool_id={}): {}", tool_id, e);
     }
+}
+
+/// `ai_usage.tool_id` 的权威取值。
+///
+/// 记账已下沉到 `ai::channel`（调用必传 tool_id），这里集中定义避免各写各的拼错 ——
+/// 新增 AI 调用方时先在这里加一个常量。
+pub mod tool_ids {
+    /// 思维导图（AI 导入 / 右栏 Agent / 节点重析…）
+    pub const MINDMAP: &str = "mindmap";
+    /// 收藏模块（AI 归类 + 检索 Agent）
+    pub const FAVORITES: &str = "favorites";
+    /// 翻译
+    pub const TRANSLATE: &str = "translate";
+    /// API 模块智能导入
+    pub const API_IMPORT: &str = "api-import";
+    /// AI 工具安装助手 Agent
+    pub const INSTALL_AGENT: &str = "install-agent";
+    /// 其它 / 未归类（尽量别用：看不出是谁花的）
+    pub const OTHER: &str = "other";
 }
 
 /// 从数据库聚合查询用量摘要
@@ -523,7 +555,10 @@ pub fn clear_usage() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{cache_hit_rate, cache_tokens_from_json, output_tps, success_rate};
+    use super::{
+        cache_hit_rate, cache_tokens_from_json, log_usage_from_json_timed, output_tps, success_rate,
+        tool_ids,
+    };
 
     #[test]
     fn output_tps_uses_generation_window() {
@@ -575,5 +610,40 @@ mod tests {
         // 未上报缓存的供应商 → 全 0，不参与命中率
         let plain = serde_json::json!({ "prompt_tokens": 900, "completion_tokens": 10 });
         assert_eq!(cache_tokens_from_json(&plain), (0, 0));
+    }
+
+    /// tool_id 是「谁花的钱」的唯一标识：复制粘贴写重了，两块功能的消耗会混进同一行。
+    #[test]
+    fn tool_ids_are_distinct_and_non_empty() {
+        let all = [
+            tool_ids::MINDMAP,
+            tool_ids::FAVORITES,
+            tool_ids::TRANSLATE,
+            tool_ids::API_IMPORT,
+            tool_ids::INSTALL_AGENT,
+            tool_ids::OTHER,
+        ];
+        for id in all {
+            assert!(!id.trim().is_empty());
+            assert_eq!(id, id.trim(), "tool_id 不该带空白: {}", id);
+        }
+        let mut seen = std::collections::HashSet::new();
+        for id in all {
+            assert!(seen.insert(id), "tool_id 重复: {}", id);
+        }
+    }
+
+    /// 空 usage（没上报 token）不该落库——否则用量面板会多出一堆 0 token 的记录，
+    /// 把成功率分母搅乱。这里顺带保证它**不碰数据库**（提前 return）。
+    #[test]
+    fn timed_usage_log_skips_empty_usage() {
+        // usage 全 0 → 内部提前返回，不会打开数据库（测试环境也没必要连库）
+        log_usage_from_json_timed(
+            tool_ids::MINDMAP,
+            "m",
+            Some("p"),
+            &serde_json::json!({ "prompt_tokens": 0, "completion_tokens": 0 }),
+            1234,
+        );
     }
 }

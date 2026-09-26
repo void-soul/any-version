@@ -432,6 +432,7 @@ async fn classify_inner(
             &prompt,
             0.3,
             None,
+            crate::commands::ai::usage::tool_ids::FAVORITES,
         )
         .await
         .map_err(|e| format!("{}（供应商: {}，模型: {}）", e, provider.name, model))?;
@@ -456,14 +457,7 @@ async fn classify_inner(
             },
         );
 
-        if let Some(usage) = &outcome.usage {
-            crate::commands::ai::usage::log_usage_from_json(
-                "favorites",
-                &model,
-                Some(&provider.id),
-                usage,
-            );
-        }
+        // 用量已由 ai::channel 统一记账（tool_id=favorites），这里不再重复落库
     }
 
     result.remaining = db::with_conn(|conn| db::select_unclassified(conn, 1_000_000))?.len();
