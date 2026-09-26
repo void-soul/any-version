@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import type { ModelEntry, AiProvider, AiConfig, ModelCustomParam, UpstreamHeader } from "./types";
 import { filterProviders } from "./providerSearch";
+import { theamedAlert } from "../shared/ThemedAlert";
 
 type Preset = {
   id: string; name: string; category: string;
@@ -183,7 +184,7 @@ export default function ModelConfig() {
         await saveConfig({ ...config, default_project_path: selected as string });
       }
     } catch {
-      alert(t("settings.folderPickerUnavailable"));
+      theamedAlert(t("settings.folderPickerUnavailable"));
     }
   };
 

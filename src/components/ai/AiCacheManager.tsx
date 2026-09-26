@@ -12,6 +12,7 @@ import {
   CheckCircle,
 } from "lucide-react";
 import type { DetectedAiTool, AiToolCacheInfo } from "./types";
+import { alertError, theamedAlert } from "../shared/ThemedAlert";
 
 export default function AiCacheManager() {
   const { t } = useTranslation();
@@ -53,11 +54,11 @@ export default function AiCacheManager() {
       if (!selected) return;
       const targetPath = selected as string;
       if (targetPath.toLowerCase().startsWith("c:")) {
-        alert(t("aicache.nonCDir"));
+        theamedAlert(t("aicache.nonCDir"));
         return;
       }
       if (normalizePath(targetPath) === normalizePath(fullPath)) {
-        alert(t("aicache.samePath"));
+        theamedAlert(t("aicache.samePath"));
         return;
       }
       const key = `${toolId}:${dirName}`;
@@ -81,7 +82,7 @@ export default function AiCacheManager() {
     } catch (e: any) {
       setMigrating(null);
       setMigrateProgress(null);
-      alert(t("aicache.migrateFail", { err: String(e) }));
+      alertError(t("aicache.migrateFail", { err: String(e) }));
     }
   };
 

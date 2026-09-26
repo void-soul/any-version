@@ -58,6 +58,7 @@ import type {
   LastLaunchConfig,
   CollabAgentStatus,
 } from "./types";
+import { alertError, theamedAlert } from "../shared/ThemedAlert";
 
 const DYNAMIC_COLOR_PALETTE = [
   "bg-orange-500", "bg-emerald-500", "bg-violet-500",
@@ -619,7 +620,7 @@ export default function CollabRoom() {
 
   const createRoom = async () => {
     if (!newProject.trim()) {
-      alert(t("collab.needProjectDir"));
+      theamedAlert(t("collab.needProjectDir"));
       return;
     }
     const room = await invoke<CollabRoomT>("collab_create_room", {
@@ -786,7 +787,7 @@ export default function CollabRoom() {
     if (busy || compacting) return;
     if (!content.trim() && references.length === 0 && files.length === 0) return;
     if (!selectedTool) {
-      alert(t("collab.needToolFirst"));
+      theamedAlert(t("collab.needToolFirst"));
       return;
     }
     setBusy(true);
@@ -817,7 +818,7 @@ export default function CollabRoom() {
       setReferences([]);
       setFiles([]);
     } catch (e: unknown) {
-      alert(t("collab.sendFail", { err: String(e) }));
+      alertError(t("collab.sendFail", { err: String(e) }));
       setBusy(false);
     }
   };
@@ -861,7 +862,7 @@ export default function CollabRoom() {
         setHasSnapshot(true);
       }
     } catch (e: unknown) {
-      alert(t("collab.compactFail", { err: String(e) }));
+      alertError(t("collab.compactFail", { err: String(e) }));
     } finally {
       setCompacting(false);
     }

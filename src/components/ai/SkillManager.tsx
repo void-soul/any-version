@@ -10,6 +10,7 @@ import {
   ChevronDown, Settings2, Filter, Link2, Unlink
 } from 'lucide-react';
 import { DetectedAiTool } from './types';
+import { alertError } from "../shared/ThemedAlert";
 
 // ─── 类型 ───
 interface SkillEntry {
@@ -271,7 +272,7 @@ export default function SkillManager() {
       setEditing(null);
       loadSkills();
     } catch (e: any) {
-      alert(t("skillmgr.saveFail", { err: String(e) }));
+      alertError(t("skillmgr.saveFail", { err: String(e) }));
     }
     setSavingMeta(false);
   };

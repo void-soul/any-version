@@ -48,6 +48,7 @@ import type {
   ModelEntry,
   ToolOpResult,
 } from "./types";
+import { alertError } from "../shared/ThemedAlert";
 
 const PROTOCOL_LABELS: Record<string, string> = {
   anthropic: "Anthropic",
@@ -700,7 +701,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
       setMigratingCache(`${toolId}:${dirName}`);
       await invoke("migrate_ai_tool_cache", { toolId, dirName, newPath: selected as string });
       await loadCacheInfos();
-    } catch (e: any) { alert(t("toollaunch.migrateFail", { err: String(e) })); }
+    } catch (e: any) { alertError(t("toollaunch.migrateFail", { err: String(e) })); }
     finally { setMigratingCache(null); }
   };
 
@@ -710,7 +711,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
     try {
       await invoke("clean_ai_tool_cache", { toolId, dirName });
       await loadCacheInfos();
-    } catch (e: any) { alert(t("toollaunch.clearFail", { err: String(e) })); }
+    } catch (e: any) { alertError(t("toollaunch.clearFail", { err: String(e) })); }
     finally { setCleaningCache(null); }
   };
 

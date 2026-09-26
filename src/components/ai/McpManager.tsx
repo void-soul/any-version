@@ -13,6 +13,7 @@ import {
   X,
   Search,
 } from "lucide-react";
+import { alertError, theamedAlert } from "../shared/ThemedAlert";
 
 interface McpServer {
   id: string;
@@ -188,11 +189,11 @@ export default function McpManager() {
   };
 
   const handleSave = async () => {
-    if (!fName.trim()) { alert(t("mcp.needName")); return; }
+    if (!fName.trim()) { theamedAlert(t("mcp.needName")); return; }
     if (fTransport === "stdio") {
-      if (!fCommand.trim()) { alert(t("mcp.needCommand")); return; }
+      if (!fCommand.trim()) { theamedAlert(t("mcp.needCommand")); return; }
     } else if (!fUrl.trim()) {
-      alert(t("mcp.needUrl")); return;
+      theamedAlert(t("mcp.needUrl")); return;
     }
     const payload: McpServer = {
       id: editingId ?? "",
@@ -218,7 +219,7 @@ export default function McpManager() {
       resetForm();
       await load();
     } catch (e: any) {
-      alert(t("mcp.saveFail", { err: String(e) }));
+      alertError(t("mcp.saveFail", { err: String(e) }));
     } finally {
       setSaving(false);
     }
@@ -229,14 +230,14 @@ export default function McpManager() {
     try {
       await invoke("delete_mcp_server", { id });
       await load();
-    } catch (e: any) { alert(t("mcp.deleteFail", { err: String(e) })); }
+    } catch (e: any) { alertError(t("mcp.deleteFail", { err: String(e) })); }
   };
 
   const handleAdopt = async (d: DiscoveredMcp) => {
     try {
       await invoke("adopt_mcp_server", { toolId: d.toolId, name: d.name });
       await load();
-    } catch (e: any) { alert(t("mcp.adoptFail", { err: String(e) })); }
+    } catch (e: any) { alertError(t("mcp.adoptFail", { err: String(e) })); }
   };
 
   const handleToggle = async (id: string, toolId: string, current: boolean) => {
@@ -245,7 +246,7 @@ export default function McpManager() {
     try {
       await invoke("toggle_mcp_tool", { id, toolId, enabled: !current });
       await load();
-    } catch (e: any) { alert(t("mcp.opFail", { err: String(e) })); }
+    } catch (e: any) { alertError(t("mcp.opFail", { err: String(e) })); }
     finally { setTogglingMap((p) => ({ ...p, [key]: false })); }
   };
 
