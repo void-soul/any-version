@@ -19,6 +19,16 @@ fn emit_progress(app: &Option<tauri::AppHandle>, step: &str, extra: serde_json::
     }
 }
 
+/// 截断长文本用于事件回传（思考/工具参数可能很长，别把事件缓冲撑爆）。
+fn truncate_for_log(text: &str, max_chars: usize) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= max_chars {
+        return text.to_string();
+    }
+    let head: String = chars[..max_chars].iter().collect();
+    format!("{}…（已截断，共 {} 字）", head, chars.len())
+}
+
 // ─── AI 运行取消（类似 IDE 中断构建） ───
 
 /// 取消时返回的标准错误文本（前端据此识别为「用户主动取消」而非失败）。
@@ -1598,7 +1608,8 @@ fn agent_prompt(doc_name: &str) -> String {
 6. 用户用 @ 引用的文件会以「用户引用的文件内容」附在消息里。要求分析某个文件的业务逻辑时：先通读给出的内容，再按「入口/流程/分支/关键数据/边界与异常」组织成节点落到图上，并用 add_child_nodes / add_subtree 的 sources 把被分析的文件锚到相关节点（项目相对路径或绝对路径均可）。
 7. 把一份**带层级编号的文本**（「一、」「（一）」「1.」「1.1」「①」等）转成导图时：严格按原文层级**展开到最深一层**，不要合并、不要省略任何一级；`name` 只放标题，条目下的说明性正文放进 `detail`（不要把整段说明塞进 name，名称过长会毁掉画布可读性）。
 8. 目标节点有歧义时（get_document_overview 里出现多个同名节点，例如有好几个「扩展」）：优先用**用户当前选中的节点**；没有选中节点就先问用户是哪一个，不要猜。
-9. 全程用中文，简洁，可用 Markdown。"#
+9. 全程用中文，简洁，可用 Markdown。
+10. **每次调用工具前，先在你自己的回复里用一到两句话说明「接下来要做什么、为什么」**（这段会原样展示给用户的「思考过程」面板）。不要只发工具调用不说话，也不要把行动计划憋到最后一次性说完。"#
         , name = doc_name)
 }
 
@@ -2055,6 +2066,24 @@ async fn agent_run(
             let _ = super::db::agent_append_message(session_id, "assistant", &reply, "[]");
             return Ok(AgentTurn { reply, rounds: round + 1 });
         }
+        // 「思考过程」外显：模型在发起工具调用前写在 content 里的想法，以及
+        // 支持 reasoning 的模型给出的 reasoning_content。以前两者都被直接丢掉，
+        // 用户只看到工具结果，看不到 Agent 是怎么想的。
+        let thought = message
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if !thought.is_empty() {
+            emit_progress(app, "agentThought", serde_json::json!({ "round": round + 1, "text": truncate_for_log(&thought, 800) }));
+        }
+        if let Some(reasoning) = outcome.reasoning.as_deref() {
+            let reasoning = reasoning.trim();
+            if !reasoning.is_empty() {
+                emit_progress(app, "agentReasoning", serde_json::json!({ "round": round + 1, "text": truncate_for_log(reasoning, 1200) }));
+            }
+        }
         // assistant(tool_calls) 原样回传（OpenAI 协议要求带上它才能接 tool 消息）
         messages.push(message.clone());
         let mut tool_results: Vec<serde_json::Value> = Vec::new();
@@ -2074,6 +2103,17 @@ async fn agent_run(
                 Some(v @ serde_json::Value::Object(_)) => v,
                 _ => serde_json::json!({}),
             };
+            // 工具调用外显：读工具（查大纲/找节点）以前一个事件都不发，用户只看到
+            // 「AI 在想…」却不知道它翻了什么；现在连同参数一起回传。
+            emit_progress(
+                app,
+                "agentTool",
+                serde_json::json!({
+                    "round": round + 1,
+                    "tool": name,
+                    "args": truncate_for_log(&args.to_string(), 400),
+                }),
+            );
             let result: serde_json::Value = match name.as_str() {
                 "get_document_overview" => agent_tool_overview(full),
                 "get_subtree" => agent_tool_subtree(full, args.get("rootId").and_then(|v| v.as_str()).unwrap_or_else(|| args.get("root_id").and_then(|v| v.as_str()).unwrap_or(""))),
@@ -2200,6 +2240,38 @@ pub fn mm_agent_get_session(document_id: String) -> Result<String, String> {
 #[tauri::command]
 pub fn mm_agent_list_messages(session_id: String) -> Result<Vec<AgentMessageRow>, String> {
     super::db::agent_list_messages(&session_id)
+}
+
+/// 列出文档的 Agent 会话（一个文档可有多个；最近使用在前）。
+#[tauri::command]
+pub fn mm_agent_list_sessions(document_id: String) -> Result<Vec<AgentSessionRow>, String> {
+    super::db::agent_list_sessions(&document_id)
+}
+
+/// 新建会话：同一文档开一条新的独立历史（不再复用「文档唯一会话」）。
+#[tauri::command]
+pub fn mm_agent_new_session(document_id: String) -> Result<String, String> {
+    super::db::agent_create_session(&document_id, "")
+}
+
+/// 删除会话（连带消息；不影响该文档的其它会话与画布内容）。
+#[tauri::command]
+pub fn mm_agent_delete_session(session_id: String) -> Result<(), String> {
+    super::db::agent_delete_session(&session_id)
+}
+
+/// 重命名会话（空标题 = 取消标题，回退展示首条用户消息）。
+#[tauri::command]
+pub fn mm_agent_rename_session(session_id: String, title: String) -> Result<(), String> {
+    super::db::agent_rename_session(&session_id, &title)
+}
+
+/// 分叉会话：复制截至 message_id（空 = 全部）的历史到新会话，原会话保持不变。
+///
+/// 只复制「上下文」，不重放写图操作——画布改动已在图上，分叉只改变后续对话能看到的历史。
+#[tauri::command]
+pub fn mm_agent_fork_session(session_id: String, message_id: String) -> Result<String, String> {
+    super::db::agent_fork_session(&session_id, &message_id)
 }
 
 #[cfg(test)]

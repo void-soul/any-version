@@ -19,7 +19,7 @@ import {
   ArrowLeft, ArrowRight, ArrowUp, ArrowDown,
 } from "lucide-react";
 import type { AiConfig } from "../ai/types";
-import { AiImportResult, DocumentFull, MindmapDocument, MindmapFolder, MindmapLink, MindmapNode, MindmapSticker, PositionInput, kindColor, mmApi } from "./types";
+import { AgentSessionRow, AiImportResult, DocumentFull, MindmapDocument, MindmapFolder, MindmapLink, MindmapNode, MindmapSticker, PositionInput, kindColor, mmApi } from "./types";
 import { isLayoutDir, layoutTree, type LayoutDir } from "./layout";
 import { moduleAccent } from "../../utils/theme";
 import { VEX_CYBER_CYAN } from "../../utils/brand";
@@ -1905,8 +1905,33 @@ export default function MindmapPanel() {
   // 右栏 AI 对话面板宽度（与左栏把手同一套拖拽逻辑，方向相反）
   const [aiPanelW, setAiPanelW] = usePaneWidth("ai");
   // Agent 的写操作全部直接应用（不再有待确认清单）：回退走 Ctrl+Z 撤销快照
-  // 当前文档的 Agent 会话 id（按文档持久化，后端 mm_agent_get_session 保证存在）
+  // 当前文档的 Agent 会话（一个文档可有多个会话，各自独立历史）
+  // ref 供异步回调读取最新值，state 供 UI 渲染
   const agentSessionRef = useRef<string | null>(null);
+  const [agentSessionId, setAgentSessionId] = useState<string>("");
+  const [agentSessions, setAgentSessions] = useState<AgentSessionRow[]>([]);
+  /** 同时更新 ref 与 state（runAgentChat 等异步回调读 ref，UI 读 state） */
+  const useAgentSession = useCallback((id: string) => {
+    agentSessionRef.current = id || null;
+    setAgentSessionId(id);
+  }, []);
+
+  /** 回放某会话的历史（带落库 id：用于「从这条分叉」定位分叉点） */
+  const replaySession = useCallback(async (sid: string) => {
+    const msgs = await mmApi.agentListMessages(sid);
+    clearAgentMessages();
+    for (const m of msgs) {
+      if (m.content.trim()) pushAgentMessage(m.role === "user" ? "user" : "agent", m.content, m.id);
+    }
+  }, []);
+
+  /** 重新拉取会话列表（新建/删除/重命名/分叉后刷新）；pick 非空时顺带切换当前会话 */
+  const refreshSessions = useCallback(async (docId: string, pick?: string) => {
+    const list = await mmApi.agentListSessions(docId);
+    setAgentSessions(list);
+    if (pick) useAgentSession(pick);
+    return list;
+  }, [useAgentSession]);
   // 绑定目录下的文件清单（@ 引用候选）
   const [projectFiles, setProjectFiles] = useState<string[]>([]);
   // 本轮对话 @ 引用的文件：模型生成的节点若没带 sources，用它兜底锚定
@@ -2492,6 +2517,8 @@ export default function MindmapPanel() {
     if (!docId || !providerId || !modelId) return;
     const runId = crypto.randomUUID ? crypto.randomUUID() : `agent-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     aiRunIdRef.current = runId;
+    // 新一轮：清空进度缓冲，思考过程/工具轨迹从零开始（跑完后仍留在面板里可回看）
+    mmAiProgressBuffer.clear();
     setAiLoading(true); setError("");
     try {
       // @ 引用的文件：去重、封顶 8 个，后端读取内容进上下文
@@ -2501,12 +2528,14 @@ export default function MindmapPanel() {
         documentId: docId, sessionId: agentSessionRef.current ?? "", message: instruction,
         selectedNodeIds: [], attachedFiles: atRefs, providerId, modelId, runId,
       });
-      agentSessionRef.current = r.sessionId;
-      pushAgentMessage("agent", r.reply);
+      if (r.sessionId !== agentSessionRef.current) useAgentSession(r.sessionId);
+      // 落库后重新回放：让每条消息带上落库 id（「从这条分叉」要用），同时刷新会话列表排序
+      await replaySession(r.sessionId);
+      void refreshSessions(docId).catch(() => undefined);
     } catch (e) {
       pushAgentMessage("agent", `${t("agent.runFailed")}：${String(e)}`);
     } finally { aiRunIdRef.current = null; setAiLoading(false); }
-  }, [full?.document.id, providerId, modelId, t]);
+  }, [full?.document.id, providerId, modelId, t, useAgentSession, replaySession, refreshSessions]);
 
   // chat 模式绑定项目目录（一个导图至多绑定一个，重复绑定即替换）
   const pickAndBindDir = useCallback(async () => {
@@ -2532,25 +2561,95 @@ export default function MindmapPanel() {
     return () => { alive = false; };
   }, [aiMode, full?.document.id, full?.document.projectDir]);
 
-  // 打开右栏（或切换文档）时载入该文档的 Agent 会话历史（按文档持久化）
+  // 打开右栏（或切换文档）时载入该文档的 Agent 会话：没有会话则建一条，默认选最近用过的
   useEffect(() => {
     if (!showAi || !full?.document.id) return;
     let alive = true;
     void (async () => {
       try {
-        const sid = await mmApi.agentGetSession(full.document.id);
+        let list = await mmApi.agentListSessions(full.document.id);
         if (!alive) return;
-        agentSessionRef.current = sid;
-        const msgs = await mmApi.agentListMessages(sid);
-        if (!alive) return;
-        clearAgentMessages();
-        for (const m of msgs) {
-          if (m.content.trim()) pushAgentMessage(m.role === "user" ? "user" : "agent", m.content);
+        if (list.length === 0) {
+          const sid = await mmApi.agentNewSession(full.document.id);
+          if (!alive) return;
+          list = await mmApi.agentListSessions(full.document.id);
+          if (!alive) return;
+          setAgentSessions(list);
+          useAgentSession(sid);
+          clearAgentMessages();
+          return;
         }
+        setAgentSessions(list);
+        const sid = agentSessionRef.current && list.some((s) => s.id === agentSessionRef.current)
+          ? (agentSessionRef.current as string)
+          : list[0].id;
+        useAgentSession(sid);
+        if (alive) await replaySession(sid);
       } catch { /* 会话载入失败不阻断对话 */ }
     })();
     return () => { alive = false; };
-  }, [showAi, full?.document.id]);
+  }, [showAi, full?.document.id, useAgentSession, replaySession]);
+
+  // ─── 会话操作：切换 / 新建 / 重命名 / 删除 / 分叉 ───
+
+  const selectAgentSession = useCallback(async (sid: string) => {
+    if (!sid || sid === agentSessionRef.current) return;
+    useAgentSession(sid);
+    try { await replaySession(sid); } catch { /* 回放失败不阻断切换 */ }
+  }, [useAgentSession, replaySession]);
+
+  const newAgentSession = useCallback(async () => {
+    const docId = full?.document.id;
+    if (!docId) return;
+    try {
+      const sid = await mmApi.agentNewSession(docId);
+      await refreshSessions(docId, sid);
+      clearAgentMessages();
+      aiHasRunRef.current = false;
+      setLastAiResult(null);
+      setError("");
+    } catch (e) { setError(String(e)); }
+  }, [full?.document.id, refreshSessions]);
+
+  const renameAgentSession = useCallback(async (sid: string, title: string) => {
+    const docId = full?.document.id;
+    if (!docId || !sid) return;
+    try {
+      await mmApi.agentRenameSession(sid, title);
+      await refreshSessions(docId);
+    } catch (e) { setError(String(e)); }
+  }, [full?.document.id, refreshSessions]);
+
+  const deleteAgentSession = useCallback(async (sid: string) => {
+    const docId = full?.document.id;
+    if (!docId || !sid) return;
+    try {
+      await mmApi.agentDeleteSession(sid);
+      const list = await refreshSessions(docId);
+      // 删掉当前会话后自动切到剩下的最近一条（没有就建一条）
+      if (list.length > 0) {
+        useAgentSession(list[0].id);
+        await replaySession(list[0].id);
+      } else {
+        const nid = await mmApi.agentNewSession(docId);
+        await refreshSessions(docId, nid);
+        clearAgentMessages();
+      }
+    } catch (e) { setError(String(e)); }
+  }, [full?.document.id, refreshSessions, useAgentSession, replaySession]);
+
+  /** 从某条消息分叉：复制该条及之前的历史到新会话并切过去（原会话原样保留） */
+  const forkAgentSession = useCallback(async (messageId: string) => {
+    const docId = full?.document.id;
+    const sid = agentSessionRef.current;
+    if (!docId || !sid) return;
+    try {
+      const nid = await mmApi.agentForkSession(sid, messageId || "");
+      await refreshSessions(docId, nid);
+      await replaySession(nid);
+      flash(t("mindmap.agentForked"));
+    } catch (e) { setError(String(e)); }
+  }, [full?.document.id, refreshSessions, replaySession, flash, t]);
 
   // AI 弹框关闭：任务进行中先询问（确认后停止任务），空闲则直接关。
   // 只有右上角 ✕ / footer 按钮会走到这里；弹框本身无 Esc/遮罩关闭。
@@ -2787,7 +2886,13 @@ export default function MindmapPanel() {
                   result={lastAiResult}
                   runError={error}
                   onShowReport={() => { if (lastAiResult) setAiReport(lastAiResult); }}
-                  onNewSession={() => { aiHasRunRef.current = false; setLastAiResult(null); setError(""); }}
+                  onNewSession={() => void newAgentSession()}
+                  sessions={agentSessions}
+                  sessionId={agentSessionId}
+                  onSelectSession={(id) => void selectAgentSession(id)}
+                  onRenameSession={(id, title) => void renameAgentSession(id, title)}
+                  onDeleteSession={(id) => void deleteAgentSession(id)}
+                  onForkSession={(messageId) => void forkAgentSession(messageId)}
                   projectRoot={aiMode === "project" ? projectPath : null}
                   projectDir={full?.document.projectDir ?? null}
                   projectFiles={projectFiles}

@@ -308,6 +308,12 @@ export const mmApi = {
   agentChat: (i: AgentChatInput) => invoke<AgentChatResult>("mm_agent_chat", { input: i }),
   agentGetSession: (documentId: string) => invoke<string>("mm_agent_get_session", { documentId }),
   agentListMessages: (sessionId: string) => invoke<AgentMessageRow[]>("mm_agent_list_messages", { sessionId }),
+  agentListSessions: (documentId: string) => invoke<AgentSessionRow[]>("mm_agent_list_sessions", { documentId }),
+  agentNewSession: (documentId: string) => invoke<string>("mm_agent_new_session", { documentId }),
+  agentDeleteSession: (sessionId: string) => invoke<void>("mm_agent_delete_session", { sessionId }),
+  agentRenameSession: (sessionId: string, title: string) => invoke<void>("mm_agent_rename_session", { sessionId, title }),
+  /** 分叉：复制截至 messageId（空串 = 全部）的历史到新会话，返回新会话 id */
+  agentForkSession: (sessionId: string, messageId: string) => invoke<string>("mm_agent_fork_session", { sessionId, messageId }),
   bindDocumentDir: (documentId: string, dir: string | null) => invoke<void>("mm_bind_document_dir", { documentId, dir }),
   listProjectFiles: (documentId: string) => invoke<string[]>("mm_list_project_files", { documentId }),
 };
@@ -356,6 +362,21 @@ export interface AgentChatResult {
   sessionId: string;
   reply: string;
   rounds: number;
+}
+
+/** 会话列表项：一个导图可有多个会话（各自独立的历史，可互相分叉） */
+export interface AgentSessionRow {
+  id: string;
+  documentId: string;
+  /** 用户自定义标题；为空时前端回退展示首条用户消息 */
+  title: string | null;
+  /** 分叉来源会话 id */
+  parentId: string | null;
+  /** 分叉点消息 id（该条及之前的消息被复制过来） */
+  forkedFromMessageId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
 }
 
 /**

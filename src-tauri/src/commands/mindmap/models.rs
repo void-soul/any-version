@@ -284,6 +284,23 @@ pub struct AgentMessageRow {
     pub created_at: String,
 }
 
+/// 会话列表项：一个文档可以有多个 Agent 会话（互不干扰的历史）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionRow {
+    pub id: String,
+    pub document_id: String,
+    /// 用户自定义标题；为空时前端回退展示首条用户消息
+    pub title: Option<String>,
+    /// 分叉来源会话（fork 时写入，仅用于溯源与展示）
+    pub parent_id: Option<String>,
+    /// 分叉点消息 id（从该条**含**之前的消息复制而来）
+    pub forked_from_message_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub message_count: i64,
+}
+
 /// Agent 一轮对话的输出。
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]

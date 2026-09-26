@@ -116,6 +116,23 @@ fn build_connection() -> Result<rusqlite::Connection, String> {
             .map_err(|e| format!("迁移 project_dir 失败: {}", e))?;
     }
 
+    // Agent 多会话：标题 / 分叉来源（旧库只有一个「文档→会话」，幂等补列）
+    let session_cols: Vec<String> = conn.prepare("PRAGMA table_info(mindmap_agent_sessions)")
+        .and_then(|mut stmt| stmt.query_map([], |r| r.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>())
+        .unwrap_or_default();
+    if !session_cols.iter().any(|c| c == "title") {
+        conn.execute_batch("ALTER TABLE mindmap_agent_sessions ADD COLUMN title TEXT")
+            .map_err(|e| format!("迁移 title 失败: {}", e))?;
+    }
+    if !session_cols.iter().any(|c| c == "parent_id") {
+        conn.execute_batch("ALTER TABLE mindmap_agent_sessions ADD COLUMN parent_id TEXT")
+            .map_err(|e| format!("迁移 parent_id 失败: {}", e))?;
+    }
+    if !session_cols.iter().any(|c| c == "forked_from_message_id") {
+        conn.execute_batch("ALTER TABLE mindmap_agent_sessions ADD COLUMN forked_from_message_id TEXT")
+            .map_err(|e| format!("迁移 forked_from_message_id 失败: {}", e))?;
+    }
+
     // 旧版本文件夹表没有 parent_id（扁平），启动时幂等补列以支持层级整理。
     let folder_cols: Vec<String> = conn.prepare("PRAGMA table_info(mindmap_folders)")
         .and_then(|mut stmt| stmt.query_map([], |r| r.get::<_,String>(1))?.collect::<rusqlite::Result<Vec<_>>>())
@@ -361,6 +378,102 @@ pub fn agent_ensure_session(document_id: &str) -> Result<String, String> {
     })
 }
 
+/// 新建会话（一个文档允许多个会话，各自独立的历史）。
+pub fn agent_create_session(document_id: &str, title: &str) -> Result<String, String> {
+    with_conn(|c| {
+        let id = new_id("mas");
+        let ts = now_ts();
+        let title = if title.trim().is_empty() { None } else { Some(title.trim().to_string()) };
+        sql(c.execute(
+            "INSERT INTO mindmap_agent_sessions(id,document_id,title,created_at,updated_at) VALUES(?1,?2,?3,?4,?4)",
+            rusqlite::params![id, document_id, title, ts],
+        ))?;
+        Ok(id)
+    })
+}
+
+/// 列出文档的会话（最近使用在前；带消息数）。
+pub fn agent_list_sessions(document_id: &str) -> Result<Vec<AgentSessionRow>, String> {
+    with_conn(|c| {
+        let mut s = c.prepare(
+            "SELECT s.id, s.document_id, s.title, s.parent_id, s.forked_from_message_id, s.created_at, s.updated_at, \
+             (SELECT COUNT(*) FROM mindmap_agent_messages m WHERE m.session_id=s.id) \
+             FROM mindmap_agent_sessions s WHERE s.document_id=?1 ORDER BY s.updated_at DESC, s.id DESC",
+        ).map_err(|e| e.to_string())?;
+        let rows = s.query_map(rusqlite::params![document_id], |r| {
+            Ok(AgentSessionRow {
+                id: r.get(0)?,
+                document_id: r.get(1)?,
+                title: r.get(2)?,
+                parent_id: r.get(3)?,
+                forked_from_message_id: r.get(4)?,
+                created_at: r.get(5)?,
+                updated_at: r.get(6)?,
+                message_count: r.get(7)?,
+            })
+        }).map_err(|e| e.to_string())?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
+    })
+}
+
+/// 重命名会话（空标题 = 清掉标题，前端回退展示首条用户消息）。
+pub fn agent_rename_session(session_id: &str, title: &str) -> Result<(), String> {
+    with_conn(|c| {
+        let title = if title.trim().is_empty() { None } else { Some(title.trim().to_string()) };
+        sql(c.execute(
+            "UPDATE mindmap_agent_sessions SET title=?1 WHERE id=?2",
+            rusqlite::params![title, session_id],
+        ))?;
+        Ok(())
+    })
+}
+
+/// 删除会话（消息由外键 ON DELETE CASCADE 连带删除）。
+pub fn agent_delete_session(session_id: &str) -> Result<(), String> {
+    with_conn(|c| {
+        sql(c.execute("DELETE FROM mindmap_agent_sessions WHERE id=?1", rusqlite::params![session_id]))?;
+        Ok(())
+    })
+}
+
+/// 分叉会话：把截至 `at_message_id`（空 = 全部）的消息复制进一个新会话，原会话不动。
+///
+/// 复制的是**历史记录**，不重放 ops——写图结果已经在画布上，分叉只影响后续对话的上下文。
+/// 消息 id 重新生成（复用会撞主键），序号后缀保证同一次调用内唯一。
+pub fn agent_fork_session(session_id: &str, at_message_id: &str) -> Result<String, String> {
+    with_conn(|c| {
+        let (document_id, title): (String, Option<String>) = sql(c.query_row(
+            "SELECT document_id, title FROM mindmap_agent_sessions WHERE id=?1",
+            rusqlite::params![session_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ))?;
+        let src = agent_list_messages_inner(c, session_id)?;
+        let cut = if at_message_id.trim().is_empty() {
+            src.len()
+        } else {
+            match src.iter().position(|m| m.id == at_message_id) {
+                Some(i) => i + 1,
+                None => src.len(),
+            }
+        };
+        let new_sid = new_id("mas");
+        let ts = now_ts();
+        sql(c.execute(
+            "INSERT INTO mindmap_agent_sessions(id,document_id,title,parent_id,forked_from_message_id,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?6)",
+            rusqlite::params![new_sid, document_id, title, session_id,
+                if at_message_id.trim().is_empty() { None } else { Some(at_message_id.to_string()) }, ts],
+        ))?;
+        for (i, m) in src.iter().take(cut).enumerate() {
+            let mid = format!("{}_{}", new_id("mam"), i);
+            sql(c.execute(
+                "INSERT INTO mindmap_agent_messages(id,session_id,role,content,ops_json,created_at) VALUES(?1,?2,?3,?4,?5,?6)",
+                rusqlite::params![mid, new_sid, m.role, m.content, m.ops_json, m.created_at],
+            ))?;
+        }
+        Ok(new_sid)
+    })
+}
+
 /// 追加一条会话消息，并顺带刷新会话的 updated_at。
 pub fn agent_append_message(session_id: &str, role: &str, content: &str, ops_json: &str) -> Result<String, String> {
     with_conn(|c| {
@@ -378,30 +491,29 @@ pub fn agent_append_message(session_id: &str, role: &str, content: &str, ops_jso
     })
 }
 
+/// 按时间正序列出会话消息（内部版本：在已有连接/事务里复用，fork 复制消息时用）。
+fn agent_list_messages_inner(c: &rusqlite::Connection, session_id: &str) -> Result<Vec<crate::commands::mindmap::models::AgentMessageRow>, String> {
+    let mut s = c
+        .prepare("SELECT id,session_id,role,content,ops_json,created_at FROM mindmap_agent_messages WHERE session_id=?1 ORDER BY created_at,id")
+        .map_err(|e| e.to_string())?;
+    let rows = s
+        .query_map(rusqlite::params![session_id], |r| {
+            Ok(crate::commands::mindmap::models::AgentMessageRow {
+                id: r.get(0)?,
+                session_id: r.get(1)?,
+                role: r.get(2)?,
+                content: r.get(3)?,
+                ops_json: r.get(4)?,
+                created_at: r.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
+}
+
 /// 按时间正序列出会话消息（前端回放 + 后端构建上下文共用）。
 pub fn agent_list_messages(session_id: &str) -> Result<Vec<crate::commands::mindmap::models::AgentMessageRow>, String> {
-    with_conn(|c| {
-        let mut s = c
-            .prepare("SELECT id,session_id,role,content,ops_json,created_at FROM mindmap_agent_messages WHERE session_id=?1 ORDER BY created_at,id")
-            .map_err(|e| e.to_string())?;
-        let rows = s
-            .query_map(rusqlite::params![session_id], |r| {
-                Ok(crate::commands::mindmap::models::AgentMessageRow {
-                    id: r.get(0)?,
-                    session_id: r.get(1)?,
-                    role: r.get(2)?,
-                    content: r.get(3)?,
-                    ops_json: r.get(4)?,
-                    created_at: r.get(5)?,
-                })
-            })
-            .map_err(|e| e.to_string())?;
-        let mut out = Vec::new();
-        for r in rows {
-            out.push(r.map_err(|e| e.to_string())?);
-        }
-        Ok(out)
-    })
+    with_conn(|c| agent_list_messages_inner(c, session_id))
 }
 
 /// 记录文档来源（AI 项目导入时存项目根路径，供证据文件定位）。

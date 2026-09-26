@@ -626,6 +626,9 @@ pub struct CompleteOutcome {
     pub usage: Option<serde_json::Value>,
     /// 原始 choices[0].message（tool-call 响应的 content 为空，需从这里取 tool_calls）
     pub message: Option<serde_json::Value>,
+    /// 模型的推理文本（DeepSeek/Qwen 等返回 `reasoning_content`，Claude 系为 `reasoning`）。
+    /// 以前整段丢弃，导致「思考过程」无从展示；没有该字段的模型为 None。
+    pub reasoning: Option<String>,
 }
 
 /// 原生 tool-calling：把 tool_calls[0].function.arguments 解析为 JSON 对象。
@@ -1125,10 +1128,21 @@ async fn complete_chat_messages_inner(
         value.get("usage").is_some(),
         log_preview(&text)
     ));
+    // 推理文本在循环体内解析（每次重试都可能带），这里从最终 message 再取一次即可
+    let reasoning = message
+        .as_ref()
+        .and_then(|m| {
+            ["reasoning_content", "reasoning", "thinking"]
+                .iter()
+                .find_map(|k| m.get(*k).and_then(|v| v.as_str()))
+        })
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     Ok(CompleteOutcome {
         text,
         usage: value.get("usage").cloned(),
         message,
+        reasoning,
     })
 }
 

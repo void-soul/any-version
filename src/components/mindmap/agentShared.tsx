@@ -10,11 +10,11 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "reac
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import {
-  AlertTriangle, Ban, Brain, Check, ChevronDown, Coins, File, LayoutGrid, Loader2,
-  MessageCircle, RotateCcw, Search, Send, Sparkles, Square, Terminal,
+  AlertTriangle, Ban, Brain, Check, ChevronDown, Coins, File, GitFork, LayoutGrid, Loader2,
+  MessageCircle, Pencil, Plus, RotateCcw, Search, Send, Sparkles, Square, Terminal, Trash2, Wrench,
 } from "lucide-react";
 import type { AiConfig } from "../ai/types";
-import type { AiImportResult } from "./types";
+import type { AgentSessionRow, AiImportResult } from "./types";
 import { createEventBuffer, useEventBufferSnapshot, type EventBuffer } from "../../utils/eventBuffer";
 import { matchProjectFiles } from "./atFiles";
 
@@ -71,6 +71,9 @@ export interface AiProgressEntry {
   ops?: import("./types").AgentOp[];
   // 无效点单回执（step=reject）：AI 本轮请求了目录结构里不存在的路径
   paths?: string[];
+  // 思考过程：step=agentTool 的工具名与参数；step=agentThought/agentReasoning 的文本
+  tool?: string;
+  args?: string;
   // 前端收到时打的时间戳（ms）
   at?: number;
 }
@@ -103,6 +106,10 @@ export const STEP_ICONS: Record<string, React.ReactNode> = {
   stream: <Terminal className="h-3 w-3 text-emerald-300" />,
   ask: <MessageCircle className="h-3 w-3 text-amber-300" />,
   cancel: <Ban className="h-3 w-3 text-red-300" />,
+  // 思考过程：读/写工具调用 + 模型调用前的想法 + 模型产出的推理文本
+  agentTool: <Wrench className="h-3 w-3 text-cyan-300" />,
+  agentThought: <Brain className="h-3 w-3 text-violet-300" />,
+  agentReasoning: <Brain className="h-3 w-3 text-fuchsia-300" />,
 };
 
 export const fmtNum = (n: number) => n.toLocaleString();
@@ -170,10 +177,33 @@ export function progressText(e: AiProgressEntry, t: (k: string, o?: any) => stri
       return t("mindmap.aiCancelled");
     case "agentOps":
       return t("mindmap.agentOpsStep", { n: e.ops?.length ?? 0 });
+    // 思考过程：工具名翻译 + 参数（参数可能很长，交给 ActivityLine 折叠展示）
+    case "agentTool":
+      return t("mindmap.agentToolStep", { tool: toolLabel(t, e.tool ?? ""), n: e.round ?? 0 });
+    case "agentThought":
+      return t("mindmap.agentThoughtStep", { n: e.round ?? 0 });
+    case "agentReasoning":
+      return t("mindmap.agentReasoningStep", { n: e.round ?? 0 });
     default:
       return e.detail ?? e.step;
   }
 }
+
+/** 工具名的中文标签（与后端 AGENT_TOOLS_SPEC 的函数名对应） */
+const AGENT_TOOL_LABELS: Record<string, string> = {
+  get_document_overview: "读取导图大纲",
+  get_subtree: "读取子树",
+  find_nodes: "查找节点",
+  create_root_node: "新建主线",
+  add_child_nodes: "新增平级节点",
+  add_subtree: "新增子树",
+  update_nodes: "更新节点",
+  delete_nodes: "删除节点",
+  move_nodes: "移动节点",
+};
+
+export const toolLabel = (t: (k: string, o?: any) => string, tool: string) =>
+  t(AGENT_TOOL_LABELS[tool] ? `mindmap.agentTool_${tool}` : "", { defaultValue: tool });
 
 // ════════════ 会话存储（模块级：最小化/关闭重开不丢对话） ════════════
 
@@ -182,14 +212,16 @@ export interface AgentMessage {
   role: "user" | "agent";
   text: string;
   ts: number;
+  /** 落库消息 id：回放历史时带上，用于「从这条分叉」定位分叉点 */
+  dbId?: string;
 }
 
 let agentMsgs: readonly AgentMessage[] = [];
 let agentMsgSeq = 0;
 const agentMsgSubs = new Set<() => void>();
 
-export function pushAgentMessage(role: AgentMessage["role"], text: string) {
-  agentMsgs = [...agentMsgs, { id: ++agentMsgSeq, role, text, ts: Date.now() }];
+export function pushAgentMessage(role: AgentMessage["role"], text: string, dbId?: string) {
+  agentMsgs = [...agentMsgs, { id: ++agentMsgSeq, role, text, ts: Date.now(), dbId }];
   agentMsgSubs.forEach((fn) => fn());
 }
 
@@ -289,8 +321,107 @@ export interface AgentWorkbenchProps {
   /** 最近一次运行的错误文本（用户主动停止时为空） */
   runError: string;
   onShowReport: () => void;
+  /** 新建会话（后端建一条新历史；前端清屏由调用方负责） */
   onNewSession: () => void;
+  /** chat 模式会话列表（一个导图多个会话） */
+  sessions?: AgentSessionRow[];
+  sessionId?: string;
+  onSelectSession?: (id: string) => void;
+  onRenameSession?: (id: string, title: string) => void;
+  onDeleteSession?: (id: string) => void;
+  /** 从某条消息分叉出新会话（messageId 为空 = fork 整个会话） */
+  onForkSession?: (messageId: string) => void;
   projectRoot?: string | null;
+}
+
+/** 会话条：切换 / 新建 / 重命名 / 删除（仅 chat 模式：会话按文档持久化在后端） */
+function SessionBar({
+  sessions, sessionId, loading, t, onSelect, onNew, onRename, onDelete,
+}: {
+  sessions: AgentSessionRow[];
+  sessionId: string;
+  loading: boolean;
+  t: (k: string, o?: any) => string;
+  onSelect: (id: string) => void;
+  onNew: () => void;
+  onRename: (id: string, title: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [confirmDel, setConfirmDel] = useState(false);
+  const cur = sessions.find((s) => s.id === sessionId) ?? null;
+
+  // 切换会话后收起编辑态与删除确认，避免误伤刚切过去的会话
+  useEffect(() => { setRenaming(false); setConfirmDel(false); }, [sessionId]);
+  // 删除确认 3 秒后自动失效（两段式确认，不弹原生对话框）
+  useEffect(() => {
+    if (!confirmDel) return;
+    const id = window.setTimeout(() => setConfirmDel(false), 3000);
+    return () => window.clearTimeout(id);
+  }, [confirmDel]);
+
+  const labelOf = (s: AgentSessionRow) =>
+    (s.title && s.title.trim()) ? s.title.trim() : `${t("agent.sessionUntitled")} ${shortTs(s.updatedAt)}`;
+
+  return (
+    <div className="flex shrink-0 items-center gap-1 rounded-lg border border-white/10 bg-slate-950/70 px-2 py-1">
+      <MessageCircle className="h-3 w-3 shrink-0 text-slate-500" />
+      {renaming ? (
+        <input
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") { onRename(sessionId, draft.trim()); setRenaming(false); }
+            else if (e.key === "Escape") { setRenaming(false); }
+          }}
+          onBlur={() => setRenaming(false)}
+          placeholder={t("agent.sessionNamePh")}
+          className="min-w-0 flex-1 rounded border border-cyan-400/40 bg-slate-950 px-1.5 py-0.5 text-[10px] text-slate-200 outline-none"
+        />
+      ) : (
+        <select
+          value={sessionId}
+          onChange={(e) => onSelect(e.target.value)}
+          disabled={loading || sessions.length === 0}
+          className={`${wbSelect} min-w-0 flex-1 border-0 bg-transparent px-1`}
+          title={t("agent.sessionSwitchTip")}>
+          {sessions.length === 0 && <option value="">{t("agent.sessionNone")}</option>}
+          {sessions.map((s) => (
+            <option key={s.id} value={s.id}>
+              {labelOf(s)}{s.parentId ? t("agent.sessionForkMark") : ""}（{s.messageCount}）
+            </option>
+          ))}
+        </select>
+      )}
+      <button type="button" onClick={onNew} disabled={loading}
+        className="shrink-0 cursor-pointer rounded border border-white/10 bg-white/[0.04] p-0.5 text-slate-400 transition hover:text-white disabled:opacity-40"
+        title={t("agent.newSessionTip")}>
+        <Plus className="h-3 w-3" />
+      </button>
+      <button type="button" onClick={() => { setDraft(cur?.title ?? ""); setRenaming(true); }} disabled={loading || !sessionId}
+        className="shrink-0 cursor-pointer rounded border border-white/10 bg-white/[0.04] p-0.5 text-slate-400 transition hover:text-white disabled:opacity-40"
+        title={t("agent.renameSession")}>
+        <Pencil className="h-3 w-3" />
+      </button>
+      <button type="button"
+        onClick={() => { if (confirmDel) { onDelete(sessionId); setConfirmDel(false); } else setConfirmDel(true); }}
+        disabled={loading || !sessionId || sessions.length <= 1}
+        className={`shrink-0 cursor-pointer rounded border p-0.5 transition disabled:opacity-40 ${confirmDel ? "border-red-400/60 bg-red-500/15 text-red-300" : "border-white/10 bg-white/[0.04] text-slate-400 hover:text-white"}`}
+        title={confirmDel ? t("agent.deleteSessionConfirm") : t("agent.deleteSession")}>
+        <Trash2 className="h-3 w-3" />
+      </button>
+    </div>
+  );
+}
+
+/** ISO 时间 → MM-DD HH:mm（会话列表的回退标题用） */
+function shortTs(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 /** 事件 step → 阶段序号（项目模式 6 阶段） */
@@ -386,6 +517,18 @@ function ActivityLine({ e, projectRoot, t }: { e: AiProgressEntry; projectRoot?:
               <span key={p} className="max-w-[180px] truncate rounded border border-yellow-400/20 bg-yellow-400/5 px-1 py-px font-mono text-[8px] text-yellow-300/80" title={p}>{p}</span>
             ))}
           </div>
+        )}
+        {/* 思考过程：模型调用工具前的想法 / 模型产出的推理文本（长文可展开） */}
+        {(e.step === "agentThought" || e.step === "agentReasoning") && !!e.text && (
+          <div className={`mt-0.5 max-h-24 overflow-y-auto whitespace-pre-wrap rounded border px-1.5 py-1 text-[9px] leading-4 ${
+            e.step === "agentReasoning"
+              ? "border-fuchsia-400/20 bg-fuchsia-400/[0.04] text-fuchsia-200/80"
+              : "border-violet-400/20 bg-violet-400/[0.04] text-violet-200/80"
+          }`} title={e.text}>{e.text}</div>
+        )}
+        {/* 工具参数：折叠展示，避免长 JSON 把时间线撑爆 */}
+        {e.step === "agentTool" && !!e.args && e.args !== "{}" && (
+          <div className="mt-0.5 max-h-16 overflow-y-auto whitespace-pre-wrap break-all rounded border border-cyan-400/15 bg-cyan-400/[0.03] px-1.5 py-1 font-mono text-[8px] leading-3.5 text-cyan-100/70" title={e.args}>{e.args}</div>
         )}
       </div>
     </div>
@@ -518,6 +661,7 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
     projectPath, onPickProject, aiDepth, onDepthChange, aiViews, onViewsChange,
     textTitle, onTextTitleChange, loading, onRun, onStop, onAnswer, result, runError,
     onShowReport, onNewSession, projectRoot, projectDir, projectFiles, onBindProjectDir,
+    sessions, sessionId, onSelectSession, onRenameSession, onDeleteSession, onForkSession,
   } = props;
   const { t } = useTranslation();
 
@@ -688,6 +832,19 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2" style={{ height: "calc(88vh - 120px)", minHeight: 440 }}>
+      {/* 会话条（chat 模式）：一个导图多个会话，可切换/新建/重命名/删除 */}
+      {mode === "chat" && (
+        <SessionBar
+          sessions={sessions ?? []}
+          sessionId={sessionId ?? ""}
+          loading={loading}
+          t={t}
+          onSelect={(id) => onSelectSession?.(id)}
+          onNew={() => onNewSession()}
+          onRename={(id, title) => onRenameSession?.(id, title)}
+          onDelete={(id) => onDeleteSession?.(id)}
+        />
+      )}
       {/* 状态条：阶段计划 + 实时统计 */}
       <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-slate-950/70 px-2 py-1.5">
         <span className="inline-flex shrink-0 items-center gap-1 text-[9px] font-semibold uppercase tracking-wide text-slate-400">
@@ -728,17 +885,25 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
           </div>
         )}
         {messages.map((m) => (
-          <div key={m.id} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+          <div key={m.id} className={`group flex items-end gap-1 ${m.role === "user" ? "justify-end" : "justify-start"}`}>
             <div className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-[10px] leading-4 ${m.role === "user" ? "border border-cyan-400/25 bg-cyan-400/10 text-cyan-100" : "border border-white/10 bg-white/[0.04] text-slate-300"}`}>
               {m.text}
             </div>
+            {/* 从这条分叉：复制该条及之前的历史到新会话（原会话不动） */}
+            {onForkSession && m.dbId && !loading && (
+              <button type="button" onClick={() => onForkSession(m.dbId as string)}
+                className="hidden shrink-0 cursor-pointer rounded border border-white/10 bg-white/[0.04] p-0.5 text-slate-500 transition hover:border-cyan-400/50 hover:text-cyan-300 group-hover:inline-flex"
+                title={t("agent.forkHereTip")}>
+                <GitFork className="h-2.5 w-2.5" />
+              </button>
+            )}
           </div>
         ))}
-        {/* 实时工具调用（运行中） */}
-        {loading && (
+        {/* 思考过程 / 工具调用轨迹：运行中实时滚动；跑完仍保留，便于回看「它到底干了什么」 */}
+        {(loading || timeline.length > 0) && (
           <div className="space-y-1 rounded-lg border border-white/5 bg-black/20 p-2">
             {timeline.map((e, i) => <ActivityLine key={`${e.at}-${i}`} e={e} projectRoot={projectRoot} t={t} />)}
-            {lastStream ? (
+            {loading && (lastStream ? (
               <div className="flex items-start gap-1.5">
                 <span className="mt-0.5 shrink-0"><Terminal className="h-3 w-3 animate-pulse text-emerald-300" /></span>
                 <div className="min-w-0 flex-1">
@@ -755,7 +920,7 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
                 <Loader2 className="h-3 w-3 animate-spin text-slate-400" />
                 <span className="text-[8px] text-slate-500">{timeline.length ? t("agent.thinking") : t("mindmap.aiStepScan")}</span>
               </div>
-            )}
+            ))}
           </div>
         )}
         {/* AI 询问用户：后端推送 ask 事件后阻塞等待，渲染表单让用户填写；
@@ -900,7 +1065,8 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
             {isFirstRun ? t("agent.runFirst") : t("agent.followUp")}
           </button>
         )}
-        {messages.length > 0 && !loading && (
+        {/* chat 模式的「新会话」走会话条上的 +（后端真建新会话）；非 chat 模式没有会话概念，仍就地清屏 */}
+        {mode !== "chat" && messages.length > 0 && !loading && (
           <button type="button"
             onClick={() => { clearAgentMessages(); onNewSession(); }}
             className="inline-flex h-[34px] shrink-0 cursor-pointer items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] px-2 text-[9px] text-slate-400 transition hover:text-slate-200"
