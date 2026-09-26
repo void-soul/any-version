@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { X, Minus, Square, Download, AlertTriangle, Loader2, FolderOpen, ChevronDown, Settings } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { MODULES, MODULE_MAP, resolveModuleLayout } from "./moduleRegistry";
@@ -260,6 +261,12 @@ export default function App() {
       try {
         await invoke("update_config", { dataDir: binDataDir.trim() });
         setBinOldDataDir(binDataDir.trim());
+        // 数据目录换了就重启：后端要按新目录重新读配置、重新检测运行组件是否齐全，
+        // 否则会在旧目录缓存未失效的情况下把组件装到错误的位置。
+        setBinMigrating(false);
+        setBinDownloading(false);
+        await relaunch();
+        return;
       } catch (e) {
         setBinError(`数据目录迁移失败：${typeof e === "string" ? e : String(e)}`);
         setBinDownloading(false);

@@ -218,6 +218,8 @@ export default function GlobalSettings() {
     null,
   );
   const [showMigrateConfirm, setShowMigrateConfirm] = useState(false);
+  // 数据目录真的换了：进程内缓存（数据库连接等）还指向旧目录，必须重启才彻底生效
+  const [needRestart, setNeedRestart] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [updateBody, setUpdateBody] = useState<string | null>(null);
@@ -771,12 +773,16 @@ export default function GlobalSettings() {
       },
     );
 
+    const migrated = pathsChanged();
     try {
       const result = await invoke<MigrateResult>("update_config", {
         dataDir: dataDir || oldDataDir,
       });
       setMigrateResult(result);
       setSuccess(true);
+      // 换了数据目录：新目录里有没有运行组件（ffmpeg/mihomo 等）要重启后重新检测才知道，
+      // 所以这里提示并允许一键重启，而不是让用户在一个「半切换」的状态下继续用。
+      if (migrated) setNeedRestart(true);
       await fetchConfig();
     } catch (e: any) {
       alert(t("settings.configSaveFail", { err: String(e) }));
@@ -784,6 +790,15 @@ export default function GlobalSettings() {
       unlisten();
       setProgress(null);
       setSaving(false);
+    }
+  };
+
+  /** 重启应用：新数据目录要重新读配置才真正生效（含运行组件是否齐全的检测） */
+  const restartApp = async () => {
+    try {
+      await relaunch();
+    } catch (e) {
+      alert(t("settings.restartManual", { err: String(e) }));
     }
   };
 
@@ -1004,6 +1019,7 @@ export default function GlobalSettings() {
                   <p className="text-amber-300">{t("settings.migrateStep2")}</p>
                   <p className="text-amber-300">{t("settings.migrateStep3")}</p>
                   <p className="text-slate-400 mt-1">{t("settings.migrateHint")}</p>
+                  <p className="text-amber-300">{t("settings.migrateRestartNote")}</p>
                 </div>
                 <div className="flex items-center gap-2 pt-1">
                   <button
@@ -1121,6 +1137,26 @@ export default function GlobalSettings() {
                     )}
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* 数据目录已切换：提示重启（进程内的数据库连接等仍指向旧目录） */}
+            {needRestart && (
+              <div className="p-4 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] rounded-xl space-y-2.5">
+                <div className="flex items-start gap-1.5">
+                  <Power className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-[var(--module-accent)]" />
+                  <div className="text-[10px] text-slate-300 space-y-1">
+                    <p className="font-semibold text-[var(--module-accent)]">{t("settings.restartRequired")}</p>
+                    <p>{t("settings.restartReason")}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={restartApp}
+                  className="px-3 py-1.5 rounded-lg text-[10px] font-semibold cursor-pointer transition-all flex items-center gap-1.5 bg-[var(--module-accent)] text-white hover:opacity-85"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  {t("settings.restartNow")}
+                </button>
               </div>
             )}
 
