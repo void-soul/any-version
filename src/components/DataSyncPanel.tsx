@@ -4,8 +4,9 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { DatabaseBackup, Loader2, FolderDown, FolderUp } from "lucide-react";
+import { DatabaseBackup, Loader2, FolderDown, FolderUp, RefreshCw } from "lucide-react";
 import { vexSay } from "../utils/vexSay";
 
 interface ExportResult {
@@ -35,6 +36,16 @@ export default function DataSyncPanel() {
   const [msg, setMsg] = useState("");
   const [lastExport, setLastExport] = useState<ExportResult | null>(null);
   const [importPath, setImportPath] = useState("");
+  // 导入是把文件直接覆盖回去：进程内已打开的数据库连接还指向旧内容，必须重启才看得到
+  const [needRestart, setNeedRestart] = useState(false);
+
+  const restartApp = async () => {
+    try {
+      await relaunch();
+    } catch (e) {
+      setMsg(t("datasync.restartManual", { err: String(e) }));
+    }
+  };
 
   const exportSnapshot = async () => {
     try {
@@ -77,6 +88,7 @@ export default function DataSyncPanel() {
       setMsg("");
       const res = await invoke<string>("state_sync_import", { path: selected });
       setMsg(res);
+      setNeedRestart(true);
       vexSay(t("datasync.vexRestored"), "success");
     } catch (e) {
       setMsg(t("datasync.importFail", { err: String(e) }));
@@ -160,6 +172,18 @@ export default function DataSyncPanel() {
           <p className="text-[9px] text-amber-400/80">
             {t("datasync.importWarn")}
           </p>
+          {needRestart && (
+            <div className="flex items-center gap-2 flex-wrap pt-1">
+              <span className="text-[10px] text-slate-300">{t("datasync.restartRequired")}</span>
+              <button
+                onClick={restartApp}
+                className="px-3 py-1.5 rounded-lg text-[10px] font-semibold cursor-pointer transition-all flex items-center gap-1.5 bg-[var(--module-accent)] text-white hover:opacity-85"
+              >
+                <RefreshCw className="w-3 h-3" />
+                {t("datasync.restartNow")}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

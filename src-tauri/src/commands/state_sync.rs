@@ -21,10 +21,18 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 use crate::commands::config::{get_base_dir, get_data_dir};
 use crate::commands::secrets::{decrypt_secret, encrypt_secret};
 
-/// 快照打包的固定文件（相对 data_dir；config.json 例外，始终位于 base_dir）。
+/// 快照打包的固定文件（相对 data_dir；config.json / settings.json 例外，始终位于 base_dir）。
 const MANAGED_FILES: &[&str] = &[
     "config.json",
+    // config.json 只存数据路径，其余选项（SDK 托管、RSS、外观、托盘…）在 settings.json，
+    // 少打任何一个都会让「全量导入」后设置对不上。
+    "settings.json",
     "backups.json",
+    "mindmap_settings.json",
+    "favorites_settings.json",
+    "music/settings.json",
+    "music/library.json",
+    "translate_history.json",
     "ai_config.json",
     "ai_sessions.json",
     "last_launch_configs.json",
@@ -41,6 +49,7 @@ const MANAGED_FILES: &[&str] = &[
     "otp/otp.db",
     "clipboard/clipboard.db",
     "picky/picky.db",
+    "favorites.db",
 ];
 
 /// 快照打包的整目录（相对 data_dir，递归收集其下所有文件）。
@@ -240,7 +249,8 @@ fn collect_dir_files(data_dir: &Path, rel_dir: &str) -> Vec<String> {
 /// config.json 是数据入口，固定留在 base_dir（即使 data_dir 被改到其它盘）。
 /// 其余文件/目录都在 data_dir 下。
 fn resolve_snapshot_path(rel: &str) -> PathBuf {
-    if rel == "config.json" {
+    // 入口配置与选项文件固定留在 base_dir（即使 data_dir 被改到其它盘）
+    if rel == "config.json" || rel == "settings.json" {
         get_base_dir().join(rel)
     } else {
         get_data_dir().join(rel)
@@ -433,6 +443,34 @@ mod tests {
         // 明文快照原样通过（兼容旧版）
         let plain = gunzip_if_needed(data).unwrap();
         assert_eq!(plain, data);
+    }
+
+    /// config.json / settings.json 是入口，必须落在 base_dir 而不是 data_dir。
+    #[test]
+    fn entry_configs_resolve_to_base_dir() {
+        let base = get_base_dir();
+        assert_eq!(resolve_snapshot_path("config.json"), base.join("config.json"));
+        assert_eq!(resolve_snapshot_path("settings.json"), base.join("settings.json"));
+        assert_eq!(
+            resolve_snapshot_path("favorites.db"),
+            get_data_dir().join("favorites.db")
+        );
+    }
+
+    /// 全量导出必须覆盖「除数据路径以外的选项」，否则导入后设置会静默回默认。
+    #[test]
+    fn managed_files_cover_settings_and_all_databases() {
+        for must in [
+            "config.json",
+            "settings.json",
+            "backups.json",
+            "favorites.db",
+            "mindmap.db",
+            "api.db",
+            "picky/picky.db",
+        ] {
+            assert!(MANAGED_FILES.contains(&must), "快照清单缺少 {}", must);
+        }
     }
 
     #[test]
