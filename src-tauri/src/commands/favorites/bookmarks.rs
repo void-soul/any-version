@@ -21,6 +21,9 @@ pub struct BookmarkImportResult {
     pub folders: usize,
     /// 解析到但跳过的（缺 url / 非法条目）
     pub skipped: usize,
+    /// 命中删除墓碑而跳过的（用户之前删过这个网址，书签文件里还在）
+    #[serde(default)]
+    pub deleted: usize,
     /// 书签文件路径（回显给用户确认读的是哪个 Profile）
     pub file: String,
 }
@@ -170,6 +173,7 @@ pub fn import(browser: &str, custom_path: Option<&str>) -> Result<BookmarkImport
     }
 
     let mut folders = 0usize;
+    let mut deleted = 0usize;
     let imported = db::with_conn(|conn| {
         let mut imported = 0usize;
         for (path, item) in &out.nodes {
@@ -186,9 +190,12 @@ pub fn import(browser: &str, custom_path: Option<&str>) -> Result<BookmarkImport
                 };
                 parent = Some(id);
             }
-            let id = db::upsert(conn, item)
-                .map(|_| ())
-                .and_then(|_| db::find_favorite_id(conn, &item.source, &item.external_id))?;
+            // 命中删除墓碑：用户之前删过这个网址，书签文件里还在，不重新纳入
+            if db::upsert(conn, item)? == db::UpsertOutcome::Deleted {
+                deleted += 1;
+                continue;
+            }
+            let id = db::find_favorite_id(conn, &item.source, &item.external_id)?;
             if let (Some(fid), Some(cid)) = (id, parent) {
                 db::link_item_category(conn, fid, cid)?;
                 imported += 1;
@@ -198,17 +205,19 @@ pub fn import(browser: &str, custom_path: Option<&str>) -> Result<BookmarkImport
     })?;
 
     eprintln!(
-        "[favorites] 浏览器收藏夹导入完成: browser={} file={} 条目={} 目录={} 跳过={}",
+        "[favorites] 浏览器收藏夹导入完成: browser={} file={} 条目={} 目录={} 跳过={} 删过跳过={}",
         browser,
         file.display(),
         imported,
         folders,
-        skipped
+        skipped,
+        deleted
     );
     Ok(BookmarkImportResult {
         imported,
         folders,
         skipped,
+        deleted,
         file: file.to_string_lossy().to_string(),
     })
 }

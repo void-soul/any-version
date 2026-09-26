@@ -100,6 +100,17 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
         -- 条目正文缓存：知乎收藏的 content（HTML+纯文本）、GitHub 的 README。
         -- 单独一张表而不是塞进 favorite.extra_json：正文动辄几十 KB，
         -- 列表查询只要元数据，混在一起会让每次列表都拖着大字段走。
+        -- 删除墓碑：记住「用户删过哪些条目」。
+        -- 没有它，本地删掉的条目会在下一次导入时复活——导入按 UNIQUE(source, external_id)
+        -- upsert，库里查不到就当新条目插入，而平台上的收藏一直还在。
+        -- 只存键 + 标题（供设置页辨认），不存正文。
+        CREATE TABLE IF NOT EXISTS favorite_deleted (
+            source      TEXT NOT NULL,
+            external_id TEXT NOT NULL,
+            title       TEXT,
+            deleted_at  TEXT NOT NULL,
+            PRIMARY KEY (source, external_id)
+        );
         CREATE TABLE IF NOT EXISTS favorite_content (
             favorite_id INTEGER PRIMARY KEY,
             -- 展示用的纯文本（已剥标签）
@@ -252,12 +263,16 @@ fn init_connection() -> Result<Connection, String> {
 }
 
 /// 在全局连接上执行一段逻辑（首次调用自动初始化）。
-pub fn with_conn<T>(f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
+/// 取连接执行一段逻辑。
+///
+/// 传 **可变引用**：删除条目要在同一事务里「删行 + 立墓碑」，事务需要 `&mut Connection`。
+/// 只读/只写的闭包照样能用（`&mut` 会自动退化成 `&`），调用方无需改。
+pub fn with_conn<T>(f: impl FnOnce(&mut Connection) -> Result<T, String>) -> Result<T, String> {
     let mut guard = DB_CONN.lock().map_err(|e| format!("DB锁错误: {}", e))?;
     if guard.is_none() {
         *guard = Some(init_connection()?);
     }
-    let conn = guard.as_ref().expect("连接已初始化");
+    let conn = guard.as_mut().expect("连接已初始化");
     f(conn)
 }
 
@@ -295,12 +310,109 @@ pub struct ClassifyItem {
     pub url: String,
 }
 
-/// upsert 的结果：新增 / 有变化已更新 / 完全没变（跨次导入去重的正常结局）。
+/// upsert 的结果：新增 / 有变化已更新 / 完全没变（跨次导入去重的正常结局）/
+/// **已被用户删除**（命中墓碑，导入必须跳过，否则删掉的条目会复活）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpsertOutcome {
     Added,
     Updated,
     Skipped,
+    Deleted,
+}
+
+/// 墓碑键：默认就是 `external_id`；书签来源的 external_id 是 **URL**，
+/// 多一个 `#片段`、末尾斜杠或 http/https 之差就会漏碑，因此统一归一化。
+fn tombstone_key(source: &str, external_id: &str) -> String {
+    if source != "bookmark" {
+        return external_id.to_string();
+    }
+    let trimmed = external_id.trim();
+    // 去 fragment
+    let no_frag = trimmed.split('#').next().unwrap_or(trimmed);
+    // scheme/host 统一小写，末尾斜杠去掉（查询串保留：它通常是 URL 的一部分）
+    match no_frag.split_once("://") {
+        Some((scheme, rest)) => {
+            let rest = rest.trim_end_matches('/');
+            format!("{}://{}", scheme.to_lowercase(), rest.to_lowercase())
+        }
+        None => no_frag.trim_end_matches('/').to_lowercase(),
+    }
+}
+
+/// 记一条墓碑（同一条重复删除时刷新时间与标题）。
+pub fn mark_deleted(conn: &Connection, source: &str, external_id: &str, title: &str) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO favorite_deleted (source, external_id, title, deleted_at) \
+         VALUES (?1, ?2, ?3, ?4) \
+         ON CONFLICT(source, external_id) DO UPDATE SET title = ?3, deleted_at = ?4",
+        rusqlite::params![source, tombstone_key(source, external_id), title, now_str()],
+    )
+    .map_err(|e| format!("记录删除墓碑失败: {}", e))?;
+    Ok(())
+}
+
+/// 是否被用户删过（导入前查，命中就跳过）。
+pub fn is_deleted(conn: &Connection, source: &str, external_id: &str) -> Result<bool, String> {
+    let hit: i64 = conn
+        .query_row(
+            "SELECT 1 FROM favorite_deleted WHERE source = ?1 AND external_id = ?2",
+            rusqlite::params![source, tombstone_key(source, external_id)],
+            |_| Ok(1),
+        )
+        .unwrap_or(0);
+    Ok(hit == 1)
+}
+
+/// 墓碑列表项（设置页展示 + 恢复用）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FavoriteDeletedRow {
+    pub source: String,
+    pub external_id: String,
+    pub title: Option<String>,
+    pub deleted_at: String,
+}
+
+pub fn list_deleted(conn: &Connection) -> Result<Vec<FavoriteDeletedRow>, String> {
+    let mut stmt = conn
+        .prepare("SELECT source, external_id, title, deleted_at FROM favorite_deleted ORDER BY deleted_at DESC")
+        .map_err(|e| format!("读取删除记录失败: {}", e))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(FavoriteDeletedRow {
+                source: row.get(0)?,
+                external_id: row.get(1)?,
+                title: row.get(2)?,
+                deleted_at: row.get(3)?,
+            })
+        })
+        .map_err(|e| format!("读取删除记录失败: {}", e))?;
+    let mut out = Vec::new();
+    for r in rows.flatten() {
+        out.push(r);
+    }
+    Ok(out)
+}
+
+/// 清墓碑 → 这些条目下次导入会重新进来。
+/// `source` / `external_id` 都给 = 只恢复一条；只给 source = 恢复该来源全部；
+/// 都不给 = 全部恢复。返回清除的条数。
+pub fn clear_deleted(conn: &Connection, source: Option<&str>, external_id: Option<&str>) -> Result<usize, String> {
+    let cleared = match (source, external_id) {
+        (Some(s), Some(e)) => conn
+            .execute(
+                "DELETE FROM favorite_deleted WHERE source = ?1 AND external_id = ?2",
+                rusqlite::params![s, tombstone_key(s, e)],
+            )
+            .map_err(|e| format!("清除删除记录失败: {}", e))?,
+        (Some(s), None) => conn
+            .execute("DELETE FROM favorite_deleted WHERE source = ?1", rusqlite::params![s])
+            .map_err(|e| format!("清除删除记录失败: {}", e))?,
+        (None, _) => conn
+            .execute("DELETE FROM favorite_deleted", [])
+            .map_err(|e| format!("清除删除记录失败: {}", e))?,
+    };
+    Ok(cleared)
 }
 
 fn now_str() -> String {
@@ -312,6 +424,11 @@ fn now_str() -> String {
 /// 这是「重复导入不进重复记录」的唯一保证——依赖 `(source, external_id)` 唯一约束，
 /// 而不是先查后写（避免并发下两边都查不到）。
 pub fn upsert(conn: &Connection, item: &NewFavorite) -> Result<UpsertOutcome, String> {
+    // 用户删过的条目不再捞回来：平台上的收藏还在，导入一定会再拉到它，
+    // 而本地那条已经删了、唯一键空着，不查碑就会当成新条目重新插入。
+    if is_deleted(conn, &item.source, &item.external_id)? {
+        return Ok(UpsertOutcome::Deleted);
+    }
     let inserted = conn
         .execute(
             "INSERT OR IGNORE INTO favorite \
@@ -1356,16 +1473,40 @@ pub fn set_tags(conn: &Connection, id: i64, tags: &[String]) -> Result<(), Strin
     Ok(())
 }
 
-/// 删除本地条目（只删本地，不动平台）。
-pub fn delete(conn: &Connection, id: i64) -> Result<bool, String> {
-    conn.execute(
+/// 删除本地条目（只删本地，不动平台）+ **立墓碑**。
+///
+/// 立碑是「删掉的条目不再被导入捞回来」的唯一保证：删之前先把 (source, external_id)
+/// 读出来，删完再写进 `favorite_deleted`。碑没立上而条目已删，等于白删——所以
+/// 写入失败要连带回滚删除（事务）。
+pub fn delete(conn: &mut Connection, id: i64) -> Result<bool, String> {
+    let existing: Option<(String, String, String)> = conn
+        .query_row(
+            "SELECT source, external_id, title FROM favorite WHERE id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .ok();
+    let tx = conn.transaction().map_err(|e| format!("开启删除事务失败: {}", e))?;
+    tx.execute(
         "DELETE FROM favorite_item_category WHERE favorite_id = ?1",
         [id],
     )
     .map_err(|e| format!("删除分类关联失败: {}", e))?;
-    let removed = conn
+    let removed = tx
         .execute("DELETE FROM favorite WHERE id = ?1", [id])
         .map_err(|e| format!("删除收藏条目失败: {}", e))?;
+    if removed > 0 {
+        if let Some((source, external_id, title)) = existing {
+            tx.execute(
+                "INSERT INTO favorite_deleted (source, external_id, title, deleted_at) \
+                 VALUES (?1, ?2, ?3, ?4) \
+                 ON CONFLICT(source, external_id) DO UPDATE SET title = ?3, deleted_at = ?4",
+                rusqlite::params![source, tombstone_key(&source, &external_id), title, now_str()],
+            )
+            .map_err(|e| format!("记录删除墓碑失败: {}", e))?;
+        }
+    }
+    tx.commit().map_err(|e| format!("提交删除失败: {}", e))?;
     Ok(removed > 0)
 }
 
@@ -1479,6 +1620,10 @@ pub fn upsert_with_id(
     item: &NewFavorite,
 ) -> Result<(UpsertOutcome, i64), String> {
     let outcome = upsert(conn, item)?;
+    // 命中墓碑：条目没进库，也就没有 id 可查（更不该去缓存正文）
+    if outcome == UpsertOutcome::Deleted {
+        return Ok((outcome, 0));
+    }
     let id = conn
         .query_row(
             "SELECT id FROM favorite WHERE source = ?1 AND external_id = ?2",
@@ -1498,12 +1643,13 @@ pub fn count_all(conn: &Connection) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_status, apply_tags, count_all, create_category, delete, delete_category,
-        find_category_by_name, get_credential, get_import_cursor, link_item_category, list,
-        list_category_tree, migrate, move_category, prune_all_empty_categories, rename_category,
-        reset_classification, select_unclassified, set_credential, set_import_cursor,
-        set_item_categories, set_item_categories_manual, set_tags, stats, upsert, CategoryNode,
-        FavoriteRow, FavoriteStats, ListFilter, NewFavorite, UpsertOutcome,
+        apply_status, apply_tags, clear_deleted, count_all, create_category, delete,
+        delete_category, find_category_by_name, get_credential, get_import_cursor, is_deleted,
+        link_item_category, list, list_category_tree, list_deleted, mark_deleted, migrate,
+        move_category, prune_all_empty_categories, rename_category, reset_classification,
+        select_unclassified, set_credential, set_import_cursor, set_item_categories,
+        set_item_categories_manual, set_tags, stats, upsert, CategoryNode, FavoriteRow,
+        FavoriteStats, ListFilter, NewFavorite, UpsertOutcome,
     };
 
     /// 前后端的字段契约：这两个结构按 camelCase 序列化，前端读的是 `bySource` / `aiLocked`。
@@ -1561,6 +1707,85 @@ mod tests {
             favorited_at: None,
             initial_status: None,
         }
+    }
+
+    // ─── 删除墓碑：删掉的条目不该被下次导入捞回来 ───
+
+    /// 删掉的条目再次 upsert 应被墓碑挡住，清碑后又能进来。
+    #[test]
+    fn deleted_item_does_not_come_back_on_reimport() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+
+        let item = sample("42", "a/b");
+        assert_eq!(upsert(&conn, &item).unwrap(), UpsertOutcome::Added);
+
+        let id: i64 = conn
+            .query_row("SELECT id FROM favorite WHERE external_id = '42'", [], |r| r.get(0))
+            .unwrap();
+        assert!(delete(&mut conn, id).unwrap());
+        assert_eq!(count_all(&conn).unwrap(), 0);
+
+        // 平台上的收藏还在，导入一定会再拉到它 —— 但墓碑要把它挡住
+        assert_eq!(upsert(&conn, &item).unwrap(), UpsertOutcome::Deleted);
+        assert_eq!(count_all(&conn).unwrap(), 0, "删掉的条目被导入复活了");
+
+        // 墓碑可查、可清；清掉之后这条才会重新进来
+        let tombs = list_deleted(&conn).unwrap();
+        assert_eq!(tombs.len(), 1);
+        assert_eq!(tombs[0].source, "github");
+        assert_eq!(tombs[0].external_id, "42");
+        assert_eq!(clear_deleted(&conn, Some("github"), Some("42")).unwrap(), 1);
+        assert_eq!(upsert(&conn, &item).unwrap(), UpsertOutcome::Added);
+        assert_eq!(count_all(&conn).unwrap(), 1);
+    }
+
+    /// 只清某个来源：别的来源的墓碑不受影响。
+    #[test]
+    fn clearing_one_source_keeps_other_tombstones() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        mark_deleted(&conn, "github", "1", "a/b").unwrap();
+        mark_deleted(&conn, "bilibili", "BV1", "视频").unwrap();
+        assert_eq!(clear_deleted(&conn, Some("github"), None).unwrap(), 1);
+        let left = list_deleted(&conn).unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].source, "bilibili");
+        // 都不传 = 全部恢复
+        assert_eq!(clear_deleted(&conn, None, None).unwrap(), 1);
+        assert!(list_deleted(&conn).unwrap().is_empty());
+    }
+
+    /// 书签的 external_id 是 URL：`#片段` / 末尾斜杠 / 大小写差异都要算同一条。
+    #[test]
+    fn bookmark_tombstone_key_ignores_fragment_and_trailing_slash() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        mark_deleted(&conn, "bookmark", "https://Example.com/docs/", "Docs").unwrap();
+        assert!(is_deleted(&conn, "bookmark", "https://example.com/docs").unwrap());
+        assert!(is_deleted(&conn, "bookmark", "https://example.com/docs/#section").unwrap());
+        // GitHub 用仓库 id 当 external_id，不能被 URL 归一化改坏
+        mark_deleted(&conn, "github", "12345", "o/r").unwrap();
+        assert!(is_deleted(&conn, "github", "12345").unwrap());
+    }
+
+    /// 墓碑与「失效(status=gone)」是两回事：后者条目仍在库里。
+    #[test]
+    fn tombstone_is_not_the_same_as_gone_status() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        let mut item = sample("7", "c/d");
+        item.initial_status = Some("gone".to_string());
+        assert_eq!(upsert(&conn, &item).unwrap(), UpsertOutcome::Added);
+        assert_eq!(count_all(&conn).unwrap(), 1);
+        assert!(!is_deleted(&conn, "github", "7").unwrap());
+        // 失效条目被用户清理掉 → 也要立碑，下次导入不再出现
+        let id: i64 = conn
+            .query_row("SELECT id FROM favorite WHERE external_id = '7'", [], |r| r.get(0))
+            .unwrap();
+        assert!(delete(&mut conn, id).unwrap());
+        assert!(is_deleted(&conn, "github", "7").unwrap());
+        assert_eq!(upsert(&conn, &item).unwrap(), UpsertOutcome::Deleted);
     }
 
     #[test]
@@ -2127,10 +2352,10 @@ mod tests {
     /// 删本地条目要连标签一起删（不留孤儿行）。
     #[test]
     fn delete_removes_tags_too() {
-        let conn = seeded();
+        let mut conn = seeded();
         set_tags(&conn, 1, &["CLI".to_string()]).unwrap();
-        assert!(delete(&conn, 1).unwrap());
-        assert!(!delete(&conn, 1).unwrap(), "删第二次应返回 false");
+        assert!(delete(&mut conn, 1).unwrap());
+        assert!(!delete(&mut conn, 1).unwrap(), "删第二次应返回 false");
         let left: i64 = conn
             .query_row("SELECT COUNT(*) FROM favorite_tag", [], |r| r.get(0))
             .unwrap();

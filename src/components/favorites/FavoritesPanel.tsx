@@ -31,6 +31,7 @@ import {
   Bot,
   Send,
   Sparkles,
+  Loader2,
 } from "lucide-react";
 
 import { favoritedDateLabel, sinceToLocalString, type FavoritesSort, type SincePreset } from "./favoritedTime";
@@ -53,6 +54,7 @@ import {
   type CheckResult,
   type ClassifyResult,
   type CredentialStatus,
+  type FavoriteDeletedRow,
   type FavoriteRow,
   type FavoriteSettings,
   type FavoriteStats,
@@ -75,6 +77,11 @@ const IMPORT_TASKS: FavTask[] = ["github", "bilibili", "zhihu", "bookmark"];
 const isImportTask = (task: FavTask) => IMPORT_TASKS.includes(task);
 const MIN_LEFT_WIDTH = 140;
 const MAX_LEFT_WIDTH = 420;
+
+/** AI 检索右栏宽度（与后端 settings.rs 的 MIN/MAX_AI_WIDTH 一致） */
+const DEFAULT_AI_WIDTH = 360;
+const MIN_AI_WIDTH = 260;
+const MAX_AI_WIDTH = 640;
 
 /** 检索 Agent 轮数：与后端 `clamp_agent_rounds` 同一范围，默认 6。 */
 const MIN_AGENT_ROUNDS = 1;
@@ -120,6 +127,8 @@ export default function FavoritesPanel() {
 
   // 左侧分类栏宽度：可拖动，宽度与模型选择一起存进 favorites_settings.json
   const [leftWidth, setLeftWidth] = useState(DEFAULT_LEFT_WIDTH);
+  // AI 检索右栏（常驻，不再是弹窗）：宽度可拖动，显隐与宽度一起持久化
+  const [aiWidth, setAiWidth] = useState(DEFAULT_AI_WIDTH);
   // 设置的内存副本：拖动/切模型都是「读-改-写」，先攒在这里再整份落盘
   // 检索 Agent 的轮数上限：每轮一次模型调用，调大更会找但更费 token（后端再钳一次 1..20）
   const [agentRounds, setAgentRounds] = useState(DEFAULT_AGENT_ROUNDS);
@@ -128,6 +137,8 @@ export default function FavoritesPanel() {
     providerId: null,
     modelId: null,
     agentRounds: DEFAULT_AGENT_ROUNDS,
+    aiWidth: DEFAULT_AI_WIDTH,
+    aiOpen: true,
   });
 
   /** 保存界面设置（整份覆盖，未传的字段沿用内存里的现值）。失败只记日志：设置丢了不影响功能。 */
@@ -252,7 +263,7 @@ export default function FavoritesPanel() {
   const [tokenOpen, setTokenOpen] = useState(false);
 
   const refresh = useCallback(async () => {
-    const [list, overview, creds] = await Promise.all([
+    const [list, overview, creds, deleted] = await Promise.all([
       invoke<FavoriteRow[]>("fav_list", {
         source,
         // 分类改成树之后按 id 筛（后端会把子分类一起算进来）
@@ -266,10 +277,12 @@ export default function FavoritesPanel() {
       }),
       invoke<FavoriteStats>("fav_stats"),
       invoke<CredentialStatus[]>("fav_credential_status"),
+      invoke<FavoriteDeletedRow[]>("fav_list_deleted"),
     ]);
     setItems(list);
     setStats(overview);
     setCredStatus(creds);
+    setDeletedRows(deleted ?? []);
   }, [source, categoryId, keyword, sort, since]);
 
   // ── 分类树操作（对齐启动模块：新建子分类 / 重命名 / 删除 / 同级排序）──
@@ -479,10 +492,27 @@ export default function FavoritesPanel() {
             ? Math.min(MAX_LEFT_WIDTH, Math.max(MIN_LEFT_WIDTH, savedWidth))
             : DEFAULT_LEFT_WIDTH;
         setLeftWidth(width);
+
+        // AI 检索右栏：宽度同样钳制，显隐按上次的来（默认展开）
+        const savedAiWidth = saved?.aiWidth;
+        const aiW =
+          typeof savedAiWidth === "number" && Number.isFinite(savedAiWidth) && savedAiWidth > 0
+            ? Math.min(MAX_AI_WIDTH, Math.max(MIN_AI_WIDTH, savedAiWidth))
+            : DEFAULT_AI_WIDTH;
+        setAiWidth(aiW);
+        setAiOpen(saved?.aiOpen ?? true);
+        const rounds =
+          typeof saved?.agentRounds === "number" && Number.isFinite(saved.agentRounds)
+            ? Math.min(MAX_AGENT_ROUNDS, Math.max(MIN_AGENT_ROUNDS, saved.agentRounds))
+            : DEFAULT_AGENT_ROUNDS;
+        setAgentRounds(rounds);
         settingsRef.current = {
           leftWidth: width,
           providerId: saved?.providerId ?? null,
           modelId: saved?.modelId ?? null,
+          agentRounds: rounds,
+          aiWidth: aiW,
+          aiOpen: saved?.aiOpen ?? true,
         };
 
         // 上次选的供应商还在可用列表里 → 恢复；否则留空等用户选
@@ -555,6 +585,35 @@ export default function FavoritesPanel() {
     window.addEventListener("mouseup", onUp);
   };
 
+  /** AI 检索右栏宽度拖动（方向相反：往左拖变宽） */
+  const startAiResize = (e: ReactMouseEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = aiWidth;
+    let next = startWidth;
+    const onMove = (ev: MouseEvent) => {
+      next = Math.min(MAX_AI_WIDTH, Math.max(MIN_AI_WIDTH, startWidth - (ev.clientX - startX)));
+      setAiWidth(next);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      if (next !== startWidth) void persistSettings({ aiWidth: next });
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  /** 开关 AI 检索右栏（显隐持久化） */
+  const toggleAiPanel = () => {
+    setAiOpen((prev) => {
+      const next = !prev;
+      void persistSettings({ aiOpen: next });
+      return next;
+    });
+  };
+
   const runImport = async () => {
     // 没配 Token 就直接把配置弹窗递上去，别让用户吃一个报错再自己找入口
     if (!tokenConfigured) {
@@ -577,6 +636,7 @@ export default function FavoritesPanel() {
           "ok",
         );
       }
+      reportSkippedDeleted(result.skippedDeleted);
     } catch (e) {
       toast(t("favorites.importFail", { err: String(e) }), "err");
     } finally {
@@ -620,6 +680,12 @@ export default function FavoritesPanel() {
     if (!(item.id in content)) void openContent(item);
   };
 
+  /** 导入完成后补一句「有几条是你之前删过的，已跳过」——否则用户会以为导入漏了 */
+  const reportSkippedDeleted = (n?: number) => {
+    if (!n) return;
+    toast(t("favorites.importSkippedDeleted", { count: n }), "info");
+  };
+
   const runImportBili = async () => {
     startTask("bilibili");
     try {
@@ -633,6 +699,7 @@ export default function FavoritesPanel() {
         }),
         "ok",
       );
+      reportSkippedDeleted(result.skippedDeleted);
     } catch (e) {
       toast(t("favorites.importFail", { err: String(e) }), "err");
       // Cookie 失效是最常见原因：直接把配置弹窗递上去
@@ -675,6 +742,7 @@ export default function FavoritesPanel() {
           "ok",
         );
       }
+      reportSkippedDeleted(result.skippedDeleted);
     } catch (e) {
       toast(t("favorites.importFail", { err: String(e) }), "err");
       // Cookie 失效是最常见原因：把配置弹窗递上去
@@ -693,6 +761,8 @@ export default function FavoritesPanel() {
         imported: number;
         folders: number;
         skipped: number;
+        /** 命中删除墓碑而跳过（之前删过这个网址） */
+        deleted?: number;
         file: string;
       }>("fav_import_bookmarks", { browser, customPath: null });
       await refresh();
@@ -704,6 +774,7 @@ export default function FavoritesPanel() {
         }),
         "ok",
       );
+      reportSkippedDeleted(result.deleted);
     } catch (e) {
       toast(t("favorites.importFail", { err: String(e) }), "err");
     } finally {
@@ -809,6 +880,23 @@ export default function FavoritesPanel() {
   };
 
   const goneCount = stats?.gone ?? 0;
+
+  // ── 删除墓碑：删过的条目不该被下次导入捞回来，但用户可以「重新纳入」──
+  const [deletedRows, setDeletedRows] = useState<FavoriteDeletedRow[]>([]);
+  const [deletedOpen, setDeletedOpen] = useState(false);
+
+  const restoreDeleted = async (source?: string, externalId?: string) => {
+    try {
+      const n = await invoke<number>("fav_restore_deleted", {
+        source: source ?? null,
+        externalId: externalId ?? null,
+      });
+      toast(t("favorites.restoreDeletedDone", { count: n }), "ok");
+      await refresh();
+    } catch (e) {
+      toast(t("favorites.restoreDeletedFail", { err: String(e) }), "err");
+    }
+  };
 
   /**
    * 停止当前长任务。
@@ -1030,9 +1118,10 @@ export default function FavoritesPanel() {
           title={importRunning ? t("favorites.processBlockedByImport") : t("favorites.checkHint")}
           onClick={() => void runCheck()}
         />
-        {/* AI 检索：用自然语言说需求，agent 在本地收藏库里找并整理成清单 */}
+        {/* AI 检索：常驻右栏（点一下展开/收起，不再弹窗）；输入框在右栏里 */}
         <LinkButton
-          label={t("favorites.aiSearch")}
+          label={aiOpen ? t("favorites.aiSearchHide") : t("favorites.aiSearch")}
+          active={aiOpen}
           busy={aiBusy}
           disabled={running.length > 0 || !providerId || !modelId}
           title={
@@ -1043,10 +1132,11 @@ export default function FavoritesPanel() {
                 : undefined
           }
           onClick={() => {
+            if (aiOpen) { toggleAiPanel(); return; }
             setAiError(null);
             setAiResult("");
             setAiSteps([]);
-            setAiOpen(true);
+            toggleAiPanel();
           }}
         />
         {/* 加工类同一时刻只可能有一个在跑，停它即可（不传 task 时会停全部） */}
@@ -1450,6 +1540,85 @@ export default function FavoritesPanel() {
             );
           })}
           </div>
+
+          {/* AI 检索助手：常驻右栏（原先是全屏弹窗，一开就挡住列表）。
+              与条目列表同屏，边看结果边翻收藏；宽度可拖、可关，状态持久化。 */}
+          {aiOpen && (
+            <>
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                aria-label={t("favorites.resizeAiTip")}
+                title={t("favorites.resizeAiTip")}
+                onMouseDown={startAiResize}
+                className="w-2 shrink-0 cursor-col-resize rounded transition-colors hover:bg-[var(--module-accent-soft)]"
+              />
+              <aside
+                className="shrink-0 flex flex-col min-h-0 glass-panel p-3 gap-2"
+                style={{ width: aiWidth }}
+              >
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-[var(--module-accent)]/15 border border-[var(--module-accent)]/30 flex items-center justify-center">
+                    <Bot className="w-3.5 h-3.5 text-[var(--module-accent)]" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[11px] font-bold text-white truncate">{t("favorites.aiSearchTitle")}</div>
+                    <div className="text-[9px] text-slate-500 truncate">{t("favorites.aiSearchHint")}</div>
+                  </div>
+                  <button
+                    onClick={toggleAiPanel}
+                    className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
+                    title={t("favorites.aiPanelClose")}
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <input
+                    value={aiInput}
+                    onChange={(e) => setAiInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void runAiSearch(); } }}
+                    placeholder={t("favorites.aiSearchPh")}
+                    className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
+                  />
+                  <button
+                    onClick={() => void runAiSearch()}
+                    disabled={aiBusy || !aiInput.trim()}
+                    className="px-2 py-1.5 rounded-lg text-[10px] bg-[var(--module-accent)] hover:opacity-90 text-white font-semibold cursor-pointer disabled:opacity-40 flex items-center gap-1"
+                  >
+                    {aiBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                    {aiBusy ? t("favorites.aiSearchRunning") : t("favorites.aiSearchGo")}
+                  </button>
+                </div>
+
+                {/* 检索过程：让用户看得见 agent 到底查了什么，而不是黑箱等结果 */}
+                {aiSteps.length > 0 && (
+                  <div ref={aiLogRef} className="max-h-24 shrink-0 overflow-y-auto rounded-lg border border-white/5 bg-black/30 p-2 space-y-1">
+                    {aiSteps.map((s, i) => (
+                      <div key={i} className="text-[9px] text-slate-500 flex gap-1.5">
+                        <span className="flex-shrink-0 text-slate-600">{AI_TOOL_LABEL[s.tool ?? ""] ?? "过程"}</span>
+                        <span className="min-w-0 break-all">{s.text.slice(0, 160)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-white/5 bg-slate-900/30 p-2.5">
+                  {aiError ? (
+                    <div className="text-[11px] text-rose-400 break-all">{aiError}</div>
+                  ) : aiResult ? (
+                    <AiResultMarkdown text={aiResult} />
+                  ) : (
+                    <div className="text-[11px] text-slate-500 py-6 text-center">
+                      <Sparkles className="w-4 h-4 mx-auto mb-2 text-slate-600" />
+                      {t("favorites.aiSearchPlaceholder")}
+                    </div>
+                  )}
+                </div>
+              </aside>
+            </>
+          )}
         </div>
       </div>
 
@@ -1475,8 +1644,64 @@ export default function FavoritesPanel() {
             {categoryName} ✕
           </button>
         )}
+        {/* 删除墓碑：让用户知道删掉的条目被记住了，且可以反悔 */}
+        {deletedRows.length > 0 && (
+          <button
+            onClick={() => setDeletedOpen(true)}
+            className="px-1.5 py-0.5 rounded-full border border-white/10 text-slate-400 hover:text-[var(--module-accent)] cursor-pointer"
+            title={t("favorites.deletedHint")}
+          >
+            {t("favorites.deletedCount", { count: deletedRows.length })}
+          </button>
+        )}
         <span className="ml-auto">{t("favorites.readonlyHint")}</span>
       </div>
+
+      {/* 已删除条目（墓碑）：重新纳入后，下次导入会把它们再拉进来 */}
+      {deletedOpen && (
+        <div className="fixed inset-0 z-[300] modal-mask bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-surface-panel border border-white/15 rounded-2xl p-4 shadow-2xl space-y-3 text-xs">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white">{t("favorites.deletedTitle")}</h3>
+              <button onClick={() => setDeletedOpen(false)} className="text-slate-400 hover:text-white p-1">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-[10px] text-slate-500 leading-relaxed">{t("favorites.deletedHint")}</p>
+            <div className="max-h-64 overflow-y-auto space-y-1">
+              {deletedRows.map((d) => (
+                <div key={`${d.source}-${d.externalId}`} className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-2 py-1.5">
+                  <span className="shrink-0 text-[9px] text-slate-500">{SOURCE_LABELS[d.source] ?? d.source}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[11px] text-slate-200">{d.title || d.externalId}</div>
+                    <div className="truncate text-[9px] text-slate-600">{d.deletedAt}</div>
+                  </div>
+                  <button
+                    onClick={() => void restoreDeleted(d.source, d.externalId)}
+                    className="shrink-0 px-2 py-1 rounded-lg border border-white/10 text-[10px] text-slate-300 hover:text-[var(--module-accent)] cursor-pointer"
+                  >
+                    {t("favorites.deletedRestore")}
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                onClick={() => void restoreDeleted()}
+                className="px-2.5 py-1.5 rounded-lg border border-white/10 text-[10px] text-slate-300 hover:text-white cursor-pointer"
+              >
+                {t("favorites.deletedRestoreAll", { count: deletedRows.length })}
+              </button>
+              <button
+                onClick={() => setDeletedOpen(false)}
+                className="px-2.5 py-1.5 rounded-lg bg-[var(--module-accent)] text-white text-[10px] font-semibold cursor-pointer"
+              >
+                {t("favorites.deletedClose")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* GitHub Token（收藏模块专属）：与 SDK 模块的 Token 各存各的 */}
       <GithubTokenDialog
@@ -1522,72 +1747,6 @@ export default function FavoritesPanel() {
       />
 
       <ConfirmDialogHost request={confirmRequest} onClose={() => setConfirmRequest(null)} />
-
-      {/* AI 检索助手：把「我想要个做 X 的库」翻译成检索动作，并把结果整理成清单 */}
-      {aiOpen && (
-        <div className="fixed inset-0 z-[130] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="w-[620px] max-w-[95vw] max-h-[85vh] flex flex-col rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl p-5">
-            <div className="flex items-center gap-2.5 mb-3">
-              <div className="w-9 h-9 rounded-xl bg-[var(--module-accent)]/15 border border-[var(--module-accent)]/30 flex items-center justify-center">
-                <Bot className="w-4 h-4 text-[var(--module-accent)]" />
-              </div>
-              <div className="flex-1">
-                <h3 className="text-sm font-bold text-white">{t("favorites.aiSearchTitle")}</h3>
-                <p className="text-[10px] text-slate-500">{t("favorites.aiSearchHint")}</p>
-              </div>
-              <button
-                onClick={() => setAiOpen(false)}
-                className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="flex items-center gap-2 mb-2">
-              <input
-                value={aiInput}
-                onChange={(e) => setAiInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void runAiSearch(); } }}
-                placeholder={t("favorites.aiSearchPh")}
-                className="flex-1 bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
-              />
-              <button
-                onClick={() => void runAiSearch()}
-                disabled={aiBusy || !aiInput.trim()}
-                className="px-3 py-2 rounded-lg text-[11px] bg-[var(--module-accent)] hover:opacity-90 text-white font-semibold cursor-pointer disabled:opacity-40 flex items-center gap-1"
-              >
-                <Send className="w-3 h-3" />
-                {aiBusy ? t("favorites.aiSearchRunning") : t("favorites.aiSearchGo")}
-              </button>
-            </div>
-
-            {/* 检索过程：让用户看得见 agent 到底查了什么，而不是黑箱等结果 */}
-            {aiSteps.length > 0 && (
-              <div ref={aiLogRef} className="max-h-24 overflow-y-auto rounded-lg border border-white/5 bg-black/30 p-2 mb-2 space-y-1">
-                {aiSteps.map((s, i) => (
-                  <div key={i} className="text-[9px] text-slate-500 flex gap-1.5">
-                    <span className="flex-shrink-0 text-slate-600">{AI_TOOL_LABEL[s.tool ?? ""] ?? "过程"}</span>
-                    <span className="min-w-0 break-all">{s.text.slice(0, 160)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-white/5 bg-slate-900/30 p-3">
-              {aiError ? (
-                <div className="text-[11px] text-rose-400 break-all">{aiError}</div>
-              ) : aiResult ? (
-                <AiResultMarkdown text={aiResult} />
-              ) : (
-                <div className="text-[11px] text-slate-500 py-8 text-center">
-                  <Sparkles className="w-4 h-4 mx-auto mb-2 text-slate-600" />
-                  {t("favorites.aiSearchPlaceholder")}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* 分类右键菜单 */}
       {catMenu && (
@@ -1835,6 +1994,7 @@ function LinkButton({
   disabled,
   busy,
   danger,
+  active,
   title,
 }: {
   label: string;
@@ -1842,6 +2002,8 @@ function LinkButton({
   disabled?: boolean;
   busy?: boolean;
   danger?: boolean;
+  /** 当前处于「已开启」状态（如 AI 检索右栏展开中）：高亮，让用户看出这是开关 */
+  active?: boolean;
   title?: string;
 }) {
   return (
@@ -1852,7 +2014,9 @@ function LinkButton({
       className={`inline-flex items-center gap-1 text-[11px] cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
         danger
           ? "text-rose-400/80 hover:text-rose-300"
-          : "text-slate-400 hover:text-[var(--module-accent)]"
+          : active
+            ? "text-[var(--module-accent)]"
+            : "text-slate-400 hover:text-[var(--module-accent)]"
       }`}
     >
       {busy && <RefreshCw className="w-2.5 h-2.5 animate-spin" />}

@@ -198,6 +198,9 @@ pub struct ImportResult {
     pub added: usize,
     pub updated: usize,
     pub skipped: usize,
+    /// 命中删除墓碑而跳过的条数：**用户之前删过、平台上还在**，这次没有捞回来
+    #[serde(default)]
+    pub skipped_deleted: usize,
     pub cancelled: bool,
     /// 读取失败的收藏夹（`标题（原因）`）；其余收藏夹照常导入
     #[serde(default)]
@@ -269,18 +272,22 @@ async fn import_github_inner(
             let mut added = 0usize;
             let mut updated = 0usize;
             let mut skipped = 0usize;
+            let mut skipped_deleted = 0usize;
             for item in &items {
                 match db::upsert(conn, item)? {
                     db::UpsertOutcome::Added => added += 1,
                     db::UpsertOutcome::Updated => updated += 1,
                     db::UpsertOutcome::Skipped => skipped += 1,
+                    // 用户删过：平台还在，但这次不要捞回来
+                    db::UpsertOutcome::Deleted => skipped_deleted += 1,
                 }
             }
-            Ok((added, updated, skipped))
+            Ok((added, updated, skipped, skipped_deleted))
         })?;
         result.added += delta.0;
         result.updated += delta.1;
         result.skipped += delta.2;
+        result.skipped_deleted += delta.3;
 
         emit_progress(
             &app,
@@ -711,18 +718,21 @@ async fn import_bilibili_inner(app: tauri::AppHandle) -> Result<ImportResult, St
                 let mut added = 0usize;
                 let mut updated = 0usize;
                 let mut skipped = 0usize;
+                let mut skipped_deleted = 0usize;
                 for item in &items {
                     match db::upsert(conn, item)? {
                         db::UpsertOutcome::Added => added += 1,
                         db::UpsertOutcome::Updated => updated += 1,
                         db::UpsertOutcome::Skipped => skipped += 1,
+                        db::UpsertOutcome::Deleted => skipped_deleted += 1,
                     }
                 }
-                Ok((added, updated, skipped))
+                Ok((added, updated, skipped, skipped_deleted))
             })?;
             result.added += delta.0;
             result.updated += delta.1;
             result.skipped += delta.2;
+            result.skipped_deleted += delta.3;
             emit_progress(
                 &app,
                 &import_progress(
@@ -932,6 +942,11 @@ async fn import_zhihu_inner(app: tauri::AppHandle) -> Result<ImportResult, Strin
                     db::UpsertOutcome::Added => result.added += 1,
                     db::UpsertOutcome::Updated => result.updated += 1,
                     db::UpsertOutcome::Skipped => result.skipped += 1,
+                    db::UpsertOutcome::Deleted => result.skipped_deleted += 1,
+                }
+                // 命中墓碑：条目没入库，id 为 0，别去缓存正文
+                if outcome == db::UpsertOutcome::Deleted {
+                    continue;
                 }
                 if !item.text.is_empty() || item.html.is_some() {
                     db::with_conn(|conn| {
@@ -1185,9 +1200,26 @@ pub fn fav_set_tags(id: i64, tags: Vec<String>) -> Result<(), String> {
 }
 
 /// 删除本地条目（**只删本地**，不动平台）。
+///
+/// 同时立一条**删除墓碑**（`favorite_deleted`）：平台上的收藏还在，下次导入一定会再拉到它，
+/// 没有碑就会被当成新条目重新插入（表现为「删了又回来」）。
 #[tauri::command]
 pub fn fav_delete(id: i64) -> Result<bool, String> {
     db::with_conn(|conn| db::delete(conn, id))
+}
+
+/// 列出删除墓碑（设置页展示「已删除 n 条」并允许重新纳入）。
+#[tauri::command]
+pub fn fav_list_deleted() -> Result<Vec<db::FavoriteDeletedRow>, String> {
+    db::with_conn(|conn| db::list_deleted(conn))
+}
+
+/// 清除删除墓碑 → 这些条目下次导入会重新进来。
+///
+/// `source` + `externalId` 都给 = 只恢复一条；只给 source = 恢复该来源全部；都不给 = 全部恢复。
+#[tauri::command]
+pub fn fav_restore_deleted(source: Option<String>, external_id: Option<String>) -> Result<usize, String> {
+    db::with_conn(|conn| db::clear_deleted(conn, source.as_deref(), external_id.as_deref()))
 }
 
 /// 概览计数。

@@ -57,6 +57,19 @@ export interface FavoriteSettings {
   modelId: string | null;
   /** 收藏检索 Agent 的单轮工具循环上限（每轮一次 LLM 调用，调大更会找但更费 token） */
   agentRounds?: number;
+  /** AI 检索右栏宽度（px） */
+  aiWidth?: number;
+  /** AI 检索右栏是否展开（常驻右栏，可关） */
+  aiOpen?: boolean;
+}
+
+/** 删除墓碑：用户删过的条目（平台上还在，导入时会被跳过） */
+export interface FavoriteDeletedRow {
+  source: string;
+  externalId: string;
+  /** 删除时记下的标题（仅供辨认） */
+  title: string | null;
+  deletedAt: string;
 }
 
 export interface ImportResult {
@@ -65,6 +78,8 @@ export interface ImportResult {
   added: number;
   updated: number;
   skipped: number;
+  /** 命中删除墓碑而跳过的条数（用户之前删过、平台上还在） */
+  skippedDeleted?: number;
   cancelled: boolean;
   /** 读取失败的收藏夹（`标题（原因）`）；其余收藏夹照常导入 */
   failed?: string[];
