@@ -76,6 +76,11 @@ const isImportTask = (task: FavTask) => IMPORT_TASKS.includes(task);
 const MIN_LEFT_WIDTH = 140;
 const MAX_LEFT_WIDTH = 420;
 
+/** 检索 Agent 轮数：与后端 `clamp_agent_rounds` 同一范围，默认 6。 */
+const MIN_AGENT_ROUNDS = 1;
+const MAX_AGENT_ROUNDS = 20;
+const DEFAULT_AGENT_ROUNDS = 6;
+
 export default function FavoritesPanel() {
   const { t } = useTranslation();
 
@@ -116,10 +121,13 @@ export default function FavoritesPanel() {
   // 左侧分类栏宽度：可拖动，宽度与模型选择一起存进 favorites_settings.json
   const [leftWidth, setLeftWidth] = useState(DEFAULT_LEFT_WIDTH);
   // 设置的内存副本：拖动/切模型都是「读-改-写」，先攒在这里再整份落盘
+  // 检索 Agent 的轮数上限：每轮一次模型调用，调大更会找但更费 token（后端再钳一次 1..20）
+  const [agentRounds, setAgentRounds] = useState(DEFAULT_AGENT_ROUNDS);
   const settingsRef = useRef<FavoriteSettings>({
     leftWidth: DEFAULT_LEFT_WIDTH,
     providerId: null,
     modelId: null,
+    agentRounds: DEFAULT_AGENT_ROUNDS,
   });
 
   /** 保存界面设置（整份覆盖，未传的字段沿用内存里的现值）。失败只记日志：设置丢了不影响功能。 */
@@ -970,6 +978,24 @@ export default function FavoritesPanel() {
             <option key={id} value={id}>{id}</option>
           ))}
         </select>
+
+        {/* 检索 Agent 轮数：只影响「AI 检索」，归类不走这个循环 */}
+        <input
+          type="number"
+          min={MIN_AGENT_ROUNDS}
+          max={MAX_AGENT_ROUNDS}
+          value={agentRounds}
+          onChange={(e) => {
+            const raw = Number(e.target.value);
+            const next = Number.isFinite(raw)
+              ? Math.min(MAX_AGENT_ROUNDS, Math.max(MIN_AGENT_ROUNDS, Math.round(raw)))
+              : DEFAULT_AGENT_ROUNDS;
+            setAgentRounds(next);
+            void persistSettings({ agentRounds: next });
+          }}
+          className="glass-input px-1.5 h-6 w-12 text-[11px] text-center"
+          title={t("favorites.agentRoundsHint")}
+        />
 
         <Menu
           label={t("favorites.classify")}

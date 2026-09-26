@@ -55,6 +55,8 @@ export interface FavoriteSettings {
   providerId: string | null;
   /** 上次 AI 归类用的模型 */
   modelId: string | null;
+  /** 收藏检索 Agent 的单轮工具循环上限（每轮一次 LLM 调用，调大更会找但更费 token） */
+  agentRounds?: number;
 }
 
 export interface ImportResult {

@@ -265,6 +265,7 @@
     "modelPick": "选择模型",
     "needProviderModel": "请先在顶栏选择供应商与模型",
     "modelHint": "用哪个模型归类",
+    "agentRoundsHint": "检索 Agent 的轮数上限：每轮一次模型调用，调大更会找但更费 token（1-20）",
     "modelLoading": "模型列表加载中…",
     "contentShow": "展开正文",
     "contentHide": "收起正文",

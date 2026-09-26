@@ -265,6 +265,7 @@
     "modelPick": "Select model",
     "needProviderModel": "Pick a provider and a model in the toolbar first",
     "modelHint": "Which model to classify with",
+    "agentRoundsHint": "Search agent round cap: one model call per round — higher finds more but costs more tokens (1-20)",
     "modelLoading": "Loading models…",
     "contentShow": "Show content",
     "contentHide": "Hide content",

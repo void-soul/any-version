@@ -30,7 +30,20 @@ pub struct FavoriteSettings {
     /// 上次 AI 归类用的模型（与 `provider_id` 成对保存）
     #[serde(default)]
     pub model_id: Option<String>,
+    /// 收藏检索 Agent 的单轮工具循环上限（与思维导图「Agent 轮数」同一口径：
+    /// 每轮一次 LLM 调用，调大更会找但更费 token）
+    #[serde(default = "default_agent_rounds")]
+    pub agent_rounds: usize,
 }
+
+fn default_agent_rounds() -> usize {
+    DEFAULT_AGENT_ROUNDS
+}
+
+/// Agent 轮数的上下限：1 轮 = 只搜一次就整理；20 轮足够兜住「换好几个词」的场景。
+pub const MIN_AGENT_ROUNDS: usize = 1;
+pub const MAX_AGENT_ROUNDS: usize = 20;
+pub const DEFAULT_AGENT_ROUNDS: usize = 6;
 
 fn default_left_width() -> f64 {
     DEFAULT_LEFT_WIDTH
@@ -42,8 +55,14 @@ impl Default for FavoriteSettings {
             left_width: DEFAULT_LEFT_WIDTH,
             provider_id: None,
             model_id: None,
+            agent_rounds: DEFAULT_AGENT_ROUNDS,
         }
     }
+}
+
+/// Agent 轮数钳制：0 / NaN 式的坏值回默认，越界收敛到 1..=20（与 `left_width` 同一套路）。
+pub fn clamp_agent_rounds(rounds: usize) -> usize {
+    rounds.clamp(MIN_AGENT_ROUNDS, MAX_AGENT_ROUNDS)
 }
 
 /// 设置文件路径。
@@ -68,6 +87,7 @@ pub fn load_settings() -> FavoriteSettings {
         .and_then(|data| serde_json::from_str::<FavoriteSettings>(&data).ok())
         .unwrap_or_default();
     settings.left_width = clamp_left_width(settings.left_width);
+    settings.agent_rounds = clamp_agent_rounds(settings.agent_rounds);
     settings
 }
 
@@ -75,6 +95,7 @@ pub fn load_settings() -> FavoriteSettings {
 pub fn save_settings(settings: &FavoriteSettings) -> Result<(), String> {
     let mut normalized = settings.clone();
     normalized.left_width = clamp_left_width(normalized.left_width);
+    normalized.agent_rounds = clamp_agent_rounds(normalized.agent_rounds);
     let data = serde_json::to_string_pretty(&normalized).map_err(|e| e.to_string())?;
     atomic_write_file(&settings_path(), data.as_bytes())
 }
@@ -129,11 +150,14 @@ mod tests {
             left_width: 200.0,
             provider_id: Some("p1".to_string()),
             model_id: Some("m1".to_string()),
+            agent_rounds: 8,
         };
         let json = serde_json::to_string(&settings).unwrap();
         assert!(json.contains("\"leftWidth\""));
         assert!(json.contains("\"providerId\""));
         assert!(json.contains("\"modelId\""));
+        // Agent 轮数同样按 camelCase 下发，前端按 agentRounds 读
+        assert!(json.contains("\"agentRounds\""));
         let back: FavoriteSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(back, settings);
     }
