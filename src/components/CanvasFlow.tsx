@@ -104,13 +104,13 @@ function JsonArrayTable({ value, path, onSelect }: { value: JsonValue[]; path: s
   const displayRows = value.slice(0, 80);
   return (
     <div className="mt-2 overflow-hidden rounded border border-white/10 bg-slate-950/60" onClick={(event) => event.stopPropagation()}>
-      <div className="border-b border-white/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-wide text-cyan-300">{t("canvasflow.arrContent", { count: value.length })}</div>
+      <div className="border-b border-white/10 px-2 py-1 text-micro font-semibold uppercase tracking-wide text-cyan-300">{t("canvasflow.arrContent", { count: value.length })}</div>
       <div className="max-h-36 overflow-auto">
-        <table className="w-full table-fixed border-collapse text-left font-mono text-[9px]">
+        <table className="w-full table-fixed border-collapse text-left font-mono text-micro">
           <thead><tr>{objectRows && <th className="sticky top-0 w-6 border-b border-white/10 bg-slate-900 px-1.5 py-1 text-slate-600">#</th>}{columns.map((column) => <th key={column} className="sticky top-0 max-w-[100px] border-b border-white/10 bg-slate-900 px-1.5 py-1 text-cyan-300">{column}</th>)}</tr></thead>
           <tbody>{displayRows.map((row, index) => <tr key={`${path}.${index}`} className="hover:bg-white/[0.05]" onClick={() => onSelect(`${path}.${index}`)}>{objectRows && <td className="border-b border-white/5 px-1.5 py-1 text-slate-600">{index + 1}</td>}{columns.map((column) => { const cell = objectRows && typeof row === "object" && row !== null && !Array.isArray(row) ? row[column] ?? null : row; return <td key={column} className="max-w-[100px] truncate border-b border-white/5 px-1.5 py-1 text-slate-300" title={JSON.stringify(cell)}>{compactJsonValue(cell)}</td>; })}</tr>)}</tbody>
         </table>
-        {value.length > 80 && <div className="border-t border-white/10 px-2 py-1 text-[9px] text-slate-600">{t("canvasflow.showFirst80")}</div>}
+        {value.length > 80 && <div className="border-t border-white/10 px-2 py-1 text-micro text-slate-600">{t("canvasflow.showFirst80")}</div>}
       </div>
     </div>
   );
@@ -153,10 +153,10 @@ const JsonFlowNode = memo(function JsonFlowNode({ data }: NodeProps<Node<JsonFlo
       <Handle type="target" position={Position.Left} isConnectable={false} className="!h-2.5 !w-2.5 !border-2 !border-slate-950" style={{ background: color }} />
       <div className="flex items-center gap-1.5">
         {container && <button type="button" className="nodrag nopan inline-flex h-4 w-4 items-center justify-center text-slate-500 hover:text-white" onClick={(event) => { event.stopPropagation(); onToggle(item.path); }} title={collapsed.has(item.path) ? t("canvasflow.expand") : t("canvasflow.collapse")}>{collapsed.has(item.path) ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}</button>}
-        <span className={`min-w-0 flex-1 truncate font-mono text-[11px] ${directMatch ? "text-yellow-300" : "text-cyan-200"}`}>{item.name}</span>
-        <button type="button" className="nodrag nopan text-slate-600 hover:text-white" onClick={(event) => { event.stopPropagation(); onCopy(copyJsonValue(item.value)); }} title={t("canvasflow.copyNode")}><span className="text-[10px]">⧉</span></button>
+        <span className={`min-w-0 flex-1 truncate font-mono text-caption ${directMatch ? "text-yellow-300" : "text-cyan-200"}`}>{item.name}</span>
+        <button type="button" className="nodrag nopan text-slate-600 hover:text-white" onClick={(event) => { event.stopPropagation(); onCopy(copyJsonValue(item.value)); }} title={t("canvasflow.copyNode")}><span className="text-tiny">⧉</span></button>
       </div>
-      <div className="mt-1 truncate font-mono text-[10px]" style={{ color }}>{jsonSummary(item.value)}</div>
+      <div className="mt-1 truncate font-mono text-tiny" style={{ color }}>{jsonSummary(item.value)}</div>
       {Array.isArray(item.value) && !collapsed.has(item.path) && <JsonArrayTable value={item.value} path={item.path} onSelect={onSelect} />}
       <Handle type="source" position={Position.Right} isConnectable={false} className="!h-2.5 !w-2.5 !border-2 !border-slate-950" style={{ background: color }} />
     </div>
@@ -199,7 +199,7 @@ function JsonFlowInner({ value, selectedPath, searchMatches, onSelectPath, onCop
   // JSON 内容变化时重置位置
   useEffect(() => { setNodes(computedNodes); }, [value]);
   useEffect(() => { const timer = window.setTimeout(() => fitView({ padding: 0.2, duration: 240 }), 0); return () => window.clearTimeout(timer); }, [fitView, value, collapsed]);
-  return <div className="relative h-full min-h-0"><ReactFlow nodes={nodes} edges={edges} nodeTypes={{ jsonNode: JsonFlowNode }} edgeTypes={{ color: ColorEdge }} onNodesChange={(changes) => setNodes((cur) => applyNodeChanges(changes, cur))} fitView minZoom={0.15} maxZoom={2.2} nodesDraggable nodesConnectable={false} elementsSelectable proOptions={{ hideAttribution: true }}><Background color="#1e293b" gap={24} size={1} /><MiniMap style={{ backgroundColor: "var(--color-surface-deep)", border: "1px solid rgba(255,255,255,.12)" }} className="!bg-slate-950/95" nodeColor={(node) => hashColor(String(node.id), JSON_EDGE_COLORS)} nodeStrokeColor="#0f172a" nodeBorderRadius={2} maskColor="rgba(2, 6, 23, 0.72)" pannable zoomable /><Controls className="canvas-flow-controls" showInteractive={false} /></ReactFlow>{graphTruncated && <div className="pointer-events-none absolute left-3 top-3 z-10 rounded border border-amber-400/20 bg-slate-900/90 px-2 py-1 text-[10px] text-amber-200">{t("canvasflow.graphTruncated", { count: MAX_JSON_FLOW_ITEMS })}</div>}</div>;
+  return <div className="relative h-full min-h-0"><ReactFlow nodes={nodes} edges={edges} nodeTypes={{ jsonNode: JsonFlowNode }} edgeTypes={{ color: ColorEdge }} onNodesChange={(changes) => setNodes((cur) => applyNodeChanges(changes, cur))} fitView minZoom={0.15} maxZoom={2.2} nodesDraggable nodesConnectable={false} elementsSelectable proOptions={{ hideAttribution: true }}><Background color="#1e293b" gap={24} size={1} /><MiniMap style={{ backgroundColor: "var(--color-surface-deep)", border: "1px solid rgba(255,255,255,.12)" }} className="!bg-slate-950/95" nodeColor={(node) => hashColor(String(node.id), JSON_EDGE_COLORS)} nodeStrokeColor="#0f172a" nodeBorderRadius={2} maskColor="rgba(2, 6, 23, 0.72)" pannable zoomable /><Controls className="canvas-flow-controls" showInteractive={false} /></ReactFlow>{graphTruncated && <div className="pointer-events-none absolute left-3 top-3 z-10 rounded border border-amber-400/20 bg-slate-900/90 px-2 py-1 text-tiny text-amber-200">{t("canvasflow.graphTruncated", { count: MAX_JSON_FLOW_ITEMS })}</div>}</div>;
 }
 
 export function JsonFlowCanvas(props: { value: JsonValue; selectedPath: string; searchMatches: SearchMatches; onSelectPath: (path: string) => void; onCopy: (value: string) => void; collapseAllToken: number }) {

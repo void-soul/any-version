@@ -403,7 +403,7 @@ export default function MusicPanel() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t("music.searchPh")}
-            className="glass-input w-full pl-7 pr-2 h-8 text-[11px]"
+            className="glass-input w-full pl-7 pr-2 h-8 text-caption"
           />
         </div>
         <div className="flex items-center gap-0.5 rounded-ctl bg-white/5 p-0.5">
@@ -440,7 +440,7 @@ export default function MusicPanel() {
             <span
               key={folder}
               title={folder}
-              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-[10px] text-slate-300 max-w-[220px]"
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-tiny text-slate-300 max-w-[220px]"
             >
               <span className="truncate">{folderName(folder)}</span>
               <button
@@ -452,7 +452,7 @@ export default function MusicPanel() {
               </button>
             </span>
           ))}
-          <span className="text-[10px] text-slate-500 ml-auto">
+          <span className="text-tiny text-slate-500 ml-auto">
             {t("music.totalTracks", { count: library.tracks.length })}
           </span>
         </div>
@@ -464,20 +464,20 @@ export default function MusicPanel() {
           <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-500">
             <ListMusic className="w-10 h-10 opacity-40" />
             <p className="text-sm">{t("music.empty")}</p>
-            <p className="text-[11px] text-slate-600">{t("music.emptyHint")}</p>
+            <p className="text-caption text-slate-600">{t("music.emptyHint")}</p>
             <SharedButton variant="primary" onClick={importFolder}>
               <FolderPlus className="w-3.5 h-3.5" />
               {t("music.importFolder")}
             </SharedButton>
           </div>
         ) : filteredTracks.length === 0 ? (
-          <div className="p-6 text-center text-slate-500 text-[11px]">{t("music.noMatch")}</div>
+          <div className="p-6 text-center text-slate-500 text-caption">{t("music.noMatch")}</div>
         ) : (
           /*
             列宽：按百分比分配（colgroup + table-fixed），列与列之间不留 gap——
             宽度全部随容器缩放，「序号 / 标题 / 作者 / 专辑 / 时长」五列合计 100%。
           */
-          <table className="w-full table-fixed border-collapse text-[11px] text-left">
+          <table className="w-full table-fixed border-collapse text-caption text-left">
             <colgroup>
               {TRACK_COL_WIDTHS.map((width) => (
                 <col key={width} style={{ width }} />
@@ -614,7 +614,7 @@ export default function MusicPanel() {
         </div>
 
         <div className="flex items-center gap-2 flex-1 min-w-0">
-          <span className="text-[10px] font-mono text-slate-400 w-10 text-right">
+          <span className="text-tiny font-mono text-slate-400 w-10 text-right">
             {formatTime(position)}
           </span>
           <input
@@ -629,14 +629,14 @@ export default function MusicPanel() {
             onKeyUp={() => void commitSeek()}
             className="flex-1 accent-[var(--module-accent)] cursor-pointer disabled:cursor-default"
           />
-          <span className="text-[10px] font-mono text-slate-400 w-10">{formatTime(duration)}</span>
+          <span className="text-tiny font-mono text-slate-400 w-10">{formatTime(duration)}</span>
         </div>
 
         <div className="min-w-0 w-48 flex-shrink-0">
-          <p className="text-[11px] text-slate-200 truncate">
+          <p className="text-caption text-slate-200 truncate">
             {player?.title ?? t("music.notPlaying")}
           </p>
-          <p className="text-[10px] text-slate-500 truncate">{player?.artist ?? ""}</p>
+          <p className="text-tiny text-slate-500 truncate">{player?.artist ?? ""}</p>
         </div>
 
         {/* 音量：右侧留出边距，避免贴着窗口边缘 */}
@@ -673,8 +673,8 @@ export default function MusicPanel() {
             className="w-[440px] max-w-full rounded-panel border border-white/10 bg-slate-900 p-4 space-y-3"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="text-[13px] font-bold text-white">{t("music.renameTitle")}</div>
-            <div className="text-[11px] text-slate-400 break-all">
+            <div className="text-title font-bold text-white">{t("music.renameTitle")}</div>
+            <div className="text-caption text-slate-400 break-all">
               {renameTrack.path.split(/[\\/]/).pop()}
             </div>
             <input
@@ -686,9 +686,9 @@ export default function MusicPanel() {
               }}
               autoFocus
               spellCheck={false}
-              className="w-full bg-black/30 border border-white/10 rounded-ctl px-2.5 py-2 text-[12px] text-slate-100 outline-none focus:border-[var(--module-accent)]"
+              className="w-full bg-black/30 border border-white/10 rounded-ctl px-2.5 py-2 text-body text-slate-100 outline-none focus:border-[var(--module-accent)]"
             />
-            <div className="text-[10px] text-slate-500">
+            <div className="text-tiny text-slate-500">
               {renameFromTags ? t("music.renameFromTags") : t("music.renameNoTags")}
             </div>
             <div className="flex justify-end gap-2 pt-1">

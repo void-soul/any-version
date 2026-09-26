@@ -26,11 +26,11 @@ export default function VexEmptyState({
     <div className={`flex flex-col items-center justify-center gap-3 py-14 text-center ${className}`}>
       <VexGlowAvatar size={avatarSize} />
       <div>
-        <p className="text-xs text-slate-400">{title ?? t("vex.defaultTitle")}</p>
-        {desc !== undefined && <p className="mt-1 text-[11px] text-slate-600">{desc ?? t("vex.defaultDesc")}</p>}
+        <p className="text-body text-slate-400">{title ?? t("vex.defaultTitle")}</p>
+        {desc !== undefined && <p className="mt-1 text-caption text-slate-600">{desc ?? t("vex.defaultDesc")}</p>}
       </div>
       {tick && (
-        <p className={`text-[10px] italic opacity-80 ${tickColor}`}>— {tick}</p>
+        <p className={`text-tiny italic opacity-80 ${tickColor}`}>— {tick}</p>
       )}
     </div>
   );

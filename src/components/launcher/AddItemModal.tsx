@@ -463,7 +463,7 @@ export default function AddItemModal({
                   type="button"
                   onClick={handleUploadIcon}
                   title={t("additem.uploadImageTitle")}
-                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-body rounded-ctl transition cursor-pointer flex items-center gap-1.5"
+                  className="px-2.5 py-1.5 ui-btn text-slate-300 hover:text-white text-body rounded-ctl transition cursor-pointer flex items-center gap-1.5"
                 >
                   <ImageIcon className="w-3.5 h-3.5 text-purple-400" />
                   {t("additem.uploadImage")}
@@ -475,7 +475,7 @@ export default function AddItemModal({
                     if (!netIconUrl) setNetIconUrl(target.trim().startsWith("http") ? target.trim() : "");
                   }}
                   title={t("additem.netIconTitle")}
-                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-body rounded-ctl transition cursor-pointer flex items-center gap-1.5"
+                  className="px-2.5 py-1.5 ui-btn text-slate-300 hover:text-white text-body rounded-ctl transition cursor-pointer flex items-center gap-1.5"
                 >
                   <Link2 className="w-3.5 h-3.5 text-blue-400" />
                   {t("additem.netIcon")}
@@ -485,7 +485,7 @@ export default function AddItemModal({
                   onClick={handleRestoreDefaultIcon}
                   disabled={!target.trim()}
                   title={t("additem.restoreDefaultTitle")}
-                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-body rounded-ctl transition cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="px-2.5 py-1.5 ui-btn text-slate-300 hover:text-white text-body rounded-ctl transition cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <RotateCcw className="w-3.5 h-3.5 text-cyan-400" />
                   {t("additem.restoreDefault")}
@@ -495,7 +495,7 @@ export default function AddItemModal({
                   onClick={handleClearIcon}
                   disabled={!icon && !htmlIcon}
                   title={t("additem.clearIconTitle")}
-                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-body rounded-ctl transition cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="px-2.5 py-1.5 ui-btn text-slate-300 hover:text-white text-body rounded-ctl transition cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <X className="w-3.5 h-3.5 text-red-400" />
                   {t("additem.clearIcon")}

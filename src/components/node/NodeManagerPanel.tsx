@@ -556,7 +556,7 @@ export default function NodeManagerPanel() {
       <div className="flex items-center gap-2 px-5 py-3 border-b border-white/10 bg-white/[0.02]">
         <Settings2 className="w-4 h-4 text-[var(--module-accent)]" />
         <h2 className="text-sm font-bold text-white">{t("nodeproj.manageTitle")}</h2>
-        <span className="text-[10px] text-slate-500 ml-1">{t("nodeproj.manageSub")}</span>
+        <span className="text-tiny text-slate-500 ml-1">{t("nodeproj.manageSub")}</span>
       </div>
       <div className="flex-1 min-h-0 flex overflow-hidden">
         {/* 服务选项卡列表 */}
@@ -591,7 +591,7 @@ export default function NodeManagerPanel() {
                 }`}
               >
                 <span
-                  className={`text-[11px] font-semibold truncate flex-1 ${
+                  className={`text-caption font-semibold truncate flex-1 ${
                     selected ? "text-white" : "text-slate-300"
                   }`}
                   title={project.displayName}
@@ -607,7 +607,7 @@ export default function NodeManagerPanel() {
             );
           })}
           {managedProjects.length === 0 && (
-            <div className="px-3 py-6 text-center text-[10px] text-slate-500">
+            <div className="px-3 py-6 text-center text-tiny text-slate-500">
               {t("nodeproj.noManaged")}
             </div>
           )}
@@ -669,7 +669,7 @@ export default function NodeManagerPanel() {
                 <button
                   key={tab.id}
                   onClick={() => setActiveTabId(tab.id)}
-                  className={`group flex items-center gap-1.5 px-3 py-1.5 rounded-t-ctl text-[11px] font-semibold transition-all cursor-pointer flex-shrink-0 ${
+                  className={`group flex items-center gap-1.5 px-3 py-1.5 rounded-t-ctl text-caption font-semibold transition-all cursor-pointer flex-shrink-0 ${
                     active
                       ? "bg-white/10 text-white border-b-2 border-[var(--module-accent)]"
                       : "text-slate-400 hover:text-slate-200 hover:bg-white/5 border-b-2 border-transparent"
@@ -695,7 +695,7 @@ export default function NodeManagerPanel() {
             <button
               onClick={() => activeTab && reloadTab(activeTab.id)}
               disabled={!activeTab}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-ctl text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-ctl text-caption font-semibold text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
               title={t("nodeproj.refreshHomeTitle")}
             >
               <RefreshCw className="w-3.5 h-3.5" /> {t("nodeproj.refreshHome")}
@@ -703,7 +703,7 @@ export default function NodeManagerPanel() {
             <button
               onClick={() => activeTab && void openDevTools(activeTab)}
               disabled={!activeTab}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-ctl text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-ctl text-caption font-semibold text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
               title={t("nodeproj.devToolsTitle")}
             >
               <Code2 className="w-3.5 h-3.5" /> {t("nodeproj.devTools")}
@@ -711,7 +711,7 @@ export default function NodeManagerPanel() {
             {/* 服务管理入口（超链接样式，区别于两侧的刷新/开发者工具按钮） */}
             <button
               onClick={() => setActiveTabId(MANAGE_TAB)}
-              className={`group flex items-center gap-1 px-1 py-1 text-[11px] cursor-pointer transition-colors flex-shrink-0 ${
+              className={`group flex items-center gap-1 px-1 py-1 text-caption cursor-pointer transition-colors flex-shrink-0 ${
                 activeTabId === MANAGE_TAB
                   ? "text-[var(--module-accent)]"
                   : "text-slate-400 hover:text-[var(--module-accent)]"
@@ -876,7 +876,7 @@ function ProjectCard({
             </span>
             {isNpx && (
               <span
-                className="px-1.5 py-0.5 rounded-md text-[9px] font-mono font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"
+                className="px-1.5 py-0.5 rounded-md text-micro font-mono font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"
                 title={t("nodeproj.npxBadgeTitle")}
               >
                 npx
@@ -884,14 +884,14 @@ function ProjectCard({
             )}
             {isPip && (
               <span
-                className="px-1.5 py-0.5 rounded-md text-[9px] font-mono font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                className="px-1.5 py-0.5 rounded-md text-micro font-mono font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20"
                 title={t("nodeproj.pipBadgeTitle")}
               >
                 pip
               </span>
             )}
             <span
-              className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+              className={`px-2 py-0.5 rounded-full text-tiny font-semibold ${
                 portConflict
                   ? "bg-red-500/10 text-red-400 border border-red-500/20"
                   : running
@@ -911,12 +911,12 @@ function ProjectCard({
             </span>
           </div>
           {project.description && (
-            <p className="text-[11px] text-slate-500 truncate">
+            <p className="text-caption text-slate-500 truncate">
               {project.description}
             </p>
           )}
         </div>
-        <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-mono flex-shrink-0">
+        <div className="flex items-center gap-1.5 text-tiny text-slate-500 font-mono flex-shrink-0">
           {st?.pid && (
             <span className="flex items-center gap-1">
               <Terminal className="w-3 h-3" /> PID {st.pid}
@@ -938,7 +938,7 @@ function ProjectCard({
       </div>
 
       {/* 环境检测条 */}
-      <div className="px-5 pb-2 flex flex-wrap items-center gap-3 text-[10px]">
+      <div className="px-5 pb-2 flex flex-wrap items-center gap-3 text-tiny">
         {!isNpx && !isPip && <EnvBadge dep={d?.git} label="git" />}
         <EnvBadge
           dep={d?.node}
@@ -950,7 +950,7 @@ function ProjectCard({
         />
         {st?.port && <span className="text-slate-600">{t("nodeproj.portText", { port: st.port })}</span>}
         <label
-          className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-200 cursor-pointer select-none"
+          className="flex items-center gap-1 text-tiny text-slate-400 hover:text-slate-200 cursor-pointer select-none"
           title={t("nodeproj.autoStartTitle")}
         >
           <input
@@ -977,7 +977,7 @@ function ProjectCard({
             <button
               type="button"
               onClick={() => onKillPortOwner(st?.port ?? project.defaultPort)}
-              className="px-2 py-1 rounded-md bg-red-600 hover:bg-red-500 text-[10px] font-semibold text-white cursor-pointer transition-all flex items-center gap-1"
+              className="px-2 py-1 rounded-md bg-red-600 hover:bg-red-500 text-tiny font-semibold text-white cursor-pointer transition-all flex items-center gap-1"
             >
               <Square className="w-3 h-3" /> {t("nodeproj.forceKill")}
             </button>
@@ -987,7 +987,7 @@ function ProjectCard({
 
       {/* 更新检查：git 模式对比 commit；npx 模式对比本地版本与 npm registry 远程版本 */}
       {installed && (
-        <div className="px-5 py-1.5 flex items-center gap-2 text-[11px]">
+        <div className="px-5 py-1.5 flex items-center gap-2 text-caption">
           {checkingUpdate ? (
             <span className="flex items-center gap-1.5 text-slate-400">
               <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t("nodeproj.checkingUpdate")}
@@ -1045,7 +1045,7 @@ function ProjectCard({
 
       {/* 进度 / 错误 */}
       {(isBusy || prog) && (
-        <div className="px-5 py-2 flex items-center gap-2 text-[11px] text-sky-300">
+        <div className="px-5 py-2 flex items-center gap-2 text-caption text-sky-300">
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
           <span>
             {prog?.phase === "done"
@@ -1074,7 +1074,7 @@ function ProjectCard({
         </div>
       )}
       {error && (
-        <div className="px-5 py-2 flex items-start gap-2 text-[11px] text-red-400 break-all">
+        <div className="px-5 py-2 flex items-start gap-2 text-caption text-red-400 break-all">
           <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
           <span>{error}</span>
         </div>
@@ -1086,7 +1086,7 @@ function ProjectCard({
           <div className="flex items-center gap-1">
             <button
               onClick={onToggleLog}
-              className="flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-slate-300 cursor-pointer"
+              className="flex items-center gap-1.5 text-tiny text-slate-500 hover:text-slate-300 cursor-pointer"
             >
               <Terminal className="w-3 h-3" />
               {logOpen ? t("nodeproj.logsToggleOpen") : t("nodeproj.logsToggleClosed")}
@@ -1103,7 +1103,7 @@ function ProjectCard({
                   /* 剪贴板不可用时静默忽略 */
                 }
               }}
-              className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-slate-500 hover:text-slate-300 hover:bg-white/5 cursor-pointer transition-all"
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded text-tiny text-slate-500 hover:text-slate-300 hover:bg-white/5 cursor-pointer transition-all"
               title={t("nodeproj.copyLogs")}
             >
               <Copy className="w-3 h-3" />
@@ -1111,7 +1111,7 @@ function ProjectCard({
             </button>
             <button
               onClick={() => onClearLogs(project.id)}
-              className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 cursor-pointer transition-all"
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded text-tiny text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 cursor-pointer transition-all"
               title={t("nodeproj.clearLogsBtn")}
             >
               <Eraser className="w-3 h-3" />
@@ -1120,7 +1120,7 @@ function ProjectCard({
           </div>
           {logOpen && (
             <div
-              className="mt-1 max-h-56 overflow-y-auto rounded-ctl bg-black/40 border border-white/5 p-2 font-mono text-[10px] leading-relaxed"
+              className="mt-1 max-h-56 overflow-y-auto rounded-ctl bg-black/40 border border-white/5 p-2 font-mono text-tiny leading-relaxed"
               onClick={() => endRef.current?.scrollIntoView({ block: "end" })}
             >
               {logs.map((l, i) => (
@@ -1153,7 +1153,7 @@ function ProjectCard({
         <div className="px-5 pt-2">
           <div className="flex items-center gap-2 rounded-ctl border border-amber-500/20 bg-amber-500/10 px-3 py-2">
             <Sparkles className="w-3.5 h-3.5 text-amber-300 flex-shrink-0" />
-            <div className="flex-1 text-[11px] text-amber-200/90 leading-snug">
+            <div className="flex-1 text-caption text-amber-200/90 leading-snug">
               {t("nodeproj.initBanner")}
             </div>
             <div className="w-24 flex-shrink-0">
@@ -1182,7 +1182,7 @@ function ProjectCard({
                 if (e.key === "Enter") submitCommand();
               }}
               placeholder={t("nodeproj.execPlaceholder")}
-              className="flex-1 bg-transparent outline-none text-[12px] text-slate-200 placeholder:text-slate-600 font-mono"
+              className="flex-1 bg-transparent outline-none text-body text-slate-200 placeholder:text-slate-600 font-mono"
               spellCheck={false}
             />
           </div>
@@ -1282,7 +1282,7 @@ function ProjectCard({
           <div className="flex items-center justify-end gap-2 min-w-0">
             {consoleUrlMode && consoleUrl && (
               <span
-                className="text-[10px] text-emerald-400/80 flex items-center gap-1 flex-shrink-0"
+                className="text-tiny text-emerald-400/80 flex items-center gap-1 flex-shrink-0"
                 title={consoleUrl}
               >
                 <CheckCircle2 className="w-3 h-3" /> {t("nodeproj.consoleUrlReady")}
@@ -1290,7 +1290,7 @@ function ProjectCard({
             )}
             {!d?.allReady && installed && (
               <span
-                className="text-[10px] text-amber-400 flex items-center gap-1 flex-shrink-0"
+                className="text-tiny text-amber-400 flex items-center gap-1 flex-shrink-0"
                 title={t("nodeproj.depsNotReady")}
               >
                 <AlertTriangle className="w-3 h-3 flex-shrink-0" />
@@ -1359,7 +1359,7 @@ function ActionButton({
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className={`flex-1 justify-center px-2 py-1 rounded-ctl text-[10px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed ${color} text-white`}
+      className={`flex-1 justify-center px-2 py-1 rounded-ctl text-tiny font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed ${color} text-white`}
     >
       {busy ? (
         <Loader2 className="w-3.5 h-3.5 animate-spin" />

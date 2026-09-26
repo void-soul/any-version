@@ -68,13 +68,13 @@ function MoveModuleModal({ module, modules, onClose, onMoved }: {
         </>
       }
     >
-      <p className="text-xs leading-relaxed text-slate-400 mb-3">
+      <p className="text-body leading-relaxed text-slate-400 mb-3">
         {t("api.moveDesc", { name: module.name })}
       </p>
       <select
         value={targetId}
         onChange={(e) => setTargetId(e.target.value)}
-        className="w-full rounded-ctl border border-white/10 bg-black/30 px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60 cursor-pointer"
+        className="w-full rounded-ctl border border-white/10 bg-black/30 px-3 py-2 text-body text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60 cursor-pointer"
       >
         <option value="">{t("api.selectTarget")}</option>
         {targets.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
@@ -716,7 +716,7 @@ export default function ApiPanel() {
           <div className="mb-1">
             <div className="flex items-center gap-1 px-1.5 pt-1 pb-0.5">
               <Star className="w-3 h-3 text-amber-400 fill-amber-400" />
-              <span className="text-[10px] font-semibold text-slate-500">{t("api.fav")}</span>
+              <span className="text-tiny font-semibold text-slate-500">{t("api.fav")}</span>
             </div>
             {favs.map(row)}
           </div>
@@ -729,9 +729,9 @@ export default function ApiPanel() {
               <div className="group flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-white/5 cursor-pointer" onClick={() => toggleExpand(m.id)}>
                 {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
                 <Folder className="w-3.5 h-3.5 text-amber-400/80 shrink-0" />
-                <span className="flex-1 text-xs text-slate-300 truncate">{m.name}</span>
-                {m.description && <span className="text-[10px] text-slate-600 truncate max-w-28 hidden group-hover:block" title={m.description}>{m.description}</span>}
-                <span className="text-[10px] px-1.5 py-px rounded-full bg-white/5 border border-white/5 text-slate-500 tabular-nums">{children.length}</span>
+                <span className="flex-1 text-body text-slate-300 truncate">{m.name}</span>
+                {m.description && <span className="text-tiny text-slate-600 truncate max-w-28 hidden group-hover:block" title={m.description}>{m.description}</span>}
+                <span className="text-tiny px-1.5 py-px rounded-full bg-white/5 border border-white/5 text-slate-500 tabular-nums">{children.length}</span>
                 <button
                   onClick={(e) => { e.stopPropagation(); openEditModule(m); }}
                   className="hidden group-hover:block p-0.5 text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
@@ -769,10 +769,10 @@ export default function ApiPanel() {
                 <div className="overflow-hidden min-h-0">
                   <div className="space-y-0.5 py-0.5">
                     {m.description && (
-                      <div className="text-[10px] text-slate-500/90 leading-snug px-1.5 py-0.5 border-l border-white/10 ml-1">{m.description}</div>
+                      <div className="text-tiny text-slate-500/90 leading-snug px-1.5 py-0.5 border-l border-white/10 ml-1">{m.description}</div>
                     )}
                     {children.map(row)}
-                    {children.length === 0 && <div className="text-[10px] text-slate-600 px-2 py-0.5">{t("api.emptyModule")}</div>}
+                    {children.length === 0 && <div className="text-tiny text-slate-600 px-2 py-0.5">{t("api.emptyModule")}</div>}
                   </div>
                 </div>
               </div>
@@ -781,14 +781,14 @@ export default function ApiPanel() {
         })}
         {loose.map(row)}
         {modules.length === 0 && endpoints.length === 0 && (
-          <div className="text-[10px] text-slate-600 px-2 py-2">{t("api.noEndpoints")}</div>
+          <div className="text-tiny text-slate-600 px-2 py-2">{t("api.noEndpoints")}</div>
         )}
       </div>
     );
   };
 
   const statusBadge = response ? (
-    <span className={`text-xs font-bold px-2 py-0.5 rounded-md border ${response.status === 0 ? "text-rose-300 border-rose-500/40 bg-rose-500/10" : response.status < 300 ? "text-emerald-300 border-emerald-500/40 bg-emerald-500/10" : response.status < 500 ? "text-amber-300 border-amber-500/40 bg-amber-500/10" : "text-rose-300 border-rose-500/40 bg-rose-500/10"}`}>
+    <span className={`text-body font-bold px-2 py-0.5 rounded-md border ${response.status === 0 ? "text-rose-300 border-rose-500/40 bg-rose-500/10" : response.status < 300 ? "text-emerald-300 border-emerald-500/40 bg-emerald-500/10" : response.status < 500 ? "text-amber-300 border-amber-500/40 bg-amber-500/10" : "text-rose-300 border-rose-500/40 bg-rose-500/10"}`}>
       {response.status === 0 ? t("api.statusError") : response.status}
     </span>
   ) : null;
@@ -804,7 +804,7 @@ export default function ApiPanel() {
               <div className="relative flex-1 min-w-0">
                 <button
                   onClick={() => { setProjectPop((v) => !v); setEnvPop(false); }}
-                  className="flex w-full items-center gap-1.5 rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-xs text-slate-200 hover:border-white/25 cursor-pointer"
+                  className="flex w-full items-center gap-1.5 rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-body text-slate-200 hover:border-white/25 cursor-pointer"
                   title={t("api.switchProjectTip")}
                 >
                   <FlaskConical className="w-3.5 h-3.5 shrink-0" style={{ color: ACCENT }} />
@@ -816,13 +816,13 @@ export default function ApiPanel() {
                     <div className="fixed inset-0 z-30" onClick={() => setProjectPop(false)} />
                     <div className="absolute left-0 top-full z-40 mt-1.5 w-56 overflow-hidden rounded-card border border-white/10 shadow-2xl" style={{ background: POPOVER_BG }}>
                       <div className="flex items-center justify-between border-b border-white/10 px-3 py-1.5">
-                        <span className="text-[10px] font-semibold text-slate-500">{t("api.apiProjects")}</span>
+                        <span className="text-tiny font-semibold text-slate-500">{t("api.apiProjects")}</span>
                         <button onClick={openCreateProject} className="p-0.5 text-slate-500 hover:text-[var(--module-accent)] cursor-pointer" title={t("api.newProjectTip")}>
                           <Plus className="w-3 h-3" />
                         </button>
                       </div>
                       <div className="max-h-56 overflow-y-auto p-1 space-y-0.5">
-                        {projects.length === 0 && <div className="px-2 py-1 text-[10px] text-slate-600">{t("api.noProjects")}</div>}
+                        {projects.length === 0 && <div className="px-2 py-1 text-tiny text-slate-600">{t("api.noProjects")}</div>}
                         {projects.map((p) => (
                           <div
                             key={p.id}
@@ -830,9 +830,9 @@ export default function ApiPanel() {
                             className={`flex items-center gap-1.5 rounded-md px-2 py-1 cursor-pointer ${p.id === activeProjectId ? "bg-[color-mix(in_srgb,var(--module-accent)_15%,transparent)] text-white" : "text-slate-300 hover:bg-white/5"}`}
                           >
                             <FlaskConical className="w-3 h-3 shrink-0" style={{ color: p.id === activeProjectId ? ACCENT : undefined }} />
-                            <span className="flex-1 text-xs truncate" title={p.description || undefined}>{p.name}</span>
+                            <span className="flex-1 text-body truncate" title={p.description || undefined}>{p.name}</span>
                             {p.id === activeProjectId && (
-                              <span className="rounded-full px-1.5 py-px text-[9px] font-semibold" style={{ background: "color-mix(in srgb, var(--module-accent) 25%, transparent)", color: ACCENT }}>{t("api.current")}</span>
+                              <span className="rounded-full px-1.5 py-px text-micro font-semibold" style={{ background: "color-mix(in srgb, var(--module-accent) 25%, transparent)", color: ACCENT }}>{t("api.current")}</span>
                             )}
                           </div>
                         ))}
@@ -865,7 +865,7 @@ export default function ApiPanel() {
                   <div className="relative flex-1 min-w-0">
                     <button
                       onClick={() => { setEnvPop((v) => !v); setProjectPop(false); }}
-                      className="flex w-full items-center gap-1.5 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] text-slate-200 hover:border-white/25 cursor-pointer"
+                      className="flex w-full items-center gap-1.5 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-caption text-slate-200 hover:border-white/25 cursor-pointer"
                       title={t("api.switchEnvTip")}
                     >
                       <Database className="w-3 h-3 shrink-0 text-slate-500" />
@@ -876,14 +876,14 @@ export default function ApiPanel() {
                       <>
                         <div className="fixed inset-0 z-30" onClick={() => setEnvPop(false)} />
                         <div className="absolute left-0 top-full z-40 mt-1.5 min-w-full w-max max-w-[260px] overflow-hidden rounded-card border border-white/10 shadow-2xl" style={{ background: POPOVER_BG }}>
-                          <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-500">{t("api.envSwitchTitle")}</div>
+                          <div className="px-3 py-1.5 text-tiny font-semibold text-slate-500">{t("api.envSwitchTitle")}</div>
                           <div className="max-h-52 overflow-y-auto p-1 space-y-0.5">
-                            {envs.length === 0 && <div className="px-2 py-1 text-[10px] text-slate-600">{t("api.noEnvHint")}</div>}
+                            {envs.length === 0 && <div className="px-2 py-1 text-tiny text-slate-600">{t("api.noEnvHint")}</div>}
                             {envs.map((e) => (
                               <button
                                 key={e.id}
                                 onClick={() => { setActiveEnvId(e.id); setEnvPop(false); invoke("api_set_active_env", { projectId: activeProjectId, envId: e.id }); }}
-                                className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-[11px] text-left cursor-pointer transition-colors ${e.id === activeEnvId ? "bg-[color-mix(in_srgb,var(--module-accent)_15%,transparent)] text-white" : "text-slate-300 hover:bg-white/5"}`}
+                                className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-caption text-left cursor-pointer transition-colors ${e.id === activeEnvId ? "bg-[color-mix(in_srgb,var(--module-accent)_15%,transparent)] text-white" : "text-slate-300 hover:bg-white/5"}`}
                               >
                                 {e.id === activeEnvId && <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: "var(--module-accent)" }} />}
                                 <span className={`flex-1 truncate ${e.id === activeEnvId ? "" : "pl-3"}`}>{e.name}</span>
@@ -894,7 +894,7 @@ export default function ApiPanel() {
                       </>
                     )}
                   </div>
-                  <button onClick={() => setEnvModal(true)} className="flex items-center gap-1 rounded-md border border-white/10 bg-black/30 px-1.5 py-1.5 text-[10px] text-slate-400 hover:text-white hover:border-white/25 cursor-pointer" title={t("api.manageEnvsTip")}>
+                  <button onClick={() => setEnvModal(true)} className="flex items-center gap-1 rounded-md border border-white/10 bg-black/30 px-1.5 py-1.5 text-tiny text-slate-400 hover:text-white hover:border-white/25 cursor-pointer" title={t("api.manageEnvsTip")}>
                     <Settings2 className="w-3 h-3" />
                     {t("api.envMaintain")}
                   </button>
@@ -905,19 +905,19 @@ export default function ApiPanel() {
               <div className="flex items-center gap-0.5 px-2 pt-2">
                 <button
                   onClick={() => setSideTab("tree")}
-                  className={`flex flex-1 items-center gap-1 rounded-md px-2 py-1 text-[11px] cursor-pointer transition-colors ${sideTab === "tree" ? "bg-[color-mix(in_srgb,var(--module-accent)_14%,transparent)] text-white" : "text-slate-400 hover:bg-white/5 hover:text-slate-300"}`}
+                  className={`flex flex-1 items-center gap-1 rounded-md px-2 py-1 text-caption cursor-pointer transition-colors ${sideTab === "tree" ? "bg-[color-mix(in_srgb,var(--module-accent)_14%,transparent)] text-white" : "text-slate-400 hover:bg-white/5 hover:text-slate-300"}`}
                 >
                   <Braces className="w-3 h-3" style={sideTab === "tree" ? { color: ACCENT } : undefined} />
                   {t("api.tabTree")}
-                  <span className="ml-auto text-[9px] tabular-nums text-slate-500">{endpoints.length}</span>
+                  <span className="ml-auto text-micro tabular-nums text-slate-500">{endpoints.length}</span>
                 </button>
                 <button
                   onClick={() => setSideTab("history")}
-                  className={`flex flex-1 items-center gap-1 rounded-md px-2 py-1 text-[11px] cursor-pointer transition-colors ${sideTab === "history" ? "bg-[color-mix(in_srgb,var(--module-accent)_14%,transparent)] text-white" : "text-slate-400 hover:bg-white/5 hover:text-slate-300"}`}
+                  className={`flex flex-1 items-center gap-1 rounded-md px-2 py-1 text-caption cursor-pointer transition-colors ${sideTab === "history" ? "bg-[color-mix(in_srgb,var(--module-accent)_14%,transparent)] text-white" : "text-slate-400 hover:bg-white/5 hover:text-slate-300"}`}
                 >
                   <History className="w-3 h-3" style={sideTab === "history" ? { color: ACCENT } : undefined} />
                   {t("api.tabHistory")}
-                  <span className="ml-auto text-[9px] tabular-nums text-slate-500">{history.length}</span>
+                  <span className="ml-auto text-micro tabular-nums text-slate-500">{history.length}</span>
                 </button>
                 {sideTab === "history" && history.length > 0 && (
                   <button
@@ -950,11 +950,11 @@ export default function ApiPanel() {
                           title={`${h.method} ${h.url}\n${h.created_at.replace("T", " ").slice(0, 19)}`}
                         >
                           <Icon className={`w-3 h-3 shrink-0 ${h.method === "GET" ? "text-emerald-400" : h.method === "POST" ? "text-amber-400" : h.method === "DELETE" ? "text-rose-400" : "text-slate-400"}`} />
-                          <span className="flex-1 text-[11px] text-slate-400 truncate">{h.name || h.url}</span>
+                          <span className="flex-1 text-caption text-slate-400 truncate">{h.name || h.url}</span>
                         </button>
                       );
                     })}
-                    {history.length === 0 && <div className="text-[10px] text-slate-600 px-1.5 py-1">{t("api.historyEmpty")}</div>}
+                    {history.length === 0 && <div className="text-tiny text-slate-600 px-1.5 py-1">{t("api.historyEmpty")}</div>}
                   </div>
                 )}
               </div>
@@ -962,18 +962,18 @@ export default function ApiPanel() {
               {/* 底部工具栏（布局对齐思维导图：2×2 网格） */}
               <div className="p-2 border-t border-white/10 space-y-1.5">
                 <div className="grid grid-cols-2 gap-1.5">
-                  <button onClick={openCreateModule} className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer" title={t("pmodals.newModule")}>
+                  <button onClick={openCreateModule} className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-caption text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer" title={t("pmodals.newModule")}>
                     <FolderPlus className="w-3.5 h-3.5" /> {t("api.newModuleBtn")}
                   </button>
-                  <button onClick={() => createEndpoint(null)} className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer" title={t("api.addEndpoint")}>
+                  <button onClick={() => createEndpoint(null)} className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-caption text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer" title={t("api.addEndpoint")}>
                     <FilePlus2 className="w-3.5 h-3.5" /> {t("api.newEndpointBtn")}
                   </button>
                 </div>
                 <div className="grid grid-cols-2 gap-1.5">
-                  <button onClick={() => setImportModal(true)} className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer" title={t("api.importTip")}>
+                  <button onClick={() => setImportModal(true)} className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-caption text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer" title={t("api.importTip")}>
                     <Upload className="w-3.5 h-3.5" /> {t("api.importBtn")}
                   </button>
-                  <button onClick={exportPostman} className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer" title={t("api.exportTip")}>
+                  <button onClick={exportPostman} className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-caption text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer" title={t("api.exportTip")}>
                     <Download className="w-3.5 h-3.5" /> {t("api.exportBtn")}
                   </button>
                 </div>
@@ -1034,21 +1034,21 @@ export default function ApiPanel() {
             <select
               value={draft.method}
               onChange={(e) => updateDraft({ method: e.target.value })}
-              className="bg-black/30 border border-white/10 rounded-md px-1.5 py-1.5 text-xs font-bold cursor-pointer focus:outline-none"
+              className="bg-black/30 border border-white/10 rounded-md px-1.5 py-1.5 text-body font-bold cursor-pointer focus:outline-none"
             >
               {METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
             <input
               value={draft.name}
               onChange={(e) => updateDraft({ name: e.target.value })}
-              className="w-40 bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200 focus:outline-none"
+              className="w-40 bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200 focus:outline-none"
               placeholder={t("api.endpointNamePh")}
             />
             <VarInput
               value={draft.url}
               envVars={variables}
               onChange={(v) => updateDraft({ url: v })}
-              className="flex-1 bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]/60"
+              className="flex-1 bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]/60"
               placeholder="https://api.example.com/users/{{userId}}"
               onKeyDown={(e) => e.key === "Enter" && sendRequest()}
             />
@@ -1056,20 +1056,20 @@ export default function ApiPanel() {
               <div className="relative">
                 <button
                   onClick={() => setShowTplPanel((v) => !v)}
-                  className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs cursor-pointer transition-colors ${showTplPanel ? "border-[var(--module-accent)]/50 bg-[color-mix(in_srgb,var(--module-accent)_12%,transparent)] text-[var(--module-accent)]" : "border-[color-mix(in_srgb,var(--module-accent)_35%,transparent)] bg-[color-mix(in_srgb,var(--module-accent)_8%,transparent)] text-[var(--module-accent)] hover:bg-[color-mix(in_srgb,var(--module-accent)_14%,transparent)]"} ${tplItems.outOfSync > 0 ? "!border-rose-500/60" : ""}`}
+                  className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-body cursor-pointer transition-colors ${showTplPanel ? "border-[var(--module-accent)]/50 bg-[color-mix(in_srgb,var(--module-accent)_12%,transparent)] text-[var(--module-accent)]" : "border-[color-mix(in_srgb,var(--module-accent)_35%,transparent)] bg-[color-mix(in_srgb,var(--module-accent)_8%,transparent)] text-[var(--module-accent)] hover:bg-[color-mix(in_srgb,var(--module-accent)_14%,transparent)]"} ${tplItems.outOfSync > 0 ? "!border-rose-500/60" : ""}`}
                   title={tplItems.outOfSync > 0 ? t("api.tplOutOfSyncTip", { n: tplItems.outOfSync }) : t("api.tplViewTip")}
                 >
                   <Link2 className="w-3.5 h-3.5" />
                   {t("api.tplInherit")}
                   <span
-                    className="rounded-full px-1.5 py-px text-[10px] font-bold text-white tabular-nums"
+                    className="rounded-full px-1.5 py-px text-tiny font-bold text-white tabular-nums"
                     style={{ background: tplItems.outOfSync > 0 ? "#f43f5e" : "var(--module-accent)" }}
                   >
                     {tplItems.total}
                   </span>
                   {tplItems.outOfSync > 0 && (
                     <span
-                      className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-bold text-white shadow"
+                      className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-micro font-bold text-white shadow"
                       style={{ background: "#e11d48" }}
                       title={t("api.tplPendingTip", { n: tplItems.outOfSync })}
                     >
@@ -1082,7 +1082,7 @@ export default function ApiPanel() {
                     <div className="fixed inset-0 z-30" onClick={() => setShowTplPanel(false)} />
                     <div className="absolute right-0 top-full z-40 mt-1.5 w-80 overflow-hidden rounded-card border border-white/10 shadow-2xl" style={{ background: POPOVER_BG }}>
                       <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
-                        <span className="flex items-center gap-1.5 text-[11px] font-semibold text-white">
+                        <span className="flex items-center gap-1.5 text-caption font-semibold text-white">
                           <Link2 className="w-3 h-3" style={{ color: "var(--module-accent)" }} />
                           {t("api.tplPanelTitle")}
                         </span>
@@ -1094,12 +1094,12 @@ export default function ApiPanel() {
                         {tplItems.outOfSync > 0 && (
                           <div className="flex items-center gap-2 rounded-md border border-rose-500/40 bg-rose-500/10 px-2.5 py-2">
                             <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-rose-400" />
-                            <span className="flex-1 text-[10px] leading-snug text-rose-300">
+                            <span className="flex-1 text-tiny leading-snug text-rose-300">
                               {t("api.tplOutOfSyncDesc", { n: tplItems.outOfSync })}
                             </span>
                             <button
                               onClick={reloadCurrent}
-                              className="shrink-0 rounded-md px-2 py-1 text-[10px] font-semibold text-white cursor-pointer hover:opacity-85"
+                              className="shrink-0 rounded-md px-2 py-1 text-tiny font-semibold text-white cursor-pointer hover:opacity-85"
                               style={{ background: "#e11d48" }}
                             >
                               {t("api.reload")}
@@ -1108,15 +1108,15 @@ export default function ApiPanel() {
                         )}
                         {tplItems.groups.map((g) => (
                           <div key={g.label}>
-                            <div className="px-1 pb-1 text-[9px] font-semibold uppercase tracking-wider text-slate-500">{g.label}</div>
+                            <div className="px-1 pb-1 text-micro font-semibold uppercase tracking-wider text-slate-500">{g.label}</div>
                             <div className="space-y-1">
                               {g.items.map((it, i) => (
                                 <div key={i} className={`flex items-center gap-1.5 rounded-md border px-2 py-1 ${it.synced ? "border-white/5 bg-black/25" : "border-rose-500/40 bg-rose-500/10"}`}>
                                   <Lock className={`w-3 h-3 shrink-0 ${it.synced ? "text-[var(--module-accent)]" : "text-rose-400"}`} />
-                                  <code className="font-mono text-[10px] text-slate-200 truncate">{it.key}</code>
-                                  <span className="text-[10px] text-slate-500">=</span>
-                                  <code className={`font-mono text-[10px] truncate ${it.synced ? "text-[var(--module-accent)]/90" : "text-rose-300"}`} title={it.value}>{it.value || t("api.emptyVal")}</code>
-                                  {!it.synced && <span className="ml-auto shrink-0 text-[9px] font-semibold text-rose-400">{t("api.pendingSync")}</span>}
+                                  <code className="font-mono text-tiny text-slate-200 truncate">{it.key}</code>
+                                  <span className="text-tiny text-slate-500">=</span>
+                                  <code className={`font-mono text-tiny truncate ${it.synced ? "text-[var(--module-accent)]/90" : "text-rose-300"}`} title={it.value}>{it.value || t("api.emptyVal")}</code>
+                                  {!it.synced && <span className="ml-auto shrink-0 text-micro font-semibold text-rose-400">{t("api.pendingSync")}</span>}
                                 </div>
                               ))}
                             </div>
@@ -1125,12 +1125,12 @@ export default function ApiPanel() {
                         <div className="px-1 pt-1 space-y-1.5">
                           <button
                             onClick={openProjectTpl}
-                            className="flex w-full items-center justify-center gap-1.5 rounded-ctl border border-white/10 bg-white/5 px-2 py-1.5 text-[10px] font-semibold text-slate-200 hover:bg-white/10 hover:text-white cursor-pointer transition-colors"
+                            className="flex w-full items-center justify-center gap-1.5 rounded-ctl border border-white/10 bg-white/5 px-2 py-1.5 text-tiny font-semibold text-slate-200 hover:bg-white/10 hover:text-white cursor-pointer transition-colors"
                           >
                             <Settings2 className="w-3 h-3" style={{ color: "var(--module-accent)" }} />
                             {t("api.openProjectTpl")}
                           </button>
-                          <div className="text-center text-[9px] text-slate-500">{t("api.tplSyncHint")}</div>
+                          <div className="text-center text-micro text-slate-500">{t("api.tplSyncHint")}</div>
                         </div>
                       </div>
                     </div>
@@ -1141,28 +1141,28 @@ export default function ApiPanel() {
             <button
               onClick={sendRequest}
               disabled={sending}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-md text-xs font-semibold text-white cursor-pointer disabled:opacity-50"
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-md text-body font-semibold text-white cursor-pointer disabled:opacity-50"
               style={{ background: ACCENT }}
             >
               {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
               {sending ? t("api.sending") : t("api.send")}
             </button>
-            <button onClick={() => saveDraft()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
+            <button onClick={() => saveDraft()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-body bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
               <Save className="w-3.5 h-3.5" /> {t("common.save")}
             </button>
             {selectedId && (
               <button
                 onClick={() => toggleFavorite(draft)}
                 title={draft.is_favorite ? t("api.unfavorite") : t("api.favThis")}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs cursor-pointer ${draft.is_favorite ? "text-amber-400 bg-amber-500/10" : "text-slate-400 bg-white/5 hover:bg-white/10"}`}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-body cursor-pointer ${draft.is_favorite ? "text-amber-400 bg-amber-500/10" : "text-slate-400 bg-white/5 hover:bg-white/10"}`}
               >
                 <Star className={`w-3.5 h-3.5 ${draft.is_favorite ? "fill-amber-400" : ""}`} /> {draft.is_favorite ? t("api.favorited") : t("api.fav")}
               </button>
             )}
-            <button onClick={saveAsDoc} title={t("api.saveAsDocTip")} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
+            <button onClick={saveAsDoc} title={t("api.saveAsDocTip")} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-body bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
               <BookOpen className="w-3.5 h-3.5" /> {t("api.saveAsDoc")}
             </button>
-            <button onClick={saveAsTest} title={t("api.saveAsTestTip")} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
+            <button onClick={saveAsTest} title={t("api.saveAsTestTip")} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-body bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
               <TestTube2 className="w-3.5 h-3.5" /> {t("api.saveAsTest")}
             </button>
           </div>
@@ -1174,7 +1174,7 @@ export default function ApiPanel() {
               return (
                 <>
                   {mod && (
-                    <div className="flex items-center gap-1 shrink-0 text-[10px] text-amber-300/80">
+                    <div className="flex items-center gap-1 shrink-0 text-tiny text-amber-300/80">
                       <Folder className="w-3 h-3" />
                       <span className="font-semibold">{mod.name}</span>
                       {mod.description && <span className="text-slate-500 max-w-40 truncate" title={mod.description}>· {mod.description}</span>}
@@ -1184,7 +1184,7 @@ export default function ApiPanel() {
                     value={draft.description}
                     onChange={(e) => updateDraft({ description: e.target.value })}
                     placeholder={t("api.descPh")}
-                    className="flex-1 min-w-0 bg-transparent border border-transparent hover:border-white/10 focus:border-[var(--module-accent)]/40 rounded-md px-2 py-1 text-[11px] text-slate-300 placeholder:text-slate-600 focus:outline-none"
+                    className="flex-1 min-w-0 bg-transparent border border-transparent hover:border-white/10 focus:border-[var(--module-accent)]/40 rounded-md px-2 py-1 text-caption text-slate-300 placeholder:text-slate-600 focus:outline-none"
                   />
                 </>
               );
@@ -1202,7 +1202,7 @@ export default function ApiPanel() {
               <button
                 key={key}
                 onClick={() => setActiveTab(key)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-t-ctl text-xs cursor-pointer border-b-2 ${activeTab === key ? "text-white border-[var(--module-accent)] bg-white/5" : "text-slate-500 border-transparent hover:text-slate-300"}`}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-t-ctl text-body cursor-pointer border-b-2 ${activeTab === key ? "text-white border-[var(--module-accent)] bg-white/5" : "text-slate-500 border-transparent hover:text-slate-300"}`}
               >
                 <Icon className="w-3.5 h-3.5" /> {label}
               </button>
@@ -1224,7 +1224,7 @@ export default function ApiPanel() {
                     <button
                       key={key}
                       onClick={() => setSubTab(key)}
-                      className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md cursor-pointer ${subTab === key ? "bg-white/10 text-white" : "text-slate-500 hover:text-slate-300"}`}
+                      className={`flex items-center gap-1 px-2.5 py-1 text-caption rounded-md cursor-pointer ${subTab === key ? "bg-white/10 text-white" : "text-slate-500 hover:text-slate-300"}`}
                     >
                       <Icon className="w-3 h-3" /> {label}
                     </button>
@@ -1244,19 +1244,19 @@ export default function ApiPanel() {
                 {subTab === "headers" && (
                   <div className="space-y-2">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <label className="flex items-center gap-1.5 text-[10px] text-slate-400 cursor-pointer">
+                      <label className="flex items-center gap-1.5 text-tiny text-slate-400 cursor-pointer">
                         <input type="checkbox" checked={hideCommonHeaders} onChange={(e) => setHideCommonHeaders(e.target.checked)} className="accent-[var(--module-accent)]" />
                         {t("api.hideCommonHeaders")}
                       </label>
                       <select
                         value=""
                         onChange={(e) => { if (e.target.value) applyPreset(e.target.value); }}
-                        className="bg-black/30 border border-white/10 rounded-md px-1.5 py-1 text-[10px] text-slate-300 cursor-pointer"
+                        className="bg-black/30 border border-white/10 rounded-md px-1.5 py-1 text-tiny text-slate-300 cursor-pointer"
                       >
                         <option value="">{t("api.applyPreset")}</option>
                         {presetSets.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                       </select>
-                      <button onClick={() => setPresetModal(true)} className="flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer">
+                      <button onClick={() => setPresetModal(true)} className="flex items-center gap-1 text-tiny px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer">
                         <Settings2 className="w-3 h-3" /> {t("api.managePreset")}
                       </button>
                     </div>
@@ -1284,7 +1284,7 @@ export default function ApiPanel() {
                         <button
                           key={b.value}
                           onClick={() => updateDraft({ body_type: b.value })}
-                          className={`px-2.5 py-1 text-[11px] rounded-md cursor-pointer ${draft.body_type === b.value ? "bg-white/10 text-white" : "text-slate-500 hover:text-slate-300"}`}
+                          className={`px-2.5 py-1 text-caption rounded-md cursor-pointer ${draft.body_type === b.value ? "bg-white/10 text-white" : "text-slate-500 hover:text-slate-300"}`}
                         >
                           {b.label}
                         </button>
@@ -1305,7 +1305,7 @@ export default function ApiPanel() {
                           envVars={variables}
                           onChange={(v) => updateDraft({ body_graphql_query: v })}
                           placeholder={"query GetUser($id: ID!) {\n  user(id: $id) { id name }\n}"}
-                          className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none"
+                          className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body font-mono text-slate-200 focus:outline-none"
                         />
                         <VarInput
                           multiline
@@ -1314,7 +1314,7 @@ export default function ApiPanel() {
                           envVars={variables}
                           onChange={(v) => updateDraft({ body_graphql_variables: v })}
                           placeholder='{"id": "{{random:int:1:100}}"}'
-                          className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none"
+                          className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body font-mono text-slate-200 focus:outline-none"
                         />
                       </div>
                     )}
@@ -1324,14 +1324,14 @@ export default function ApiPanel() {
                           value={draft.body}
                           onChange={(e) => updateDraft({ body: e.target.value })}
                           placeholder={t("api.localFilePathPh")}
-                          className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200"
+                          className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200"
                         />
                         <button
                           onClick={async () => {
                             const f = await openDialog({ multiple: false });
                             if (f) updateDraft({ body: String(f) });
                           }}
-                          className="text-[11px] px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer"
+                          className="text-caption px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer"
                         >
                           {t("api.chooseFile")}
                         </button>
@@ -1344,7 +1344,7 @@ export default function ApiPanel() {
                         value={draft.body}
                         envVars={variables}
                         onChange={(v) => updateDraft({ body: v })}
-                        className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60"
+                        className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body font-mono text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60"
                         placeholder={draft.body_type === "json" ? '{"name": "{{random:string:6}}", "age": {{random:int:18:60}}}' : t("api.rawBodyPh")}
                       />
                     )}
@@ -1361,7 +1361,7 @@ export default function ApiPanel() {
                 {subTab === "cookies" && (
                   <div className="space-y-1.5">
                     <KvEditor items={draft.cookies} onChange={(v) => updateDraft({ cookies: v })} envVars={variables} placeholderKey={t("api.cookiePh")} placeholderValue={t("apiparts.kvValuePh")} />
-                    <div className="text-[10px] text-slate-500">{t("api.cookieHint")}</div>
+                    <div className="text-tiny text-slate-500">{t("api.cookieHint")}</div>
                   </div>
                 )}
               </div>
@@ -1388,30 +1388,30 @@ export default function ApiPanel() {
                     ["rps_limit", t("api.rpsLimit"), loadConfig.rps_limit, (v: number) => setLoadConfig({ ...loadConfig, rps_limit: v })],
                   ] as const).map(([key, label, value, set]) => (
                     <label key={key} className="block">
-                      <span className="text-[10px] text-slate-500">{label}</span>
+                      <span className="text-tiny text-slate-500">{label}</span>
                       <input
                         type="number"
                         min={0}
                         value={value}
                         onChange={(e) => set(Number(e.target.value))}
-                        className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200 focus:outline-none"
+                        className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200 focus:outline-none"
                       />
                     </label>
                   ))}
                 </div>
-                <div className="text-[10px] text-slate-500">{t("api.loadHint")}</div>
+                <div className="text-tiny text-slate-500">{t("api.loadHint")}</div>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={startLoadTest}
                     disabled={!!runningRunId || !draft.url}
-                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-md text-xs font-semibold text-white cursor-pointer disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-md text-body font-semibold text-white cursor-pointer disabled:opacity-50"
                     style={{ background: ACCENT }}
                   >
                     <Play className="w-3.5 h-3.5" />
                     {runningRunId ? t("api.loadRunning") : t("api.startLoad")}
                   </button>
                   {runningRunId && loadStatus && (
-                    <div className="flex-1 text-[11px] text-slate-300">
+                    <div className="flex-1 text-caption text-slate-300">
                       {t("api.loadStatus", { s: loadStatus.elapsed_secs, total: loadStatus.total, ok: loadStatus.success, fail: loadStatus.failed, qps: loadStatus.qps.toFixed(1), p95: loadStatus.latency_p95_ms.toFixed(1) })}
                     </div>
                   )}
@@ -1420,14 +1420,14 @@ export default function ApiPanel() {
                 {runningRunId && <div className="h-1.5 rounded-full bg-white/10 overflow-hidden"><div className="h-full bg-[var(--module-accent)]" style={{ width: `${Math.min(100, (loadStatus?.elapsed_secs ?? 0) / Math.max(1, loadConfig.duration_secs) * 100)}%` }} /></div>}
                 {loadRuns.length > 0 && !runningRunId && (
                   <div className="space-y-1.5">
-                    <div className="text-[11px] font-semibold text-slate-400">{t("api.loadHistory")}</div>
+                    <div className="text-caption font-semibold text-slate-400">{t("api.loadHistory")}</div>
                     {loadRuns.map((run) => (
                       <div key={run.id} className="rounded-ctl border border-white/10 bg-black/20 px-3 py-2">
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2 text-xs text-slate-300">
+                          <div className="flex items-center gap-2 text-body text-slate-300">
                             <span className="font-semibold">{run.name || draft.name}</span>
-                            <span className="text-[10px] text-slate-500">{run.created_at.replace("T", " ").slice(0, 19)}</span>
-                            <span className="text-[10px] text-slate-500">{t("api.loadConfigInfo", { c: run.config.concurrency, d: run.config.duration_secs })}</span>
+                            <span className="text-tiny text-slate-500">{run.created_at.replace("T", " ").slice(0, 19)}</span>
+                            <span className="text-tiny text-slate-500">{t("api.loadConfigInfo", { c: run.config.concurrency, d: run.config.duration_secs })}</span>
                           </div>
                           <button
                             onClick={async () => {
@@ -1455,25 +1455,25 @@ export default function ApiPanel() {
           {/* 响应区 */}
           <div className="shrink-0 h-64 border-t border-white/10 flex flex-col">
             <div className="flex items-center gap-2 px-3 py-1.5 border-b border-white/10">
-              <span className="text-[11px] font-semibold text-slate-400">{t("api.response")}</span>
+              <span className="text-caption font-semibold text-slate-400">{t("api.response")}</span>
               {statusBadge}                  {response && (
                     <>
-                      <span className="text-[10px] text-slate-500">{fmtTime(response.time_ms)}</span>
-                  <span className="text-[10px] text-slate-500">{response.size_bytes > 1024 * 1024 ? `${(response.size_bytes / 1024 / 1024).toFixed(1)}MB` : `${(response.size_bytes / 1024).toFixed(1)}KB`}</span>
-                  {response.body_truncated && <span className="text-[10px] text-amber-400">{t("api.bodyTruncated")}</span>}
+                      <span className="text-tiny text-slate-500">{fmtTime(response.time_ms)}</span>
+                  <span className="text-tiny text-slate-500">{response.size_bytes > 1024 * 1024 ? `${(response.size_bytes / 1024 / 1024).toFixed(1)}MB` : `${(response.size_bytes / 1024).toFixed(1)}KB`}</span>
+                  {response.body_truncated && <span className="text-tiny text-amber-400">{t("api.bodyTruncated")}</span>}
                   <div className="ml-auto flex items-center gap-2">
                     <div className="flex gap-0.5 bg-black/30 rounded p-0.5">
                       {(["pretty", "raw"] as const).map((m) => (
                         <button
                           key={m}
                           onClick={() => setBodyMode(m)}
-                          className={`px-1.5 py-0.5 rounded text-[10px] cursor-pointer ${bodyMode === m ? "bg-white/10 text-cyan-300" : "text-slate-500 hover:text-slate-300"}`}
+                          className={`px-1.5 py-0.5 rounded text-tiny cursor-pointer ${bodyMode === m ? "bg-white/10 text-cyan-300" : "text-slate-500 hover:text-slate-300"}`}
                         >
                           {m === "pretty" ? t("api.pretty") : t("api.raw")}
                         </button>
                       ))}
                     </div>
-                    <button onClick={copyBody} className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer">
+                    <button onClick={copyBody} className="flex items-center gap-1 text-tiny px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer">
                       {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />} {copied ? t("api.copied") : t("api.copyBody")}
                     </button>
                   </div>
@@ -1483,38 +1483,38 @@ export default function ApiPanel() {
             <div className="flex-1 min-h-0 grid grid-cols-[minmax(180px,24%)_1fr_220px]">
               <div className="border-r border-white/10 overflow-y-auto p-2">
                 {response?.headers.map((h, i) => (
-                  <div key={i} className="flex text-[10px] py-0.5">
+                  <div key={i} className="flex text-tiny py-0.5">
                     <span className="w-1/2 text-slate-500 truncate">{h.key}</span>
                     <span className="w-1/2 text-slate-300 truncate" title={h.value}>{h.value}</span>
                   </div>
                 ))}
-                {response && response.headers.length === 0 && <div className="text-[10px] text-slate-600">{t("api.noHeaders")}</div>}
+                {response && response.headers.length === 0 && <div className="text-tiny text-slate-600">{t("api.noHeaders")}</div>}
               </div>
               {sending ? (
                 <div className="flex flex-col items-center justify-center h-full gap-2 text-slate-500 select-none">
                   <Loader2 className="w-5 h-5 animate-spin text-cyan-400" />
-                  <span className="text-[11px]">{t("api.sendingWait")}</span>
+                  <span className="text-caption">{t("api.sendingWait")}</span>
                 </div>
               ) : response ? (
                 <ResponseBody body={response.body} mode={bodyMode} />
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-slate-600 gap-2 select-none">
                   <Send className="w-6 h-6 opacity-40" />
-                  <span className="text-[11px]">{t("api.noResponseYet")}</span>
+                  <span className="text-caption">{t("api.noResponseYet")}</span>
                 </div>
               )}
               {/* 响应注释 */}
               <div className="border-l border-white/10 flex flex-col">
                 <div className="flex items-center gap-1 px-2 py-1 border-b border-white/10">
                   <StickyNote className="w-3 h-3 text-slate-500" />
-                  <span className="text-[10px] text-slate-500">{t("api.comment")}</span>
-                  <button onClick={saveComment} className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer">{t("common.save")}</button>
+                  <span className="text-tiny text-slate-500">{t("api.comment")}</span>
+                  <button onClick={saveComment} className="ml-auto text-tiny px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer">{t("common.save")}</button>
                 </div>
                 <textarea
                   value={commentDraft}
                   onChange={(e) => setCommentDraft(e.target.value)}
                   placeholder={t("api.commentPh")}
-                  className="flex-1 bg-transparent p-2 text-[11px] text-slate-300 resize-none focus:outline-none"
+                  className="flex-1 bg-transparent p-2 text-caption text-slate-300 resize-none focus:outline-none"
                 />
               </div>
             </div>
@@ -1525,7 +1525,7 @@ export default function ApiPanel() {
           <div className="text-center space-y-2">
             <FlaskConical className="w-10 h-10 mx-auto opacity-40" />
             <p>{t("api.emptyMain")}</p>
-            <p className="text-[10px] text-slate-600">{t("api.emptyHint2", { vars: '{{"变量名"}}', guid: "{{$guid}}" })}</p>
+            <p className="text-tiny text-slate-600">{t("api.emptyHint2", { vars: '{{"变量名"}}', guid: "{{$guid}}" })}</p>
           </div>
         </div>
       )}

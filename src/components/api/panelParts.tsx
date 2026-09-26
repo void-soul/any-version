@@ -197,7 +197,7 @@ export function VarInput({ value, onChange, envVars, placeholder, className, dis
                         ? (hoverExample?.idx === i ? t("apiparts.exampleValTip", { v: hoverExample.value }) : c.format)
                         : c.desc
                   }
-                  className={`flex w-full items-center gap-2 px-2 py-1 text-left text-[11px] cursor-pointer ${i === activeIdx ? "bg-[color-mix(in_srgb,var(--module-accent)_15%,transparent)]" : ""}`}
+                  className={`flex w-full items-center gap-2 px-2 py-1 text-left text-caption cursor-pointer ${i === activeIdx ? "bg-[color-mix(in_srgb,var(--module-accent)_15%,transparent)]" : ""}`}
                 >
                   {isRandom ? (
                     <span
@@ -214,12 +214,12 @@ export function VarInput({ value, onChange, envVars, placeholder, className, dis
                   )}
                   <code className="font-mono text-[var(--module-accent)] whitespace-nowrap">{c.label}</code>
                   {c.value !== "" && (
-                    <span className="max-w-[9rem] truncate font-mono text-[9px] text-slate-600">{c.value}</span>
+                    <span className="max-w-[9rem] truncate font-mono text-micro text-slate-600">{c.value}</span>
                   )}
-                  <span className="ml-auto shrink-0 truncate text-[9px] text-slate-500">{c.desc}</span>
+                  <span className="ml-auto shrink-0 truncate text-micro text-slate-500">{c.desc}</span>
                 </button>
                 {expanded && (
-                  <div className="mx-2 mb-1 rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-[10px] leading-relaxed">
+                  <div className="mx-2 mb-1 rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-tiny leading-relaxed">
                     <div className="text-slate-300">{c.format}</div>
                     <div className="mt-0.5 flex items-center gap-1.5">
                       <span className="text-slate-500">{t("apiparts.sample")}</span>
@@ -320,7 +320,7 @@ export function ResponseBody({ body, mode }: { body: string; mode: "pretty" | "r
   const tokens = mode === "pretty" ? highlightJsonTokens(shown) : null;
   if (tokens) {
     return (
-      <pre className="overflow-auto p-2 text-[11px] font-mono whitespace-pre-wrap break-all h-full">
+      <pre className="overflow-auto p-2 text-caption font-mono whitespace-pre-wrap break-all h-full">
         {tokens.map((tk, i) =>
           tk.cls ? (
             <span key={i} className={tk.cls}>{tk.content}</span>
@@ -331,7 +331,7 @@ export function ResponseBody({ body, mode }: { body: string; mode: "pretty" | "r
       </pre>
     );
   }
-  return <pre className="overflow-auto p-2 text-[11px] font-mono text-slate-200 whitespace-pre-wrap break-all h-full">{shown}</pre>;
+  return <pre className="overflow-auto p-2 text-caption font-mono text-slate-200 whitespace-pre-wrap break-all h-full">{shown}</pre>;
 }
 
 // ─── 键值编辑器（Key-value 编辑 / Bulk 编辑 / 描述） ───
@@ -383,19 +383,19 @@ export function KvEditor({ items, onChange, placeholderKey, placeholderValue, wi
         <button
           type="button"
           onClick={() => { setMode("kv"); setBulkText(items.map((kv) => kv.enabled ? `${kv.key}:${kv.value}` : `// ${kv.key}:${kv.value}`).join("\n")); }}
-          className={`text-[10px] px-2 py-0.5 rounded cursor-pointer ${mode === "kv" ? "bg-white/10 text-white" : "text-slate-500 hover:text-slate-300"}`}
+          className={`text-tiny px-2 py-0.5 rounded cursor-pointer ${mode === "kv" ? "bg-white/10 text-white" : "text-slate-500 hover:text-slate-300"}`}
         >
           {t("apiparts.kvEdit")}
         </button>
         <button
           type="button"
           onClick={() => { setMode("bulk"); setBulkText(items.map((kv) => kv.enabled ? `${kv.key}:${kv.value}` : `// ${kv.key}:${kv.value}`).join("\n")); }}
-          className={`text-[10px] px-2 py-0.5 rounded cursor-pointer ${mode === "bulk" ? "bg-white/10 text-white" : "text-slate-500 hover:text-slate-300"}`}
+          className={`text-tiny px-2 py-0.5 rounded cursor-pointer ${mode === "bulk" ? "bg-white/10 text-white" : "text-slate-500 hover:text-slate-300"}`}
         >
           {t("apiparts.bulkEdit")}
         </button>
         {mode === "bulk" && (
-          <button type="button" onClick={applyBulk} className="text-[10px] px-2 py-0.5 rounded bg-[var(--module-accent)]/20 text-[var(--module-accent)] cursor-pointer">
+          <button type="button" onClick={applyBulk} className="text-tiny px-2 py-0.5 rounded bg-[var(--module-accent)]/20 text-[var(--module-accent)] cursor-pointer">
             {t("apiparts.apply")}
           </button>
         )}
@@ -406,7 +406,7 @@ export function KvEditor({ items, onChange, placeholderKey, placeholderValue, wi
           onChange={(e) => setBulkText(e.target.value)}
           rows={6}
           placeholder={t("apiparts.bulkPh")}
-          className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60"
+          className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body font-mono text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60"
         />
       ) : (
         <div className="space-y-1">
@@ -428,7 +428,7 @@ export function KvEditor({ items, onChange, placeholderKey, placeholderValue, wi
                   disabled={locked}
                   onChange={(e) => update(i, { key: e.target.value })}
                   placeholder={placeholderKey ?? t("apiparts.kvKeyPh")}
-                  className={`w-1/4 bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs focus:outline-none ${locked ? "text-[var(--module-accent)]/80 opacity-70 cursor-not-allowed" : "text-slate-200 focus:border-[var(--module-accent)]/60"}`}
+                  className={`w-1/4 bg-black/30 border border-white/10 rounded-md px-2 py-1 text-body focus:outline-none ${locked ? "text-[var(--module-accent)]/80 opacity-70 cursor-not-allowed" : "text-slate-200 focus:border-[var(--module-accent)]/60"}`}
                   title={locked ? t("apiparts.templKeyTitle") : undefined}
                 />
                 <div className="flex-1">
@@ -438,7 +438,7 @@ export function KvEditor({ items, onChange, placeholderKey, placeholderValue, wi
                     envVars={envVars}
                     onChange={(v) => update(i, { value: v })}
                     placeholder={placeholderValue ?? t("apiparts.kvValuePh")}
-                    className={`w-full bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs focus:outline-none ${locked ? "text-[var(--module-accent)]/80 opacity-70 cursor-not-allowed" : "text-slate-200 focus:border-[var(--module-accent)]/60"}`}
+                    className={`w-full bg-black/30 border border-white/10 rounded-md px-2 py-1 text-body focus:outline-none ${locked ? "text-[var(--module-accent)]/80 opacity-70 cursor-not-allowed" : "text-slate-200 focus:border-[var(--module-accent)]/60"}`}
                   />
                 </div>
                 {withDescription && (
@@ -447,7 +447,7 @@ export function KvEditor({ items, onChange, placeholderKey, placeholderValue, wi
                     disabled={locked}
                     onChange={(e) => update(i, { description: e.target.value })}
                     placeholder={t("apiparts.descPh")}
-                    className="w-1/4 hidden lg:block bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs text-slate-500 focus:outline-none focus:border-[var(--module-accent)]/60 disabled:opacity-50"
+                    className="w-1/4 hidden lg:block bg-black/30 border border-white/10 rounded-md px-2 py-1 text-body text-slate-500 focus:outline-none focus:border-[var(--module-accent)]/60 disabled:opacity-50"
                   />
                 )}
                 <button
@@ -465,7 +465,7 @@ export function KvEditor({ items, onChange, placeholderKey, placeholderValue, wi
           <button
             type="button"
             onClick={() => onChange([...items, { key: "", value: "", enabled: true, description: "" }])}
-            className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
+            className="flex items-center gap-1 text-caption text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
           >
             <Plus className="w-3 h-3" /> {t("apiparts.add")}
           </button>
@@ -510,7 +510,7 @@ export function FormDataEditor({ items, onChange, envVars = {} }: { items: FormD
               disabled={locked}
               onChange={(e) => update(i, { key: e.target.value })}
               placeholder={t("apiparts.fieldPh")}
-              className={`w-1/4 bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs focus:outline-none ${locked ? "text-[var(--module-accent)]/80 opacity-70 cursor-not-allowed" : "text-slate-200"}`}
+              className={`w-1/4 bg-black/30 border border-white/10 rounded-md px-2 py-1 text-body focus:outline-none ${locked ? "text-[var(--module-accent)]/80 opacity-70 cursor-not-allowed" : "text-slate-200"}`}
               title={locked ? t("apiparts.inheritedTitle") : undefined}
             />
             {kv.kind === "file" ? (
@@ -518,7 +518,7 @@ export function FormDataEditor({ items, onChange, envVars = {} }: { items: FormD
                 type="button"
                 disabled={locked}
                 onClick={() => pickFile(i)}
-                className="flex-1 flex items-center gap-1.5 bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs text-slate-400 hover:text-[var(--module-accent)] cursor-pointer truncate disabled:opacity-50"
+                className="flex-1 flex items-center gap-1.5 bg-black/30 border border-white/10 rounded-md px-2 py-1 text-body text-slate-400 hover:text-[var(--module-accent)] cursor-pointer truncate disabled:opacity-50"
                 title={kv.file_path}
               >
                 <FileText className="w-3 h-3 shrink-0" />
@@ -531,14 +531,14 @@ export function FormDataEditor({ items, onChange, envVars = {} }: { items: FormD
                 disabled={locked}
                 onChange={(v) => update(i, { value: v })}
                 placeholder={t("apiparts.valuePh", { v: "{{$guid}}" })}
-                className={`flex-1 bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs focus:outline-none ${locked ? "text-[var(--module-accent)]/80 opacity-70 cursor-not-allowed" : "text-slate-200"}`}
+                className={`flex-1 bg-black/30 border border-white/10 rounded-md px-2 py-1 text-body focus:outline-none ${locked ? "text-[var(--module-accent)]/80 opacity-70 cursor-not-allowed" : "text-slate-200"}`}
               />
             )}
             <select
               value={kv.kind}
               disabled={locked}
               onChange={(e) => update(i, { kind: e.target.value as "text" | "file" })}
-              className="bg-black/30 border border-white/10 rounded-md px-1 py-1 text-[10px] text-slate-300 cursor-pointer disabled:opacity-40"
+              className="bg-black/30 border border-white/10 rounded-md px-1 py-1 text-tiny text-slate-300 cursor-pointer disabled:opacity-40"
             >
               <option value="text">Text</option>
               <option value="file">File</option>
@@ -548,7 +548,7 @@ export function FormDataEditor({ items, onChange, envVars = {} }: { items: FormD
               disabled={locked}
               onChange={(e) => update(i, { description: e.target.value })}
               placeholder={t("apiparts.descPh")}
-              className="w-1/4 hidden lg:block bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs text-slate-500 focus:outline-none disabled:opacity-50"
+              className="w-1/4 hidden lg:block bg-black/30 border border-white/10 rounded-md px-2 py-1 text-body text-slate-500 focus:outline-none disabled:opacity-50"
             />
             <button
               type="button"
@@ -565,7 +565,7 @@ export function FormDataEditor({ items, onChange, envVars = {} }: { items: FormD
       <button
         type="button"
         onClick={() => onChange([...items, { key: "", value: "", enabled: true, kind: "text", file_path: "", description: "" }])}
-        className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
+        className="flex items-center gap-1 text-caption text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
       >
         <Plus className="w-3 h-3" /> {t("apiparts.addField")}
       </button>
@@ -585,7 +585,7 @@ export function AuthPanel({ auth, onChange }: { auth: Authorization; onChange: (
             key={t.value}
             type="button"
             onClick={() => set({ type: t.value })}
-            className={`px-2.5 py-1 text-[11px] rounded-md cursor-pointer ${auth.type === t.value ? "bg-white/10 text-white" : "text-slate-500 hover:text-slate-300"}`}
+            className={`px-2.5 py-1 text-caption rounded-md cursor-pointer ${auth.type === t.value ? "bg-white/10 text-white" : "text-slate-500 hover:text-slate-300"}`}
           >
             {t.label}
           </button>
@@ -593,27 +593,27 @@ export function AuthPanel({ auth, onChange }: { auth: Authorization; onChange: (
       </div>
       {auth.type === "basic" && (
         <div className="grid grid-cols-2 gap-2">
-          <input value={auth.username} onChange={(e) => set({ username: e.target.value })} placeholder={t("apiparts.usernamePh")} className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
-          <input type="password" value={auth.password} onChange={(e) => set({ password: e.target.value })} placeholder={t("apiparts.passwordPh")} className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
+          <input value={auth.username} onChange={(e) => set({ username: e.target.value })} placeholder={t("apiparts.usernamePh")} className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200" />
+          <input type="password" value={auth.password} onChange={(e) => set({ password: e.target.value })} placeholder={t("apiparts.passwordPh")} className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200" />
         </div>
       )}
       {auth.type === "bearer" && (
-        <input value={auth.token} onChange={(e) => set({ token: e.target.value })} placeholder={t("apiparts.tokenPh", { v: "{{token}}" })} className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
+        <input value={auth.token} onChange={(e) => set({ token: e.target.value })} placeholder={t("apiparts.tokenPh", { v: "{{token}}" })} className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200" />
       )}
       {auth.type === "jwt" && (
-        <input value={auth.jwt_token} onChange={(e) => set({ jwt_token: e.target.value })} placeholder={t("apiparts.jwtPh", { v: "{{jwt}}" })} className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
+        <input value={auth.jwt_token} onChange={(e) => set({ jwt_token: e.target.value })} placeholder={t("apiparts.jwtPh", { v: "{{jwt}}" })} className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200" />
       )}
       {auth.type === "apiKey" && (
         <div className="grid grid-cols-[auto_1fr_1fr] gap-2 items-center">
-          <select value={auth.api_key_in} onChange={(e) => set({ api_key_in: e.target.value as "header" | "query" })} className="bg-black/30 border border-white/10 rounded-md px-1.5 py-1.5 text-xs text-slate-300 cursor-pointer">
+          <select value={auth.api_key_in} onChange={(e) => set({ api_key_in: e.target.value as "header" | "query" })} className="bg-black/30 border border-white/10 rounded-md px-1.5 py-1.5 text-body text-slate-300 cursor-pointer">
             <option value="header">Header</option>
             <option value="query">Query</option>
           </select>
-          <input value={auth.api_key_name} onChange={(e) => set({ api_key_name: e.target.value })} placeholder={t("apiparts.keyNamePh")} className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
-          <input value={auth.api_key_value} onChange={(e) => set({ api_key_value: e.target.value })} placeholder={t("apiparts.keyValuePh")} className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
+          <input value={auth.api_key_name} onChange={(e) => set({ api_key_name: e.target.value })} placeholder={t("apiparts.keyNamePh")} className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200" />
+          <input value={auth.api_key_value} onChange={(e) => set({ api_key_value: e.target.value })} placeholder={t("apiparts.keyValuePh")} className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200" />
         </div>
       )}
-      {auth.type === "none" && <div className="text-[10px] text-slate-500">{t("apiparts.noAuth")}</div>}
+      {auth.type === "none" && <div className="text-tiny text-slate-500">{t("apiparts.noAuth")}</div>}
     </div>
   );
 }
@@ -637,22 +637,22 @@ export function SettingsPanel({ settings, timeoutMs, onChange, onTimeout }: {
       >
         <span className={`absolute top-0.5 w-3.5 h-3.5 rounded-full bg-white transition-all ${value ? "left-4" : "left-0.5"}`} />
       </button>
-      <span className="text-xs text-slate-300">{label}</span>
+      <span className="text-body text-slate-300">{label}</span>
     </label>
   );
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <span className="text-[10px] text-slate-500 w-32">{t("apiparts.httpVersion")}</span>
-        <select value={settings.http_version} onChange={(e) => set({ http_version: e.target.value as RequestSettings["http_version"] })} className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200 cursor-pointer">
+        <span className="text-tiny text-slate-500 w-32">{t("apiparts.httpVersion")}</span>
+        <select value={settings.http_version} onChange={(e) => set({ http_version: e.target.value as RequestSettings["http_version"] })} className="bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200 cursor-pointer">
           <option value="auto">Auto</option>
           <option value="http1">HTTP/1.x</option>
           <option value="http2">HTTP/2</option>
         </select>
       </div>
       <div className="flex items-center gap-2">
-        <span className="text-[10px] text-slate-500 w-32">{t("apiparts.timeoutMs")}</span>
-        <input type="number" min={100} value={timeoutMs} onChange={(e) => onTimeout(Number(e.target.value))} className="w-32 bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200" />
+        <span className="text-tiny text-slate-500 w-32">{t("apiparts.timeoutMs")}</span>
+        <input type="number" min={100} value={timeoutMs} onChange={(e) => onTimeout(Number(e.target.value))} className="w-32 bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200" />
       </div>
       <div className="grid grid-cols-2 gap-x-4">
         <Toggle label={t("apiparts.verifySsl")} value={settings.verify_ssl} on={(v) => set({ verify_ssl: v })} />

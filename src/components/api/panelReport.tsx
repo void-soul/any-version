@@ -5,7 +5,7 @@ import type { LoadTestReport } from "./types";
 export function StatCard({ label, value, accent }: { label: string; value: string; accent?: string }) {
   return (
     <div className="rounded-ctl border border-white/10 bg-black/25 px-2.5 py-1.5 text-center">
-      <div className="text-[9px] text-slate-500">{label}</div>
+      <div className="text-micro text-slate-500">{label}</div>
       <div className="text-sm font-semibold" style={{ color: accent ?? "#e2e8f0" }}>{value}</div>
     </div>
   );
@@ -96,7 +96,7 @@ export function LoadReportView({ report }: { report: LoadTestReport }) {
       </div>
       <div className="flex flex-wrap gap-1.5">
         {report.status_codes.map(([code, count]) => (
-          <span key={code} className={`text-[10px] px-2 py-0.5 rounded-full border ${code >= 500 ? "text-rose-300 border-rose-500/30 bg-rose-500/10" : code >= 400 ? "text-amber-300 border-amber-500/30 bg-amber-500/10" : "text-emerald-300 border-emerald-500/30 bg-emerald-500/10"}`}>
+          <span key={code} className={`text-tiny px-2 py-0.5 rounded-full border ${code >= 500 ? "text-rose-300 border-rose-500/30 bg-rose-500/10" : code >= 400 ? "text-amber-300 border-amber-500/30 bg-amber-500/10" : "text-emerald-300 border-emerald-500/30 bg-emerald-500/10"}`}>
             {code} × {count}
           </span>
         ))}

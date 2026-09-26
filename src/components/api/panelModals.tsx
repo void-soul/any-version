@@ -52,13 +52,13 @@ export function PresetHeadersModal({ projectId, sets, onClose, onChanged }: {
       {local.map((s, i) => (
         <div key={i} className="rounded-card border border-white/10 bg-black/20 p-3 space-y-2">
           <div className="flex items-center gap-2">
-            <input value={s.name} onChange={(e) => update(i, { name: e.target.value })} className="flex-1 bg-transparent border border-white/10 rounded-md px-2 py-1 text-xs font-semibold text-slate-100 focus:outline-none" />
+            <input value={s.name} onChange={(e) => update(i, { name: e.target.value })} className="flex-1 bg-transparent border border-white/10 rounded-md px-2 py-1 text-body font-semibold text-slate-100 focus:outline-none" />
             <button onClick={() => setLocal(local.filter((_, idx) => idx !== i))} className="p-1 text-slate-500 hover:text-rose-400 cursor-pointer"><Trash2 className="w-3.5 h-3.5" /></button>
           </div>
           <KvEditor items={s.headers} onChange={(h) => update(i, { headers: h })} placeholderKey={t("pmodals.kvHeaderPh")} placeholderValue={t("pmodals.kvValue")} withDescription={false} />
         </div>
       ))}
-      <button onClick={add} className="flex items-center gap-1 text-xs text-slate-400 hover:text-[var(--module-accent)] cursor-pointer">
+      <button onClick={add} className="flex items-center gap-1 text-body text-slate-400 hover:text-[var(--module-accent)] cursor-pointer">
         <Plus className="w-3.5 h-3.5" /> {t("pmodals.newPresetSet")}
       </button>
     </SharedModal>
@@ -131,7 +131,7 @@ export function EnvModal({ projectId, envs, activeEnvId, onClose, onChanged }: {
     }));
   };
 
-  const cellCls = "bg-black/30 border border-white/10 rounded-md px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60";
+  const cellCls = "bg-black/30 border border-white/10 rounded-md px-2 py-1 text-body text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60";
 
   return (
     <SharedModal
@@ -147,7 +147,7 @@ export function EnvModal({ projectId, envs, activeEnvId, onClose, onChanged }: {
         <select
           value={active ?? ""}
           onChange={(e) => setActive(e.target.value)}
-          className="bg-black/30 border border-white/10 rounded-md px-2 py-1 text-[11px] text-slate-200 focus:outline-none"
+          className="bg-black/30 border border-white/10 rounded-md px-2 py-1 text-caption text-slate-200 focus:outline-none"
           title={t("pmodals.activeEnvTip")}
         >
           {local.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
@@ -162,12 +162,12 @@ export function EnvModal({ projectId, envs, activeEnvId, onClose, onChanged }: {
     >
       <div className="p-1">
           {local.length === 0 ? (
-            <div className="py-10 text-center text-xs text-slate-500">{t("pmodals.envEmpty")}</div>
+            <div className="py-10 text-center text-body text-slate-500">{t("pmodals.envEmpty")}</div>
           ) : (
-            <table className="w-full border-separate border-spacing-0 text-xs">
+            <table className="w-full border-separate border-spacing-0 text-body">
               <thead>
                 <tr>
-                  <th className="sticky left-0 z-10 bg-surface-panel px-2 py-1.5 text-left text-[10px] font-semibold text-slate-400 border-b border-white/10">{t("pmodals.varName")}</th>
+                  <th className="sticky left-0 z-10 bg-surface-panel px-2 py-1.5 text-left text-tiny font-semibold text-slate-400 border-b border-white/10">{t("pmodals.varName")}</th>
                   {local.map((e, i) => (
                     <th key={e.id} className={`px-1.5 py-1 border-b border-white/10 ${e.id === active ? "bg-[color-mix(in_srgb,var(--module-accent)_10%,transparent)]" : "bg-black/20"}`}>
                       <div className="flex items-center gap-1">
@@ -175,11 +175,11 @@ export function EnvModal({ projectId, envs, activeEnvId, onClose, onChanged }: {
                         <input
                           value={e.name}
                           onChange={(ev) => updateEnv(i, { name: ev.target.value })}
-                          className={`w-full min-w-[110px] bg-transparent border ${e.id === active ? "border-[var(--module-accent)]/50" : "border-white/10"} rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-slate-100 focus:outline-none`}
+                          className={`w-full min-w-[110px] bg-transparent border ${e.id === active ? "border-[var(--module-accent)]/50" : "border-white/10"} rounded-md px-1.5 py-0.5 text-caption font-semibold text-slate-100 focus:outline-none`}
                         />
                         <button
                           onClick={() => setActive(e.id)}
-                          className="shrink-0 p-0.5 text-[9px] text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
+                          className="shrink-0 p-0.5 text-micro text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
                           title={t("pmodals.setActiveTip")}
                         >{t("pmodals.active")}</button>
                         <button
@@ -206,7 +206,7 @@ export function EnvModal({ projectId, envs, activeEnvId, onClose, onChanged }: {
                         <input
                           defaultValue={key}
                           onBlur={(e) => renameVar(key, e.target.value.trim())}
-                          className={`w-full min-w-[110px] bg-transparent border border-transparent rounded-md px-1 py-0.5 text-[11px] font-medium text-slate-200 focus:border-[var(--module-accent)]/50 focus:outline-none`}
+                          className={`w-full min-w-[110px] bg-transparent border border-transparent rounded-md px-1 py-0.5 text-caption font-medium text-slate-200 focus:border-[var(--module-accent)]/50 focus:outline-none`}
                           title={t("pmodals.renameVarTip")}
                         />
                         <button
@@ -234,14 +234,14 @@ export function EnvModal({ projectId, envs, activeEnvId, onClose, onChanged }: {
             </table>
           )}
           <div className="mt-3 flex items-center gap-2">
-            <button onClick={addRow} className="flex items-center gap-1 text-xs text-slate-400 hover:text-[var(--module-accent)] cursor-pointer">
+            <button onClick={addRow} className="flex items-center gap-1 text-body text-slate-400 hover:text-[var(--module-accent)] cursor-pointer">
               <Plus className="w-3.5 h-3.5" /> {t("pmodals.addVarRow")}
             </button>
-            <button onClick={addEnv} className="flex items-center gap-1 text-xs text-slate-400 hover:text-[var(--module-accent)] cursor-pointer">
+            <button onClick={addEnv} className="flex items-center gap-1 text-body text-slate-400 hover:text-[var(--module-accent)] cursor-pointer">
               <Plus className="w-3.5 h-3.5" /> {t("pmodals.addEnvCol")}
             </button>
           </div>
-          <div className="mt-2 text-[10px] text-slate-500 space-y-0.5">
+          <div className="mt-2 text-tiny text-slate-500 space-y-0.5">
             {t("pmodals.envHint1")}
             {t("pmodals.envHint2", { placeholder: <code className="text-[var(--module-accent)]">{"{{var}}"}</code> })}
           </div>
@@ -305,7 +305,7 @@ export function ProjectModal({ project, onClose, onSave, initialSection }: {
     >
       <div className="space-y-3">
           <label className="block">
-            <span className="text-[11px] text-slate-400 mb-1 block">{t("pmodals.projectName")}</span>
+            <span className="text-caption text-slate-400 mb-1 block">{t("pmodals.projectName")}</span>
             <input
               autoFocus
               value={name}
@@ -316,36 +316,36 @@ export function ProjectModal({ project, onClose, onSave, initialSection }: {
             />
           </label>
           <label className="block">
-            <span className="text-[11px] text-slate-400 mb-1 block">{t("pmodals.desc")}</span>
+            <span className="text-caption text-slate-400 mb-1 block">{t("pmodals.desc")}</span>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder={t("pmodals.projectDescPh")}
               rows={2}
-              className="w-full bg-black/30 border border-white/10 rounded-ctl px-3 py-2 text-xs text-slate-200 resize-none focus:outline-none focus:border-[var(--module-accent)]/60"
+              className="w-full bg-black/30 border border-white/10 rounded-ctl px-3 py-2 text-body text-slate-200 resize-none focus:outline-none focus:border-[var(--module-accent)]/60"
             />
           </label>
           <div ref={headerRef} className={`rounded-ctl border transition-all duration-300 ${highlight === "headers" ? "border-[var(--module-accent)]/70 ring-2 ring-[color-mix(in_srgb,var(--module-accent)_30%,transparent)]" : "border-transparent"}`}>
             <div className="flex items-center gap-1.5 mb-1 px-1 pt-1">
               <Link2 className="w-3 h-3" style={{ color: ACCENT }} />
-              <span className="text-[11px] text-slate-400">{t("pmodals.commonHeaders")}</span>
-              <span className="text-[9px] text-slate-600">{t("pmodals.autoAttachHeaders")}</span>
+              <span className="text-caption text-slate-400">{t("pmodals.commonHeaders")}</span>
+              <span className="text-micro text-slate-600">{t("pmodals.autoAttachHeaders")}</span>
             </div>
             <KvEditor items={commonHeaders} onChange={setCommonHeaders} placeholderKey={t("pmodals.kvHeaderPh")} placeholderValue={t("pmodals.kvValue")} withDescription={false} />
           </div>
           <div ref={paramsRef} className={`rounded-ctl border transition-all duration-300 ${highlight === "params" ? "border-[var(--module-accent)]/70 ring-2 ring-[color-mix(in_srgb,var(--module-accent)_30%,transparent)]" : "border-transparent"}`}>
             <div className="flex items-center gap-1.5 mb-1 px-1 pt-1">
               <ListTree className="w-3 h-3" style={{ color: ACCENT }} />
-              <span className="text-[11px] text-slate-400">{t("pmodals.commonParams")}</span>
-              <span className="text-[9px] text-slate-600">{t("pmodals.autoAttachHeaders")}</span>
+              <span className="text-caption text-slate-400">{t("pmodals.commonParams")}</span>
+              <span className="text-micro text-slate-600">{t("pmodals.autoAttachHeaders")}</span>
             </div>
             <KvEditor items={commonParams} onChange={setCommonParams} placeholderKey={t("pmodals.kvParamPh")} placeholderValue={t("pmodals.kvValue")} withDescription={false} />
           </div>
           <div ref={bodyRef} className={`rounded-ctl border transition-all duration-300 ${highlight === "body" ? "border-[var(--module-accent)]/70 ring-2 ring-[color-mix(in_srgb,var(--module-accent)_30%,transparent)]" : "border-transparent"}`}>
             <div className="flex items-center gap-1.5 mb-1 px-1 pt-1">
               <Braces className="w-3 h-3" style={{ color: ACCENT }} />
-              <span className="text-[11px] text-slate-400">{t("pmodals.commonBody")}</span>
-              <span className="text-[9px] text-slate-600">{t("pmodals.autoAttachBody")}</span>
+              <span className="text-caption text-slate-400">{t("pmodals.commonBody")}</span>
+              <span className="text-micro text-slate-600">{t("pmodals.autoAttachBody")}</span>
             </div>
             <KvEditor items={commonBody} onChange={setCommonBody} placeholderKey={t("pmodals.kvParamPh")} placeholderValue={t("pmodals.kvValue")} withDescription={false} />
           </div>
@@ -387,7 +387,7 @@ export function ModuleModal({ module, onClose, onSave }: {
     >
       <div className="space-y-3">
           <label className="block">
-            <span className="text-[11px] text-slate-400 mb-1 block">{t("pmodals.moduleName")}</span>
+            <span className="text-caption text-slate-400 mb-1 block">{t("pmodals.moduleName")}</span>
             <input
               autoFocus
               value={name}
@@ -398,13 +398,13 @@ export function ModuleModal({ module, onClose, onSave }: {
             />
           </label>
           <label className="block">
-            <span className="text-[11px] text-slate-400 mb-1 block">{t("pmodals.desc")}</span>
+            <span className="text-caption text-slate-400 mb-1 block">{t("pmodals.desc")}</span>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder={t("pmodals.moduleDescPh")}
               rows={3}
-              className="w-full bg-black/30 border border-white/10 rounded-ctl px-3 py-2 text-xs text-slate-200 resize-none focus:outline-none focus:border-[var(--module-accent)]/60"
+              className="w-full bg-black/30 border border-white/10 rounded-ctl px-3 py-2 text-body text-slate-200 resize-none focus:outline-none focus:border-[var(--module-accent)]/60"
             />
           </label>
       </div>

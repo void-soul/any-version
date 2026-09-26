@@ -573,8 +573,8 @@ function CreateDocModal({ onClose, onCreate, folderId }: { onClose: () => void; 
           <button type="button" className="text-slate-500 hover:text-white" onClick={onClose}><X className="h-4 w-4" /></button>
         </div>
         <div className="space-y-3">
-          <div><label className="text-tiny text-slate-400 block mb-1">{t("mindmap.nameLabel")}</label><input ref={inputRef} className="w-full h-9 rounded-ctl bg-slate-900 border border-white/10 px-3 text-body text-white outline-none" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("mindmap.mapNamePh")} onKeyDown={(e) => { if (e.key === "Enter" && name.trim()) onCreate(name.trim(), desc, folderId); }} /></div>
-          <div><label className="text-tiny text-slate-400 block mb-1">{t("mindmap.descLabel")}</label><textarea className="w-full h-16 rounded-ctl bg-slate-900 border border-white/10 px-3 py-2 text-body text-white outline-none resize-none" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder={t("mindmap.descPh")} /></div>
+          <div><label className="text-tiny text-slate-400 block mb-1">{t("mindmap.nameLabel")}</label><input ref={inputRef} className="w-full h-9 rounded-ctl ui-input px-3 text-body text-white outline-none" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("mindmap.mapNamePh")} onKeyDown={(e) => { if (e.key === "Enter" && name.trim()) onCreate(name.trim(), desc, folderId); }} /></div>
+          <div><label className="text-tiny text-slate-400 block mb-1">{t("mindmap.descLabel")}</label><textarea className="w-full h-16 rounded-ctl ui-input px-3 py-2 text-body text-white outline-none resize-none" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder={t("mindmap.descPh")} /></div>
           <button type="button" className="w-full rounded-ctl py-2 text-caption font-semibold text-white disabled:opacity-40" style={{ backgroundColor: ACCENT }}
             disabled={!name.trim()} onClick={() => { if (name.trim()) onCreate(name.trim(), desc, folderId); }}>{t("mindmap.create")}</button>
         </div>
@@ -3073,7 +3073,7 @@ export default function MindmapPanel() {
         <div className="fixed inset-0 z-[200] modal-mask flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]">
           <div className="w-[340px] rounded-card border border-white/10 bg-surface-panel p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="mb-4 text-sm font-semibold text-white">{t("mindmap.newFolderTitle")}</h3>
-            <input className="w-full h-9 rounded-ctl bg-slate-900 border border-white/10 px-3 text-body text-white outline-none mb-4" value={folderName} onChange={(e) => setFolderName(e.target.value)} placeholder={t("mindmap.folderNamePh")} autoFocus onKeyDown={(e) => e.key === "Enter" && createFolder()} />
+            <input className="w-full h-9 rounded-ctl ui-input px-3 text-body text-white outline-none mb-4" value={folderName} onChange={(e) => setFolderName(e.target.value)} placeholder={t("mindmap.folderNamePh")} autoFocus onKeyDown={(e) => e.key === "Enter" && createFolder()} />
             <div className="flex justify-end gap-2">
               <button type="button" className="rounded-md px-4 py-1.5 text-caption text-slate-400 hover:text-white" onClick={() => setShowFolderCreate(false)}>{t("mindmap.cancel")}</button>
               <button type="button" className="rounded-md px-4 py-1.5 text-caption font-semibold text-white disabled:opacity-40" style={{ backgroundColor: ACCENT }} disabled={!folderName.trim()} onClick={createFolder}>{t("mindmap.create")}</button>
@@ -3084,7 +3084,7 @@ export default function MindmapPanel() {
         <div className="fixed inset-0 z-[200] modal-mask flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]">
           <div className="w-[340px] rounded-card border border-white/10 bg-surface-panel p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="mb-4 text-sm font-semibold text-white">{t("mindmap.renameFolderTitle")}</h3>
-            <input className="w-full h-9 rounded-ctl bg-slate-900 border border-white/10 px-3 text-body text-white outline-none mb-4" value={folderName} onChange={(e) => setFolderName(e.target.value)} autoFocus onKeyDown={(e) => e.key === "Enter" && updateFolder()} />
+            <input className="w-full h-9 rounded-ctl ui-input px-3 text-body text-white outline-none mb-4" value={folderName} onChange={(e) => setFolderName(e.target.value)} autoFocus onKeyDown={(e) => e.key === "Enter" && updateFolder()} />
             <div className="flex justify-end gap-2">
               <button type="button" className="rounded-md px-4 py-1.5 text-caption text-slate-400 hover:text-white" onClick={() => setEditingFolder(null)}>{t("mindmap.cancel")}</button>
               <button type="button" className="rounded-md px-4 py-1.5 text-caption font-semibold text-white disabled:opacity-40" style={{ backgroundColor: ACCENT }} disabled={!folderName.trim()} onClick={updateFolder}>{t("mindmap.save")}</button>

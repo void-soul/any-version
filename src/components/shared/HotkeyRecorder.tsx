@@ -136,7 +136,7 @@ export function HotkeyRecorder({
         type="button"
         disabled={disabled}
         onClick={() => setRecording((r) => !r)}
-        className={`min-w-[86px] px-2.5 py-1 rounded-md border text-[11px] text-center transition cursor-pointer ${
+        className={`min-w-[86px] px-2.5 py-1 rounded-md border text-caption text-center transition cursor-pointer ${
           recording
             ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
             : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white"

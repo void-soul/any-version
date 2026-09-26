@@ -101,16 +101,16 @@ function ModuleConfigRow({
 
       {/* 图标 + 标签 */}
       <Icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color }} />
-      <span className="text-[11px] text-slate-300 w-14 truncate flex-shrink-0">{label}</span>
+      <span className="text-caption text-slate-300 w-14 truncate flex-shrink-0">{label}</span>
 
       {/* 位置：顶栏/更多 */}
       {pinned ? (
-        <span className="text-[9px] text-slate-600 w-9 text-center flex-shrink-0">{t("settings.pinned")}</span>
+        <span className="text-micro text-slate-600 w-9 text-center flex-shrink-0">{t("settings.pinned")}</span>
       ) : (
         <button
           onClick={onToggleToolbar}
           disabled={disabled}
-          className={`px-1.5 py-0.5 rounded-md text-[9px] font-medium border transition cursor-pointer disabled:opacity-40 w-9 flex-shrink-0 ${
+          className={`px-1.5 py-0.5 rounded-md text-micro font-medium border transition cursor-pointer disabled:opacity-40 w-9 flex-shrink-0 ${
             inToolbar
               ? "bg-cyan-500/15 border-cyan-500/40 text-cyan-300"
               : "bg-white/5 border-white/10 text-slate-400"
@@ -144,7 +144,7 @@ function ModuleConfigRow({
       <div className="flex items-center gap-1 flex-shrink-0">
         <button
           onClick={onRecordHotkey}
-          className={`px-2 py-0.5 rounded-md text-[9px] font-mono border transition cursor-pointer ${
+          className={`px-2 py-0.5 rounded-md text-micro font-mono border transition cursor-pointer ${
             isRecording
               ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
               : hotkey
@@ -934,21 +934,21 @@ export default function GlobalSettings() {
       <div className="glass-panel rounded-panel p-6 border border-white/5 space-y-6">
         <div className="flex items-center gap-2 pb-3 border-b border-white/5">
           <FolderKanban className="w-4 h-4 text-[var(--module-accent)]" />
-          <h3 className="text-xs font-semibold text-white">
+          <h3 className="text-body font-semibold text-white">
             {t("settings.dataDirSection")}
           </h3>
         </div>
 
 
         {loading ? (
-          <div className="text-xs text-slate-400 py-6 flex items-center gap-2">
+          <div className="text-body text-slate-400 py-6 flex items-center gap-2">
             <RefreshCw className="w-4 h-4 animate-spin text-[var(--module-accent)]" />
             {t("settings.loadingConfig")}
           </div>
         ) : (
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <label className="text-[10px] text-slate-500 uppercase font-semibold">
+              <label className="text-tiny text-slate-500 uppercase font-semibold">
                 {t("settings.dataDirLabel")}
               </label>
               <div className="flex items-center gap-2">
@@ -956,7 +956,7 @@ export default function GlobalSettings() {
                   type="text"
                   value={dataDir}
                   onChange={(e) => setDataDir(e.target.value)}
-                  className="flex-1 glass-input px-3.5 py-2.5 text-xs font-mono"
+                  className="flex-1 glass-input px-3.5 py-2.5 text-body font-mono"
                   placeholder="e.g. D:\Kira"
                 />
                 <button
@@ -971,10 +971,10 @@ export default function GlobalSettings() {
 
             {/* 派生路径只读展示 */}
             <div className="rounded-card border border-white/5 bg-white/[0.02] p-3 space-y-1.5">
-              <p className="text-[10px] text-slate-500 uppercase font-semibold">
+              <p className="text-tiny text-slate-500 uppercase font-semibold">
                 {t("settings.derivedDirs")}
               </p>
-              <div className="text-[10px] font-mono text-slate-400 space-y-1">
+              <div className="text-tiny font-mono text-slate-400 space-y-1">
                 <div className="flex items-center gap-2">
                   <span className="text-cyan-400 flex-shrink-0">{t("settings.sdkDir")}</span>
                   <span className="truncate">
@@ -1010,11 +1010,11 @@ export default function GlobalSettings() {
             {/* 路径变更确认弹窗 */}
             {showMigrateConfirm && (
               <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-card space-y-3 animate-fadeIn">
-                <h4 className="text-xs font-semibold text-amber-400 flex items-center gap-1.5">
+                <h4 className="text-body font-semibold text-amber-400 flex items-center gap-1.5">
                   <AlertTriangle className="w-4 h-4" />
                   {t("settings.confirmMigrate")}
                 </h4>
-                <div className="text-[10px] text-slate-300 space-y-1.5">
+                <div className="text-tiny text-slate-300 space-y-1.5">
                   <p>{t("settings.migrateNotice")}</p>
                   <p className="text-amber-300">{t("settings.migrateStep1")}</p>
                   <p className="text-amber-300">{t("settings.migrateStep2")}</p>
@@ -1026,14 +1026,14 @@ export default function GlobalSettings() {
                   <button
                     onClick={handleSave}
                     disabled={saving}
-                    className="px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-card text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5"
+                    className="px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-card text-body font-semibold cursor-pointer transition-all flex items-center gap-1.5"
                   >
                     <Save className="w-3 h-3" />
                     {saving ? t("settings.migrating") : t("settings.confirmMigrateSave")}
                   </button>
                   <button
                     onClick={() => setShowMigrateConfirm(false)}
-                    className="px-4 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-card text-xs font-medium cursor-pointer border border-white/10"
+                    className="px-4 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-card text-body font-medium cursor-pointer border border-white/10"
                   >
                     {t("common.cancel")}
                   </button>
@@ -1044,7 +1044,7 @@ export default function GlobalSettings() {
             {/* 迁移进度条 */}
             {progress && (
               <div className="p-3 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] rounded-card space-y-2 animate-fadeIn">
-                <div className="flex items-center justify-between text-[10px]">
+                <div className="flex items-center justify-between text-tiny">
                   <span className="text-[var(--module-accent)] font-semibold flex items-center gap-1.5">
                     <Loader2 className="w-3 h-3 animate-spin" />
                     {progress.stage}
@@ -1066,7 +1066,7 @@ export default function GlobalSettings() {
                   </div>
                 )}
                 {progress.file_name && (
-                  <div className="flex items-center gap-1 text-[9px] text-slate-400">
+                  <div className="flex items-center gap-1 text-micro text-slate-400">
                     <FileText className="w-2.5 h-2.5 flex-shrink-0" />
                     <span className="truncate">{progress.file_name}</span>
                   </div>
@@ -1076,8 +1076,8 @@ export default function GlobalSettings() {
 
             {/* 迁移结果展示 */}
             {migrateResult && (
-              <div className="p-4 bg-emerald-500/5 border border-emerald-500/15 rounded-card space-y-2 text-[10px]">
-                <h4 className="text-xs font-semibold text-emerald-400">
+              <div className="p-4 bg-emerald-500/5 border border-emerald-500/15 rounded-card space-y-2 text-tiny">
+                <h4 className="text-body font-semibold text-emerald-400">
                   {t("settings.migrateDone")}
                 </h4>
                 {migrateResult.moved_versions && (
@@ -1116,13 +1116,13 @@ export default function GlobalSettings() {
                     {migrateResult.old_dirs_remain.map((dir, i) => (
                       <p
                         key={i}
-                        className="font-mono text-[9px] text-slate-400 pl-5"
+                        className="font-mono text-micro text-slate-400 pl-5"
                       >
                         {dir}
                       </p>
                     ))}
                     {deletedOldDirs ? (
-                      <p className="text-emerald-400 text-[10px] flex items-center gap-1">
+                      <p className="text-emerald-400 text-tiny flex items-center gap-1">
                         <CheckCircle2 className="w-3 h-3" />
                         {t("settings.deletedOldDirs", { count: deletedOldDirs.length })}
                       </p>
@@ -1130,7 +1130,7 @@ export default function GlobalSettings() {
                       <button
                         onClick={handleDeleteOldDirs}
                         disabled={deletingOldDirs}
-                        className="px-3 py-1.5 bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] hover:bg-[color-mix(in_srgb,var(--module-accent)_40%,transparent)] disabled:opacity-50 text-[var(--module-accent)] rounded-ctl text-[10px] font-medium cursor-pointer transition-all flex items-center gap-1.5 border border-[var(--module-accent-ring)]"
+                        className="px-3 py-1.5 bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] hover:bg-[color-mix(in_srgb,var(--module-accent)_40%,transparent)] disabled:opacity-50 text-[var(--module-accent)] rounded-ctl text-tiny font-medium cursor-pointer transition-all flex items-center gap-1.5 border border-[var(--module-accent-ring)]"
                       >
                         <Trash2 className="w-3 h-3" />
                         {deletingOldDirs ? t("settings.deletingOld") : t("settings.deleteOldDirs")}
@@ -1146,14 +1146,14 @@ export default function GlobalSettings() {
               <div className="p-4 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] rounded-card space-y-2.5">
                 <div className="flex items-start gap-1.5">
                   <Power className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-[var(--module-accent)]" />
-                  <div className="text-[10px] text-slate-300 space-y-1">
+                  <div className="text-tiny text-slate-300 space-y-1">
                     <p className="font-semibold text-[var(--module-accent)]">{t("settings.restartRequired")}</p>
                     <p>{t("settings.restartReason")}</p>
                   </div>
                 </div>
                 <button
                   onClick={restartApp}
-                  className="px-3 py-1.5 rounded-ctl text-[10px] font-semibold cursor-pointer transition-all flex items-center gap-1.5 bg-[var(--module-accent)] text-white hover:opacity-85"
+                  className="px-3 py-1.5 rounded-ctl text-tiny font-semibold cursor-pointer transition-all flex items-center gap-1.5 bg-[var(--module-accent)] text-white hover:opacity-85"
                 >
                   <RefreshCw className="w-3 h-3" />
                   {t("settings.restartNow")}
@@ -1166,7 +1166,7 @@ export default function GlobalSettings() {
                 {success &&
                   !migrateResult?.moved_versions &&
                   !migrateResult?.moved_links && (
-                    <span className="text-xs font-medium text-emerald-400 flex items-center gap-1.5">
+                    <span className="text-body font-medium text-emerald-400 flex items-center gap-1.5">
                       <CheckCircle2 className="w-4 h-4" />
                       {t("settings.configSaved")}
                     </span>
@@ -1176,7 +1176,7 @@ export default function GlobalSettings() {
               <button
                 onClick={handleSaveClick}
                 disabled={saving || !dataDir}
-                className="px-6 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-card text-xs font-semibold shadow-lg shadow-[var(--module-accent-ring)] cursor-pointer transition-all flex items-center gap-1.5"
+                className="px-6 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-card text-body font-semibold shadow-lg shadow-[var(--module-accent-ring)] cursor-pointer transition-all flex items-center gap-1.5"
               >
                 <Save className="w-3.5 h-3.5" />
                 {saving ? t("settings.saving") : t("settings.saveConfig")}
@@ -1193,9 +1193,9 @@ export default function GlobalSettings() {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="text-base font-black tracking-wide text-white">Kira</span>
-              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)]">v{appVersion || "1.0.0"}</span>
+              <span className="text-micro px-1.5 py-0.5 rounded-full bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)]">v{appVersion || "1.0.0"}</span>
             </div>
-            <p className="text-[11px] text-slate-300 mt-1 truncate">
+            <p className="text-caption text-slate-300 mt-1 truncate">
               <VexGreeting />
             </p>
           </div>
@@ -1207,12 +1207,12 @@ export default function GlobalSettings() {
         <div className="flex items-center justify-between pb-3 border-b border-white/5">
           <div className="flex items-center gap-2">
             <RefreshCw className="w-4 h-4 text-[var(--module-accent)]" />
-            <h3 className="text-xs font-semibold text-white">{t("settings.update")}</h3>
+            <h3 className="text-body font-semibold text-white">{t("settings.update")}</h3>
           </div>
           <button
             onClick={handleCheckUpdate}
             disabled={checkingUpdate}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-ctl text-[10px] border border-white/5 cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-ctl text-tiny border border-white/5 cursor-pointer"
           >
             <RefreshCw
               className={`w-3 h-3 ${checkingUpdate ? "animate-spin" : ""}`}
@@ -1221,7 +1221,7 @@ export default function GlobalSettings() {
           </button>
         </div>
 
-        <div className="flex items-center gap-3 text-xs">
+        <div className="flex items-center gap-3 text-body">
           <span className="text-slate-400">{t("settings.currentVersion")}</span>
           <span className="font-mono text-slate-200 bg-black/20 px-2 py-0.5 rounded">
             v{appVersion || "1.0.0"}
@@ -1229,7 +1229,7 @@ export default function GlobalSettings() {
         </div>
 
         {updateError && (
-          <div className="p-3 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] rounded-card text-[10px] text-[var(--module-accent)]">
+          <div className="p-3 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] rounded-card text-tiny text-[var(--module-accent)]">
             {updateError}
           </div>
         )}
@@ -1237,11 +1237,11 @@ export default function GlobalSettings() {
         {latestVersion && (
           <div className="p-4 bg-emerald-500/5 border border-emerald-500/15 rounded-card space-y-2">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-emerald-300">
+              <span className="text-body font-semibold text-emerald-300">
                 {t("settings.newVersionFound", { version: latestVersion })}
               </span>
               {updateBody && (
-                <span className="text-[10px] text-slate-400">
+                <span className="text-tiny text-slate-400">
                   ({updateBody.substring(0, 80)}...)
                 </span>
               )}
@@ -1250,7 +1250,7 @@ export default function GlobalSettings() {
               <button
                 onClick={handleInstallUpdate}
                 disabled={installing}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-ctl text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5 disabled:opacity-60"
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-ctl text-body font-semibold cursor-pointer transition-all flex items-center gap-1.5 disabled:opacity-60"
               >
                 <Loader2
                   className={`w-3 h-3 ${installing ? "animate-spin" : ""}`}
@@ -1260,7 +1260,7 @@ export default function GlobalSettings() {
             ) : (
               <button
                 onClick={handleDownloadUpdate}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-ctl text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5"
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-ctl text-body font-semibold cursor-pointer transition-all flex items-center gap-1.5"
               >
                 <ExternalLink className="w-3 h-3" />
                 {t("settings.gotoDownloadPage")}
@@ -1270,7 +1270,7 @@ export default function GlobalSettings() {
         )}
 
         {latestVersion === null && !checkingUpdate && !updateError && (
-          <p className="text-[10px] text-slate-500">
+          <p className="text-tiny text-slate-500">
             {t("settings.updateHint")}
           </p>
         )}
@@ -1280,13 +1280,13 @@ export default function GlobalSettings() {
       <div className="glass-panel rounded-panel p-6 border border-white/5 space-y-4">
         <div className="flex items-center gap-2 pb-3 border-b border-white/5">
           <Power className="w-4 h-4 text-[var(--module-accent)]" />
-          <h3 className="text-xs font-semibold text-white">{t("settings.behavior")}</h3>
+          <h3 className="text-body font-semibold text-white">{t("settings.behavior")}</h3>
         </div>
 
         <div className="flex items-center justify-between">
           <div className="space-y-0.5">
-            <p className="text-xs font-medium text-slate-200">{t("settings.autostart")}</p>
-            <p className="text-[9px] text-slate-500">
+            <p className="text-body font-medium text-slate-200">{t("settings.autostart")}</p>
+            <p className="text-micro text-slate-500">
               {t("settings.autostartHint")}
             </p>
           </div>
@@ -1312,8 +1312,8 @@ export default function GlobalSettings() {
         <div className="pt-3 border-t border-white/5 space-y-3">
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
-              <p className="text-xs font-medium text-slate-200">{t("settings.trayMenuEnabled")}</p>
-              <p className="text-[9px] text-slate-500">{t("settings.trayMenuEnabledHint")}</p>
+              <p className="text-body font-medium text-slate-200">{t("settings.trayMenuEnabled")}</p>
+              <p className="text-micro text-slate-500">{t("settings.trayMenuEnabledHint")}</p>
             </div>
             <button
               type="button"
@@ -1340,8 +1340,8 @@ export default function GlobalSettings() {
           <div className="flex items-center gap-2">
             <Sliders className="w-4 h-4 text-cyan-400" />
             <div>
-              <h3 className="text-xs font-semibold text-white">{t("settings.appearance")}</h3>
-              <p className="text-[9px] text-slate-500 mt-0.5">
+              <h3 className="text-body font-semibold text-white">{t("settings.appearance")}</h3>
+              <p className="text-micro text-slate-500 mt-0.5">
                 {t("settings.appearanceHint")}
               </p>
             </div>
@@ -1351,10 +1351,10 @@ export default function GlobalSettings() {
         {/* 0. 主题色 */}
         <div className="space-y-2.5">
           <div className="flex items-center justify-between pt-3 border-t border-white/5">
-            <p className="text-[11px] font-medium text-slate-200">{t("settings.themeColor")}</p>
+            <p className="text-caption font-medium text-slate-200">{t("settings.themeColor")}</p>
             <div className="flex items-center gap-2">
               <div
-                className="flex items-center gap-1.5 rounded-md border border-white/10 bg-black/30 px-2 py-1 font-mono text-[10px] text-slate-200"
+                className="flex items-center gap-1.5 rounded-md border border-white/10 bg-black/30 px-2 py-1 font-mono text-tiny text-slate-200"
                 style={{ boxShadow: `0 0 8px ${themeAccent}55` }}
               >
                 <span className="h-3 w-3 rounded-full" style={{ background: themeAccent }} />
@@ -1362,7 +1362,7 @@ export default function GlobalSettings() {
               </div>
               <button
                 onClick={() => void handleResetThemeAccent()}
-                className="rounded-md border border-white/10 px-2 py-1 text-[10px] text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
+                className="rounded-md border border-white/10 px-2 py-1 text-tiny text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
                 title={t("settings.resetTheme")}
               >
                 {t("settings.resetThemeBtn")}
@@ -1394,12 +1394,12 @@ export default function GlobalSettings() {
               />
             </label>
           </div>
-          <p className="text-[9px] text-slate-600">{t("settings.themePresetsHint")}</p>
+          <p className="text-micro text-slate-600">{t("settings.themePresetsHint")}</p>
         </div>
 
         {/* 1. 全局字体 */}
         <div className="pt-3 border-t border-white/5 space-y-2.5">
-          <p className="text-[11px] font-medium text-slate-200">{t("settings.globalFont")}</p>
+          <p className="text-caption font-medium text-slate-200">{t("settings.globalFont")}</p>
           <div className="flex items-center gap-2">
             <div className="relative flex-1 min-w-0">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500 pointer-events-none" />
@@ -1408,13 +1408,13 @@ export default function GlobalSettings() {
                 value={fontSearch}
                 onChange={(e) => setFontSearch(e.target.value)}
                 placeholder={t("settings.searchFontsPh", { count: systemFonts.length })}
-                className="w-full glass-input pl-7 pr-2.5 py-1.5 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-sky-400/50"
+                className="w-full glass-input pl-7 pr-2.5 py-1.5 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-sky-400/50"
               />
             </div>
             <button
               onClick={refreshSystemFonts}
               disabled={fontRefreshing}
-              className="p-1.5 rounded-ctl text-[10px] text-slate-400 hover:text-slate-200 bg-white/5 hover:bg-white/10 border border-white/10 transition cursor-pointer flex-shrink-0 disabled:opacity-50"
+              className="p-1.5 rounded-ctl text-tiny text-slate-400 hover:text-slate-200 ui-btn transition cursor-pointer flex-shrink-0 disabled:opacity-50"
               title={t("settings.refreshFontsTitle")}
             >
               <RefreshCw className={`w-3.5 h-3.5 ${fontRefreshing ? "animate-spin" : ""}`} />
@@ -1424,7 +1424,7 @@ export default function GlobalSettings() {
             <select
               value={appearance.globalFont}
               onChange={(e) => handleSetGlobalFont(e.target.value)}
-              className="flex-1 min-w-0 glass-input text-xs"
+              className="flex-1 min-w-0 glass-input text-body"
             >
               <option value="">{t("settings.defaultFont")}</option>
               {filteredFonts.map((f) => (
@@ -1436,7 +1436,7 @@ export default function GlobalSettings() {
             {appearance.customFontPath && (
               <button
                 onClick={handleClearCustomFont}
-                className="px-2.5 py-1.5 rounded-ctl text-[10px] font-medium bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] border border-[color-mix(in_srgb,var(--module-accent)_40%,transparent)] text-[var(--module-accent)] hover:bg-[color-mix(in_srgb,var(--module-accent)_30%,transparent)] transition cursor-pointer whitespace-nowrap"
+                className="px-2.5 py-1.5 rounded-ctl text-tiny font-medium bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] border border-[color-mix(in_srgb,var(--module-accent)_40%,transparent)] text-[var(--module-accent)] hover:bg-[color-mix(in_srgb,var(--module-accent)_30%,transparent)] transition cursor-pointer whitespace-nowrap"
                 title={t("settings.removeCustomFont")}
               >
                 {t("settings.removeCustomFont")}
@@ -1445,7 +1445,7 @@ export default function GlobalSettings() {
             <button
               onClick={handleImportFont}
               disabled={importingFont}
-              className="px-2.5 py-1.5 rounded-ctl text-[10px] font-medium bg-cyan-600/20 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-600/30 transition cursor-pointer whitespace-nowrap flex items-center gap-1 disabled:opacity-50"
+              className="px-2.5 py-1.5 rounded-ctl text-tiny font-medium bg-cyan-600/20 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-600/30 transition cursor-pointer whitespace-nowrap flex items-center gap-1 disabled:opacity-50"
               title={t("settings.importFontTitle")}
             >
               {importingFont ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
@@ -1453,7 +1453,7 @@ export default function GlobalSettings() {
             </button>
           </div>
           {appearance.customFontPath && (
-            <p className="text-[9px] text-emerald-400">
+            <p className="text-micro text-emerald-400">
               {t("settings.usingCustomFont", { font: appearance.globalFont })}
             </p>
           )}
@@ -1461,8 +1461,8 @@ export default function GlobalSettings() {
 
         {/* 1.5 全局背景底图纹理 */}
         <div className="pt-3 border-t border-white/5 space-y-2.5">
-          <p className="text-[11px] font-medium text-slate-200">{t("settings.backgroundTexture")}</p>
-          <p className="text-[9px] text-slate-500">{t("settings.backgroundTextureHint")}</p>
+          <p className="text-caption font-medium text-slate-200">{t("settings.backgroundTexture")}</p>
+          <p className="text-micro text-slate-500">{t("settings.backgroundTextureHint")}</p>
           <div className="grid grid-cols-5 gap-1.5">
             {[
               { value: "", label: "settings.textureGrid", cls: "cyber-grid" },
@@ -1493,7 +1493,7 @@ export default function GlobalSettings() {
                   title={t(tc.label)}
                 >
                   <span className={`h-7 w-full rounded ${tc.cls} bg-black/40`} />
-                  <span className={`text-[9px] ${active ? "text-[var(--module-accent)]" : "text-slate-400"}`}>
+                  <span className={`text-micro ${active ? "text-[var(--module-accent)]" : "text-slate-400"}`}>
                     {t(tc.label)}
                   </span>
                 </button>
@@ -1504,8 +1504,8 @@ export default function GlobalSettings() {
 
         {/* 1.6 界面语言 */}
         <div className="pt-3 border-t border-white/5 space-y-2.5">
-          <p className="text-[11px] font-medium text-slate-200">{t("settings.language")}</p>
-          <p className="text-[9px] text-slate-500">{t("settings.languageHint")}</p>
+          <p className="text-caption font-medium text-slate-200">{t("settings.language")}</p>
+          <p className="text-micro text-slate-500">{t("settings.languageHint")}</p>
           <div className="flex items-center gap-2">
             {[
               { value: "zh", label: t("settings.languageZh") },
@@ -1516,7 +1516,7 @@ export default function GlobalSettings() {
                 <button
                   key={opt.value}
                   onClick={() => handleSetLanguage(opt.value)}
-                  className={`px-4 py-1.5 rounded-ctl text-[11px] font-semibold transition cursor-pointer ${
+                  className={`px-4 py-1.5 rounded-ctl text-caption font-semibold transition cursor-pointer ${
                     active
                       ? "bg-[var(--module-accent)] text-white"
                       : "bg-white/5 text-slate-300 hover:bg-white/10 border border-white/10"
@@ -1532,8 +1532,8 @@ export default function GlobalSettings() {
         {/* 2. 模块管理：统一配置（主题色 + 位置 + 启用 + 快捷键 + 拖拽排序） */}
         <div className="pt-3 border-t border-white/5 space-y-2.5">
           <div className="space-y-0.5">
-            <p className="text-[11px] font-medium text-slate-200">{t("settings.modules")}</p>
-            <p className="text-[9px] text-slate-500">
+            <p className="text-caption font-medium text-slate-200">{t("settings.modules")}</p>
+            <p className="text-micro text-slate-500">
               {t("settings.modulesHint")}
             </p>
           </div>
@@ -1577,11 +1577,11 @@ export default function GlobalSettings() {
           <div className="flex items-center justify-between">
             <button
               onClick={handleResetModuleOrder}
-              className="text-[10px] text-slate-500 hover:text-slate-300 transition cursor-pointer flex items-center gap-1"
+              className="text-tiny text-slate-500 hover:text-slate-300 transition cursor-pointer flex items-center gap-1"
             >
               <RotateCcw className="w-3 h-3" /> {t("settings.resetOrder")}
             </button>
-            <span className="text-[9px] text-slate-600">{t("settings.dragToOrder")}</span>
+            <span className="text-micro text-slate-600">{t("settings.dragToOrder")}</span>
           </div>
         </div>
       </div>

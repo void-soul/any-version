@@ -205,14 +205,14 @@ export default function ImageBase64() {
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-sm font-semibold text-white">{t("imgbase64.title")}</h3>
-          <p className="text-[11px] text-slate-400 mt-0.5">{t("imgbase64.subtitle")}</p>
+          <p className="text-caption text-slate-400 mt-0.5">{t("imgbase64.subtitle")}</p>
         </div>
         
         {/* Tab Selector */}
         <div className="flex bg-white/5 border border-white/5 rounded-ctl p-0.5">
           <button
             onClick={() => setActiveTab("toBase64")}
-            className={`px-3 py-1 rounded text-[10px] font-semibold transition-all cursor-pointer ${
+            className={`px-3 py-1 rounded text-tiny font-semibold transition-all cursor-pointer ${
               activeTab === "toBase64" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"
             }`}
           >
@@ -220,7 +220,7 @@ export default function ImageBase64() {
           </button>
           <button
             onClick={() => setActiveTab("toImage")}
-            className={`px-3 py-1 rounded text-[10px] font-semibold transition-all cursor-pointer ${
+            className={`px-3 py-1 rounded text-tiny font-semibold transition-all cursor-pointer ${
               activeTab === "toImage" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"
             }`}
           >
@@ -235,14 +235,14 @@ export default function ImageBase64() {
           {/* 左侧：图片上传与预览 */}
           <div className="glass-panel border border-white/5 rounded-panel p-5 bg-white/2 flex flex-col h-[400px]">
             <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-4 flex-shrink-0">
-              <span className="text-xs font-semibold text-white flex items-center gap-1.5">
+              <span className="text-body font-semibold text-white flex items-center gap-1.5">
                 <ImageIcon className="w-4 h-4 text-blue-400" />
                 {t("imgbase64.imgSource")}
               </span>
               {imgSrc && (
                 <button
                   onClick={handleClearImage}
-                  className="text-[10px] text-red-400 hover:text-red-300 font-semibold cursor-pointer"
+                  className="text-tiny text-red-400 hover:text-red-300 font-semibold cursor-pointer"
                 >
                   {t("imgbase64.clearImg")}
                 </button>
@@ -260,8 +260,8 @@ export default function ImageBase64() {
                   <Upload className="w-6 h-6 text-blue-400" />
                 </div>
                 <div>
-                  <p className="text-xs text-slate-300 font-medium">{t("imgbase64.dragHint")}</p>
-                  <p className="text-[10px] text-slate-500 mt-1">{t("imgbase64.formatsHint")}</p>
+                  <p className="text-body text-slate-300 font-medium">{t("imgbase64.dragHint")}</p>
+                  <p className="text-tiny text-slate-500 mt-1">{t("imgbase64.formatsHint")}</p>
                 </div>
                 <div className="pt-2">
                   <button
@@ -270,7 +270,7 @@ export default function ImageBase64() {
                       e.stopPropagation();
                       handleSelectLocalImage();
                     }}
-                    className="px-3.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/5 text-slate-300 rounded-ctl text-[10px] font-semibold cursor-pointer transition-colors"
+                    className="px-3.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/5 text-slate-300 rounded-ctl text-tiny font-semibold cursor-pointer transition-colors"
                   >
                     {t("imgbase64.pickFromDir")}
                   </button>
@@ -293,7 +293,7 @@ export default function ImageBase64() {
                   />
                 </div>
                 {imgDetails && (
-                  <div className="bg-black/40 px-4 py-2 border-t border-white/5 flex items-center justify-between text-[10px] text-slate-400 font-mono flex-shrink-0">
+                  <div className="bg-black/40 px-4 py-2 border-t border-white/5 flex items-center justify-between text-tiny text-slate-400 font-mono flex-shrink-0">
                     <span className="truncate max-w-[200px]">{imgDetails.name}</span>
                     <span>{imgDetails.type} • {imgDetails.size}</span>
                   </div>
@@ -302,7 +302,7 @@ export default function ImageBase64() {
             )}
 
             {error1 && (
-              <div className="mt-3 p-3 bg-red-500/10 border border-red-500/20 text-red-200 text-xs rounded-card flex items-center gap-2 flex-shrink-0">
+              <div className="mt-3 p-3 bg-red-500/10 border border-red-500/20 text-red-200 text-body rounded-card flex items-center gap-2 flex-shrink-0">
                 <AlertCircle className="w-4 h-4 text-red-400" />
                 <span>{error1}</span>
               </div>
@@ -312,7 +312,7 @@ export default function ImageBase64() {
           {/* 右侧：Base64 结果 */}
           <div className="glass-panel border border-white/5 rounded-panel p-5 bg-white/2 flex flex-col h-[400px]">
             <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-4 flex-shrink-0">
-              <span className="text-xs font-semibold text-white flex items-center gap-1.5">
+              <span className="text-body font-semibold text-white flex items-center gap-1.5">
                 <FileCode className="w-4 h-4 text-blue-400" />
                 {t("imgbase64.base64Result")}
               </span>
@@ -323,11 +323,11 @@ export default function ImageBase64() {
                 value={base64Result}
                 readOnly
                 placeholder={t("imgbase64.resultPh")}
-                className="w-full h-full glass-input p-4 font-mono text-[10px] text-slate-300 resize-none break-all"
+                className="w-full h-full glass-input p-4 font-mono text-tiny text-slate-300 resize-none break-all"
               />
               {base64Result && (
                 <div className="absolute top-2 right-2 flex items-center gap-1.5">
-                  <span className="text-[9px] text-slate-500 bg-black/40 px-2 py-1 rounded border border-white/5 font-mono">
+                  <span className="text-micro text-slate-500 bg-black/40 px-2 py-1 rounded border border-white/5 font-mono">
                     {t("imgbase64.length", { n: base64Result.length })}
                   </span>
                 </div>
@@ -338,21 +338,21 @@ export default function ImageBase64() {
               <div className="mt-4 flex flex-wrap gap-2 flex-shrink-0">
                 <button
                   onClick={() => handleCopy("base64")}
-                  className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-card text-[10px] font-semibold cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                  className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-card text-tiny font-semibold cursor-pointer transition-all flex items-center justify-center gap-1.5"
                 >
                   {copySuccess === "base64" ? <CheckCircle className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                   {copySuccess === "base64" ? t("imgbase64.copied") : t("imgbase64.copyBase64")}
                 </button>
                 <button
                   onClick={() => handleCopy("html")}
-                  className="px-3 py-2 bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 rounded-card text-[10px] font-semibold cursor-pointer transition-colors flex items-center gap-1"
+                  className="px-3 py-2 bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 rounded-card text-tiny font-semibold cursor-pointer transition-colors flex items-center gap-1"
                 >
                   {copySuccess === "html" ? <CheckCircle className="w-3.5 h-3.5 text-emerald-400" /> : <FileCode className="w-3.5 h-3.5" />}
                   {t("imgbase64.htmlTag")}
                 </button>
                 <button
                   onClick={() => handleCopy("css")}
-                  className="px-3 py-2 bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 rounded-card text-[10px] font-semibold cursor-pointer transition-colors flex items-center gap-1"
+                  className="px-3 py-2 bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 rounded-card text-tiny font-semibold cursor-pointer transition-colors flex items-center gap-1"
                 >
                   {copySuccess === "css" ? <CheckCircle className="w-3.5 h-3.5 text-emerald-400" /> : <Scissors className="w-3.5 h-3.5" />}
                   {t("imgbase64.cssStyle")}
@@ -369,14 +369,14 @@ export default function ImageBase64() {
           {/* 左侧：输入框 */}
           <div className="glass-panel border border-white/5 rounded-panel p-5 bg-white/2 flex flex-col h-[400px]">
             <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-4 flex-shrink-0">
-              <span className="text-xs font-semibold text-white flex items-center gap-1.5">
+              <span className="text-body font-semibold text-white flex items-center gap-1.5">
                 <FileCode className="w-4 h-4 text-blue-400" />
                 {t("imgbase64.inputBase64")}
               </span>
               {base64Input && (
                 <button
                   onClick={() => handleBase64InputChange("")}
-                  className="text-[10px] text-red-400 hover:text-red-300 font-semibold cursor-pointer"
+                  className="text-tiny text-red-400 hover:text-red-300 font-semibold cursor-pointer"
                 >
                   {t("imgbase64.clear")}
                 </button>
@@ -388,12 +388,12 @@ export default function ImageBase64() {
                 value={base64Input}
                 onChange={(e) => handleBase64InputChange(e.target.value)}
                 placeholder={t("imgbase64.inputPh")}
-                className="w-full h-full glass-input p-4 font-mono text-[10px] text-slate-300 resize-none break-all"
+                className="w-full h-full glass-input p-4 font-mono text-tiny text-slate-300 resize-none break-all"
               />
             </div>
 
             {error2 && (
-              <div className="mt-3 p-3 bg-red-500/10 border border-red-500/20 text-red-200 text-xs rounded-card flex items-center gap-2 flex-shrink-0">
+              <div className="mt-3 p-3 bg-red-500/10 border border-red-500/20 text-red-200 text-body rounded-card flex items-center gap-2 flex-shrink-0">
                 <AlertCircle className="w-4 h-4 text-red-400" />
                 <span>{error2}</span>
               </div>
@@ -403,14 +403,14 @@ export default function ImageBase64() {
           {/* 右侧：图片预览及保存 */}
           <div className="glass-panel border border-white/5 rounded-panel p-5 bg-white/2 flex flex-col h-[400px]">
             <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-4 flex-shrink-0">
-              <span className="text-xs font-semibold text-white flex items-center gap-1.5">
+              <span className="text-body font-semibold text-white flex items-center gap-1.5">
                 <ImageIcon className="w-4 h-4 text-blue-400" />
                 {t("imgbase64.preview")}
               </span>
             </div>
 
             {!previewSrc ? (
-              <div className="flex-1 border border-white/5 rounded-card bg-black/10 flex flex-col items-center justify-center p-6 text-center text-slate-500 text-xs">
+              <div className="flex-1 border border-white/5 rounded-card bg-black/10 flex flex-col items-center justify-center p-6 text-center text-slate-500 text-body">
                 {t("imgbase64.previewHint")}
               </div>
             ) : (
@@ -424,7 +424,7 @@ export default function ImageBase64() {
                   />
                 </div>
                 {previewDetails && (
-                  <div className="bg-black/40 px-4 py-2 border-t border-white/5 flex items-center justify-between text-[10px] text-slate-400 font-mono flex-shrink-0">
+                  <div className="bg-black/40 px-4 py-2 border-t border-white/5 flex items-center justify-between text-tiny text-slate-400 font-mono flex-shrink-0">
                     <span>{t("imgbase64.detectFormat", { type: previewDetails.type })}</span>
                     <span>{t("imgbase64.fileSize", { size: previewDetails.size })}</span>
                   </div>
@@ -437,7 +437,7 @@ export default function ImageBase64() {
                 <button
                   onClick={handleSaveImage}
                   disabled={saveLoading}
-                  className="w-full px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-card text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                  className="w-full px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-card text-body font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center justify-center gap-1.5"
                 >
                   <Download className="w-3.5 h-3.5" />
                   {saveLoading ? t("imgbase64.saving") : t("imgbase64.saveAsImg")}

@@ -143,7 +143,7 @@ export default function TaskCalendarPanel() {
         onDragEnd={() => { setDragId(null); setDragOver(null); }}
         onClick={(e) => { e.stopPropagation(); setEditing(task); }}
         title={`${task.title} · ${t("taskPlan.progressLabel")} ${task.progress}%`}
-        className={`flex cursor-pointer items-center gap-1 rounded border border-white/10 bg-white/[0.04] px-1 py-0.5 text-[10px] transition hover:bg-white/[0.1] ${
+        className={`flex cursor-pointer items-center gap-1 rounded border border-white/10 bg-white/[0.04] px-1 py-0.5 text-tiny transition hover:bg-white/[0.1] ${
           late ? "border-l-2 border-l-rose-400" : ""
         } ${dragId === task.id ? "opacity-40" : ""}`}
       >
@@ -153,7 +153,7 @@ export default function TaskCalendarPanel() {
         </span>
         {done
           ? <Check className="h-2.5 w-2.5 shrink-0 text-emerald-400" />
-          : task.progress > 0 && <span className="shrink-0 text-[9px] text-slate-500">{task.progress}%</span>}
+          : task.progress > 0 && <span className="shrink-0 text-micro text-slate-500">{task.progress}%</span>}
       </div>
     );
   };
@@ -177,13 +177,13 @@ export default function TaskCalendarPanel() {
         }`}
       >
         <div className="flex shrink-0 items-center gap-1">
-          <span className={`text-[10px] font-semibold ${
+          <span className={`text-tiny font-semibold ${
             isToday ? "text-[var(--module-accent)]" : outside ? "text-slate-600" : past ? "text-slate-500" : "text-slate-400"
           }`}>
             {isToday ? t("taskPlan.today") : Number(day.slice(8))}
           </span>
-          <span className="text-[9px] text-slate-600">{Number(day.slice(8)) === 1 ? `${Number(day.slice(5, 7))} 月` : ""}</span>
-          {list.length > 0 && <span className="ml-auto text-[9px] text-slate-600">{list.length}</span>}
+          <span className="text-micro text-slate-600">{Number(day.slice(8)) === 1 ? `${Number(day.slice(5, 7))} 月` : ""}</span>
+          {list.length > 0 && <span className="ml-auto text-micro text-slate-600">{list.length}</span>}
         </div>
         <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
           {list.map(taskChip)}
@@ -202,14 +202,14 @@ export default function TaskCalendarPanel() {
       <div className="flex flex-shrink-0 items-center gap-2">
         <CalendarDays className="h-4 w-4 text-[var(--module-accent)]" />
         <h2 className="text-sm font-bold text-white">{t("taskPlan.title")}</h2>
-        <span className="text-[11px] text-slate-400">{rangeLabel}</span>
+        <span className="text-caption text-slate-400">{rangeLabel}</span>
         <div className="ml-1 flex items-center gap-1">
           <button type="button" onClick={() => jumpTo(-1)} title={view === "month" ? t("taskPlan.prevMonth") : t("taskPlan.prevWeek")}
             className="rounded-md p-1 text-slate-400 transition hover:bg-white/10 hover:text-white">
             <ChevronLeft className="h-3.5 w-3.5" />
           </button>
           <button type="button" onClick={() => setAnchor(today)}
-            className="rounded-md border border-white/10 px-2 py-0.5 text-[10px] text-slate-300 transition hover:bg-white/10">
+            className="rounded-md border border-white/10 px-2 py-0.5 text-tiny text-slate-300 transition hover:bg-white/10">
             {t("taskPlan.today")}
           </button>
           <button type="button" onClick={() => jumpTo(1)} title={view === "month" ? t("taskPlan.nextMonth") : t("taskPlan.nextWeek")}
@@ -221,7 +221,7 @@ export default function TaskCalendarPanel() {
 
         <div className="ml-auto flex items-center gap-2">
           {overdue.length > 0 && (
-            <span className="flex items-center gap-1 rounded-md border border-rose-400/30 bg-rose-500/10 px-2 py-0.5 text-[10px] text-rose-300"
+            <span className="flex items-center gap-1 rounded-md border border-rose-400/30 bg-rose-500/10 px-2 py-0.5 text-tiny text-rose-300"
               title={t("taskPlan.overdueHint")}>
               <AlertTriangle className="h-3 w-3" />
               {t("taskPlan.overdueChip", { count: overdue.length })}
@@ -231,19 +231,19 @@ export default function TaskCalendarPanel() {
           <div className="flex items-center gap-0.5 rounded-ctl border border-white/10 bg-white/[0.03] p-0.5">
             {(["month", "week"] as const).map((v) => (
               <button key={v} type="button" onClick={() => setView(v)}
-                className={`rounded-md px-2 py-0.5 text-[10px] transition ${
+                className={`rounded-md px-2 py-0.5 text-tiny transition ${
                   view === v ? "bg-[var(--module-accent)]/25 font-semibold text-white" : "text-slate-400 hover:bg-white/10"
                 }`}>
                 {v === "month" ? t("taskPlan.monthView") : t("taskPlan.weekView")}
               </button>
             ))}
           </div>
-          <SharedButton variant={showInbox ? "primary" : "secondary"} className="!h-7 !px-2 !text-[10px]"
+          <SharedButton variant={showInbox ? "primary" : "secondary"} className="!h-7 !px-2 !text-tiny"
             onClick={() => setShowInbox((v) => !v)} title={t("taskPlan.inboxHint")}>
             <Inbox className="h-3 w-3" />
             {t("taskPlan.inbox", { count: unscheduled.length })}
           </SharedButton>
-          <SharedButton variant="primary" className="!h-7 !px-2 !text-[10px]" onClick={() => setDraftDay(today)}>
+          <SharedButton variant="primary" className="!h-7 !px-2 !text-tiny" onClick={() => setDraftDay(today)}>
             <Plus className="h-3 w-3" />
             {t("taskPlan.newTask")}
           </SharedButton>
@@ -251,7 +251,7 @@ export default function TaskCalendarPanel() {
       </div>
 
       {err && (
-        <div className="flex flex-shrink-0 items-start gap-2 rounded-ctl border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-300">
+        <div className="flex flex-shrink-0 items-start gap-2 rounded-ctl border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-caption text-rose-300">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span className="min-w-0 flex-1 break-all">{t("taskPlan.loadFailed", { err })}</span>
           <button type="button" onClick={() => setErr("")} className="shrink-0 text-rose-300/70 hover:text-white">✕</button>
@@ -262,7 +262,7 @@ export default function TaskCalendarPanel() {
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-card border border-white/10">
         <div className="grid flex-shrink-0 grid-cols-7 border-b border-white/10 bg-white/[0.02]">
           {WEEKDAY_KEYS.map((key) => (
-            <div key={key} className="px-2 py-1 text-center text-[10px] font-semibold text-slate-500">{t(key)}</div>
+            <div key={key} className="px-2 py-1 text-center text-tiny font-semibold text-slate-500">{t(key)}</div>
           ))}
         </div>
         <div className={view === "month"
@@ -275,14 +275,14 @@ export default function TaskCalendarPanel() {
       {/* 未排期收集箱：拖到格子里即完成排期（不显示的话，这些任务等于在日历上消失） */}
       {showInbox && (
         <div className="flex max-h-28 flex-shrink-0 flex-col gap-1 overflow-hidden rounded-card border border-white/10 bg-white/[0.02] p-2">
-          <div className="flex shrink-0 items-center gap-1.5 text-[10px] font-semibold text-slate-400">
+          <div className="flex shrink-0 items-center gap-1.5 text-tiny font-semibold text-slate-400">
             <Inbox className="h-3 w-3" />
             {t("taskPlan.inboxTitle")}
             <span className="text-slate-600">{unscheduled.length}</span>
           </div>
           <div className="flex min-h-0 flex-1 flex-wrap gap-1 overflow-y-auto">
             {unscheduled.length === 0
-              ? <span className="text-[10px] text-slate-600">{t("taskPlan.inboxEmpty")}</span>
+              ? <span className="text-tiny text-slate-600">{t("taskPlan.inboxEmpty")}</span>
               : unscheduled.map((task) => (
                 <div key={task.id} className="w-48">{taskChip(task)}</div>
               ))}
@@ -420,7 +420,7 @@ function TaskEditorModal({
       }
     >
       {err && (
-        <div className="flex items-start gap-2 rounded-ctl border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-300">
+        <div className="flex items-start gap-2 rounded-ctl border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-caption text-rose-300">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span className="min-w-0 flex-1 break-all">{err}</span>
         </div>
@@ -439,26 +439,26 @@ function TaskEditorModal({
           <input type="date" className={inputCls} value={date} onChange={(e) => setDate(e.target.value)} />
           <div className="mt-1 flex items-center gap-1">
             <button type="button" onClick={() => setDate(todayStr())}
-              className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-white/10">
+              className="rounded border border-white/10 px-1.5 py-0.5 text-tiny text-slate-400 hover:bg-white/10">
               {t("taskPlan.setToday")}
             </button>
             <button type="button" onClick={() => setDate(new Date(Date.now() + DAY_MS).toISOString().slice(0, 10))}
-              className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-white/10">
+              className="rounded border border-white/10 px-1.5 py-0.5 text-tiny text-slate-400 hover:bg-white/10">
               {t("taskPlan.setTomorrow")}
             </button>
             <button type="button" onClick={() => setDate("")}
-              className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-white/10">
+              className="rounded border border-white/10 px-1.5 py-0.5 text-tiny text-slate-400 hover:bg-white/10">
               {t("taskPlan.unschedule")}
             </button>
           </div>
-          {!date && <div className="mt-1 text-[10px] text-slate-500">{t("taskPlan.unscheduledHint")}</div>}
+          {!date && <div className="mt-1 text-tiny text-slate-500">{t("taskPlan.unscheduledHint")}</div>}
         </div>
         <div>
           <label className={labelCls}>{t("taskPlan.priorityLabel")}</label>
           <div className="flex items-center gap-1">
             {PRIORITY_ORDER.map((p) => (
               <button key={p} type="button" onClick={() => setPriority(p)}
-                className={`flex-1 rounded-ctl border px-1.5 py-1 text-[10px] transition ${
+                className={`flex-1 rounded-ctl border px-1.5 py-1 text-tiny transition ${
                   priority === p ? `${PRIORITY_META[p].bg} ${PRIORITY_META[p].text} font-semibold` : "border-white/10 text-slate-400 hover:bg-white/5"
                 }`}>
                 {t(PRIORITY_LABEL[p])}
@@ -480,7 +480,7 @@ function TaskEditorModal({
           <div className="flex items-center gap-1">
             {[0, 50, 100].map((p) => (
               <button key={p} type="button" onClick={() => setProgress(p)}
-                className={`rounded border px-1.5 py-0.5 text-[10px] transition ${
+                className={`rounded border px-1.5 py-0.5 text-tiny transition ${
                   progress === p ? "border-white/25 bg-white/10 text-white" : "border-white/10 text-slate-400 hover:bg-white/5"
                 }`}>
                 {p}%
@@ -518,7 +518,7 @@ function TaskEditorModal({
       </div>
 
       {task && (
-        <div className="flex flex-wrap items-center gap-2 border-t border-white/10 pt-2 text-[10px] text-slate-500">
+        <div className="flex flex-wrap items-center gap-2 border-t border-white/10 pt-2 text-tiny text-slate-500">
           <Clock className="h-3 w-3" />
           {t("taskPlan.metaLine", {
             created: task.createdAt.slice(0, 10),
@@ -526,7 +526,7 @@ function TaskEditorModal({
           })}
           {late && (
             <button type="button" disabled={busy} onClick={() => void carryToToday()}
-              className="ml-auto rounded-md border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-[10px] text-amber-200 transition hover:bg-amber-400/20 disabled:opacity-50">
+              className="ml-auto rounded-md border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-tiny text-amber-200 transition hover:bg-amber-400/20 disabled:opacity-50">
               {t("taskPlan.carryToToday")}
             </button>
           )}

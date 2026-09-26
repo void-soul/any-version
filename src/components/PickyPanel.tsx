@@ -369,7 +369,7 @@ export default function PickyPanel() {
       <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5 flex-shrink-0">
         <Bookmark className="w-4 h-4 text-[var(--module-accent)]" />
         <span className="text-sm font-bold text-white">{t("picky.title")}</span>
-        <span className="text-[10px] text-slate-500">{t("picky.count", { count: state.bookmarks.length })}</span>
+        <span className="text-tiny text-slate-500">{t("picky.count", { count: state.bookmarks.length })}</span>
         <div className="flex-1" />
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500 pointer-events-none" />
@@ -378,7 +378,7 @@ export default function PickyPanel() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t("picky.searchPh")}
-            className="glass-input pl-7 pr-2 py-1.5 text-xs bg-black/30 border border-white/10 rounded-ctl w-52 focus:outline-none focus:border-[var(--module-accent)]/50"
+            className="glass-input pl-7 pr-2 py-1.5 text-body bg-black/30 border border-white/10 rounded-ctl w-52 focus:outline-none focus:border-[var(--module-accent)]/50"
           />
         </div>
         {/* 视图切换：列表（一行一条简略） / 块状（一行多条信息块） */}
@@ -404,7 +404,7 @@ export default function PickyPanel() {
         </div>
         <button
           onClick={() => setShowSync(true)}
-          className="px-2.5 py-1.5 rounded-ctl text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition"
+          className="px-2.5 py-1.5 rounded-ctl text-caption bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition"
           title={t("picky.syncTitle")}
         >
           <Cloud className="w-3 h-3" /> {t("picky.sync")}
@@ -414,7 +414,7 @@ export default function PickyPanel() {
             setEditing(null);
             setShowAdd(true);
           }}
-          className="px-2.5 py-1.5 rounded-ctl text-[11px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold flex items-center gap-1 cursor-pointer transition"
+          className="px-2.5 py-1.5 rounded-ctl text-caption ui-btn-primary text-white font-semibold flex items-center gap-1 cursor-pointer transition"
         >
           <Plus className="w-3 h-3" /> {t("picky.add")}
         </button>
@@ -432,7 +432,7 @@ export default function PickyPanel() {
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`px-3 py-1 rounded-ctl text-[11px] transition cursor-pointer ${
+            className={`px-3 py-1 rounded-ctl text-caption transition cursor-pointer ${
               tab === t
                 ? "bg-[var(--module-accent)]/20 text-white border border-[var(--module-accent)]/30"
                 : "text-slate-400 hover:bg-white/5 border border-transparent"
@@ -445,7 +445,7 @@ export default function PickyPanel() {
 
       {/* 提示条 */}
       {notice && (
-        <div className="px-4 py-1.5 bg-[var(--module-accent)]/10 border-b border-[var(--module-accent)]/20 text-[11px] text-[var(--module-accent)] flex-shrink-0">
+        <div className="px-4 py-1.5 bg-[var(--module-accent)]/10 border-b border-[var(--module-accent)]/20 text-caption text-[var(--module-accent)] flex-shrink-0">
           {notice}
         </div>
       )}
@@ -453,13 +453,13 @@ export default function PickyPanel() {
       {/* 列表 */}
       <div className="flex-1 overflow-y-auto p-4">
         {loading ? (
-          <div className="h-full flex items-center justify-center text-slate-500 text-xs gap-2">
+          <div className="h-full flex items-center justify-center text-slate-500 text-body gap-2">
             <Loader2 className="w-4 h-4 animate-spin" /> {t("picky.loading")}
           </div>
         ) : filtered.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-3">
             <Globe className="w-10 h-10 text-slate-600" />
-            <p className="text-xs">
+            <p className="text-body">
               {state.bookmarks.length === 0 ? t("picky.emptyAll") : t("picky.emptyFiltered")}
             </p>
           </div>
@@ -573,11 +573,11 @@ export default function PickyPanel() {
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-sm font-bold text-white mb-2">{confirm.title}</h3>
-            <p className="text-xs text-slate-400 mb-4">{confirm.message}</p>
+            <p className="text-body text-slate-400 mb-4">{confirm.message}</p>
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setConfirm(null)}
-                className="px-3 py-1.5 rounded-ctl text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer"
+                className="px-3 py-1.5 rounded-ctl text-caption text-slate-400 hover:bg-white/5 cursor-pointer"
               >
                 {t("picky.cancel")}
               </button>
@@ -587,7 +587,7 @@ export default function PickyPanel() {
                   setConfirm(null);
                   cb();
                 }}
-                className="px-3 py-1.5 rounded-ctl text-[11px] bg-red-500/90 text-white font-semibold cursor-pointer hover:bg-red-500"
+                className="px-3 py-1.5 rounded-ctl text-caption bg-red-500/90 text-white font-semibold cursor-pointer hover:bg-red-500"
               >
                 {t("picky.confirm")}
               </button>
@@ -651,7 +651,7 @@ function BookmarkCard({
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-[13px] font-semibold text-white truncate">{b.title || t("picky.unnamed")}</span>
+            <span className="text-title font-semibold text-white truncate">{b.title || t("picky.unnamed")}</span>
             {b.refined && (
               <span className="text-[8px] px-1.5 py-0.5 rounded bg-white/10 text-slate-400 flex-shrink-0">{t("picky.archived")}</span>
             )}
@@ -659,15 +659,15 @@ function BookmarkCard({
           {b.url && (
             <button
               onClick={onOpen}
-              className="text-[10px] text-sky-400/80 hover:text-sky-300 truncate flex items-center gap-1 cursor-pointer max-w-full"
+              className="text-tiny text-sky-400/80 hover:text-sky-300 truncate flex items-center gap-1 cursor-pointer max-w-full"
               title={b.url}
             >
               <ExternalLink className="w-2.5 h-2.5 flex-shrink-0" />
               <span className="truncate">{hostOf(b.url)}</span>
             </button>
           )}
-          {b.description && <p className="text-[10px] text-slate-500 line-clamp-2 mt-0.5">{b.description}</p>}
-          <div className="flex items-center gap-2 mt-1 text-[9px] text-slate-600">
+          {b.description && <p className="text-tiny text-slate-500 line-clamp-2 mt-0.5">{b.description}</p>}
+          <div className="flex items-center gap-2 mt-1 text-micro text-slate-600">
             <span>{t("picky.savedAt", { time: fmtTime(b.createdAt) })}</span>
             {b.updatedAt !== b.createdAt && <span>{t("picky.updatedAt", { time: fmtTime(b.updatedAt) })}</span>}
           </div>
@@ -698,7 +698,7 @@ function BookmarkCard({
           </IconBtn>
           <IconBtn title={expanded ? t("picky.collapseComments") : t("picky.commentsCollapsed", { count: comments.length })} onClick={onToggleExpand} active={expanded}>
             <MessageSquare className="w-3 h-3" />
-            <span className="text-[9px]">{comments.length > 0 ? comments.length : ""}</span>
+            <span className="text-micro">{comments.length > 0 ? comments.length : ""}</span>
           </IconBtn>
           <IconBtn title={t("picky.refetch")} onClick={onRefetch}>
             <RefreshCw className="w-3 h-3" />
@@ -776,7 +776,7 @@ function BookmarkRow(props: {
             <Globe className="w-3 h-3 text-[var(--module-accent)]" />
           )}
         </div>
-        <span className="text-xs font-semibold text-white truncate flex-1 min-w-0" title={b.title}>
+        <span className="text-body font-semibold text-white truncate flex-1 min-w-0" title={b.title}>
           {b.title || t("picky.unnamed")}
         </span>
         {b.refined && (
@@ -791,7 +791,7 @@ function BookmarkRow(props: {
           </IconBtn>
           <IconBtn title={expanded ? t("picky.collapseComments") : t("picky.commentsCollapsed", { count: comments.length })} onClick={onToggleExpand} active={expanded}>
             <MessageSquare className="w-3 h-3" />
-            <span className="text-[9px]">{comments.length > 0 ? comments.length : ""}</span>
+            <span className="text-micro">{comments.length > 0 ? comments.length : ""}</span>
           </IconBtn>
           <IconBtn title={t("picky.refetch")} onClick={onRefetch}>
             <RefreshCw className="w-3 h-3" />
@@ -850,7 +850,7 @@ function CommentBlock({
 
   return (
     <div className="space-y-2">
-      {comments.length === 0 && <p className="text-[10px] text-slate-600">{t("picky.noComments")}</p>}
+      {comments.length === 0 && <p className="text-tiny text-slate-600">{t("picky.noComments")}</p>}
       {topLevel.map((c) => (
         <div key={c.id} className="space-y-1.5">
           <CommentRow comment={c} depth={0} onReply={() => setReplyTo(replyTo?.id === c.id ? null : c)} onDelete={() => onDelete(c)} />
@@ -865,10 +865,10 @@ function CommentBlock({
           onChange={(e) => setCommentText(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submitComment()}
           placeholder={replyTo ? t("picky.replyPh", { text: replyTo.content.slice(0, 20) }) : t("picky.commentPh")}
-          className="flex-1 glass-input px-2.5 py-1.5 text-[11px] bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-[var(--module-accent)]/50"
+          className="flex-1 glass-input px-2.5 py-1.5 text-caption bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-[var(--module-accent)]/50"
         />
         {replyTo && (
-          <button onClick={() => setReplyTo(null)} className="text-[10px] text-slate-500 hover:text-slate-300 cursor-pointer">
+          <button onClick={() => setReplyTo(null)} className="text-tiny text-slate-500 hover:text-slate-300 cursor-pointer">
             {t("picky.cancel")}
           </button>
         )}
@@ -903,8 +903,8 @@ function CommentRow({
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
-          <p className="text-[11px] text-slate-200 leading-relaxed break-words whitespace-pre-wrap">{comment.content}</p>
-          <div className="flex items-center gap-2 mt-1 text-[9px] text-slate-600">
+          <p className="text-caption text-slate-200 leading-relaxed break-words whitespace-pre-wrap">{comment.content}</p>
+          <div className="flex items-center gap-2 mt-1 text-micro text-slate-600">
             <span>{fmtTime(comment.createdAt)}</span>
             {depth === 0 && onReply && (
               <button onClick={onReply} className="flex items-center gap-0.5 hover:text-slate-300 cursor-pointer">
@@ -1012,28 +1012,28 @@ function BookmarkModal({
         </div>
         <div className="space-y-3">
           <div>
-            <label className="text-[10px] text-slate-400 mb-1 block">{t("picky.titleLabel")}</label>
+            <label className="text-tiny text-slate-400 mb-1 block">{t("picky.titleLabel")}</label>
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder={t("picky.titlePh")}
-              className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-[var(--module-accent)]/50"
+              className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-[var(--module-accent)]/50"
             />
           </div>
           <div>
-            <label className="text-[10px] text-slate-400 mb-1 block">URL</label>
+            <label className="text-tiny text-slate-400 mb-1 block">URL</label>
             <div className="flex gap-2">
               <input
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 placeholder="https://example.com/article"
-                className="flex-1 glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-[var(--module-accent)]/50"
+                className="flex-1 glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-[var(--module-accent)]/50"
               />
               {!bookmark && (
                 <button
                   onClick={fetchMeta}
                   disabled={fetching || !url.trim()}
-                  className="px-3 py-2 rounded-ctl text-[11px] bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 cursor-pointer disabled:opacity-50 flex items-center gap-1 flex-shrink-0"
+                  className="px-3 py-2 rounded-ctl text-caption ui-btn text-slate-300 cursor-pointer disabled:opacity-50 flex items-center gap-1 flex-shrink-0"
                 >
                   {fetching ? <Loader2 className="w-3 h-3 animate-spin" /> : <Globe className="w-3 h-3" />} {t("picky.fetch")}
                 </button>
@@ -1041,24 +1041,24 @@ function BookmarkModal({
             </div>
           </div>
           <div>
-            <label className="text-[10px] text-slate-400 mb-1 block">{t("picky.descLabel")}</label>
+            <label className="text-tiny text-slate-400 mb-1 block">{t("picky.descLabel")}</label>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder={t("picky.descPh")}
               rows={3}
-              className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-[var(--module-accent)]/50 resize-none"
+              className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-[var(--module-accent)]/50 resize-none"
             />
           </div>
         </div>
         <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} className="px-3 py-1.5 rounded-ctl text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer">
+          <button onClick={onClose} className="px-3 py-1.5 rounded-ctl text-caption text-slate-400 hover:bg-white/5 cursor-pointer">
             {t("picky.cancel")}
           </button>
           <button
             onClick={submit}
             disabled={busy || (!title.trim() && !url.trim())}
-            className="px-4 py-1.5 rounded-ctl text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
+            className="px-4 py-1.5 rounded-ctl text-caption bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
           >
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {t("picky.save")}
           </button>
@@ -1108,17 +1108,17 @@ function TagModal({
             <X className="w-4 h-4" />
           </button>
         </div>
-        <p className="text-[10px] text-slate-500 mb-3 truncate">{t("picky.tagsHint", { title: bookmark.title })}</p>
+        <p className="text-tiny text-slate-500 mb-3 truncate">{t("picky.tagsHint", { title: bookmark.title })}</p>
 
         <div className="flex flex-wrap gap-1.5 min-h-[40px] max-h-[200px] overflow-y-auto mb-3">
-          {allTags.length === 0 && <p className="text-[10px] text-slate-600">{t("picky.noTags")}</p>}
+          {allTags.length === 0 && <p className="text-tiny text-slate-600">{t("picky.noTags")}</p>}
           {allTags.map((tg) => {
             const on = selectedIds.includes(tg.id);
             return (
               <span key={tg.id} className="inline-flex items-center gap-1">
                 <button
                   onClick={() => onToggle(tg.id)}
-                  className={`vex-chip px-2.5 py-1 rounded-full text-[10px] border transition-colors cursor-pointer ${
+                  className={`vex-chip px-2.5 py-1 rounded-full text-tiny border transition-colors cursor-pointer ${
                     on ? "bg-white/10 border-white/30 text-white" : "bg-white/[0.03] border-white/10 text-slate-400 hover:border-white/25"
                   }`}
                   style={on ? { background: `${tg.color}33`, borderColor: `${tg.color}66`, color: tg.color } : undefined}
@@ -1143,12 +1143,12 @@ function TagModal({
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && submit()}
             placeholder={t("picky.newTagPh")}
-            className="flex-1 glass-input px-3 py-1.5 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-[var(--module-accent)]/50"
+            className="flex-1 glass-input px-3 py-1.5 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-[var(--module-accent)]/50"
           />
           <button
             onClick={submit}
             disabled={!newName.trim()}
-            className="px-3 py-1.5 rounded-ctl text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
+            className="px-3 py-1.5 rounded-ctl text-caption bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
           >
             <Plus className="w-3 h-3" /> {t("picky.new")}
           </button>
@@ -1175,7 +1175,7 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
   if (!cfg) {
     return (
       <ModalShell onClose={onClose} title={t("picky.syncModalTitle")}>
-        <div className="flex items-center gap-2 text-xs text-slate-500">
+        <div className="flex items-center gap-2 text-body text-slate-500">
           <Loader2 className="w-4 h-4 animate-spin" /> {t("picky.loadingCfg")}
         </div>
       </ModalShell>
@@ -1221,12 +1221,12 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
     }
   };
 
-  const field = "w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-[var(--module-accent)]/50";
+  const field = "w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-[var(--module-accent)]/50";
 
   return (
     <ModalShell onClose={onClose} title={t("picky.syncModalTitle2")}>
       <div className="space-y-3">
-        <label className="flex items-center gap-2 text-[11px] text-slate-300 cursor-pointer">
+        <label className="flex items-center gap-2 text-caption text-slate-300 cursor-pointer">
           <input
             type="checkbox"
             checked={cfg.enabled}
@@ -1236,32 +1236,32 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
           {t("picky.enableSync")}
         </label>
         {!cfg.enabled && (
-          <p className="text-[10px] text-amber-400/90 bg-amber-400/10 border border-amber-400/20 rounded-ctl px-3 py-2">
+          <p className="text-tiny text-amber-400/90 bg-amber-400/10 border border-amber-400/20 rounded-ctl px-3 py-2">
             {t("picky.syncDisabledWarn")}
           </p>
         )}
-        {cfg.lastSyncAt && <p className="text-[10px] text-slate-500">{t("picky.lastSync", { time: fmtTime(cfg.lastSyncAt) })}</p>}
+        {cfg.lastSyncAt && <p className="text-tiny text-slate-500">{t("picky.lastSync", { time: fmtTime(cfg.lastSyncAt) })}</p>}
 
         <div>
-          <label className="text-[10px] text-slate-400 mb-1 block">{t("picky.endpointLabel")}</label>
+          <label className="text-tiny text-slate-400 mb-1 block">{t("picky.endpointLabel")}</label>
           <input value={cfg.endpoint || ""} onChange={(e) => set("endpoint", e.target.value)} placeholder="https://s3.example.com" disabled={!cfg.enabled} className={field} />
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="text-[10px] text-slate-400 mb-1 block">Region</label>
+            <label className="text-tiny text-slate-400 mb-1 block">Region</label>
             <input value={cfg.region} onChange={(e) => set("region", e.target.value)} disabled={!cfg.enabled} className={field} />
           </div>
           <div>
-            <label className="text-[10px] text-slate-400 mb-1 block">Bucket</label>
+            <label className="text-tiny text-slate-400 mb-1 block">Bucket</label>
             <input value={cfg.bucketName} onChange={(e) => set("bucketName", e.target.value)} disabled={!cfg.enabled} className={field} />
           </div>
         </div>
         <div>
-          <label className="text-[10px] text-slate-400 mb-1 block">AccessKey ID</label>
+          <label className="text-tiny text-slate-400 mb-1 block">AccessKey ID</label>
           <input value={cfg.accessKeyId} onChange={(e) => set("accessKeyId", e.target.value)} disabled={!cfg.enabled} className={field} />
         </div>
         <div>
-          <label className="text-[10px] text-slate-400 mb-1 block">{t("picky.secretKey")}</label>
+          <label className="text-tiny text-slate-400 mb-1 block">{t("picky.secretKey")}</label>
           <input
             type="password"
             value={cfg.secretAccessKey}
@@ -1272,11 +1272,11 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="text-[10px] text-slate-400 mb-1 block">{t("picky.prefix")}</label>
+            <label className="text-tiny text-slate-400 mb-1 block">{t("picky.prefix")}</label>
             <input value={cfg.prefix || ""} onChange={(e) => set("prefix", e.target.value)} placeholder="picky/" disabled={!cfg.enabled} className={field} />
           </div>
           <div>
-            <label className="text-[10px] text-slate-400 mb-1 block">{t("picky.addrStyle")}</label>
+            <label className="text-tiny text-slate-400 mb-1 block">{t("picky.addrStyle")}</label>
             <select value={cfg.addressingStyle} onChange={(e) => set("addressingStyle", e.target.value)} disabled={!cfg.enabled} className={field}>
               <option value="auto">{t("picky.styleAuto")}</option>
               <option value="path">{t("picky.stylePath")}</option>
@@ -1284,7 +1284,7 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
             </select>
           </div>
         </div>
-        <label className="flex items-center gap-2 text-[11px] text-slate-300 cursor-pointer">
+        <label className="flex items-center gap-2 text-caption text-slate-300 cursor-pointer">
           <input
             type="checkbox"
             checked={cfg.tlsVerify}
@@ -1295,24 +1295,24 @@ function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (msg: str
           {t("picky.verifyTls")}
         </label>
 
-        <p className="text-[10px] text-slate-600 leading-relaxed">
+        <p className="text-tiny text-slate-600 leading-relaxed">
           {t("picky.syncDesc")}
         </p>
 
-        {msg && <p className="text-[11px] text-[var(--module-accent)] break-words">{msg}</p>}
+        {msg && <p className="text-caption text-[var(--module-accent)] break-words">{msg}</p>}
 
         <div className="flex justify-end gap-2 pt-1">
           <button
             onClick={save}
             disabled={!cfg.enabled || busy}
-            className="px-3 py-1.5 rounded-ctl text-[11px] bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 cursor-pointer disabled:opacity-50"
+            className="px-3 py-1.5 rounded-ctl text-caption ui-btn text-slate-300 cursor-pointer disabled:opacity-50"
           >
             {t("picky.saveCfg")}
           </button>
           <button
             onClick={syncNow}
             disabled={!cfg.enabled || busy}
-            className="px-4 py-1.5 rounded-ctl text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
+            className="px-4 py-1.5 rounded-ctl text-caption bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
           >
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Cloud className="w-3 h-3" />} {t("picky.doSync")}
           </button>
@@ -1350,13 +1350,13 @@ function ReadingModal({
           <div className="min-w-0 flex-1">
             <div className="text-sm font-bold text-white truncate" title={b.title}>{b.title || t("picky.unnamed")}</div>
             {b.url && (
-              <button onClick={() => void openUrl(b.url!)} className="text-[10px] text-sky-400/80 hover:text-sky-300 truncate block max-w-full cursor-pointer" title={b.url}>
+              <button onClick={() => void openUrl(b.url!)} className="text-tiny text-sky-400/80 hover:text-sky-300 truncate block max-w-full cursor-pointer" title={b.url}>
                 {hostOf(b.url)}
               </button>
             )}
           </div>
           {content && !loading && (
-            <span className="text-[9px] text-slate-500 flex-shrink-0">{t("picky.contentWords", { count: wordCount })}</span>
+            <span className="text-micro text-slate-500 flex-shrink-0">{t("picky.contentWords", { count: wordCount })}</span>
           )}
           <button onClick={onRefetch} disabled={loading}
             className="p-1.5 rounded-ctl hover:bg-white/10 text-slate-400 hover:text-white disabled:opacity-40 cursor-pointer flex-shrink-0"
@@ -1373,19 +1373,19 @@ function ReadingModal({
           {loading ? (
             <div className="flex flex-col items-center justify-center gap-3 py-16 text-slate-500">
               <Loader2 className="w-6 h-6 animate-spin text-[var(--module-accent)]" />
-              <span className="text-xs">{t("picky.contentLoading")}</span>
+              <span className="text-body">{t("picky.contentLoading")}</span>
             </div>
           ) : content ? (
-            <article className="text-[13px] leading-7 text-slate-200 whitespace-pre-wrap break-words font-[system-ui]">
+            <article className="text-title leading-7 text-slate-200 whitespace-pre-wrap break-words font-[system-ui]">
               {content}
             </article>
           ) : (
             <div className="flex flex-col items-center justify-center gap-3 py-16 text-slate-500">
               <BookOpen className="w-8 h-8 opacity-40" />
-              <span className="text-xs text-center">{t("picky.contentEmpty")}</span>
+              <span className="text-body text-center">{t("picky.contentEmpty")}</span>
               {b.url && (
                 <button onClick={onRefetch}
-                  className="mt-1 px-3 py-1.5 rounded-ctl text-[11px] bg-[var(--module-accent)]/15 border border-[var(--module-accent)]/30 text-[var(--module-accent)] hover:bg-[var(--module-accent)]/25 cursor-pointer">
+                  className="mt-1 px-3 py-1.5 rounded-ctl text-caption bg-[var(--module-accent)]/15 border border-[var(--module-accent)]/30 text-[var(--module-accent)] hover:bg-[var(--module-accent)]/25 cursor-pointer">
                   {t("picky.readRefetch")}
                 </button>
               )}

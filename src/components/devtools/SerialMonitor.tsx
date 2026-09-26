@@ -293,17 +293,17 @@ export default function SerialMonitor() {
   };
 
   const selectCls =
-    "bg-black/30 border border-white/10 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-teal-500";
+    "bg-black/30 border border-white/10 rounded px-2 py-1.5 text-body focus:outline-none focus:border-teal-500";
   const inputCls =
-    "bg-black/30 border border-white/10 rounded px-2 py-1.5 font-mono text-xs focus:outline-none focus:border-teal-500";
+    "bg-black/30 border border-white/10 rounded px-2 py-1.5 font-mono text-body focus:outline-none focus:border-teal-500";
 
   return (
-    <div className="h-full flex flex-col overflow-hidden p-3 gap-2.5 text-[12px]">
+    <div className="h-full flex flex-col overflow-hidden p-3 gap-2.5 text-body">
       <div className="flex items-center gap-2 shrink-0">
         <Usb className="w-4 h-4 text-teal-400" />
         <h1 className="text-base font-semibold">{t("serial.title")}</h1>
         {/* 模式切换 */}
-        <div className="flex rounded-ctl overflow-hidden border border-white/10 text-[11px]">
+        <div className="flex rounded-ctl overflow-hidden border border-white/10 text-caption">
           <button
             onClick={() => void switchMode("real")}
             className={`px-3 py-1 flex items-center gap-1 cursor-pointer ${mode === "real" ? "bg-teal-600 text-white" : "bg-white/5 text-slate-400 hover:text-slate-200"}`}
@@ -318,7 +318,7 @@ export default function SerialMonitor() {
           </button>
         </div>
         <span
-          className={`text-[11px] px-2 py-0.5 rounded-full ${
+          className={`text-caption px-2 py-0.5 rounded-full ${
             active
               ? mode === "sim"
                 ? "bg-violet-900/60 text-violet-300"
@@ -328,7 +328,7 @@ export default function SerialMonitor() {
         >
           {!active ? t("serial.statusIdle") : mode === "sim" ? t("serial.statusSim") : t("serial.statusReal")}
         </span>
-        <div className="ml-auto flex items-center gap-3 text-[11px] text-slate-500">
+        <div className="ml-auto flex items-center gap-3 text-caption text-slate-500">
           <label className="flex items-center gap-1 cursor-pointer hover:text-slate-300">
             <input type="checkbox" checked={hexView} onChange={(e) => setHexView(e.target.checked)} className="accent-teal-500" />
             {t("serial.hexView")}
@@ -353,7 +353,7 @@ export default function SerialMonitor() {
           <button onClick={refreshPorts} title={t("serial.refreshPorts")} className="p-1.5 rounded hover:bg-white/10 text-slate-400 cursor-pointer">
             <RefreshCw className="w-4 h-4" />
           </button>
-          <label className="flex items-center gap-1 text-xs text-slate-400">
+          <label className="flex items-center gap-1 text-body text-slate-400">
             {t("serial.baud")}
             <select value={baud} onChange={(e) => setBaud(Number(e.target.value))} className={selectCls}>
               {[9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600].map((b) => (
@@ -361,7 +361,7 @@ export default function SerialMonitor() {
               ))}
             </select>
           </label>
-          <label className="flex items-center gap-1 text-xs text-slate-400">
+          <label className="flex items-center gap-1 text-body text-slate-400">
             {t("serial.dataBits")}
             <select value={dataBits} onChange={(e) => setDataBits(Number(e.target.value))} className={selectCls}>
               {[8, 7, 6, 5].map((v) => (
@@ -369,7 +369,7 @@ export default function SerialMonitor() {
               ))}
             </select>
           </label>
-          <label className="flex items-center gap-1 text-xs text-slate-400">
+          <label className="flex items-center gap-1 text-body text-slate-400">
             {t("serial.parity")}
             <select value={parity} onChange={(e) => setParity(e.target.value as typeof parity)} className={selectCls}>
               <option value="none">None</option>
@@ -377,7 +377,7 @@ export default function SerialMonitor() {
               <option value="odd">Odd</option>
             </select>
           </label>
-          <label className="flex items-center gap-1 text-xs text-slate-400">
+          <label className="flex items-center gap-1 text-body text-slate-400">
             {t("serial.stopBits")}
             <select value={stopBits} onChange={(e) => setStopBits(Number(e.target.value))} className={selectCls}>
               {[1, 2].map((v) => (
@@ -385,7 +385,7 @@ export default function SerialMonitor() {
               ))}
             </select>
           </label>
-          <label className="flex items-center gap-1 text-xs text-slate-400">
+          <label className="flex items-center gap-1 text-body text-slate-400">
             {t("serial.flow")}
             <select value={flow} onChange={(e) => setFlow(e.target.value as typeof flow)} className={selectCls}>
               <option value="none">{t("serial.flowNone")}</option>
@@ -405,7 +405,7 @@ export default function SerialMonitor() {
         </div>
       ) : (
         <div className="shrink-0 bg-white/[0.03] border border-violet-500/30 rounded-ctl p-3 space-y-2">
-          <div className="flex items-center gap-2 text-xs text-slate-400">
+          <div className="flex items-center gap-2 text-body text-slate-400">
             <Bot className="w-4 h-4 text-violet-400" />
             <span>
               <span dangerouslySetInnerHTML={{ __html: t("serial.simDesc") }} />
@@ -430,7 +430,7 @@ export default function SerialMonitor() {
           </div>
           {/* 表头 */}
           {rules.length > 0 && (
-            <div className="grid grid-cols-[7rem_1fr_9rem_5rem_2rem] gap-2 text-[11px] text-slate-500 px-0.5">
+            <div className="grid grid-cols-[7rem_1fr_9rem_5rem_2rem] gap-2 text-caption text-slate-500 px-0.5">
               <span>{t("serial.colMatch")}</span>
               <span>{t("serial.colRecv")}</span>
               <span>{t("serial.colResp")}</span>
@@ -459,7 +459,7 @@ export default function SerialMonitor() {
                     placeholder={r.pattern_hex ? t("serial.hexPh") : t("serial.textPh")}
                     className={`${inputCls} w-full resize-y min-h-[2rem]`}
                   />
-                  <label className="flex items-center gap-1 text-[11px] text-slate-500 cursor-pointer">
+                  <label className="flex items-center gap-1 text-caption text-slate-500 cursor-pointer">
                     <input type="checkbox" checked={r.pattern_hex} onChange={(e) => updateRule(i, { pattern_hex: e.target.checked })} className="accent-violet-500" /> {t("serial.hexMatch")}
                   </label>
                 </div>
@@ -471,7 +471,7 @@ export default function SerialMonitor() {
                     placeholder={r.response_hex ? t("serial.respHexPh") : t("serial.respTextPh")}
                     className={`${inputCls} w-full resize-y min-h-[2rem]`}
                   />
-                  <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                  <div className="flex items-center gap-2 text-caption text-slate-500">
                     <label className="flex items-center gap-1 cursor-pointer">
                       <input type="checkbox" checked={r.response_hex} onChange={(e) => updateRule(i, { response_hex: e.target.checked })} className="accent-violet-500" /> HEX
                     </label>
@@ -503,7 +503,7 @@ export default function SerialMonitor() {
       )}
 
       {/* 收发日志 */}
-      <div ref={logRef} className="flex-1 min-h-0 overflow-auto rounded-ctl border border-white/10 bg-white/[0.02] p-3 font-mono text-[12px] leading-5">
+      <div ref={logRef} className="flex-1 min-h-0 overflow-auto rounded-ctl border border-white/10 bg-white/[0.02] p-3 font-mono text-body leading-5">
         {logs.length === 0 && (
           <div className="h-full flex flex-col items-center justify-center text-slate-600 gap-2 select-none">
             {mode === "sim" ? <Bot className="w-8 h-8 opacity-40" /> : <Usb className="w-8 h-8 opacity-40" />}
@@ -517,9 +517,9 @@ export default function SerialMonitor() {
             return (
               <div key={i} className={`flex ${system ? "justify-center" : outgoing ? "justify-end" : "justify-start"}`}>
                 <div className={`flex max-w-[86%] items-end gap-2 ${outgoing ? "flex-row-reverse" : ""}`}>
-                  <span className="shrink-0 text-[10px] text-slate-600">{entry.time}</span>
+                  <span className="shrink-0 text-tiny text-slate-600">{entry.time}</span>
                   <div className={`rounded-card px-3 py-2 ${system ? "bg-white/[0.06] text-yellow-200" : outgoing ? "bg-cyan-500/15 text-cyan-100" : entry.dir === "dev" ? "bg-violet-500/15 text-violet-100" : "bg-emerald-500/10 text-slate-200"}`}>
-                    <span className="mr-1.5 text-[10px] opacity-70">{entry.dir === "rx" ? t("serial.dirDevice") : entry.dir === "tx" ? t("serial.dirSend") : entry.dir === "dev" ? t("serial.dirResp") : t("serial.dirSys")}</span>
+                    <span className="mr-1.5 text-tiny opacity-70">{entry.dir === "rx" ? t("serial.dirDevice") : entry.dir === "tx" ? t("serial.dirSend") : entry.dir === "dev" ? t("serial.dirResp") : t("serial.dirSys")}</span>
                     <span className="break-all whitespace-pre-wrap">{hexView && entry.hex !== undefined ? entry.hex : entry.text}</span>
                   </div>
                 </div>
@@ -533,7 +533,7 @@ export default function SerialMonitor() {
       <div className="shrink-0 bg-white/[0.03] border border-white/10 rounded-ctl p-3 space-y-2">
         {/* 行游标提示 */}
         {lines.length > 1 && (
-          <div className="flex items-center justify-between text-[11px] text-slate-500">
+          <div className="flex items-center justify-between text-caption text-slate-500">
             <span className="flex items-center gap-1">
               <ListOrdered className="w-3.5 h-3.5" />
               {t("serial.cursorInfo", { lines: lines.length, idx: Math.min(lineIdx + 1, lines.length) })}
@@ -557,9 +557,9 @@ export default function SerialMonitor() {
               : t("serial.textPlaceholder")
           }
           rows={3}
-          className="w-full bg-black/30 border border-white/10 rounded-md p-2 font-mono text-xs resize-none focus:outline-none focus:border-teal-500"
+          className="w-full bg-black/30 border border-white/10 rounded-md p-2 font-mono text-body resize-none focus:outline-none focus:border-teal-500"
         />
-        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
+        <div className="flex flex-wrap items-center gap-2 text-body text-slate-300">
           <label className="flex items-center gap-1 cursor-pointer">
             <input type="checkbox" checked={sendHex} onChange={(e) => setSendHex(e.target.checked)} className="accent-teal-500" /> HEX
           </label>

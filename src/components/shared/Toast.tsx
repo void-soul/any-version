@@ -117,7 +117,7 @@ function ToastView({ items }: { items: ToastMsg[] }) {
             <span className={`w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 ${iconCls}`}>
               <Icon className="w-3 h-3" />
             </span>
-            <span className="text-[12px] text-slate-100 leading-snug break-words">{t.msg}</span>
+            <span className="text-body text-slate-100 leading-snug break-words">{t.msg}</span>
           </div>
         );
       })}

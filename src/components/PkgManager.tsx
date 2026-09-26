@@ -97,13 +97,13 @@ export default function PkgManager() {
   const getStatusBadge = (pkg: PackageInfo) => {
     if (pkg.status === "outdated") {
       return (
-        <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-0.5 w-max">
+        <span className="px-2 py-0.5 rounded-md text-tiny font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-0.5 w-max">
           {t("pkgmgr2.upgradable")}
         </span>
       );
     }
     return (
-      <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-0.5 w-max">
+      <span className="px-2 py-0.5 rounded-md text-tiny font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-0.5 w-max">
         {t("pkgmgr2.latest")}
       </span>
     );
@@ -115,7 +115,7 @@ export default function PkgManager() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold text-white tracking-wide">{t("pkgmgr2.title")}</h2>
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="text-body text-slate-400 mt-1">
             {t("pkgmgr2.subtitle")}
           </p>
         </div>
@@ -127,7 +127,7 @@ export default function PkgManager() {
               <button
                 key={opt.id}
                 onClick={() => setActiveSdk(opt.id as "nodejs" | "python")}
-                className={`px-3.5 py-1.5 rounded-ctl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-ctl text-body font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
                   activeSdk === opt.id
                     ? "bg-blue-600 text-white"
                     : "text-slate-400 hover:text-slate-200"
@@ -143,7 +143,7 @@ export default function PkgManager() {
             <button
               onClick={handleUpgradeAll}
               disabled={upgradingAll || loading}
-              className="flex items-center gap-2 px-3.5 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-card text-xs font-semibold cursor-pointer transition-all shadow-lg shadow-amber-500/10"
+              className="flex items-center gap-2 px-3.5 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-card text-body font-semibold cursor-pointer transition-all shadow-lg shadow-amber-500/10"
             >
               <Rocket className={`w-3.5 h-3.5 ${upgradingAll ? "animate-pulse" : ""}`} />
               {upgradingAll ? t("pkgmgr2.upgradingAll") : t("pkgmgr2.upgradeAll", { count: outdatedCount })}
@@ -153,7 +153,7 @@ export default function PkgManager() {
           <button
             onClick={() => fetchPackages(activeSdk)}
             disabled={loading}
-            className="flex items-center gap-2 px-3.5 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-card text-xs border border-white/5 cursor-pointer transition-all"
+            className="flex items-center gap-2 px-3.5 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-card text-body border border-white/5 cursor-pointer transition-all"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
             {t("pkgmgr2.refresh")}
@@ -163,7 +163,7 @@ export default function PkgManager() {
 
       {/* Error Message */}
       {errorMsg && (
-        <div className="p-3.5 bg-red-500/10 border border-red-500/20 text-red-400 rounded-card text-xs flex items-center gap-1.5 font-medium">
+        <div className="p-3.5 bg-red-500/10 border border-red-500/20 text-red-400 rounded-card text-body flex items-center gap-1.5 font-medium">
           <Terminal className="w-4 h-4 text-red-400" />
           {errorMsg}
         </div>
@@ -172,7 +172,7 @@ export default function PkgManager() {
       {/* Packages Table */}
       <div className="flex-1 min-h-0 glass-panel border border-white/5 rounded-panel overflow-hidden flex flex-col h-[480px]">
         <div className="flex-1 overflow-y-auto">
-          <table className="w-full text-left border-collapse text-xs">
+          <table className="w-full text-left border-collapse text-body">
             <thead>
               <tr className="bg-white/3 border-b border-white/5 text-slate-400 font-semibold">
                 <th className="p-4">{t("pkgmgr2.colPkg")}</th>
@@ -219,13 +219,13 @@ export default function PkgManager() {
                           <button
                             onClick={() => handleUpgrade(pkg.name)}
                             disabled={isUpgrading}
-                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-ctl text-[10px] font-semibold cursor-pointer transition-all flex items-center justify-center gap-1 mx-auto"
+                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-ctl text-tiny font-semibold cursor-pointer transition-all flex items-center justify-center gap-1 mx-auto"
                           >
                             <ArrowUpCircle className="w-3.5 h-3.5" />
                             {isUpgrading ? t("pkgmgr2.upgrading") : t("pkgmgr2.upgradeBtn")}
                           </button>
                         ) : (
-                          <span className="text-[10px] text-slate-600">{t("pkgmgr2.noUpdate")}</span>
+                          <span className="text-tiny text-slate-600">{t("pkgmgr2.noUpdate")}</span>
                         )}
                       </td>
                     </tr>

@@ -48,7 +48,7 @@ export default function MonacoEditor(props: MonacoEditorProps) {
       .catch((e) => {
         if (!alive) return;
         console.error("[MonacoEditor] 加载失败:", e);
-        setFallback(<textarea value={props.value ?? ""} onChange={(ev) => props.onChange?.(ev.target.value, null)} className="h-full w-full resize-none bg-slate-950 p-3 text-[11px] text-slate-200 font-mono outline-none" readOnly />);
+        setFallback(<textarea value={props.value ?? ""} onChange={(ev) => props.onChange?.(ev.target.value, null)} className="h-full w-full resize-none bg-slate-950 p-3 text-caption text-slate-200 font-mono outline-none" readOnly />);
         setReady(true);
       });
     return () => {

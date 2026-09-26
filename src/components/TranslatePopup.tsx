@@ -339,9 +339,9 @@ export default function TranslatePopup() {
           <div className="flex items-center gap-1.5 text-slate-300">
             <VexGlowAvatar size={16} color={translateAccent} />
             <Languages className="w-3.5 h-3.5 text-[var(--tl-accent)]" />
-            <span className="text-[11px] font-semibold tracking-wide">{t("translate.title")}</span>
+            <span className="text-caption font-semibold tracking-wide">{t("translate.title")}</span>
             {result?.target && (
-              <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/10 text-slate-400">
+              <span className="text-micro px-1.5 py-0.5 rounded bg-white/10 text-slate-400">
                 {t("translate.target", { lang: result.target })}
               </span>
             )}
@@ -370,7 +370,7 @@ export default function TranslatePopup() {
 
         {/* Kira 随口一说（贴心提示） */}
         <div className="px-3 py-1 border-b border-white/5">
-          <span className="text-[9px] italic text-slate-500 leading-snug">
+          <span className="text-micro italic text-slate-500 leading-snug">
             💬<VexGreeting seconds={10} />
           </span>
         </div>
@@ -384,7 +384,7 @@ export default function TranslatePopup() {
             onFocus={onSelectOpen}
             onChange={(e) => changeProvider(e.target.value)}
             disabled={translating || providers.length === 0}
-            className="text-[9px] px-1.5 py-0.5 rounded bg-white/10 text-slate-300 border border-white/10 focus:outline-none disabled:opacity-50 cursor-pointer min-w-0 flex-1"
+            className="text-micro px-1.5 py-0.5 rounded bg-white/10 text-slate-300 border border-white/10 focus:outline-none disabled:opacity-50 cursor-pointer min-w-0 flex-1"
             title={t("translate.provider")}
           >
             {providers.length === 0 && <option value="">{t("translate.noProvider")}</option>}
@@ -400,7 +400,7 @@ export default function TranslatePopup() {
             onFocus={onSelectOpen}
             onChange={(e) => changeModel(e.target.value)}
             disabled={translating || !provId}
-            className="text-[9px] px-1.5 py-0.5 rounded bg-white/10 text-slate-300 border border-white/10 focus:outline-none disabled:opacity-50 cursor-pointer min-w-0 flex-1"
+            className="text-micro px-1.5 py-0.5 rounded bg-white/10 text-slate-300 border border-white/10 focus:outline-none disabled:opacity-50 cursor-pointer min-w-0 flex-1"
             title={t("translate.model")}
           >
             {(providers.find((p) => p.id === provId)?.models || []).map((m) => (
@@ -415,7 +415,7 @@ export default function TranslatePopup() {
             onFocus={onSelectOpen}
             onChange={(e) => changeTarget(e.target.value)}
             disabled={translating}
-            className="text-[9px] px-1.5 py-0.5 rounded bg-white/10 text-slate-300 border border-white/10 focus:outline-none disabled:opacity-50 cursor-pointer shrink-0"
+            className="text-micro px-1.5 py-0.5 rounded bg-white/10 text-slate-300 border border-white/10 focus:outline-none disabled:opacity-50 cursor-pointer shrink-0"
             title={t("translate.targetLang")}
           >
             {TARGETS.map((t) => (
@@ -433,7 +433,7 @@ export default function TranslatePopup() {
           {/* 原文：可编辑 textarea */}
           <div>
             <div className="flex items-center justify-between mb-1">
-              <span className="text-[9px] text-slate-500">{t("translate.source")}</span>
+              <span className="text-micro text-slate-500">{t("translate.source")}</span>
               {(sourceText || result?.source) && (
                 <button
                   onClick={copySource}
@@ -451,19 +451,19 @@ export default function TranslatePopup() {
                 setSourceText(e.target.value);
               }}
               placeholder={t("translate.phInput")}
-              className="w-full min-h-[60px] bg-white/5 border border-white/10 rounded-ctl px-2 py-1.5 text-[11px] text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-[var(--tl-accent)] resize-none leading-relaxed"
+              className="w-full min-h-[60px] bg-white/5 border border-white/10 rounded-ctl px-2 py-1.5 text-caption text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-[var(--tl-accent)] resize-none leading-relaxed"
             />
           </div>
 
           {/* 翻译按钮 */}
           <div className="flex items-center justify-end gap-1.5">
-            <span className="text-[9px] text-slate-600">
+            <span className="text-micro text-slate-600">
               {t("translate.target", { lang: result?.target || "中文" })}
             </span>
             <button
               onClick={doTranslate}
               disabled={translating || !sourceText.trim()}
-              className="px-3 py-1 rounded-ctl text-[10px] font-semibold bg-[var(--tl-accent)] text-white hover:bg-[var(--tl-accent-strong)] transition cursor-pointer disabled:opacity-50 flex items-center gap-1"
+              className="px-3 py-1 rounded-ctl text-tiny font-semibold bg-[var(--tl-accent)] text-white hover:bg-[var(--tl-accent-strong)] transition cursor-pointer disabled:opacity-50 flex items-center gap-1"
             >
               <ArrowRightLeft className="w-3 h-3" />
               {translating ? t("translate.translating") : t("translate.translate")}
@@ -474,7 +474,7 @@ export default function TranslatePopup() {
               避免内容区高度变化引发滚动条/宽度抖动 */}
           <div className="min-h-[46px] flex flex-col justify-start">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-[9px] text-slate-500">{t("translate.translated")}</span>
+              <span className="text-micro text-slate-500">{t("translate.translated")}</span>
               {result?.result && (
                 <button
                   onClick={copyResult}
@@ -488,11 +488,11 @@ export default function TranslatePopup() {
             {translating ? (
               <VexBusy text={t("translate.busy")} avatarSize={32} />
             ) : result?.error ? (
-              <div className="text-[11px] text-red-400 leading-relaxed whitespace-pre-wrap break-words">
+              <div className="text-caption text-red-400 leading-relaxed whitespace-pre-wrap break-words">
                 {result.result}
               </div>
             ) : (
-              <div className="text-[12px] text-slate-100 leading-relaxed whitespace-pre-wrap break-words">
+              <div className="text-body text-slate-100 leading-relaxed whitespace-pre-wrap break-words">
                 {result?.result || (sourceText ? t("translate.waiting") : t("translate.selectFirst"))}
               </div>
             )}

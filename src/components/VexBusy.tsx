@@ -32,7 +32,7 @@ export default function VexBusy({
             }}
           />
         </div>
-        <p className="mt-1.5 truncate text-[10px] text-slate-400">{resolvedText}</p>
+        <p className="mt-1.5 truncate text-tiny text-slate-400">{resolvedText}</p>
       </div>
     </div>
   );

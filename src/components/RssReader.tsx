@@ -525,7 +525,7 @@ export default function RssReader() {
         <div className="flex items-center gap-0.5 bg-white/5 border border-white/5 rounded-ctl p-0.5">
           <button
             onClick={() => setView("feed")}
-            className={`px-2.5 py-1 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer ${
+            className={`px-2.5 py-1 rounded-md text-tiny font-semibold flex items-center gap-1 transition-all cursor-pointer ${
               view === "feed" ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
             }`}
           >
@@ -534,14 +534,14 @@ export default function RssReader() {
           </button>
           <button
             onClick={() => setView("favorites")}
-            className={`px-2.5 py-1 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all cursor-pointer ${
+            className={`px-2.5 py-1 rounded-md text-tiny font-semibold flex items-center gap-1 transition-all cursor-pointer ${
               view === "favorites" ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
             }`}
           >
             <Bookmark className="w-3 h-3" />
             {t("rss.myFavs")}
             {favorites.size > 0 && (
-              <span className={`text-[9px] font-bold px-1 rounded ${
+              <span className={`text-micro font-bold px-1 rounded ${
                 view === "favorites" ? "bg-[color-mix(in_srgb,var(--module-accent)_70%,black)] text-[var(--module-accent)]" : "bg-white/10 text-slate-400"
               }`}>{favorites.size}</span>
             )}
@@ -554,7 +554,7 @@ export default function RssReader() {
         <button
           onClick={() => fetchAllFeeds(sources, true)}
           disabled={loading || view === "favorites"}
-          className="px-2.5 py-1 rounded-md text-[10px] font-semibold text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+          className="px-2.5 py-1 rounded-md text-tiny font-semibold text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
         >
           <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
           {t("rss.refresh")}
@@ -564,7 +564,7 @@ export default function RssReader() {
             setEditSources(sources);
             setShowConfig(true);
           }}
-          className="px-2.5 py-1 rounded-md text-[10px] font-semibold text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all flex items-center gap-1 cursor-pointer"
+          className="px-2.5 py-1 rounded-md text-tiny font-semibold text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all flex items-center gap-1 cursor-pointer"
         >
           <Settings2 className="w-3 h-3" />
           {t("rss.configSources")}
@@ -579,7 +579,7 @@ export default function RssReader() {
             <select
               value={sourceFilter}
               onChange={(e) => setSourceFilter(e.target.value)}
-              className="bg-slate-900 border border-white/10 rounded-md px-2 py-1 text-[10px] text-slate-300 focus:outline-none focus:border-[var(--module-accent)] cursor-pointer max-w-[140px]"
+              className="ui-input rounded-md px-2 py-1 text-tiny text-slate-300 focus:outline-none focus:border-[var(--module-accent)] cursor-pointer max-w-[140px]"
               title={t("rss.filterBySource")}
             >
               <option value="">{t("rss.allSources")}</option>
@@ -595,7 +595,7 @@ export default function RssReader() {
         {/* 过滤时间 —— 仅资讯视图 */}
         {view === "feed" && (
           <div className="flex items-center gap-1 flex-1 overflow-x-auto whitespace-nowrap scrollbar-none">
-            <span className="text-[10px] text-slate-500 font-semibold flex items-center gap-1 mr-0.5 flex-shrink-0">
+            <span className="text-tiny text-slate-500 font-semibold flex items-center gap-1 mr-0.5 flex-shrink-0">
               <Clock className="w-3 h-3" />
             </span>
             {[
@@ -608,7 +608,7 @@ export default function RssReader() {
               <button
                 key={item.key}
                 onClick={() => setDateFilter(item.key as any)}
-                className={`px-2 py-1 rounded-md text-[10px] font-medium transition-all cursor-pointer flex-shrink-0 ${
+                className={`px-2 py-1 rounded-md text-tiny font-medium transition-all cursor-pointer flex-shrink-0 ${
                   dateFilter === item.key
                     ? "bg-orange-600 text-white"
                     : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
@@ -624,7 +624,7 @@ export default function RssReader() {
         {view === "feed" && deletedLinks.size > 0 && (
           <button
             onClick={handleRestoreArticles}
-            className="px-2 py-1 rounded-md text-[10px] font-medium text-[var(--module-accent)] hover:text-[var(--module-accent-strong)] hover:bg-[var(--module-accent-soft)] transition-all cursor-pointer flex items-center gap-1 flex-shrink-0"
+            className="px-2 py-1 rounded-md text-tiny font-medium text-[var(--module-accent)] hover:text-[var(--module-accent-strong)] hover:bg-[var(--module-accent-soft)] transition-all cursor-pointer flex items-center gap-1 flex-shrink-0"
             title={t("rss.restoreReadTitle")}
           >
             <RefreshCw className="w-3 h-3" />
@@ -634,19 +634,19 @@ export default function RssReader() {
 
         {/* 自定义日期 —— 仅自定义过滤时 */}
         {view === "feed" && dateFilter === "custom" && (
-          <div className="flex items-center gap-1 text-[10px] flex-shrink-0">
+          <div className="flex items-center gap-1 text-tiny flex-shrink-0">
             <input
               type="date"
               value={customStartDate}
               onChange={(e) => setCustomStartDate(e.target.value)}
-              className="bg-slate-900 border border-white/10 rounded-md px-2 py-0.5 text-slate-300 focus:outline-none"
+              className="ui-input rounded-md px-2 py-0.5 text-slate-300 focus:outline-none"
             />
             <span className="text-slate-600">-</span>
             <input
               type="date"
               value={customEndDate}
               onChange={(e) => setCustomEndDate(e.target.value)}
-              className="bg-slate-900 border border-white/10 rounded-md px-2 py-0.5 text-slate-300 focus:outline-none"
+              className="ui-input rounded-md px-2 py-0.5 text-slate-300 focus:outline-none"
             />
           </div>
         )}
@@ -654,7 +654,7 @@ export default function RssReader() {
 
       {/* 错误提示 */}
       {error && (
-        <div className="mx-4 mt-4 p-3 bg-red-500/10 border border-red-500/20 text-[10px] text-red-400 rounded-card flex items-start gap-2">
+        <div className="mx-4 mt-4 p-3 bg-red-500/10 border border-red-500/20 text-tiny text-red-400 rounded-card flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
           <div className="whitespace-pre-line">{error}</div>
         </div>
@@ -668,8 +668,8 @@ export default function RssReader() {
           favorites.size === 0 ? (
             <div className="h-64 border border-dashed border-white/5 rounded-panel flex flex-col items-center justify-center text-slate-500 p-8 text-center bg-white/[0.01]">
               <Bookmark className="w-10 h-10 text-slate-700 mb-3" />
-              <span className="text-xs font-bold text-slate-400">{t("rss.noFavs")}</span>
-              <span className="text-[10px] text-slate-600 mt-1 max-w-[260px]">
+              <span className="text-body font-bold text-slate-400">{t("rss.noFavs")}</span>
+              <span className="text-tiny text-slate-600 mt-1 max-w-[260px]">
                 {t("rss.noFavsDesc", { icon: "" })}
               </span>
             </div>
@@ -703,11 +703,11 @@ export default function RssReader() {
                       <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-amber-400 transition-all" />
                     </div>
                   </div>
-                  <h3 className="text-xs font-bold text-slate-200 group-hover:text-white transition-all leading-relaxed">
+                  <h3 className="text-body font-bold text-slate-200 group-hover:text-white transition-all leading-relaxed">
                     {article.title || t("rss.noTitle")}
                   </h3>
                   {article.summary && (
-                    <p className="text-[10px] text-slate-400 leading-relaxed font-sans line-clamp-2">
+                    <p className="text-tiny text-slate-400 leading-relaxed font-sans line-clamp-2">
                       {article.summary}
                     </p>
                   )}
@@ -720,13 +720,13 @@ export default function RssReader() {
           loading ? (
             <div className="h-48 flex flex-col items-center justify-center text-slate-500">
               <RefreshCw className="w-8 h-8 animate-spin mb-2 text-blue-500" />
-              <span className="text-[11px]">{t("rss.parsing")}</span>
+              <span className="text-caption">{t("rss.parsing")}</span>
             </div>
           ) : filteredArticles.length === 0 ? (
             <div className="h-64 border border-dashed border-white/5 rounded-panel flex flex-col items-center justify-center text-slate-500 p-8 text-center bg-white/[0.01]">
               <Rss className="w-10 h-10 text-slate-700 mb-2 animate-pulse" />
-              <span className="text-xs font-bold text-slate-400">{t("rss.noNews")}</span>
-              <span className="text-[10px] text-slate-600 mt-1 max-w-[280px]">
+              <span className="text-body font-bold text-slate-400">{t("rss.noNews")}</span>
+              <span className="text-tiny text-slate-600 mt-1 max-w-[280px]">
                 {t("rss.noNewsDesc")}
               </span>
             </div>
@@ -775,11 +775,11 @@ export default function RssReader() {
                       <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-blue-400 transition-all" />
                     </div>
                   </div>
-                  <h3 className="text-xs font-bold text-slate-200 group-hover:text-white transition-all leading-relaxed">
+                  <h3 className="text-body font-bold text-slate-200 group-hover:text-white transition-all leading-relaxed">
                     {article.title || t("rss.noTitle")}
                   </h3>
                   {article.summary && (
-                    <p className="text-[10px] text-slate-400 leading-relaxed font-sans line-clamp-2">
+                    <p className="text-tiny text-slate-400 leading-relaxed font-sans line-clamp-2">
                       {article.summary}
                     </p>
                   )}
@@ -798,14 +798,14 @@ export default function RssReader() {
             <div className="p-4 border-b border-white/5 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Settings2 className="w-4.5 h-4.5 text-blue-400" />
-                <h3 className="text-xs font-bold text-slate-200">{t("rss.feedManage")}</h3>
+                <h3 className="text-body font-bold text-slate-200">{t("rss.feedManage")}</h3>
               </div>
               <button 
                 onClick={() => {
                   setShowConfig(false);
                   setConfigMessage(null);
                 }}
-                className="text-slate-500 hover:text-slate-300 text-xs"
+                className="text-slate-500 hover:text-slate-300 text-body"
               >
                 {t("rss.close")}
               </button>
@@ -819,26 +819,26 @@ export default function RssReader() {
                   placeholder={t("rss.namePh")}
                   value={newSourceName}
                   onChange={(e) => setNewSourceName(e.target.value)}
-                  className="w-[130px] flex-shrink-0 bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 text-[10.5px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                  className="w-[130px] flex-shrink-0 ui-input rounded-ctl px-2.5 py-1.5 text-[10.5px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
                 />
                 <input
                   type="text"
                   placeholder={t("rss.urlPh")}
                   value={newSourceUrl}
                   onChange={(e) => setNewSourceUrl(e.target.value)}
-                  className="flex-1 bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 text-[10.5px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                  className="flex-1 ui-input rounded-ctl px-2.5 py-1.5 text-[10.5px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
                 />
                 <button
                   onClick={() => testRssUrl(newSourceUrl)}
                   disabled={!newSourceUrl.trim()}
-                  className="px-2.5 py-1 rounded-ctl bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] text-slate-300 disabled:opacity-40 cursor-pointer flex-shrink-0"
+                  className="px-2.5 py-1 rounded-ctl ui-btn text-tiny text-slate-300 disabled:opacity-40 cursor-pointer flex-shrink-0"
                 >
                   {t("rss.testLink")}
                 </button>
                 <button
                   onClick={handleAddSource}
                   disabled={!newSourceUrl.trim()}
-                  className="px-3 py-1 rounded-ctl bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-semibold disabled:opacity-40 cursor-pointer flex-shrink-0 flex items-center gap-0.5"
+                  className="px-3 py-1 rounded-ctl bg-blue-600 hover:bg-blue-500 text-white text-tiny font-semibold disabled:opacity-40 cursor-pointer flex-shrink-0 flex items-center gap-0.5"
                 >
                   <Plus className="w-3 h-3" /> {t("rss.add")}
                 </button>
@@ -853,7 +853,7 @@ export default function RssReader() {
 
             {/* List */}
             <div className="flex-grow overflow-y-auto p-4 space-y-2">
-              <div className="text-[10px] font-bold text-slate-500 mb-1">{t("rss.curSources", { count: editSources.length })}</div>
+              <div className="text-tiny font-bold text-slate-500 mb-1">{t("rss.curSources", { count: editSources.length })}</div>
               {editSources.length === 0 ? (
                 <div className="py-8 text-center text-[10.5px] text-slate-600">{t("rss.noFeeds")}</div>
               ) : (
@@ -862,7 +862,7 @@ export default function RssReader() {
                   return (
                     <div 
                       key={url}
-                      className="p-2.5 rounded-card bg-white/5 border border-white/5 flex items-center justify-between gap-3 text-[10px]"
+                      className="p-2.5 rounded-card bg-white/5 border border-white/5 flex items-center justify-between gap-3 text-tiny"
                     >
                       <div className="flex flex-col gap-1 min-w-0 flex-1">
                         <input
@@ -870,7 +870,7 @@ export default function RssReader() {
                           value={name}
                           placeholder={t("rss.editNamePh")}
                           onChange={(e) => handleUpdateSourceName(url, e.target.value)}
-                          className="w-full max-w-[200px] bg-slate-900 border border-white/10 rounded-md px-2 py-1 text-[10px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                          className="w-full max-w-[200px] ui-input rounded-md px-2 py-1 text-tiny text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
                         />
                         <div className="flex items-center gap-1.5">
                           <span className="rounded px-1 py-0.5 text-[8px] font-semibold bg-white/5 text-slate-500 border border-white/5">
@@ -929,13 +929,13 @@ export default function RssReader() {
                   setShowConfig(false);
                   setConfigMessage(null);
                 }}
-                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-[10px] font-semibold cursor-pointer"
+                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-tiny font-semibold cursor-pointer"
               >
                 {t("rss.cancel")}
               </button>
               <button
                 onClick={handleSaveConfig}
-                className="px-3.5 py-1.5 rounded-ctl bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-semibold cursor-pointer"
+                className="px-3.5 py-1.5 rounded-ctl bg-blue-600 hover:bg-blue-500 text-white text-tiny font-semibold cursor-pointer"
               >
                 {t("rss.saveChanges")}
               </button>

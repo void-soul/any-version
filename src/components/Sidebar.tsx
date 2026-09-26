@@ -34,7 +34,7 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
         </div>
         <div>
           <h1 className="font-semibold text-white tracking-wide text-sm">Kira</h1>
-          <p className="text-[10px] text-slate-400">{t("sidebar.version")}</p>
+          <p className="text-tiny text-slate-400">{t("sidebar.version")}</p>
         </div>
       </div>
 
@@ -47,7 +47,7 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id)}
-              className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-card text-xs font-medium transition-all duration-200 cursor-pointer ${
+              className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-card text-body font-medium transition-all duration-200 cursor-pointer ${
                 isActive
                   ? "bg-blue-600/90 text-white shadow-lg shadow-blue-500/10 border-l-[3px] border-blue-400"
                   : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
@@ -62,8 +62,8 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
 
       {/* Footer info */}
       <div className="p-6 border-t border-white/5 space-y-1 text-center">
-        <p className="text-[10px] text-slate-500">{t("sidebar.platform")}</p>
-        <p className="text-[9px] text-slate-600 leading-relaxed">{t("sidebar.slogan")}</p>
+        <p className="text-tiny text-slate-500">{t("sidebar.platform")}</p>
+        <p className="text-micro text-slate-600 leading-relaxed">{t("sidebar.slogan")}</p>
       </div>
     </aside>
   );

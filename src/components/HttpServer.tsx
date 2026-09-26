@@ -108,21 +108,21 @@ export default function HttpServer() {
     <div className="space-y-6">
       <div>
         <h3 className="text-sm font-semibold text-white">{t("httpserver.title")}</h3>
-        <p className="text-[11px] text-slate-400 mt-0.5">{t("httpserver.subtitle")}</p>
+        <p className="text-caption text-slate-400 mt-0.5">{t("httpserver.subtitle")}</p>
       </div>
 
       {/* 启动表单 */}
       <form onSubmit={handleStart} className="glass-panel border border-white/5 rounded-panel p-5 bg-white/2 space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="md:col-span-3 space-y-1.5">
-            <label className="text-[10px] text-slate-500 uppercase font-semibold">{t("httpserver.rootDir")}</label>
+            <label className="text-tiny text-slate-500 uppercase font-semibold">{t("httpserver.rootDir")}</label>
             <div className="flex items-center gap-2">
               <input
                 type="text"
                 value={path}
                 onChange={(e) => setPath(e.target.value)}
                 placeholder="e.g. D:\project\dist"
-                className="flex-grow glass-input px-3 py-2 text-xs font-mono"
+                className="flex-grow glass-input px-3 py-2 text-body font-mono"
               />
               <button
                 type="button"
@@ -135,19 +135,19 @@ export default function HttpServer() {
             </div>
           </div>
           <div className="space-y-1.5">
-            <label className="text-[10px] text-slate-500 uppercase font-semibold">{t("httpserver.port")}</label>
+            <label className="text-tiny text-slate-500 uppercase font-semibold">{t("httpserver.port")}</label>
             <input
               type="number"
               value={port}
               onChange={(e) => setPort(parseInt(e.target.value) || 8080)}
               min={1}
               max={65535}
-              className="w-full glass-input px-3 py-2 text-xs font-mono"
+              className="w-full glass-input px-3 py-2 text-body font-mono"
             />
           </div>
         </div>
 
-        <label className="flex items-center gap-2 text-[11px] text-slate-400 cursor-pointer select-none">
+        <label className="flex items-center gap-2 text-caption text-slate-400 cursor-pointer select-none">
           <input
             type="checkbox"
             checked={allowLan}
@@ -158,7 +158,7 @@ export default function HttpServer() {
         </label>
 
         {error && (
-          <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-200 text-xs rounded-card flex items-center gap-2">
+          <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-200 text-body rounded-card flex items-center gap-2">
             <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
             <span>{error}</span>
           </div>
@@ -168,7 +168,7 @@ export default function HttpServer() {
           <button
             type="submit"
             disabled={loading}
-            className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-card text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center gap-1.5"
+            className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-card text-body font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center gap-1.5"
           >
             <Play className="w-3.5 h-3.5" />
             {loading ? t("httpserver.starting") : t("httpserver.start")}
@@ -180,11 +180,11 @@ export default function HttpServer() {
       <div className="glass-panel border border-white/5 rounded-panel p-5 bg-white/2 space-y-4">
         <div className="flex items-center gap-2 border-b border-white/5 pb-3">
           <Server className="w-4 h-4 text-blue-400" />
-          <h4 className="text-xs font-semibold text-white">{t("httpserver.runningTitle", { count: runningServers.length })}</h4>
+          <h4 className="text-body font-semibold text-white">{t("httpserver.runningTitle", { count: runningServers.length })}</h4>
         </div>
 
         {runningServers.length === 0 ? (
-          <div className="text-center py-10 text-slate-500 text-xs">
+          <div className="text-center py-10 text-slate-500 text-body">
             {t("httpserver.empty")}
           </div>
         ) : (
@@ -199,13 +199,13 @@ export default function HttpServer() {
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
                     <button
                       onClick={() => openUrl(`http://localhost:${srv.port}`)}
-                      className="text-xs font-bold font-mono text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer"
+                      className="text-body font-bold font-mono text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer"
                     >
                       http://localhost:{srv.port}
                       <ExternalLink className="w-3 h-3" />
                     </button>
                   </div>
-                  <p className="text-[10px] text-slate-400 font-mono truncate" title={srv.path}>
+                  <p className="text-tiny text-slate-400 font-mono truncate" title={srv.path}>
                     {t("httpserver.dirLabel", { path: srv.path })}
                   </p>
                 </div>
@@ -223,7 +223,7 @@ export default function HttpServer() {
                   </button>
                   <button
                     onClick={() => handleStop(srv.port)}
-                    className="px-3 py-2 bg-red-600/20 hover:bg-red-600/30 border border-red-500/20 hover:border-red-500/30 text-red-300 rounded-ctl text-[10px] font-semibold cursor-pointer transition-all flex items-center gap-1"
+                    className="px-3 py-2 bg-red-600/20 hover:bg-red-600/30 border border-red-500/20 hover:border-red-500/30 text-red-300 rounded-ctl text-tiny font-semibold cursor-pointer transition-all flex items-center gap-1"
                     title={t("httpserver.closeService")}
                   >
                     <Square className="w-3 h-3" />

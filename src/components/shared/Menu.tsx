@@ -78,7 +78,7 @@ export function Menu({
         disabled={disabled}
         title={title}
         onClick={() => setOpen((v) => !v)}
-        className={`text-[11px] cursor-pointer transition-colors flex items-center gap-0.5 ${
+        className={`text-caption cursor-pointer transition-colors flex items-center gap-0.5 ${
           disabled
             ? "text-slate-600 cursor-not-allowed"
             : open
@@ -107,7 +107,7 @@ export function Menu({
             }
             if ("type" in it && it.type === "header") {
               return (
-                <div key={it.key} className="px-2 py-1 text-[9px] uppercase tracking-wide text-slate-600">
+                <div key={it.key} className="px-2 py-1 text-micro uppercase tracking-wide text-slate-600">
                   {it.label}
                 </div>
               );
@@ -124,7 +124,7 @@ export function Menu({
                   item.onSelect?.();
                   setOpen(false);
                 }}
-                className={`w-full flex items-center gap-2 px-2 py-1 text-left text-[11px] transition-colors ${
+                className={`w-full flex items-center gap-2 px-2 py-1 text-left text-caption transition-colors ${
                   item.disabled
                     ? "text-slate-600 cursor-not-allowed"
                     : item.danger
@@ -134,7 +134,7 @@ export function Menu({
               >
                 <span className="w-2 shrink-0">{item.active ? "•" : ""}</span>
                 <span className="flex-1 min-w-0 truncate">{item.label}</span>
-                {item.hint && <span className="shrink-0 text-[9px] text-slate-500">{item.hint}</span>}
+                {item.hint && <span className="shrink-0 text-micro text-slate-500">{item.hint}</span>}
               </button>
             );
           })}

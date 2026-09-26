@@ -36,7 +36,7 @@ export function ModuleSettingsButton({
 }: ModuleSettingsButtonProps) {
   const [open, setOpen] = useState(false);
   const baseCls = label
-    ? "inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px]"
+    ? "inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-tiny"
     : "p-2 rounded-ctl";
   const iconCls = label ? "h-3 w-3" : "w-4 h-4";
   return (
@@ -69,7 +69,7 @@ export function SettingsGroup({
   return (
     <div className="space-y-2.5">
       {title ? (
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+        <div className="text-tiny font-semibold uppercase tracking-wider text-slate-500">
           {title}
         </div>
       ) : null}
@@ -91,9 +91,9 @@ export function SettingsRow({
   return (
     <div className="flex items-start justify-between gap-3">
       <div className="min-w-0 flex-1">
-        <div className="text-[12px] text-slate-200">{label}</div>
+        <div className="text-body text-slate-200">{label}</div>
         {hint ? (
-          <div className="text-[10px] text-slate-500 mt-0.5 leading-relaxed">{hint}</div>
+          <div className="text-tiny text-slate-500 mt-0.5 leading-relaxed">{hint}</div>
         ) : null}
       </div>
       <div className="flex-shrink-0">{children}</div>

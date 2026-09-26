@@ -383,7 +383,7 @@ export default function OtpPanel() {
       <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5 flex-shrink-0">
         <KeyRound className="w-4 h-4 text-[var(--module-accent)]" />
         <span className="text-sm font-bold text-white">{t("otp.title")}</span>
-        <span className="text-[10px] text-slate-500">{t("otp.tokenCount", { count: tokens.length })}</span>
+        <span className="text-tiny text-slate-500">{t("otp.tokenCount", { count: tokens.length })}</span>
         <div className="flex-1" />
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-500 pointer-events-none" />
@@ -392,20 +392,20 @@ export default function OtpPanel() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t("otp.searchPh")}
-            className="glass-input pl-7 pr-2 py-1.5 text-xs bg-black/30 border border-white/10 rounded-ctl w-40 focus:outline-none focus:border-sky-400/50"
+            className="glass-input pl-7 pr-2 py-1.5 text-body bg-black/30 border border-white/10 rounded-ctl w-40 focus:outline-none focus:border-sky-400/50"
           />
         </div>
         <button
           onClick={scanQr}
           disabled={busy}
-          className="px-2.5 py-1.5 rounded-ctl text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+          className="px-2.5 py-1.5 rounded-ctl text-caption bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
           title={t("otp.scanTitle")}
         >
           {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <ScanLine className="w-3 h-3" />} {t("otp.scan")}
         </button>
         <button
           onClick={() => setShowImport(true)}
-          className="px-2.5 py-1.5 rounded-ctl text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition"
+          className="px-2.5 py-1.5 rounded-ctl text-caption bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition"
         >
           <Import className="w-3 h-3" /> {t("otp.import")}
         </button>
@@ -414,7 +414,7 @@ export default function OtpPanel() {
             setEditing(null);
             setShowAdd(true);
           }}
-          className="px-2.5 py-1.5 rounded-ctl text-[11px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold flex items-center gap-1 cursor-pointer transition"
+          className="px-2.5 py-1.5 rounded-ctl text-caption ui-btn-primary text-white font-semibold flex items-center gap-1 cursor-pointer transition"
         >
           <Plus className="w-3 h-3" /> {t("otp.add")}
         </button>
@@ -427,7 +427,7 @@ export default function OtpPanel() {
           <div className="p-2 space-y-0.5">
             <button
               onClick={() => setActiveCategory(null)}
-              className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-ctl text-[11px] transition cursor-pointer ${
+              className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-ctl text-caption transition cursor-pointer ${
                 activeCategory === null
                   ? "bg-[var(--module-accent)]/20 text-white"
                   : "text-slate-400 hover:bg-white/5"
@@ -438,7 +438,7 @@ export default function OtpPanel() {
             {categories.map((cat) => (
               <div
                 key={cat.id}
-                className={`group w-full flex items-center gap-1 px-2.5 py-1.5 rounded-ctl text-[11px] transition cursor-pointer ${
+                className={`group w-full flex items-center gap-1 px-2.5 py-1.5 rounded-ctl text-caption transition cursor-pointer ${
                   activeCategory === cat.id
                     ? "bg-[var(--module-accent)]/20 text-white"
                     : "text-slate-400 hover:bg-white/5"
@@ -447,7 +447,7 @@ export default function OtpPanel() {
               >
                 <Folder className="w-3 h-3 flex-shrink-0" />
                 <span className="flex-1 truncate">{cat.title}</span>
-                <span className="text-[9px] text-slate-500">{cat.tokenIds.length}</span>
+                <span className="text-micro text-slate-500">{cat.tokenIds.length}</span>
                 <span className="hidden group-hover:flex items-center gap-0.5">
                   <button
                     onClick={(e) => { e.stopPropagation(); renameCategory(cat); }}
@@ -466,7 +466,7 @@ export default function OtpPanel() {
             ))}
             <button
               onClick={addCategory}
-              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-ctl text-[11px] text-slate-500 hover:text-slate-300 hover:bg-white/5 transition cursor-pointer"
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-ctl text-caption text-slate-500 hover:text-slate-300 hover:bg-white/5 transition cursor-pointer"
             >
               <FolderPlus className="w-3 h-3" /> {t("otp.newCat")}
             </button>
@@ -478,7 +478,7 @@ export default function OtpPanel() {
           {filtered.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-3">
               <KeyRound className="w-10 h-10 text-slate-600" />
-              <p className="text-xs">{t("otp.noTokens")}</p>
+              <p className="text-body">{t("otp.noTokens")}</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
@@ -531,14 +531,14 @@ export default function OtpPanel() {
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
               placeholder={t("otp.importPh")}
-              className="w-full h-32 glass-input px-3 py-2 text-xs font-mono bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-sky-400/50 resize-none"
+              className="w-full h-32 glass-input px-3 py-2 text-body font-mono bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-sky-400/50 resize-none"
             />
             <div className="flex justify-end gap-2 mt-3">
-              <button onClick={() => setShowImport(false)} className="px-3 py-1.5 rounded-ctl text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer">{t("otp.cancel")}</button>
+              <button onClick={() => setShowImport(false)} className="px-3 py-1.5 rounded-ctl text-caption text-slate-400 hover:bg-white/5 cursor-pointer">{t("otp.cancel")}</button>
               <button
                 onClick={doImport}
                 disabled={busy}
-                className="px-3 py-1.5 rounded-ctl text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
+                className="px-3 py-1.5 rounded-ctl text-caption bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
               >
                 {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Import className="w-3 h-3" />} {t("otp.import")}
               </button>
@@ -588,7 +588,7 @@ function BrandIcon({ token }: { token: OtpToken }) {
   const hue = Math.abs(hash) % 360;
   return (
     <div
-      className="w-8 h-8 rounded-ctl flex items-center justify-center text-[13px] font-bold text-white flex-shrink-0"
+      className="w-8 h-8 rounded-ctl flex items-center justify-center text-title font-bold text-white flex-shrink-0"
       style={{ background: `linear-gradient(135deg, hsl(${hue},65%,45%), hsl(${(hue + 40) % 360},65%,35%))` }}
     >
       {initial}
@@ -649,14 +649,14 @@ function TokenCard({
         <BrandIcon token={token} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
-            <span className="text-[13px] font-semibold text-white truncate">
+            <span className="text-title font-semibold text-white truncate">
               {token.issuer || t("otp.unknown")}
             </span>
             {token.pinned && <Pin className="w-3 h-3 text-amber-400 flex-shrink-0" />}
           </div>
-          <div className="text-[10px] text-slate-500 truncate">{token.account}</div>
+          <div className="text-tiny text-slate-500 truncate">{token.account}</div>
           {token.description && (
-            <div className="text-[9px] text-slate-600 truncate mt-0.5">{token.description}</div>
+            <div className="text-micro text-slate-600 truncate mt-0.5">{token.description}</div>
           )}
           {/* 所属分类 */}
           {categories.length > 0 && (
@@ -682,7 +682,7 @@ function TokenCard({
             </div>
           )}
         </div>
-        <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/5 text-slate-400 font-mono flex-shrink-0">
+        <span className="text-micro px-1.5 py-0.5 rounded bg-white/5 text-slate-400 font-mono flex-shrink-0">
           {TOKEN_TYPE_LABELS[token.tokenType] || token.tokenType}
         </span>
       </div>
@@ -826,7 +826,7 @@ function TokenForm({
 
         <div className="space-y-3">
           <div>
-            <label className="text-[10px] text-slate-400 mb-1 block">{t("otp.type")}</label>
+            <label className="text-tiny text-slate-400 mb-1 block">{t("otp.type")}</label>
             <select
               value={form.tokenType}
               onChange={(e) => {
@@ -838,7 +838,7 @@ function TokenForm({
                   algorithm: t === "Steam" || t === "Yandex" || t === "MOTP" ? "SHA1" : f.algorithm,
                 }));
               }}
-              className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+              className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
             >
               <option value="TOTP">{t("otp.totp")}</option>
               <option value="HOTP">{t("otp.hotp")}</option>
@@ -850,52 +850,52 @@ function TokenForm({
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="text-[10px] text-slate-400 mb-1 block">{t("otp.issuer")}</label>
+              <label className="text-tiny text-slate-400 mb-1 block">{t("otp.issuer")}</label>
               <input
                 value={form.issuer}
                 onChange={(e) => set("issuer", e.target.value)}
                 placeholder={t("otp.issuerPh")}
-                className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+                className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
               />
             </div>
             <div>
-              <label className="text-[10px] text-slate-400 mb-1 block">{t("otp.account")}</label>
+              <label className="text-tiny text-slate-400 mb-1 block">{t("otp.account")}</label>
               <input
                 value={form.account}
                 onChange={(e) => set("account", e.target.value)}
                 placeholder={t("otp.accountPh")}
-                className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+                className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
               />
             </div>
           </div>
 
           <div>
-            <label className="text-[10px] text-slate-400 mb-1 block">{t("otp.secret")}</label>
+            <label className="text-tiny text-slate-400 mb-1 block">{t("otp.secret")}</label>
             <input
               value={form.secret}
               onChange={(e) => set("secret", e.target.value)}
               placeholder={t("otp.secretPh")}
-              className="w-full glass-input px-3 py-2 text-xs font-mono bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+              className="w-full glass-input px-3 py-2 text-body font-mono bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
             />
           </div>
 
           <div>
-            <label className="text-[10px] text-slate-400 mb-1 block">{t("otp.desc")}</label>
+            <label className="text-tiny text-slate-400 mb-1 block">{t("otp.desc")}</label>
             <input
               value={form.description}
               onChange={(e) => set("description", e.target.value)}
               placeholder={t("otp.descPh")}
-              className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+              className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
             />
           </div>
 
           {/* 分类多选 */}
           <div>
-            <label className="text-[10px] text-slate-400 mb-1 block">
+            <label className="text-tiny text-slate-400 mb-1 block">
               {t("otp.category", { count: selectedCatIds.length })} {selectedCatIds.length > 0 && <span className="text-slate-500">({t("otp.selected", { count: selectedCatIds.length })})</span>}
             </label>
             {categories.length === 0 ? (
-              <p className="text-[10px] text-slate-500">{t("otp.categoryHint")}</p>
+              <p className="text-tiny text-slate-500">{t("otp.categoryHint")}</p>
             ) : (
               <div className="flex flex-wrap gap-1.5">
                 {categories.map((c) => {
@@ -905,7 +905,7 @@ function TokenForm({
                       key={c.id}
                       type="button"
                       onClick={() => toggleCat(c.id)}
-                      className={`vex-chip px-2.5 py-1 rounded-full text-[10px] border transition-colors cursor-pointer ${
+                      className={`vex-chip px-2.5 py-1 rounded-full text-tiny border transition-colors cursor-pointer ${
                         on
                           ? "vex-chip-active bg-[var(--module-accent)]/20 border-[var(--module-accent)] text-[var(--module-accent)]"
                           : "bg-white/[0.03] border-white/10 text-slate-400 hover:border-white/25"
@@ -921,21 +921,21 @@ function TokenForm({
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="text-[10px] text-slate-400 mb-1 block">{t("otp.tags")}</label>
+              <label className="text-tiny text-slate-400 mb-1 block">{t("otp.tags")}</label>
               <input
                 value={form.tags}
                 onChange={(e) => set("tags", e.target.value)}
                 placeholder={t("otp.tagsPh")}
-                className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+                className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
               />
             </div>
             <div>
-              <label className="text-[10px] text-slate-400 mb-1 block">{t("otp.iconChar")}</label>
+              <label className="text-tiny text-slate-400 mb-1 block">{t("otp.iconChar")}</label>
               <input
                 value={form.customIcon}
                 onChange={(e) => set("customIcon", e.target.value)}
                 placeholder={t("otp.iconPh")}
-                className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+                className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
               />
             </div>
           </div>
@@ -943,11 +943,11 @@ function TokenForm({
           {!isSteam && !isYandex && !isMotp && (
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-[10px] text-slate-400 mb-1 block">{t("otp.algorithm")}</label>
+                <label className="text-tiny text-slate-400 mb-1 block">{t("otp.algorithm")}</label>
                 <select
                   value={form.algorithm}
                   onChange={(e) => set("algorithm", e.target.value)}
-                  className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+                  className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
                 >
                   <option value="SHA1">SHA1</option>
                   <option value="SHA256">SHA256</option>
@@ -955,11 +955,11 @@ function TokenForm({
                 </select>
               </div>
               <div>
-                <label className="text-[10px] text-slate-400 mb-1 block">{t("otp.digits")}</label>
+                <label className="text-tiny text-slate-400 mb-1 block">{t("otp.digits")}</label>
                 <select
                   value={form.digits}
                   onChange={(e) => set("digits", Number(e.target.value))}
-                  className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+                  className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
                 >
                   {[5, 6, 7, 8].map((d) => (
                     <option key={d} value={d}>{t("otp.digitsCount", { count: d })}</option>
@@ -971,45 +971,45 @@ function TokenForm({
 
           {isHotp ? (
             <div>
-              <label className="text-[10px] text-slate-400 mb-1 block">{t("otp.counter")}</label>
+              <label className="text-tiny text-slate-400 mb-1 block">{t("otp.counter")}</label>
               <input
                 type="number"
                 value={form.counter}
                 onChange={(e) => set("counter", Number(e.target.value))}
-                className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+                className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
               />
             </div>
           ) : !isSteam && !isYandex ? (
             <div>
-              <label className="text-[10px] text-slate-400 mb-1 block">{t("otp.period")}</label>
+              <label className="text-tiny text-slate-400 mb-1 block">{t("otp.period")}</label>
               <input
                 type="number"
                 value={form.period}
                 onChange={(e) => set("period", Number(e.target.value))}
-                className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+                className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
               />
             </div>
           ) : null}
 
           {(isMotp || isYandex) && (
             <div>
-              <label className="text-[10px] text-slate-400 mb-1 block">PIN</label>
+              <label className="text-tiny text-slate-400 mb-1 block">PIN</label>
               <input
                 value={form.pin}
                 onChange={(e) => set("pin", e.target.value)}
                 placeholder={isMotp ? t("otp.pinPh") : t("otp.pinPhShort")}
-                className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+                className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
               />
             </div>
           )}
         </div>
 
         <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} className="px-3 py-1.5 rounded-ctl text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer">{t("otp.cancel")}</button>
+          <button onClick={onClose} className="px-3 py-1.5 rounded-ctl text-caption text-slate-400 hover:bg-white/5 cursor-pointer">{t("otp.cancel")}</button>
           <button
             onClick={submit}
             disabled={busy}
-            className="px-3 py-1.5 rounded-ctl text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
+            className="px-3 py-1.5 rounded-ctl text-caption bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
           >
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {t("otp.save")}
           </button>
@@ -1066,7 +1066,7 @@ function CategoryModal({
             <h3 className="text-sm font-bold text-white">
               {mode === "add" ? t("otp.newCatTitle") : t("otp.renameCatTitle")}
             </h3>
-            <p className="text-[10px] text-slate-500">
+            <p className="text-tiny text-slate-500">
               {mode === "add" ? t("otp.catHintAdd") : t("otp.catHintRename")}
             </p>
           </div>
@@ -1084,20 +1084,20 @@ function CategoryModal({
           onChange={(e) => setName(e.target.value)}
           onKeyDown={onKey}
           placeholder={t("otp.catNamePh")}
-          className="w-full glass-input px-3 py-2.5 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-[var(--module-accent)]/60 placeholder:text-slate-600"
+          className="w-full glass-input px-3 py-2.5 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-[var(--module-accent)]/60 placeholder:text-slate-600"
         />
 
         <div className="flex justify-end gap-2 mt-4">
           <button
             onClick={onClose}
-            className="px-3 py-1.5 rounded-ctl text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer"
+            className="px-3 py-1.5 rounded-ctl text-caption text-slate-400 hover:bg-white/5 cursor-pointer"
           >
             {t("otp.cancel")}
           </button>
           <button
             onClick={submit}
             disabled={busy || !name.trim()}
-            className="px-4 py-1.5 rounded-ctl text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
+            className="px-4 py-1.5 rounded-ctl text-caption bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
           >
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {t("otp.save")}
           </button>
@@ -1142,7 +1142,7 @@ function ConfirmModal({
           </div>
           <div className="flex-1">
             <h3 className="text-sm font-bold text-white">{title}</h3>
-            <p className="text-[10px] text-slate-500">
+            <p className="text-tiny text-slate-500">
               {danger ? t("otp.confirmDanger") : t("otp.confirmNormal")}
             </p>
           </div>
@@ -1154,21 +1154,21 @@ function ConfirmModal({
           </button>
         </div>
 
-        <p className="text-xs text-slate-300 leading-relaxed mb-5">{message}</p>
+        <p className="text-body text-slate-300 leading-relaxed mb-5">{message}</p>
 
         <div className="flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="px-3 py-1.5 rounded-ctl text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer"
+            className="px-3 py-1.5 rounded-ctl text-caption text-slate-400 hover:bg-white/5 cursor-pointer"
           >
             {t("otp.cancel")}
           </button>
           <button
             onClick={onConfirm}
-            className={`px-4 py-1.5 rounded-ctl text-[11px] text-white font-semibold cursor-pointer hover:opacity-85 flex items-center gap-1 ${
+            className={`px-4 py-1.5 rounded-ctl text-caption text-white font-semibold cursor-pointer hover:opacity-85 flex items-center gap-1 ${
               danger
                 ? "bg-rose-600 hover:bg-rose-500"
-                : "bg-[var(--module-accent)] hover:opacity-85"
+                : "ui-btn-primary"
             }`}
           >
             <Trash2 className="w-3 h-3" /> {t("otp.delete")}

@@ -101,14 +101,14 @@ export function EqDialog({ eq, presets, onChange }: Props) {
             onChange={(e) => onChange({ ...eq, enabled: e.target.checked })}
             className="rounded border-white/10 bg-slate-800 text-[var(--module-accent)]"
           />
-          <span className="text-[12px] text-slate-200">{t("music.eqEnabled")}</span>
+          <span className="text-body text-slate-200">{t("music.eqEnabled")}</span>
         </label>
         <div className="flex items-center gap-2 ml-auto">
-          <span className="text-[11px] text-slate-400">{t("music.eqPreset")}</span>
+          <span className="text-caption text-slate-400">{t("music.eqPreset")}</span>
           <select
             value={eq.preset}
             onChange={(e) => applyPreset(e.target.value)}
-            className="glass-input px-2 h-7 text-[11px] cursor-pointer"
+            className="glass-input px-2 h-7 text-caption cursor-pointer"
           >
             {presets.map((p) => (
               <option key={p.id} value={p.id}>
@@ -128,7 +128,7 @@ export function EqDialog({ eq, presets, onChange }: Props) {
       <div className={`space-y-1.5 ${eq.enabled ? "" : "opacity-40 pointer-events-none"}`}>
         {BAND_FREQS.map((freq, index) => (
           <div key={freq} className="flex items-center gap-2">
-            <span className="w-10 text-[10px] text-slate-500 text-right font-mono">{bandLabel(freq)}</span>
+            <span className="w-10 text-tiny text-slate-500 text-right font-mono">{bandLabel(freq)}</span>
             <input
               type="range"
               min={-12}
@@ -140,7 +140,7 @@ export function EqDialog({ eq, presets, onChange }: Props) {
               className="flex-1 accent-[var(--module-accent)] cursor-pointer"
               title={t("music.eqBandHint")}
             />
-            <span className="w-12 text-[10px] font-mono text-slate-300 text-right">
+            <span className="w-12 text-tiny font-mono text-slate-300 text-right">
               {(eq.bands[index] ?? 0) > 0 ? "+" : ""}
               {(eq.bands[index] ?? 0).toFixed(1)}
             </span>
@@ -159,7 +159,7 @@ export function EqDialog({ eq, presets, onChange }: Props) {
             <Upload className="w-3 h-3" />
             {t("music.eqImport")}
           </SharedButton>
-          <span className="text-[10px] text-slate-500">{t("music.eqImportHint")}</span>
+          <span className="text-tiny text-slate-500">{t("music.eqImportHint")}</span>
         </div>
         {importOpen && (
           <div className="space-y-2">
@@ -168,7 +168,7 @@ export function EqDialog({ eq, presets, onChange }: Props) {
               onChange={(e) => setImportText(e.target.value)}
               placeholder={t("music.eqImportPlaceholder")}
               spellCheck={false}
-              className="w-full h-20 glass-input p-2 text-[10px] font-mono resize-y"
+              className="w-full h-20 glass-input p-2 text-tiny font-mono resize-y"
             />
             <div className="flex items-center gap-2 flex-wrap">
               <SharedButton
@@ -188,7 +188,7 @@ export function EqDialog({ eq, presets, onChange }: Props) {
                   void applyImport(picked.text);
                 }}
                 disabled={importing || builtins.length === 0}
-                className="glass-input px-2 h-7 text-[11px] cursor-pointer max-w-[180px]"
+                className="glass-input px-2 h-7 text-caption cursor-pointer max-w-[180px]"
                 title={t("music.eqBuiltinHint")}
               >
                 <option value="">{t("music.eqBuiltinPick")}</option>
@@ -198,10 +198,10 @@ export function EqDialog({ eq, presets, onChange }: Props) {
                   </option>
                 ))}
               </select>
-              {importStatus && <span className="text-[10px] text-slate-400">{importStatus}</span>}
+              {importStatus && <span className="text-tiny text-slate-400">{importStatus}</span>}
             </div>
             {builtins.length > 0 && (
-              <p className="text-[10px] text-slate-500 leading-snug">
+              <p className="text-tiny text-slate-500 leading-snug">
                 {t("music.eqBuiltinHint")}
               </p>
             )}
@@ -212,7 +212,7 @@ export function EqDialog({ eq, presets, onChange }: Props) {
       {/* 总增益 / 声道平衡 */}
       <div className={`space-y-2 pt-2 border-t border-white/5 ${eq.enabled ? "" : "opacity-40 pointer-events-none"}`}>
         <div className="flex items-center gap-2">
-          <span className="w-16 text-[11px] text-slate-400">{t("music.eqGain")}</span>
+          <span className="w-16 text-caption text-slate-400">{t("music.eqGain")}</span>
           <input
             type="range"
             min={-12}
@@ -222,14 +222,14 @@ export function EqDialog({ eq, presets, onChange }: Props) {
             onChange={(e) => onChange({ ...eq, gain_db: Number(e.target.value) })}
             className="flex-1 accent-[var(--module-accent)] cursor-pointer"
           />
-          <span className="w-12 text-[10px] font-mono text-slate-300 text-right">
+          <span className="w-12 text-tiny font-mono text-slate-300 text-right">
             {eq.gain_db > 0 ? "+" : ""}
             {eq.gain_db.toFixed(1)}
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="w-16 text-[11px] text-slate-400">{t("music.eqBalance")}</span>
-          <span className="text-[10px] text-slate-500">L</span>
+          <span className="w-16 text-caption text-slate-400">{t("music.eqBalance")}</span>
+          <span className="text-tiny text-slate-500">L</span>
           <input
             type="range"
             min={-1}
@@ -240,14 +240,14 @@ export function EqDialog({ eq, presets, onChange }: Props) {
             onDoubleClick={() => onChange({ ...eq, balance: 0 })}
             className="flex-1 accent-[var(--module-accent)] cursor-pointer"
           />
-          <span className="text-[10px] text-slate-500">R</span>
-          <span className="w-12 text-[10px] font-mono text-slate-300 text-right">
+          <span className="text-tiny text-slate-500">R</span>
+          <span className="w-12 text-tiny font-mono text-slate-300 text-right">
             {eq.balance === 0 ? t("music.eqCenter") : eq.balance.toFixed(2)}
           </span>
         </div>
       </div>
 
-      <p className="text-[10px] text-slate-500 leading-snug">{t("music.eqHint")}</p>
+      <p className="text-tiny text-slate-500 leading-snug">{t("music.eqHint")}</p>
     </div>
   );
 }

@@ -42,10 +42,10 @@ export function EndpointRow({ ep, selected, onSelect, onDelete, onToggleFavorite
           className={`flex items-center gap-0.5 shrink-0 ${selected ? "text-[var(--module-accent)]" : "text-slate-500 group-hover:text-slate-400"}`}
         >
           <Link2 className="w-2.5 h-2.5" />
-          {tplCount > 1 && <span className="text-[9px] tabular-nums leading-none">{tplCount}</span>}
+          {tplCount > 1 && <span className="text-micro tabular-nums leading-none">{tplCount}</span>}
         </span>
       )}
-      <span className="flex-1 text-xs text-slate-300 truncate">{ep.name}</span>
+      <span className="flex-1 text-body text-slate-300 truncate">{ep.name}</span>
       <button
         onClick={(e) => { e.stopPropagation(); onDelete(); }}
         className="hidden group-hover:block p-0.5 text-slate-600 hover:text-rose-400 cursor-pointer"
@@ -85,16 +85,16 @@ export function UnitTestsPanel({ endpointId, tests, setTests, results, running, 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <button onClick={addTest} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
+        <button onClick={addTest} className="flex items-center gap-1 text-body px-2.5 py-1.5 rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
           <Plus className="w-3.5 h-3.5" /> {t("apisubs.addAssertGroup")}
         </button>
-        <button onClick={saveAll} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
+        <button onClick={saveAll} className="flex items-center gap-1 text-body px-2.5 py-1.5 rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
           <Save className="w-3.5 h-3.5" /> {t("common.save")}
         </button>
         <button
           onClick={onRun}
           disabled={running || tests.length === 0}
-          className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-md font-semibold text-white cursor-pointer disabled:opacity-50"
+          className="flex items-center gap-1 text-body px-3 py-1.5 rounded-md font-semibold text-white cursor-pointer disabled:opacity-50"
           style={{ background: "var(--module-accent)" }}
         >
           {running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />} {t("apisubs.runAll")}
@@ -108,10 +108,10 @@ export function UnitTestsPanel({ endpointId, tests, setTests, results, running, 
               <input
                 value={ut.name}
                 onChange={(e) => setTests(tests.map((x, i) => (i === ti ? { ...x, name: e.target.value } : x)))}
-                className="flex-1 bg-transparent text-xs font-semibold text-slate-100 focus:outline-none border-b border-transparent focus:border-white/20"
+                className="flex-1 bg-transparent text-body font-semibold text-slate-100 focus:outline-none border-b border-transparent focus:border-white/20"
               />
               {result && (
-                <span className={`text-[10px] px-2 py-0.5 rounded-full border ${result.pass ? "text-emerald-300 border-emerald-500/40" : "text-rose-300 border-rose-500/40"}`}>
+                <span className={`text-tiny px-2 py-0.5 rounded-full border ${result.pass ? "text-emerald-300 border-emerald-500/40" : "text-rose-300 border-rose-500/40"}`}>
                   {result.pass ? t("apisubs.pass") : t("apisubs.fail")} · {fmtTime(result.time_ms)} · HTTP {result.status}
                 </span>
               )}
@@ -123,7 +123,7 @@ export function UnitTestsPanel({ endpointId, tests, setTests, results, running, 
                   <select
                     value={a.type}
                     onChange={(e) => setTests(tests.map((x, i) => (i === ti ? { ...x, assertions: x.assertions.map((y, j) => (j === ai ? { ...y, type: e.target.value, op: ASSERTION_TYPES.find((s) => s.value === e.target.value)?.ops?.[0]?.value ?? y.op } : y)) } : x)))}
-                    className="bg-black/30 border border-white/10 rounded-md px-1.5 py-1 text-[11px] text-slate-200 cursor-pointer"
+                    className="bg-black/30 border border-white/10 rounded-md px-1.5 py-1 text-caption text-slate-200 cursor-pointer"
                   >
                     {ASSERTION_TYPES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
                   </select>
@@ -132,7 +132,7 @@ export function UnitTestsPanel({ endpointId, tests, setTests, results, running, 
                       value={a.path ?? ""}
                       onChange={(e) => setTests(tests.map((x, i) => (i === ti ? { ...x, assertions: x.assertions.map((y, j) => (j === ai ? { ...y, path: e.target.value } : y)) } : x)))}
                       placeholder="data.items[0].id"
-                      className="w-36 bg-black/30 border border-white/10 rounded-md px-1.5 py-1 text-[11px] font-mono text-slate-200"
+                      className="w-36 bg-black/30 border border-white/10 rounded-md px-1.5 py-1 text-caption font-mono text-slate-200"
                     />
                   )}
                   {(a.type === "json_path" || a.type === "body_contains" || a.type === "body_not_contains") && (
@@ -140,7 +140,7 @@ export function UnitTestsPanel({ endpointId, tests, setTests, results, running, 
                       value={a.type === "body_contains" || a.type === "body_not_contains" ? String(a.expected ?? "") : a.type === "json_path" ? String(a.expected ?? "") : ""}
                       onChange={(e) => setTests(tests.map((x, i) => (i === ti ? { ...x, assertions: x.assertions.map((y, j) => (j === ai ? { ...y, expected: e.target.value } : y)) } : x)))}
                       placeholder={a.type === "body_contains" ? t("apisubs.expectedContains") : t("apisubs.expectedValue")}
-                      className="flex-1 bg-black/30 border border-white/10 rounded-md px-1.5 py-1 text-[11px] text-slate-200"
+                      className="flex-1 bg-black/30 border border-white/10 rounded-md px-1.5 py-1 text-caption text-slate-200"
                     />
                   )}
                   {(a.type === "status_eq" || a.type === "status_lt" || a.type === "status_gt" || a.type === "time_lt_ms") && (
@@ -148,7 +148,7 @@ export function UnitTestsPanel({ endpointId, tests, setTests, results, running, 
                       type="number"
                       value={a.type === "time_lt_ms" ? String(a.expected ?? 1000) : String(a.expected ?? 200)}
                       onChange={(e) => setTests(tests.map((x, i) => (i === ti ? { ...x, assertions: x.assertions.map((y, j) => (j === ai ? { ...y, expected: Number(e.target.value) } : y)) } : x)))}
-                      className="w-24 bg-black/30 border border-white/10 rounded-md px-1.5 py-1 text-[11px] text-slate-200"
+                      className="w-24 bg-black/30 border border-white/10 rounded-md px-1.5 py-1 text-caption text-slate-200"
                     />
                   )}
                   <button
@@ -161,7 +161,7 @@ export function UnitTestsPanel({ endpointId, tests, setTests, results, running, 
               ))}
               <button
                 onClick={() => setTests(tests.map((x, i) => (i === ti ? { ...x, assertions: [...x.assertions, { type: "status_eq", expected: 200 }] } : x)))}
-                className="text-[11px] text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
+                className="text-caption text-slate-500 hover:text-[var(--module-accent)] cursor-pointer"
               >
                 + {t("apisubs.addAssertion")}
               </button>
@@ -169,7 +169,7 @@ export function UnitTestsPanel({ endpointId, tests, setTests, results, running, 
             {result && (
               <div className="mt-2 space-y-0.5 border-t border-white/5 pt-2">
                 {result.results.map((r, ri) => (
-                  <div key={ri} className="flex items-center gap-1.5 text-[10px]">
+                  <div key={ri} className="flex items-center gap-1.5 text-tiny">
                     <span className={`w-1.5 h-1.5 rounded-full ${r.pass ? "bg-emerald-400" : "bg-rose-400"}`} />
                     <span className="text-slate-400">{r.assertion}</span>
                     <span className="text-slate-500 ml-auto truncate">{t("apisubs.actual", { v: r.actual })}</span>
@@ -180,7 +180,7 @@ export function UnitTestsPanel({ endpointId, tests, setTests, results, running, 
           </div>
         );
       })}
-      {tests.length === 0 && <div className="text-[11px] text-slate-500">{t("apisubs.noTests")}</div>}
+      {tests.length === 0 && <div className="text-caption text-slate-500">{t("apisubs.noTests")}</div>}
     </div>
   );
 }
@@ -198,22 +198,22 @@ export function DocsPanel({ draft, onSave }: { draft: ApiEndpoint; onSave: (md: 
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <button onClick={() => setEdit(!edit)} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
+        <button onClick={() => setEdit(!edit)} className="flex items-center gap-1 text-body px-2.5 py-1.5 rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
           <Pencil className="w-3.5 h-3.5" /> {edit ? t("apisubs.preview") : t("apisubs.edit")}
         </button>
         {edit && (
-          <button onClick={save} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md font-semibold text-white cursor-pointer" style={{ background: "var(--module-accent)" }}>
+          <button onClick={save} className="flex items-center gap-1 text-body px-2.5 py-1.5 rounded-md font-semibold text-white cursor-pointer" style={{ background: "var(--module-accent)" }}>
             <Save className="w-3.5 h-3.5" /> {t("common.save")}
           </button>
         )}
-        <span className="text-[10px] text-slate-500">{t("apisubs.mdHint")}</span>
+        <span className="text-tiny text-slate-500">{t("apisubs.mdHint")}</span>
       </div>
       {edit ? (
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           rows={16}
-          className="w-full bg-black/30 border border-white/10 rounded-ctl px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60"
+          className="w-full bg-black/30 border border-white/10 rounded-ctl px-3 py-2 text-body font-mono text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60"
           placeholder={t("apisubs.docPh")}
         />
       ) : (
@@ -221,7 +221,7 @@ export function DocsPanel({ draft, onSave }: { draft: ApiEndpoint; onSave: (md: 
           {draft.docs_md ? (
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{draft.docs_md}</ReactMarkdown>
           ) : (
-            <div className="text-[11px] text-slate-500">{t("apisubs.noDocs")}</div>
+            <div className="text-caption text-slate-500">{t("apisubs.noDocs")}</div>
           )}
         </div>
       )}
@@ -334,65 +334,65 @@ export function ImportModal({ projectId, modules, onClose, onImported }: {
             <button
               key={key}
               onClick={() => setKind(key)}
-              className={`px-3 py-1.5 text-xs rounded-md cursor-pointer ${kind === key ? "bg-white/10 text-white" : "text-slate-500 hover:text-slate-300"}`}
+              className={`px-3 py-1.5 text-body rounded-md cursor-pointer ${kind === key ? "bg-white/10 text-white" : "text-slate-500 hover:text-slate-300"}`}
             >
               {label}
             </button>
           ))}
         </div>
         <label className="block">
-          <span className="text-[10px] text-slate-500">{t("apisubs.importToModule")}</span>
-          <select value={targetModule} onChange={(e) => setTargetModule(e.target.value)} className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200 cursor-pointer">
+          <span className="text-tiny text-slate-500">{t("apisubs.importToModule")}</span>
+          <select value={targetModule} onChange={(e) => setTargetModule(e.target.value)} className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200 cursor-pointer">
             <option value="">{t("apisubs.autoCreate")}</option>
             {modules.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
         </label>
         {kind === "postman" && (
           <label className="block">
-            <span className="text-[10px] text-slate-500">{t("apisubs.postmanDesc")}</span>
+            <span className="text-tiny text-slate-500">{t("apisubs.postmanDesc")}</span>
             <div className="flex gap-1.5 mb-1">
-              <button onClick={pickPostmanFile} className="px-2.5 py-1 text-[11px] rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">{t("apisubs.chooseFile")}</button>
+              <button onClick={pickPostmanFile} className="px-2.5 py-1 text-caption rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">{t("apisubs.chooseFile")}</button>
             </div>
             <textarea
               value={postmanJson}
               onChange={(e) => setPostmanJson(e.target.value)}
               rows={9}
               placeholder='{"info":{"name":"..."},"variable":[...],"item":[...]}'
-              className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs font-mono text-slate-200"
+              className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body font-mono text-slate-200"
             />
           </label>
         )}
         {kind === "swagger" && (
           <label className="block">
-            <span className="text-[10px] text-slate-500">{t("apisubs.swaggerDesc")}</span>
+            <span className="text-tiny text-slate-500">{t("apisubs.swaggerDesc")}</span>
             <input
               value={swaggerSource}
               onChange={(e) => setSwaggerSource(e.target.value)}
               placeholder={t("apisubs.importPh")}
-              className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200"
+              className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200"
             />
           </label>
         )}
         {kind === "framework" && (
           <div className="space-y-2">
             <label className="block">
-              <span className="text-[10px] text-slate-500">{t("apisubs.frameworkType")}</span>
-              <select value={framework} onChange={(e) => setFramework(e.target.value)} className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200 cursor-pointer">
+              <span className="text-tiny text-slate-500">{t("apisubs.frameworkType")}</span>
+              <select value={framework} onChange={(e) => setFramework(e.target.value)} className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200 cursor-pointer">
                 <option value="nest">{t("apisubs.nestOpt")}</option>
                 <option value="nuxt">{t("apisubs.nuxtOpt")}</option>
                 <option value="spring">{t("apisubs.springOpt")}</option>
               </select>
             </label>
             <label className="block">
-              <span className="text-[10px] text-slate-500">{t("apisubs.projectDir")}</span>
+              <span className="text-tiny text-slate-500">{t("apisubs.projectDir")}</span>
               <div className="flex gap-1.5">
                 <input
                   value={frameworkDir}
                   onChange={(e) => setFrameworkDir(e.target.value)}
                   placeholder={t("apisubs.chooseOrInputDir")}
-                  className="flex-1 bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200"
+                  className="flex-1 bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200"
                 />
-                <button onClick={pickDir} className="px-2.5 py-1.5 text-xs rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">{t("apisubs.choose")}</button>
+                <button onClick={pickDir} className="px-2.5 py-1.5 text-body rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">{t("apisubs.choose")}</button>
               </div>
             </label>
           </div>
@@ -400,20 +400,20 @@ export function ImportModal({ projectId, modules, onClose, onImported }: {
         {kind === "ai" && (
           <div className="space-y-2">
             <label className="block">
-              <span className="text-[10px] text-slate-500">{t("apisubs.aiDirDesc")}</span>
+              <span className="text-tiny text-slate-500">{t("apisubs.aiDirDesc")}</span>
               <div className="flex gap-1.5">
                 <input
                   value={aiDir}
                   onChange={(e) => setAiDir(e.target.value)}
                   placeholder={t("apisubs.chooseOrInputDir")}
-                  className="flex-1 bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200"
+                  className="flex-1 bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200"
                 />
-                <button onClick={pickAiDir} className="px-2.5 py-1.5 text-xs rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">{t("apisubs.choose")}</button>
+                <button onClick={pickAiDir} className="px-2.5 py-1.5 text-body rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">{t("apisubs.choose")}</button>
               </div>
             </label>
             <div className="grid grid-cols-2 gap-2">
               <label className="block">
-                <span className="text-[10px] text-slate-500">{t("apisubs.aiProvider")}</span>
+                <span className="text-tiny text-slate-500">{t("apisubs.aiProvider")}</span>
                 <select
                   value={aiProviderId}
                   onChange={(e) => {
@@ -421,17 +421,17 @@ export function ImportModal({ projectId, modules, onClose, onImported }: {
                     setAiProviderId(e.target.value);
                     setAiModelId(p?.models[0]?.id ?? p?.active_model_id ?? "");
                   }}
-                  className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200 cursor-pointer"
+                  className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200 cursor-pointer"
                 >
                   {aiProviders.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </label>
               <label className="block">
-                <span className="text-[10px] text-slate-500">{t("apisubs.model")}</span>
+                <span className="text-tiny text-slate-500">{t("apisubs.model")}</span>
                 <select
                   value={aiModelId}
                   onChange={(e) => setAiModelId(e.target.value)}
-                  className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-xs text-slate-200 cursor-pointer"
+                  className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200 cursor-pointer"
                 >
                   {(aiProviders.find((p) => p.id === aiProviderId)?.models ?? []).map((m) => (
                     <option key={m.id} value={m.id}>{m.name}</option>
@@ -439,19 +439,19 @@ export function ImportModal({ projectId, modules, onClose, onImported }: {
                 </select>
               </label>
             </div>
-            <div className="text-[10px] text-slate-500 space-y-0.5">
+            <div className="text-tiny text-slate-500 space-y-0.5">
               <p>{t("apisubs.importAiHint")}</p>
               <p>{t("apisubs.providerHint")}</p>
             </div>
           </div>
         )}
-        {msg && <div className={`text-[11px] ${msgOk ? "text-emerald-400" : "text-rose-400"}`}>{msg}</div>}
+        {msg && <div className={`text-caption ${msgOk ? "text-emerald-400" : "text-rose-400"}`}>{msg}</div>}
         <div className="flex justify-end gap-2 pt-1">
-          <button onClick={onClose} className="px-3 py-1.5 text-xs rounded-ctl bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">{t("common.close")}</button>
+          <button onClick={onClose} className="px-3 py-1.5 text-body rounded-ctl bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">{t("common.close")}</button>
           <button
             onClick={doImport}
             disabled={busy || (kind === "postman" && !postmanJson.trim()) || (kind === "swagger" && !swaggerSource.trim()) || (kind === "framework" && !frameworkDir.trim()) || (kind === "ai" && (!aiDir.trim() || !aiProviderId))}
-            className="px-4 py-1.5 text-xs rounded-ctl font-semibold text-white cursor-pointer disabled:opacity-50"
+            className="px-4 py-1.5 text-body rounded-ctl font-semibold text-white cursor-pointer disabled:opacity-50"
             style={{ background: "var(--module-accent)" }}
           >
             {busy ? (kind === "ai" ? t("apisubs.aiAnalyzing") : t("apisubs.importing")) : (kind === "ai" ? t("apisubs.aiAnalyzeImport") : t("apisubs.import"))}

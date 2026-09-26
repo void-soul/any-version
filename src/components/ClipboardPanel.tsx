@@ -173,8 +173,8 @@ function PreviewModal({
               {item.kind === "image" ? <ImageIcon className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
             </div>
             <div className="min-w-0">
-              <h4 className="text-[13px] font-bold text-white">{item.kind === "image" ? t("clip.imagePreview") : t("clip.textPreview")}</h4>
-              <p className="text-[10px] text-slate-500 truncate flex items-center gap-2 mt-0.5">
+              <h4 className="text-title font-bold text-white">{item.kind === "image" ? t("clip.imagePreview") : t("clip.textPreview")}</h4>
+              <p className="text-tiny text-slate-500 truncate flex items-center gap-2 mt-0.5">
                 <span className="inline-flex items-center gap-1 min-w-0">
                   <AppWindow className="w-2.5 h-2.5 flex-shrink-0" />
                   <span className="truncate">{item.sourceApp || t("clip.unknownSource")}</span>
@@ -188,7 +188,7 @@ function PreviewModal({
           </div>
           {item.formats && item.formats.length > 0 && (
             <span
-              className="hidden lg:inline text-[9px] text-slate-500 truncate max-w-[240px] flex-shrink-0"
+              className="hidden lg:inline text-micro text-slate-500 truncate max-w-[240px] flex-shrink-0"
               title={item.formats.join("\n")}
             >
               {item.formats.join(" · ")}
@@ -206,7 +206,7 @@ function PreviewModal({
         {/* 内容区 */}
         {item.kind === "text" ? (
           <div className="p-4 overflow-y-auto flex-1 min-h-0 bg-black/20">
-            <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-slate-200 select-text">
+            <pre className="whitespace-pre-wrap break-words font-mono text-body leading-relaxed text-slate-200 select-text">
               {item.content || t("clip.emptyContent")}
             </pre>
           </div>
@@ -216,7 +216,7 @@ function PreviewModal({
 
         {/* 底部操作 */}
         <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-t border-white/10 bg-white/[0.02] flex-shrink-0">
-          <div className="text-[10px] text-slate-500 flex items-center gap-3 min-w-0">
+          <div className="text-tiny text-slate-500 flex items-center gap-3 min-w-0">
             {item.kind === "image" ? (
               <>
                 {item.width > 0 && item.height > 0 && <span>{item.width}×{item.height}</span>}
@@ -231,14 +231,14 @@ function PreviewModal({
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={onCopy}
-              className="px-3 h-8 rounded-ctl bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] text-slate-300 transition-all cursor-pointer flex items-center gap-1.5"
+              className="px-3 h-8 rounded-ctl ui-btn text-caption text-slate-300 transition-all cursor-pointer flex items-center gap-1.5"
               title={t("clip.copyTip")}
             >
               <Copy className="w-3 h-3" /> {t("clip.copy")}
             </button>
             <button
               onClick={onPaste}
-              className="px-3 h-8 rounded-ctl bg-[var(--module-accent)] hover:opacity-85 text-[11px] font-semibold text-white transition-all cursor-pointer flex items-center gap-1.5"
+              className="px-3 h-8 rounded-ctl ui-btn-primary text-caption font-semibold text-white transition-all cursor-pointer flex items-center gap-1.5"
               title={t("clip.copyPasteTip")}
             >
               <ClipboardPaste className="w-3 h-3" /> {t("clip.copyPaste")}
@@ -292,14 +292,14 @@ function Row({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 min-w-0">
           <p
-            className="text-[12px] text-slate-200 truncate font-mono"
+            className="text-body text-slate-200 truncate font-mono"
             title={item.kind === "text" ? item.content || undefined : undefined}
           >
             {item.kind === "text" ? item.content : item.width && item.height ? t("clip.imageSize", { w: item.width, h: item.height }) : t("clip.imageContent")}
           </p>
           {item.formats && item.formats.length > 0 && (
             <span
-              className="text-[9px] text-slate-500 whitespace-nowrap truncate max-w-[200px] flex-shrink-0 hidden xl:inline"
+              className="text-micro text-slate-500 whitespace-nowrap truncate max-w-[200px] flex-shrink-0 hidden xl:inline"
               title={item.formats.join("\n")}
             >
               {item.formats.join(" · ")}
@@ -309,7 +309,7 @@ function Row({
       </div>
 
       {/* 元信息 */}
-      <div className="flex items-center gap-2 text-[10px] text-slate-500 whitespace-nowrap flex-shrink-0 hidden md:flex">
+      <div className="flex items-center gap-2 text-tiny text-slate-500 whitespace-nowrap flex-shrink-0 hidden md:flex">
         <span className="inline-flex items-center gap-1">
           <AppWindow className="w-3 h-3" />
           {item.sourceApp || t("clip.unknownSource")}
@@ -605,7 +605,7 @@ export default function ClipboardPanel() {
             <h3 className="text-[14px] font-bold text-white flex items-center gap-2">
               {t("clip.title")}
               <span
-                className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border ${
+                className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-tiny font-medium border ${
                   settings?.enabled
                     ? "bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] text-[var(--module-accent)] border-[var(--module-accent-ring)]"
                     : "bg-white/5 text-slate-400 border-white/10"
@@ -617,7 +617,7 @@ export default function ClipboardPanel() {
                 {settings?.enabled ? t("clip.monitoring") : t("clip.paused")}
               </span>
             </h3>
-            <p className="text-[10px] text-slate-400 mt-0.5 truncate">
+            <p className="text-tiny text-slate-400 mt-0.5 truncate">
               {t("clip.summary", { n: total })}
             </p>
           </div>
@@ -625,13 +625,13 @@ export default function ClipboardPanel() {
         <div className="flex items-center gap-2 flex-shrink-0">
           <button
             onClick={clearHistory}
-            className="px-2.5 py-1.5 rounded-ctl bg-white/5 hover:bg-red-500/15 border border-white/10 text-[10px] text-slate-300 hover:text-red-300 transition-all cursor-pointer flex items-center gap-1.5"            title={t("clip.clearTip")}
+            className="px-2.5 py-1.5 rounded-ctl bg-white/5 hover:bg-red-500/15 border border-white/10 text-tiny text-slate-300 hover:text-red-300 transition-all cursor-pointer flex items-center gap-1.5"            title={t("clip.clearTip")}
             >
             <Eraser className="w-3 h-3" /> {t("clip.clear")}
           </button>
           <button
             onClick={() => setShowSettings(true)}
-            className="px-2.5 py-1.5 rounded-ctl bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] text-slate-300 transition-all cursor-pointer flex items-center gap-1.5"
+            className="px-2.5 py-1.5 rounded-ctl ui-btn text-tiny text-slate-300 transition-all cursor-pointer flex items-center gap-1.5"
             title={t("clip.settingsTip")}
           >
             <Settings2 className="w-3 h-3" /> {t("clip.settings")}
@@ -780,7 +780,7 @@ export default function ClipboardPanel() {
             {/* 监控开关 */}
             <div className="flex items-center justify-between rounded-card bg-white/[0.03] border border-white/10 p-3">
               <div>
-                <p className="text-[12px] text-slate-200 font-medium">{t("clip.monitorOn")}</p>
+                <p className="text-body text-slate-200 font-medium">{t("clip.monitorOn")}</p>
                 <p className="text-[10.5px] text-slate-500 mt-0.5">{t("clip.monitorHint")}</p>
               </div>
               <button
@@ -798,18 +798,18 @@ export default function ClipboardPanel() {
             {/* 数字设置 */}
             <div className="grid grid-cols-2 gap-3">
               <label className="block">
-                <span className="text-[11px] text-slate-400">{t("clip.historyCap")}</span>
+                <span className="text-caption text-slate-400">{t("clip.historyCap")}</span>
                 <input
                   type="number"
                   min={50}
                   max={10000}
                   value={settings.maxItems}
                   onChange={(e) => setSettings({ ...settings, maxItems: Math.max(50, Math.min(10000, Number(e.target.value) || 1000)) })}
-                  className="mt-1 w-full h-9 px-3 rounded-ctl bg-white/5 border border-white/10 text-[12px] text-slate-200 outline-none focus:border-[var(--module-accent-ring)]"
+                  className="mt-1 w-full h-9 px-3 rounded-ctl bg-white/5 border border-white/10 text-body text-slate-200 outline-none focus:border-[var(--module-accent-ring)]"
                 />
               </label>
               <div className="flex items-end pb-1">
-                <span className="text-[10px] text-slate-500">{t("clip.historyHint")}</span>
+                <span className="text-tiny text-slate-500">{t("clip.historyHint")}</span>
               </div>
             </div>
 
@@ -821,7 +821,7 @@ export default function ClipboardPanel() {
             ]).map((opt) => (
               <div key={opt.k} className="flex items-center justify-between rounded-card bg-white/[0.03] border border-white/10 p-3">
                 <div>
-                  <p className="text-[12px] text-slate-200 font-medium">{opt.t}</p>
+                  <p className="text-body text-slate-200 font-medium">{opt.t}</p>
                   <p className="text-[10.5px] text-slate-500 mt-0.5">{opt.d}</p>
                 </div>
                 <button
@@ -838,12 +838,12 @@ export default function ClipboardPanel() {
 
             {/* 忽略规则（按来源程序） */}
             <div>
-              <p className="text-[12px] text-slate-200 font-medium mb-2">忽略规则（按来源程序）</p>
+              <p className="text-body text-slate-200 font-medium mb-2">忽略规则（按来源程序）</p>
               <p className="text-[10.5px] text-slate-500 mb-2">
                 来自这些程序（如 password.exe、winscp.exe）的复制内容将不会被记录。
               </p>
               <div className="flex flex-wrap gap-1.5 mb-2">
-                {ignoredApps.length === 0 && <span className="text-[11px] text-slate-600">暂无忽略规则</span>}
+                {ignoredApps.length === 0 && <span className="text-caption text-slate-600">暂无忽略规则</span>}
                 {ignoredApps.map((a) => (
                   <span key={a} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-[10.5px] text-slate-300">
                     {a}
@@ -859,11 +859,11 @@ export default function ClipboardPanel() {
                   onChange={(e) => setNewApp(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && addIgnoredApp()}
                   placeholder="输入程序名，如 chrome.exe"
-                  className="flex-1 h-9 px-3 rounded-ctl bg-white/5 border border-white/10 text-[12px] text-slate-200 outline-none focus:border-[var(--module-accent-ring)]"
+                  className="flex-1 h-9 px-3 rounded-ctl bg-white/5 border border-white/10 text-body text-slate-200 outline-none focus:border-[var(--module-accent-ring)]"
                 />
                 <button
                   onClick={addIgnoredApp}
-                  className="px-3 h-9 rounded-ctl bg-[var(--module-accent)] hover:opacity-85 text-[11px] font-semibold text-white transition-all cursor-pointer flex items-center gap-1"
+                  className="px-3 h-9 rounded-ctl ui-btn-primary text-caption font-semibold text-white transition-all cursor-pointer flex items-center gap-1"
                 >
                   <Plus className="w-3.5 h-3.5" /> 添加
                 </button>

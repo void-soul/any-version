@@ -49,7 +49,7 @@ export function ConfirmDialog({
         </>
       }
     >
-      <div className="text-[12px] text-slate-400 leading-relaxed">{desc}</div>
+      <div className="text-body text-slate-400 leading-relaxed">{desc}</div>
     </SharedModal>
   );
 }
