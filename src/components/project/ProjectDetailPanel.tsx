@@ -166,6 +166,9 @@ export default function ProjectDetailPanel({
   const [isAdmin, setIsAdmin] = useState(true);
   const [showMenuConfig, setShowMenuConfig] = useState(false);
   const [localDelegation, setLocalDelegation] = useState<ProjectDelegation | null>(null);
+  // 开启托管时一并决定的托盘选项（写入 project_menu_configs，之后也能在托盘配置里改）
+  const [trayShowVersion, setTrayShowVersion] = useState(true);
+  const [trayShowService, setTrayShowService] = useState(true);
   const [autoStartServices, setAutoStartServices] = useState<string[]>([]);
   // 统一确认弹窗请求（替代原生 window.confirm）
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
@@ -478,6 +481,9 @@ export default function ProjectDetailPanel({
       manage_optional_tools: def.package_managers?.filter(p => !p.built_in).map(p => p.id) || [],
     };
     patch(pid, { isSimpleManage: false });
+    // 托盘默认沿用「未配置即显示」的后端语义（is_none_or → true）
+    setTrayShowVersion(true);
+    setTrayShowService(true);
     try {
       const preview = await invoke<ManagePreview>("project_preview_manage", { id: pid, delegation: initialDelegation });
       setLocalDelegation(initialDelegation);
@@ -504,6 +510,12 @@ export default function ProjectDetailPanel({
     patch(pid, { managing: true });
     try {
       await invoke("project_manage", { id: pid, delegation: localDelegation });
+      // 顺手落托盘选项：否则开完托管还要再进「托盘配置」勾一遍
+      await invoke("update_project_menu_config", {
+        id: pid,
+        showVersion: trayShowVersion,
+        showService: trayShowService,
+      });
       patch(pid, { showManagePreview: false, managePreview: null, managing: false });
       await refreshSingle(pid);
     } catch (e: unknown) {
@@ -1334,6 +1346,40 @@ export default function ProjectDetailPanel({
                         </label>
                       </div>
                     ))}
+
+                    {/* 9. 托盘显示（开托管时就定好，省得再进「托盘配置」勾一遍） */}
+                    <div className="col-span-2 grid grid-cols-2 gap-3">
+                      <div className="p-2 bg-black/25 border border-white/5 rounded-lg flex items-center">
+                        <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
+                          <input
+                            type="checkbox"
+                            className="rounded border-white/10 bg-slate-800 text-[var(--module-accent)] focus:ring-[var(--module-accent)] focus:ring-offset-0"
+                            checked={trayShowVersion}
+                            onChange={(e) => setTrayShowVersion(e.target.checked)}
+                          />
+                          <div className="flex flex-col">
+                            <span>{t("projdetail.showInTray")}</span>
+                            <span className="text-[9px] text-slate-400 font-normal">{t("projdetail.showInTrayDesc")}</span>
+                          </div>
+                        </label>
+                      </div>
+                      {(def?.category === "service" || def?.is_service) && (
+                        <div className="p-2 bg-black/25 border border-white/5 rounded-lg flex items-center">
+                          <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
+                            <input
+                              type="checkbox"
+                              className="rounded border-white/10 bg-slate-800 text-[var(--module-accent)] focus:ring-[var(--module-accent)] focus:ring-offset-0"
+                              checked={trayShowService}
+                              onChange={(e) => setTrayShowService(e.target.checked)}
+                            />
+                            <div className="flex flex-col">
+                              <span>{t("projdetail.showServiceControl")}</span>
+                              <span className="text-[9px] text-slate-400 font-normal">{t("projdetail.showServiceInTrayDesc")}</span>
+                            </div>
+                          </label>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
