@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import type { AiConfig } from "../ai/types";
 import { AiImportResult, DocumentFull, MindmapDocument, MindmapFolder, MindmapLink, MindmapNode, MindmapSticker, PositionInput, kindColor, mmApi } from "./types";
+import { isLayoutDir, layoutTree, type LayoutDir } from "./layout";
 import { moduleAccent } from "../../utils/theme";
 import { VEX_CYBER_CYAN } from "../../utils/brand";
 import { useEventBufferSnapshot } from "../../utils/eventBuffer";
@@ -354,8 +355,7 @@ function ConfirmModal({ title, message, accent, confirmText = "mindmap.confirmDe
 
 // ════════════ 自动布局 ════════════
 
-/** 布局方向：lr=左→右（默认，根在左） rl=右→左 tb=上→下 bt=下→上 */
-type LayoutDir = "lr" | "rl" | "tb" | "bt";
+/** 布局方向按钮组的文案 key（方向与紧凑排布的实现都在 ./layout） */
 const LAYOUT_DIR_KEYS: Record<LayoutDir, string> = { lr: "mindmap.dirLr", rl: "mindmap.dirRl", tb: "mindmap.dirTb", bt: "mindmap.dirBt" };
 /** 布局方向按钮组的图标：下拉框改成按钮组后语义由图标 + tooltip 承载（写法同 DOC_SOURCE_ICONS） */
 const LAYOUT_DIR_ICONS: Record<LayoutDir, (cls: string) => React.ReactNode> = {
@@ -364,53 +364,6 @@ const LAYOUT_DIR_ICONS: Record<LayoutDir, (cls: string) => React.ReactNode> = {
   tb: (c) => <ArrowDown className={c} />,
   bt: (c) => <ArrowUp className={c} />,
 };
-const isLayoutDir = (v: string): v is LayoutDir => v === "lr" || v === "rl" || v === "tb" || v === "bt";
-
-function layoutTree(nodes: MindmapNode[], dir: LayoutDir = "lr"): Map<string, { x: number; y: number }> {
-  const byId = new Map(nodes.map((n) => [n.id, n]));
-  const children = new Map<string, string[]>();
-  const roots: string[] = [];
-  for (const n of nodes) {
-    if (n.parentId && byId.has(n.parentId) && n.parentId !== n.id) {
-      const l = children.get(n.parentId) ?? []; l.push(n.id); children.set(n.parentId, l);
-    } else { roots.push(n.id); }
-  }
-  const depth = new Map<string, number>();
-  const order: string[] = [];
-  // 带 visited 防环：AI 生成的节点若存在循环引用（A→B→A），
-  // 无保护会无限递归导致画布打开时程序卡死。
-  const visited = new Set<string>();
-  const dfs = (id: string, d: number) => {
-    if (visited.has(id)) return;
-    visited.add(id); depth.set(id, d); order.push(id);
-    for (const c of children.get(id) ?? []) dfs(c, d + 1);
-  };
-  for (const r of roots) dfs(r, 0);
-  // 未被根遍历到的节点（环内）兜底放入布局，避免遗漏
-  for (const n of nodes) { if (!visited.has(n.id)) dfs(n.id, 0); }
-  const pos = new Map<string, { x: number; y: number }>();
-  // 沿深度方向推进的间距（X 或 Y），以及同深度节点堆叠的间距
-  const depthStep = dir === "tb" || dir === "bt" ? 200 : 260;
-  // 同深度节点堆叠间距：节点卡片约 90~110px 高，80px 会让兄弟节点上下叠在一起，
-  // 看起来像「后添加的节点把前一个的内容盖掉」。调大到 120px 保证每张卡片完整可见。
-  const stackStep = dir === "tb" || dir === "bt" ? 240 : 120;
-  const depthIndex = new Map<number, number>();
-  for (const id of order) {
-    const d = depth.get(id) ?? 0;
-    const i = depthIndex.get(d) ?? 0;
-    depthIndex.set(d, i + 1);
-    const along = d * depthStep;   // 沿展开方向的偏移
-    const across = i * stackStep;  // 同深度堆叠的偏移
-    switch (dir) {
-      case "rl": pos.set(id, { x: -along, y: across }); break;
-      case "tb": pos.set(id, { x: across, y: along }); break;
-      case "bt": pos.set(id, { x: across, y: -along }); break;
-      default:  pos.set(id, { x: along, y: across });
-    }
-  }
-  return pos;
-}
-
 // ════════════ 拖拽改上级：目标节点命中判定 ════════════
 
 /** 点 (px,py) 是否落在以 (sx,sy) 为左上角、宽 w 高 h 的矩形内（拖拽改上级的落点判定）。 */
