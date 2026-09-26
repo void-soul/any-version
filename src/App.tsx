@@ -313,6 +313,12 @@ export default function App() {
       : undefined;
   const fontFaceCss = buildFontFaceCss(appearance.customFontPath);
 
+  // 弹框 / Toast / 下拉菜单都是 createPortal 挂到 document.body 的，继承不到根 div 的
+  // fontFamily —— 全局字体必须同时写到 body，否则会出现「改了字体，弹窗里没变」。
+  useEffect(() => {
+    document.body.style.fontFamily = effectiveFontFamily ?? "";
+  }, [effectiveFontFamily]);
+
   // 全 App 主强调色：优先读后端配置里的主题色（module_theme_colors["theme"]），
   // 未设置时回退默认签名色。各模块内部用 --module-accent 系列变量联动处同步跟随。
   const activeModuleColor = resolveThemeAccent(appearance.moduleThemeColors);
