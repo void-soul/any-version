@@ -273,6 +273,68 @@ PY
 - 写 JSONC（带注释）配置文件时先用 `strip_jsonc` 解析，否则 `serde_json::from_str` 失败会当空文档**整份覆盖**。
 - 工具声明里的 `model` 值要带 `modelFormat.prefix`（如 `anyversion/`），否则 opencode 系工具选不中 provider。
 
+## cc-switch 代理能力移植（专项）
+
+> cc-switch 的借鉴点是**代理 / 协议整流**。它演进很快，会**删除和收窄**功能，
+> 所以抄之前必须确认「现在还有没有、语义变没变」——照着旧截图或旧印象抄会抄错。
+
+### 去哪看（模块地图）
+
+| 路径 | 看什么 |
+|------|--------|
+| `src-tauri/src/proxy/types.rs` | `RectifierConfig` / `OptimizerConfig` / `CopilotOptimizerConfig` / `AppProxyConfig` / `LogConfig` —— **判断一个能力是否存在的唯一权威** |
+| `src-tauri/src/proxy/{cache_injector,thinking_optimizer,thinking_rectifier,thinking_budget_rectifier,media_sanitizer,tool_media,copilot_optimizer,model_mapper,reasoning_bridge}.rs` | 一个关注点一个文件的整流/优化实现 |
+| `src-tauri/src/proxy/providers/transform*.rs`、`streaming*.rs` | 按端点/协议的转换层（codex responses、codex chat、gemini、moonshot schema…） |
+| `src-tauri/src/proxy/forwarder.rs` | 主流程：预防式改写 → 发送 → 报错后反应式整流重试 |
+| `src/i18n/locales/zh.json` | 开关文案。**可能有遗留 key**（如 `requestGroup/responseGroup` 还在，但配置里已无响应整流字段）→ 别拿它判断功能是否存在 |
+
+### ⚠️ 抄之前必做：确认能力仍在、语义未变
+
+已确认的三次变化（2026-09-26 核对）：
+
+1. **「协议不匹配修复」（未知字段剥离重试）已删除** —— `RectifierConfig` 只剩 4 项。
+2. **「请求优化器」改名「Bedrock 请求优化器」并收窄**：只在 `CLAUDE_CODE_USE_BEDROCK=1` 时生效（原来通用）。
+3. **「DeepSeek 兼容」不再是用户开关**：下沉为按端点的内建转换（如 Moonshot/Kimi 工具 schema 的 `$ref` 兄弟键包进 `allOf`，Issue #6867）。
+
+核对顺序：**先看 `proxy/types.rs` 的配置结构（有什么开关）→ 再 rg 模块看实现 → 最后才看 i18n 文案**。
+
+### 能力对照表（2026-09-26）
+
+| 能力 | cc-switch | any-version | 结论 |
+|------|-----------|-------------|------|
+| Prompt 缓存注入 | **仅 Bedrock** | 所有 anthropic 出站（`optimizers.rs::inject_cache_breakpoints`） | 我们更广 |
+| Thinking 参数自适应 | **仅 Bedrock** | anthropic / openai / google 三形态 | 我们更广 |
+| DeepSeek / Moonshot 规范化 | 内建（按端点） | 用户开关 `deepseek_normalize`（deepseek/moonshot/kimi/mimo） | 粒度不同 |
+| Thinking 签名整流 | 报错后剥离 + 重试一次 | 预防式剥离 + **报错后重试一次** | 已对齐 |
+| budget_tokens 修正 32000 | 有（+ max_tokens 64000） | 有（同值） | 一致 |
+| 图片降级 | 两条路径：声明纯文本 + 报错兜底 | 同样两条（`media_fallback` + `media_heuristic`） | 一致 |
+| 纯文本模型预判（注册表） | `request_media_heuristic` | `TEXT_ONLY_MODEL_PREFIXES` + `is_text_only_model` | 已抄 |
+| 协议残留字段剥离 | **已删除** | 有（`protocol_mismatch`） | 我们多一项 |
+| Copilot 优化器（x-initiator 分类 / 孤立 tool_result 清理 / 合并 / compact 识别） | 有（Issue #1813） | **没有** | 可抄 |
+| 每 app 自动故障转移 + max_retries + 流式首字超时 | 有 | **没有** | 可抄 |
+| 模型能力注册表（`model_capabilities.rs`）驱动图片/参数决策 | 有 | **没有** | 可抄（配合图片预判） |
+
+### 移植规则
+
+1. **能力是协议层的，与工具形态无关**：只要工具走本地代理（写进它配置的是 `127.0.0.1`），就该能用 →
+   `ai-tools/<id>/config.json` 的 `supportsOptimizer` / `supportsRectifier` 必须对 `supportModel=true` 的工具打开
+   （`ai_registry.rs::model_capable_tools_allow_optimizer_and_rectifier` 守着这条不变量）。
+2. **开关链路一次改全**：`proxy/types.rs::ProxyConfig` → `commands/ai/models.rs::RectifierConfig`（全局默认）→
+   `LaunchAiToolRequest` / `DispatchOptions`（按次覆盖）→ `launch.rs` / `provider.rs` / `collab.rs` 的映射 →
+   前端 `AiConfig` + `ToolLauncher` 复选框 + i18n **zh 与 en 都要加**（有 parity 测试）。
+   别忘了前端还有兜底的默认 AiConfig 字面量（`ModelConfig.tsx`、`ToolLauncher.tsx`），漏改会 tsc 报错。
+3. **预防式与反应式两条路都要考虑**：预防式省一次往返，反应式兜未知端点差异；
+   反应式必须**只在确认能修这个错误时才认领**（剥不出东西就别重试，把错误让给后面的分支）。
+
+### 易踩的坑（已踩）
+
+- **别用 i18n 判断功能是否存在**（有遗留 key）。
+- **别照旧截图抄**（会抄到已删除 / 已收窄的能力）。
+- **单测里不要构造 `ProxyConfig`**：它带 `#[serde(skip)] Option<tauri::AppHandle>`，一构造就把 tauri 运行时
+  链接进测试二进制，Windows 下测试进程直接 `0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND` 起不来（编译是通过的）。
+  要测就把逻辑抽成不依赖 ProxyConfig 的纯函数（如 `strip_images_for_text_only_model`）。
+- 抄「按端点特例」（Moonshot/Kimi 之类）时，**只在命中的端点上改写**，否则会破坏其它供应商的 prompt cache 前缀。
+
 ## When NOT to Use
 
 - 任务是完全在 any-version 内部的 bug 修复或功能开发（无需参考）
