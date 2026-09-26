@@ -161,6 +161,163 @@ pub struct Config {
     pub language: String,
 }
 
+// ─── 落盘形态：config.json 只存数据路径，其余选项存 settings.json ───
+//
+// 以前所有东西都堆在 config.json 里（SDK 托管、RSS 订阅、外观、托盘…），
+// 而 config.json 是「数据在哪」的入口，混在一起后：
+//   1）改数据目录时整份配置被带着迁移，语义混乱；
+//   2）备份/排障时没法只看路径。
+// 现在拆分：内存里仍是完整的 `Config`（所有现有读取点不变），
+// 落盘时拆成两个文件，读取时再合并回来。
+
+/// `config.json` 的落盘形态：**只有数据路径**。
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+struct ConfigPathsFile {
+    #[serde(default)]
+    pub data_dir: String,
+    #[serde(default)]
+    pub node_projects_dir: String,
+}
+
+/// `settings.json` 的落盘形态：除数据路径以外的全部业务选项。
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(default)]
+struct SettingsFile {
+    pub managed_items: std::collections::HashSet<String>,
+    pub simple_managed_items: std::collections::HashSet<String>,
+    pub custom_install_paths: std::collections::HashMap<String, String>,
+    pub custom_data_paths: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    pub project_menu_configs: std::collections::HashMap<String, ProjectMenuConfig>,
+    pub project_delegations: std::collections::HashMap<String, ProjectDelegation>,
+    pub active_versions: std::collections::HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_token: Option<String>,
+    #[serde(deserialize_with = "deserialize_original_envs")]
+    pub original_envs: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    pub original_paths: std::collections::HashMap<String, Vec<String>>,
+    pub rss_sources: Vec<String>,
+    pub rss_source_names: std::collections::HashMap<String, String>,
+    pub has_run_before: bool,
+    pub tray_menu: TrayMenuConfig,
+    pub last_servers: LastServerConfig,
+    pub auto_start_services: std::collections::HashSet<String>,
+    pub module_theme_colors: std::collections::HashMap<String, String>,
+    pub global_font: String,
+    pub custom_font_path: String,
+    pub module_order: Vec<String>,
+    pub toolbar_modules: Vec<String>,
+    pub disabled_modules: Vec<String>,
+    pub background_texture: String,
+    pub language: String,
+}
+
+/// 业务选项文件（与 config.json 同目录，都留在 base_dir：
+/// 它们不随 data_dir 迁移，切换数据目录时选项保持原样）。
+pub(crate) fn settings_file_path() -> PathBuf {
+    get_base_dir().join("settings.json")
+}
+
+/// 完整配置 → 两个落盘文件的拆分。
+fn split_config(config: &Config) -> (ConfigPathsFile, SettingsFile) {
+    (
+        ConfigPathsFile {
+            data_dir: config.data_dir.clone(),
+            node_projects_dir: config.node_projects_dir.clone(),
+        },
+        SettingsFile {
+            managed_items: config.managed_items.clone(),
+            simple_managed_items: config.simple_managed_items.clone(),
+            custom_install_paths: config.custom_install_paths.clone(),
+            custom_data_paths: config.custom_data_paths.clone(),
+            project_menu_configs: config.project_menu_configs.clone(),
+            project_delegations: config.project_delegations.clone(),
+            active_versions: config.active_versions.clone(),
+            github_token: config.github_token.clone(),
+            original_envs: config.original_envs.clone(),
+            original_paths: config.original_paths.clone(),
+            rss_sources: config.rss_sources.clone(),
+            rss_source_names: config.rss_source_names.clone(),
+            has_run_before: config.has_run_before,
+            tray_menu: config.tray_menu.clone(),
+            last_servers: config.last_servers.clone(),
+            auto_start_services: config.auto_start_services.clone(),
+            module_theme_colors: config.module_theme_colors.clone(),
+            global_font: config.global_font.clone(),
+            custom_font_path: config.custom_font_path.clone(),
+            module_order: config.module_order.clone(),
+            toolbar_modules: config.toolbar_modules.clone(),
+            disabled_modules: config.disabled_modules.clone(),
+            background_texture: config.background_texture.clone(),
+            language: config.language.clone(),
+        },
+    )
+}
+
+/// 两个落盘文件 → 完整配置（versions_dir/links_dir/sdk_dir 由 fill_legacy_dirs 派生）。
+fn merge_config(paths: ConfigPathsFile, settings: SettingsFile) -> Config {
+    Config {
+        versions_dir: String::new(),
+        links_dir: String::new(),
+        data_dir: paths.data_dir,
+        sdk_dir: String::new(),
+        managed_items: settings.managed_items,
+        simple_managed_items: settings.simple_managed_items,
+        custom_install_paths: settings.custom_install_paths,
+        custom_data_paths: settings.custom_data_paths,
+        project_menu_configs: settings.project_menu_configs,
+        project_delegations: settings.project_delegations,
+        active_versions: settings.active_versions,
+        github_token: settings.github_token,
+        original_envs: settings.original_envs,
+        original_paths: settings.original_paths,
+        rss_sources: settings.rss_sources,
+        rss_source_names: settings.rss_source_names,
+        has_run_before: settings.has_run_before,
+        tray_menu: settings.tray_menu,
+        last_servers: settings.last_servers,
+        node_projects_dir: paths.node_projects_dir,
+        auto_start_services: settings.auto_start_services,
+        module_theme_colors: settings.module_theme_colors,
+        global_font: settings.global_font,
+        custom_font_path: settings.custom_font_path,
+        module_order: settings.module_order,
+        toolbar_modules: settings.toolbar_modules,
+        disabled_modules: settings.disabled_modules,
+        background_texture: settings.background_texture,
+        language: settings.language,
+    }
+}
+
+/// 读 settings.json；缺失时把旧版写在 config.json 里的选项一次性搬过来（幂等迁移）。
+/// `raw_config_json` 是 config.json 的原文，仅用于这次迁移。
+fn load_settings_file(raw_config_json: &str) -> SettingsFile {
+    let path = settings_file_path();
+    if path.is_file() {
+        match fs::read_to_string(&path) {
+            Ok(data) => match serde_json::from_str::<SettingsFile>(&data) {
+                Ok(settings) => return settings,
+                Err(e) => {
+                    eprintln!("[config] settings.json 解析失败: {}，回退为默认值", e);
+                    backup_corrupt_config(&path);
+                }
+            },
+            Err(e) => eprintln!("[config] settings.json 读取失败: {}", e),
+        }
+        return SettingsFile::default();
+    }
+    // 迁移：旧版 config.json 里带着全部业务选项，这里照字段名搬进 settings.json。
+    // serde 会忽略它不认识的 data_dir 等路径字段。
+    let migrated: SettingsFile = serde_json::from_str(raw_config_json).unwrap_or_default();
+    if let Ok(data) = serde_json::to_string_pretty(&migrated) {
+        if let Err(e) = atomic_write_file(&path, data.as_bytes()) {
+            eprintln!("[config] 迁移选项到 settings.json 失败: {}", e);
+        } else {
+            eprintln!("[config] 已把业务选项从 config.json 迁移到 settings.json");
+        }
+    }
+    migrated
+}
+
 pub fn get_base_dir() -> PathBuf {
     let user_profile = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
@@ -256,8 +413,10 @@ pub fn read_config_file() -> Option<Config> {
         return None;
     }
     match fs::read_to_string(&config_path) {
-        Ok(data) => match serde_json::from_str::<Config>(&data) {
-            Ok(mut config) => {
+        Ok(data) => match serde_json::from_str::<ConfigPathsFile>(&data) {
+            Ok(paths) => {
+                let settings = load_settings_file(&data);
+                let mut config = merge_config(paths, settings);
                 fill_legacy_dirs(&mut config, &base_dir);
                 Some(config)
             }
@@ -338,6 +497,7 @@ fn fill_legacy_dirs(config: &mut Config, base_dir: &Path) {
     let sdk = data.join("sdk");
     config.versions_dir = sdk.join("_versions").to_string_lossy().to_string();
     config.links_dir = sdk.to_string_lossy().to_string();
+    config.sdk_dir = sdk.to_string_lossy().to_string();
 }
 
 /// 把损坏的 config.json 备份为 config.json.corrupt-<unix秒>.bak，避免用户数据直接丢失。
@@ -399,21 +559,15 @@ pub(crate) fn atomic_write_file(path: &Path, data: &[u8]) -> Result<(), String> 
 }
 
 /// 写入已由调用方持有锁时的落盘实现（tmp + rename 原子替换）。
+/// 拆成两份写：config.json（路径）+ settings.json（其余选项）。
 fn write_config_unlocked(config: &Config) -> Result<(), String> {
     let base_dir = get_base_dir();
-    let config_path = base_dir.join("config.json");
-    let data = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
-    let tmp_path = base_dir.join("config.json.tmp");
-    fs::write(&tmp_path, &data).map_err(|e| e.to_string())?;
-    match fs::rename(&tmp_path, &config_path) {
-        Ok(_) => Ok(()),
-        Err(_) => {
-            // rename 失败（如目标被其他进程占用）：退回直接写，并清理临时文件。
-            let _ = fs::write(&config_path, &data);
-            let _ = fs::remove_file(&tmp_path);
-            Ok(())
-        }
-    }
+    let (paths, settings) = split_config(config);
+    let paths_data = serde_json::to_string_pretty(&paths).map_err(|e| e.to_string())?;
+    let settings_data = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
+    atomic_write_file(&base_dir.join("config.json"), paths_data.as_bytes())?;
+    atomic_write_file(&settings_file_path(), settings_data.as_bytes())?;
+    Ok(())
 }
 
 /// 记录托盘「启动上次配置」所需的最近一次服务参数
@@ -1337,6 +1491,72 @@ pub fn import_custom_font(src: String) -> Result<CustomFontInfo, String> {
         path: dest.to_string_lossy().to_string(),
         ext,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 落盘的 config.json 只能有数据路径；业务选项必须落进 settings.json。
+    #[test]
+    fn config_json_carries_only_paths() {
+        let mut config = default_config();
+        config.data_dir = "D:/any-versions".to_string();
+        config.node_projects_dir = "D:/any-versions/node-projects".to_string();
+        config.managed_items.insert("nodejs".to_string());
+        config.rss_sources = vec!["https://example.com/feed".to_string()];
+        config.tray_menu.enabled = false;
+
+        let (paths, settings) = split_config(&config);
+        let json = serde_json::to_value(&paths).unwrap();
+        let keys: Vec<String> = json.as_object().unwrap().keys().cloned().collect();
+        assert_eq!(keys.len(), 2, "config.json 字段: {:?}", keys);
+        assert!(keys.iter().any(|k| k == "data_dir"));
+        assert!(keys.iter().any(|k| k == "node_projects_dir"));
+        assert!(
+            !keys.iter().any(|k| k.starts_with("rss_")
+                || k.starts_with("managed")
+                || k.starts_with("module_")
+                || k == "tray_menu"),
+            "业务选项不该出现在 config.json: {:?}",
+            keys
+        );
+
+        // 合并回来后一个字段都不能丢
+        let merged = merge_config(paths, settings);
+        assert_eq!(merged.data_dir, "D:/any-versions");
+        assert_eq!(merged.node_projects_dir, "D:/any-versions/node-projects");
+        assert!(merged.managed_items.contains("nodejs"));
+        assert_eq!(merged.rss_sources, vec!["https://example.com/feed".to_string()]);
+        assert!(!merged.tray_menu.enabled);
+    }
+
+    /// 旧版 config.json（选项和路径混在一起）要能被拆开读：路径归路径，选项归选项。
+    #[test]
+    fn legacy_combined_config_splits_on_read() {
+        let legacy = r#"{
+            "data_dir": "D:/any-versions",
+            "managed_items": ["go", "nodejs"],
+            "rss_sources": ["https://a/feed"],
+            "tray_menu": { "enabled": false, "show_mihomo": true }
+        }"#;
+        let paths: ConfigPathsFile = serde_json::from_str(legacy).unwrap();
+        let settings: SettingsFile = serde_json::from_str(legacy).unwrap();
+        assert_eq!(paths.data_dir, "D:/any-versions");
+        assert!(settings.managed_items.contains("go"));
+        assert_eq!(settings.rss_sources, vec!["https://a/feed".to_string()]);
+        assert!(!settings.tray_menu.enabled);
+    }
+
+    /// 缺省字段的旧 settings.json 也要能读（全 default，不能因为缺字段整份解析失败）。
+    #[test]
+    fn settings_file_tolerates_missing_fields() {
+        let settings: SettingsFile = serde_json::from_str("{}").unwrap();
+        assert!(settings.managed_items.is_empty());
+        assert!(settings.rss_sources.is_empty());
+        assert!(settings.tray_menu.enabled);
+        assert_eq!(settings.language, "");
+    }
 }
 
 /// 移除自定义字体（恢复默认字体）
