@@ -29,7 +29,7 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
     <aside className="w-64 glass-sidebar h-screen flex flex-col select-none">
       {/* Brand Header */}
       <div className="p-6 border-b border-white/5 flex items-center gap-3">
-        <div className="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-lg shadow-blue-500/20">
+        <div className="w-9 h-9 rounded-ctl bg-blue-600 flex items-center justify-center text-white shadow-lg shadow-blue-500/20">
           <ShieldCheck className="w-5 h-5" />
         </div>
         <div>
@@ -47,7 +47,7 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id)}
-              className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-xl text-xs font-medium transition-all duration-200 cursor-pointer ${
+              className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-card text-xs font-medium transition-all duration-200 cursor-pointer ${
                 isActive
                   ? "bg-blue-600/90 text-white shadow-lg shadow-blue-500/10 border-l-[3px] border-blue-400"
                   : "text-slate-400 hover:text-slate-200 hover:bg-white/5"

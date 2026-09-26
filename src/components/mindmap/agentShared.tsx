@@ -365,7 +365,7 @@ function SessionBar({
     (s.title && s.title.trim()) ? s.title.trim() : `${t("agent.sessionUntitled")} ${shortTs(s.updatedAt)}`;
 
   return (
-    <div className="flex shrink-0 items-center gap-1 rounded-lg border border-white/10 bg-slate-950/70 px-2 py-1">
+    <div className="flex shrink-0 items-center gap-1 rounded-ctl border border-white/10 bg-slate-950/70 px-2 py-1">
       <MessageCircle className="h-3 w-3 shrink-0 text-slate-500" />
       {renaming ? (
         <input
@@ -540,7 +540,7 @@ function ResultCard({ result, t, onShowReport }: { result: AiImportResult; t: (k
   const usage = result.usage;
   const totalNodes = result.documents.reduce((s, d) => s + d.nodes.length, 0);
   return (
-    <div className="overflow-hidden rounded-lg border border-emerald-400/20 bg-emerald-400/[0.04]">
+    <div className="overflow-hidden rounded-ctl border border-emerald-400/20 bg-emerald-400/[0.04]">
       <div className="flex items-center gap-2 border-b border-emerald-400/15 px-2.5 py-1.5">
         <Check className="h-3 w-3 text-emerald-300" />
         <span className="text-[10px] font-semibold text-emerald-200">{t("agent.resultTitle", { count: result.documents.length })}</span>
@@ -610,7 +610,7 @@ function AskForm({ ask, onSubmit, t }: {
   const canSubmit = ask.fields.length === 0 ? true : true; // 允许留空（后端按未填写兜底）
   void canSubmit;
   return (
-    <div className="rounded-lg border border-amber-400/30 bg-amber-400/[0.05] p-2.5">
+    <div className="rounded-ctl border border-amber-400/30 bg-amber-400/[0.05] p-2.5">
       <div className="mb-1.5 flex items-center gap-1.5">
         <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-amber-400/20 text-amber-300">
           <Sparkles className="h-3 w-3" />
@@ -846,7 +846,7 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
         />
       )}
       {/* 状态条：阶段计划 + 实时统计 */}
-      <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-slate-950/70 px-2 py-1.5">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-ctl border border-white/10 bg-slate-950/70 px-2 py-1.5">
         <span className="inline-flex shrink-0 items-center gap-1 text-[9px] font-semibold uppercase tracking-wide text-slate-400">
           <Brain className={`h-3 w-3 ${loading ? "animate-pulse text-cyan-300" : "text-slate-500"}`} />
           {t("agent.consoleTitle")}
@@ -875,9 +875,9 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
       </div>
 
       {/* 会话区：用户指令 + agent 回执 + 实时工具调用 */}
-      <div ref={scrollRef} className="min-h-0 flex-1 space-y-1.5 overflow-y-auto rounded-lg border border-white/10 bg-slate-950/50 p-2">
+      <div ref={scrollRef} className="min-h-0 flex-1 space-y-1.5 overflow-y-auto rounded-ctl border border-white/10 bg-slate-950/50 p-2">
         {isFirstRun && !loading && (
-          <div className="flex items-center gap-2 rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-3 py-2.5">
+          <div className="flex items-center gap-2 rounded-ctl border border-dashed border-white/10 bg-white/[0.02] px-3 py-2.5">
             <Sparkles className="h-4 w-4 shrink-0 text-cyan-300/70" />
             <p className="text-[10px] leading-4 text-slate-400">
               {mode === "project" ? t("agent.hintProject") : t("agent.hintText")}
@@ -886,7 +886,7 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
         )}
         {messages.map((m) => (
           <div key={m.id} className={`group flex items-end gap-1 ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-            <div className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-[10px] leading-4 ${m.role === "user" ? "border border-cyan-400/25 bg-cyan-400/10 text-cyan-100" : "border border-white/10 bg-white/[0.04] text-slate-300"}`}>
+            <div className={`max-w-[85%] rounded-ctl px-2.5 py-1.5 text-[10px] leading-4 ${m.role === "user" ? "border border-cyan-400/25 bg-cyan-400/10 text-cyan-100" : "border border-white/10 bg-white/[0.04] text-slate-300"}`}>
               {m.text}
             </div>
             {/* 从这条分叉：复制该条及之前的历史到新会话（原会话不动） */}
@@ -901,7 +901,7 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
         ))}
         {/* 思考过程 / 工具调用轨迹：运行中实时滚动；跑完仍保留，便于回看「它到底干了什么」 */}
         {(loading || timeline.length > 0) && (
-          <div className="space-y-1 rounded-lg border border-white/5 bg-black/20 p-2">
+          <div className="space-y-1 rounded-ctl border border-white/5 bg-black/20 p-2">
             {timeline.map((e, i) => <ActivityLine key={`${e.at}-${i}`} e={e} projectRoot={projectRoot} t={t} />)}
             {loading && (lastStream ? (
               <div className="flex items-start gap-1.5">
@@ -931,7 +931,7 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
       </div>
 
       {/* 任务配置（可折叠；首轮默认展开，运行开始后收起，追问前可展开改参数） */}
-      <div className="shrink-0 rounded-lg border border-white/10 bg-slate-950/70">
+      <div className="shrink-0 rounded-ctl border border-white/10 bg-slate-950/70">
         <button type="button" onClick={() => setCfgOpen(!cfgOpen)}
           className="flex w-full cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-left">
           <ChevronDown className={`h-3 w-3 shrink-0 text-slate-500 transition-transform ${cfgOpen ? "" : "-rotate-90"}`} />
@@ -1026,7 +1026,7 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
       <div className="relative flex shrink-0 items-end gap-1.5">
         {/* @ 引用文件候选（IDE 式）：输入 @ 触发，↑↓/Enter/Tab/Esc 操作 */}
         {atQuery !== null && atMatches.length > 0 && (
-          <div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-40 overflow-y-auto rounded-lg border border-white/10 bg-slate-900/95 py-1 shadow-xl">
+          <div className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-40 overflow-y-auto rounded-ctl border border-white/10 bg-slate-900/95 py-1 shadow-xl">
             {atMatches.map((f, i) => (
               <button key={f} type="button" onMouseDown={(e) => { e.preventDefault(); pickAt(f); }}
                 className={`block w-full cursor-pointer truncate px-2.5 py-1 text-left font-mono text-[10px] transition ${i === atIndex ? "bg-[var(--module-accent)]/25 text-white" : "text-slate-300 hover:bg-white/5"}`}>
@@ -1055,11 +1055,11 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
               : t("agent.inputPhFollowUp")
           }
           disabled={loading}
-          className="min-h-[34px] flex-1 resize-none overflow-y-auto rounded-lg border border-white/10 bg-slate-950/70 px-2.5 py-2 text-[11px] leading-relaxed text-slate-200 outline-none focus:border-cyan-400/60 disabled:opacity-50"
+          className="min-h-[34px] flex-1 resize-none overflow-y-auto rounded-ctl border border-white/10 bg-slate-950/70 px-2.5 py-2 text-[11px] leading-relaxed text-slate-200 outline-none focus:border-cyan-400/60 disabled:opacity-50"
         />
         {!loading && (
           <button type="button" onClick={submit} disabled={sendDisabled}
-            className="inline-flex h-[34px] shrink-0 cursor-pointer items-center gap-1 rounded-lg px-3 text-[10px] font-semibold text-white transition disabled:cursor-default disabled:opacity-40"
+            className="inline-flex h-[34px] shrink-0 cursor-pointer items-center gap-1 rounded-ctl px-3 text-[10px] font-semibold text-white transition disabled:cursor-default disabled:opacity-40"
             style={{ backgroundColor: "var(--module-accent, #22d3ee)" }}>
             <Send className="h-3 w-3" />
             {isFirstRun ? t("agent.runFirst") : t("agent.followUp")}
@@ -1069,7 +1069,7 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
         {mode !== "chat" && messages.length > 0 && !loading && (
           <button type="button"
             onClick={() => { clearAgentMessages(); onNewSession(); }}
-            className="inline-flex h-[34px] shrink-0 cursor-pointer items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] px-2 text-[9px] text-slate-400 transition hover:text-slate-200"
+            className="inline-flex h-[34px] shrink-0 cursor-pointer items-center gap-1 rounded-ctl border border-white/10 bg-white/[0.04] px-2 text-[9px] text-slate-400 transition hover:text-slate-200"
             title={t("agent.newSessionTip")}>
             <RotateCcw className="h-3 w-3" />
             {t("agent.newSession")}

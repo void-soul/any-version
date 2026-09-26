@@ -389,7 +389,7 @@ export default function App() {
           className="fixed left-1/2 top-14 z-[210] -translate-x-1/2 animate-in fade-in slide-in-from-top-3 duration-300"
         >
           <div
-            className={`vex-neon-edge flex items-center gap-2.5 rounded-2xl px-4 py-2.5 backdrop-blur-md ${
+            className={`vex-neon-edge flex items-center gap-2.5 rounded-panel px-4 py-2.5 backdrop-blur-md ${
               vexToast.kind === "error"
                 ? "vex-toast-pulse bg-[#1a1016]/90"
                 : vexToast.kind === "success"
@@ -414,7 +414,7 @@ export default function App() {
       {/* 初次见面：三步引导卡 */}
       {introOpen && (
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/70 backdrop-blur-sm">
-          <div className="cyber-border w-[380px] max-w-[92vw] rounded-2xl p-6 shadow-2xl shadow-black/60">
+          <div className="cyber-border w-[380px] max-w-[92vw] rounded-panel p-6 shadow-2xl shadow-black/60">
             <div className="flex items-center gap-3">
               <VexGlowAvatar size={46} />
               <div>
@@ -442,11 +442,11 @@ export default function App() {
               <div className="flex gap-2">
                 {introStep < 2 ? (
                   <>
-                    <button onClick={finishIntro} className="px-3 py-1.5 rounded-lg text-[11px] text-slate-400 hover:text-white transition cursor-pointer">跳过</button>
-                    <button onClick={() => setIntroStep((s) => s + 1)} className="px-4 py-1.5 rounded-lg text-[11px] font-semibold text-white transition cursor-pointer" style={{ background: activeModuleColor }}>下一步 →</button>
+                    <button onClick={finishIntro} className="px-3 py-1.5 rounded-ctl text-[11px] text-slate-400 hover:text-white transition cursor-pointer">跳过</button>
+                    <button onClick={() => setIntroStep((s) => s + 1)} className="px-4 py-1.5 rounded-ctl text-[11px] font-semibold text-white transition cursor-pointer" style={{ background: activeModuleColor }}>下一步 →</button>
                   </>
                 ) : (
-                  <button onClick={finishIntro} className="px-5 py-1.5 rounded-lg text-[11px] font-semibold text-white transition cursor-pointer" style={{ background: `linear-gradient(90deg, ${activeModuleColor}, ${VEX_CYBER_CYAN})` }}>开始吧</button>
+                  <button onClick={finishIntro} className="px-5 py-1.5 rounded-ctl text-[11px] font-semibold text-white transition cursor-pointer" style={{ background: `linear-gradient(90deg, ${activeModuleColor}, ${VEX_CYBER_CYAN})` }}>开始吧</button>
                 )}
               </div>
             </div>
@@ -471,7 +471,7 @@ export default function App() {
         </div>
 
         {/* Center: Navigation Capsule —— 水平居中；模块多时在胶囊内横向滚动，不挤占两侧 */}
-        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex max-w-[calc(100%-300px)] items-center gap-0.5 overflow-x-auto no-scrollbar bg-white/5 border border-white/5 rounded-lg p-0.5" data-tauri-drag-region>
+        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex max-w-[calc(100%-300px)] items-center gap-0.5 overflow-x-auto no-scrollbar bg-white/5 border border-white/5 rounded-ctl p-0.5" data-tauri-drag-region>
             {toolbarModules.filter((m) => m.id !== "settings").map((m) => {
               const isActive = activePage === m.id;
               const Icon = m.icon;
@@ -512,7 +512,7 @@ export default function App() {
                   <>
                     <div className="fixed inset-0 z-[200]" onClick={() => setMoreOpen(false)} />
                     {/* 面板底色/描边走全局皮肤 token（App.css @theme），换肤自动跟随 */}
-                    <div className="fixed z-[201] min-w-[160px] rounded-lg border border-border bg-surface-modal shadow-2xl shadow-black/60 p-1"
+                    <div className="fixed z-[201] min-w-[160px] rounded-ctl border border-border bg-surface-modal shadow-2xl shadow-black/60 p-1"
                       style={{ top: moreAnchor.bottom + 6, right: moreAnchor.right }}>
                       {moreModules.map((m) => {
                         const Icon = m.icon;
@@ -613,7 +613,7 @@ export default function App() {
         {/* 运行组件下载（首次启动缺失时全屏阻塞，不下载无法使用） */}
         {binAssets && (
           <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/70 backdrop-blur-sm">
-            <div className="w-[440px] max-w-[94vw] max-h-[92vh] overflow-y-auto rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl shadow-black/60 p-6">
+            <div className="w-[440px] max-w-[94vw] max-h-[92vh] overflow-y-auto rounded-panel border border-white/10 bg-slate-900/95 shadow-2xl shadow-black/60 p-6">
               <div className="flex items-center gap-2.5 mb-3">
                 <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0" />
                 <h2 className="text-[15px] font-bold text-white">需要下载运行组件</h2>
@@ -638,7 +638,7 @@ export default function App() {
               </div>
 
               {/* 数据目录（全局路径）选择：下载前可先确定存储位置 */}
-              <div className="mb-4 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+              <div className="mb-4 rounded-card border border-white/10 bg-white/[0.03] p-3">
                 <div className="flex items-center gap-1.5 mb-2">
                   <FolderOpen className="w-3.5 h-3.5 text-sky-400 flex-shrink-0" />
                   <span className="text-[11px] font-semibold text-slate-300">
@@ -656,13 +656,13 @@ export default function App() {
                     value={binDataDir}
                     disabled={binDownloading}
                     onChange={(e) => setBinDataDir(e.target.value)}
-                    className="flex-1 min-w-0 glass-input px-3 py-2 text-[11px] font-mono bg-black/30 border border-white/10 rounded-lg focus:outline-none focus:border-sky-400/50 disabled:opacity-50"
+                    className="flex-1 min-w-0 glass-input px-3 py-2 text-[11px] font-mono bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-sky-400/50 disabled:opacity-50"
                     placeholder="e.g. D:\Kira"
                   />
                   <button
                     onClick={handleBrowseBinDataDir}
                     disabled={binDownloading}
-                    className="p-2 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 rounded-lg border border-white/5 cursor-pointer transition-all flex-shrink-0 disabled:opacity-50"
+                    className="p-2 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 rounded-ctl border border-white/5 cursor-pointer transition-all flex-shrink-0 disabled:opacity-50"
                     title="选择文件夹"
                   >
                     <FolderOpen className="w-3.5 h-3.5" />
@@ -728,7 +728,7 @@ export default function App() {
               <button
                 onClick={downloadBinAssets}
                 disabled={binDownloading}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-[13px] font-bold text-slate-900 transition-all"
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-card bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-[13px] font-bold text-slate-900 transition-all"
               >
                 {binDownloading ? (
                   binMigrating ? (

@@ -9,7 +9,7 @@ import { Toggle } from "./ui";
 type SsidRule = { ssid: string; profile_id: string };
 type ProfileItem = { id: string; name: string };
 
-const cardCls = "rounded-xl border border-white/5 bg-slate-900/30 p-3 space-y-3";
+const cardCls = "rounded-card border border-white/5 bg-slate-900/30 p-3 space-y-3";
 const inputCls =
   "px-2 py-1 rounded-md bg-slate-900 border border-white/10 text-[11px] text-slate-200 placeholder-slate-600 focus:outline-none focus:border-[var(--module-accent)]/50";
 const btnSec =

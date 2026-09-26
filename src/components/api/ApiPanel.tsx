@@ -30,6 +30,7 @@ import { EndpointRow, UnitTestsPanel, DocsPanel, ImportModal } from "./panelSubs
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { SharedModal } from "../shared/Modal";
 import { SharedButton } from "../shared/Button";
+import { theamedConfirm, theamedAlert } from "../shared/ThemedAlert";
 
 // 记住当前项目/环境/激活接口（模块卸载重挂载后恢复）
 const API_CTX_KEY = "any_version_api_ctx";
@@ -73,7 +74,7 @@ function MoveModuleModal({ module, modules, onClose, onMoved }: {
       <select
         value={targetId}
         onChange={(e) => setTargetId(e.target.value)}
-        className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60 cursor-pointer"
+        className="w-full rounded-ctl border border-white/10 bg-black/30 px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60 cursor-pointer"
       >
         <option value="">{t("api.selectTarget")}</option>
         {targets.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
@@ -413,7 +414,7 @@ export default function ApiPanel() {
       });
       setTestResults(map);
     } catch (e) {
-      window.alert(String(e));
+      theamedAlert(String(e));
     } finally {
       setTesting(false);
     }
@@ -432,7 +433,7 @@ export default function ApiPanel() {
       setLoadStatus({ running: true, elapsed_secs: 0, total: 0, success: 0, failed: 0, qps: 0, latency_avg_ms: 0, latency_p95_ms: 0, report: null });
       setRunningRunId(runId);
     } catch (e) {
-      window.alert(String(e));
+      theamedAlert(String(e));
     }
   };
 
@@ -479,7 +480,7 @@ export default function ApiPanel() {
       } catch { /* non-json body */ }
     }
     if (assertions.length === 0) {
-      window.alert(t("api.alertSendFirst"));
+      theamedAlert(t("api.alertSendFirst"));
       return;
     }
     const test: UnitTest = {
@@ -490,7 +491,7 @@ export default function ApiPanel() {
     const testList = await invoke<UnitTest[]>("api_list_unit_tests", { endpointId: selectedId });
     setTests(testList);
     setActiveTab("tests");
-    window.alert(t("api.alertTestGenerated"));
+    theamedAlert(t("api.alertTestGenerated"));
   };
 
   // 应用预设 Headers 到当前接口
@@ -691,7 +692,7 @@ export default function ApiPanel() {
         await invoke("write_text_file", { path: target, content: json });
       }
     } catch (e) {
-      window.alert(String(e));
+      theamedAlert(String(e));
     }
   };
 
@@ -813,7 +814,7 @@ export default function ApiPanel() {
                 {projectPop && (
                   <>
                     <div className="fixed inset-0 z-30" onClick={() => setProjectPop(false)} />
-                    <div className="absolute left-0 top-full z-40 mt-1.5 w-56 overflow-hidden rounded-xl border border-white/10 shadow-2xl" style={{ background: POPOVER_BG }}>
+                    <div className="absolute left-0 top-full z-40 mt-1.5 w-56 overflow-hidden rounded-card border border-white/10 shadow-2xl" style={{ background: POPOVER_BG }}>
                       <div className="flex items-center justify-between border-b border-white/10 px-3 py-1.5">
                         <span className="text-[10px] font-semibold text-slate-500">{t("api.apiProjects")}</span>
                         <button onClick={openCreateProject} className="p-0.5 text-slate-500 hover:text-[var(--module-accent)] cursor-pointer" title={t("api.newProjectTip")}>
@@ -874,7 +875,7 @@ export default function ApiPanel() {
                     {envPop && (
                       <>
                         <div className="fixed inset-0 z-30" onClick={() => setEnvPop(false)} />
-                        <div className="absolute left-0 top-full z-40 mt-1.5 min-w-full w-max max-w-[260px] overflow-hidden rounded-xl border border-white/10 shadow-2xl" style={{ background: POPOVER_BG }}>
+                        <div className="absolute left-0 top-full z-40 mt-1.5 min-w-full w-max max-w-[260px] overflow-hidden rounded-card border border-white/10 shadow-2xl" style={{ background: POPOVER_BG }}>
                           <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-500">{t("api.envSwitchTitle")}</div>
                           <div className="max-h-52 overflow-y-auto p-1 space-y-0.5">
                             {envs.length === 0 && <div className="px-2 py-1 text-[10px] text-slate-600">{t("api.noEnvHint")}</div>}
@@ -921,7 +922,7 @@ export default function ApiPanel() {
                 {sideTab === "history" && history.length > 0 && (
                   <button
                     onClick={async () => {
-                      if (!window.confirm(t("api.clearHistoryConfirm"))) return;
+                      if (!(await theamedConfirm(t("api.clearHistoryConfirm"), { danger: true }))) return;
                       await invoke("api_clear_history", { projectId: activeProjectId });
                       setHistory([]);
                     }}
@@ -1079,7 +1080,7 @@ export default function ApiPanel() {
                 {showTplPanel && (
                   <>
                     <div className="fixed inset-0 z-30" onClick={() => setShowTplPanel(false)} />
-                    <div className="absolute right-0 top-full z-40 mt-1.5 w-80 overflow-hidden rounded-xl border border-white/10 shadow-2xl" style={{ background: POPOVER_BG }}>
+                    <div className="absolute right-0 top-full z-40 mt-1.5 w-80 overflow-hidden rounded-card border border-white/10 shadow-2xl" style={{ background: POPOVER_BG }}>
                       <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
                         <span className="flex items-center gap-1.5 text-[11px] font-semibold text-white">
                           <Link2 className="w-3 h-3" style={{ color: "var(--module-accent)" }} />
@@ -1124,7 +1125,7 @@ export default function ApiPanel() {
                         <div className="px-1 pt-1 space-y-1.5">
                           <button
                             onClick={openProjectTpl}
-                            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-[10px] font-semibold text-slate-200 hover:bg-white/10 hover:text-white cursor-pointer transition-colors"
+                            className="flex w-full items-center justify-center gap-1.5 rounded-ctl border border-white/10 bg-white/5 px-2 py-1.5 text-[10px] font-semibold text-slate-200 hover:bg-white/10 hover:text-white cursor-pointer transition-colors"
                           >
                             <Settings2 className="w-3 h-3" style={{ color: "var(--module-accent)" }} />
                             {t("api.openProjectTpl")}
@@ -1201,7 +1202,7 @@ export default function ApiPanel() {
               <button
                 key={key}
                 onClick={() => setActiveTab(key)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-xs cursor-pointer border-b-2 ${activeTab === key ? "text-white border-[var(--module-accent)] bg-white/5" : "text-slate-500 border-transparent hover:text-slate-300"}`}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-t-ctl text-xs cursor-pointer border-b-2 ${activeTab === key ? "text-white border-[var(--module-accent)] bg-white/5" : "text-slate-500 border-transparent hover:text-slate-300"}`}
               >
                 <Icon className="w-3.5 h-3.5" /> {label}
               </button>
@@ -1421,7 +1422,7 @@ export default function ApiPanel() {
                   <div className="space-y-1.5">
                     <div className="text-[11px] font-semibold text-slate-400">{t("api.loadHistory")}</div>
                     {loadRuns.map((run) => (
-                      <div key={run.id} className="rounded-lg border border-white/10 bg-black/20 px-3 py-2">
+                      <div key={run.id} className="rounded-ctl border border-white/10 bg-black/20 px-3 py-2">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2 text-xs text-slate-300">
                             <span className="font-semibold">{run.name || draft.name}</span>

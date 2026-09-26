@@ -619,7 +619,7 @@ export default function NetworkPanel() {
         ) : (
           <div className="space-y-2">
             {interfaces.map((itf, i) => (
-              <div key={i} className="rounded-lg bg-white/5 border border-white/10 p-3">
+              <div key={i} className="rounded-ctl bg-white/5 border border-white/10 p-3">
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-[13px] font-semibold text-white">{itf.name}</span>
                   <span

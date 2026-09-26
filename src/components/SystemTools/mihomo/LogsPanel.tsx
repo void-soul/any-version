@@ -71,7 +71,7 @@ export default function LogsPanel({ info, running, logLevel }: { info: any; runn
         <div className="relative flex-1">
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
-            className="w-full h-8 pl-8 pr-2.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+            className="w-full h-8 pl-8 pr-2.5 rounded-ctl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
             placeholder={t("logs.filterPh")}
             value={filter}
             onChange={(e) => setFilter(e.target.value)}

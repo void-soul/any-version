@@ -440,7 +440,7 @@ export default function ModelConfig() {
   return (
     <div className="h-full overflow-y-auto p-6 space-y-4">
       {/* AI 默认项目目录（模块专属设置，原属全局设置页） */}
-      <div className="rounded-xl border border-white/5 bg-slate-900/30 p-3.5 space-y-2">
+      <div className="rounded-card border border-white/5 bg-slate-900/30 p-3.5 space-y-2">
         <div className="flex items-center gap-2">
           <FolderOpen className="w-3.5 h-3.5 text-[var(--module-accent)]" />
           <span className="text-[11px] font-semibold text-slate-200">
@@ -456,12 +456,12 @@ export default function ModelConfig() {
               if (e.key === "Enter") commitDefaultProject();
             }}
             placeholder={t("modelcfg.defaultProjectPh")}
-            className="flex-1 h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
+            className="flex-1 h-9 px-2.5 rounded-card bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
           />
           <button
             type="button"
             onClick={browseDefaultProject}
-            className="h-9 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer flex items-center justify-center"
+            className="h-9 px-3 rounded-card bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer flex items-center justify-center"
             title={t("settings.chooseFolder")}
           >
             <FolderOpen className="w-4 h-4" />
@@ -480,7 +480,7 @@ export default function ModelConfig() {
           setPresetSearch("");
           setPresetCategory("all");
           setShowPresetPicker(true);
-        }} className="px-3.5 py-2 rounded-xl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer shadow-lg shadow-[var(--module-accent-ring)] flex-shrink-0">
+        }} className="px-3.5 py-2 rounded-card bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer shadow-lg shadow-[var(--module-accent-ring)] flex-shrink-0">
           <Plus className="w-3.5 h-3.5" /> {t("modelcfg.addProvider")}
         </button>
         {/* 一个供应商都没添加时不显示搜索框：没有东西可筛 */}
@@ -491,7 +491,7 @@ export default function ModelConfig() {
               value={providerSearch}
               onChange={e => setProviderSearch(e.target.value)}
               placeholder={t("modelcfg.searchAddedPh")}
-              className="w-full h-9 rounded-xl bg-white/5 border border-white/10 pl-8 pr-7 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
+              className="w-full h-9 rounded-card bg-white/5 border border-white/10 pl-8 pr-7 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
             />
             {providerSearch && (
               <button
@@ -509,18 +509,18 @@ export default function ModelConfig() {
 
       {/* Provider List（紧凑行：点击行打开详情弹窗） */}
       {config?.providers.length === 0 ? (
-        <div className="h-64 border border-dashed border-white/5 rounded-2xl flex flex-col items-center justify-center text-slate-500">
+        <div className="h-64 border border-dashed border-white/5 rounded-panel flex flex-col items-center justify-center text-slate-500">
           <Key className="w-8 h-8 text-slate-700 mb-2" />
           <span className="text-xs font-bold text-slate-400">{t("modelcfg.noProviders")}</span>
         </div>
       ) : filteredProviders.length === 0 ? (
         // 搜索没命中：与预设弹窗的空态同一套视觉
-        <div className="h-32 border border-dashed border-white/5 rounded-2xl flex flex-col items-center justify-center text-slate-600">
+        <div className="h-32 border border-dashed border-white/5 rounded-panel flex flex-col items-center justify-center text-slate-600">
           <Search className="w-6 h-6 mb-2" />
           <span className="text-[10px] font-bold">{t("modelcfg.searchNoMatch")}</span>
         </div>
       ) : (
-        <div className="rounded-xl border border-white/5 overflow-hidden divide-y divide-white/[0.04]">
+        <div className="rounded-card border border-white/5 overflow-hidden divide-y divide-white/[0.04]">
           {filteredProviders.map((provider) => {
             const hasEndpoint = !!(provider.openai_url || provider.anthropic_url || provider.google_url);
             return (
@@ -582,7 +582,7 @@ export default function ModelConfig() {
       {/* ─── 预设选择弹窗（关键词 + 分类过滤） ─── */}
       {showPresetPicker && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 modal-mask flex items-center justify-center p-4" onClick={() => setShowPresetPicker(false)}>
-          <div className="w-full max-w-xl bg-slate-950/95 border border-white/10 rounded-2xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden" onClick={e => e.stopPropagation()}>
+          <div className="w-full max-w-xl bg-slate-950/95 border border-white/10 rounded-panel shadow-2xl flex flex-col max-h-[85vh] overflow-hidden" onClick={e => e.stopPropagation()}>
             {/* Header */}
             <div className="p-4 pb-3 border-b border-white/5 space-y-3">
               <div className="flex items-center justify-between">
@@ -594,7 +594,7 @@ export default function ModelConfig() {
                 <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input autoFocus value={presetSearch} onChange={e => setPresetSearch(e.target.value)}
                   placeholder={t("modelcfg.pickerSearchPh")}
-                  className="w-full bg-slate-900 border border-white/10 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
+                  className="w-full bg-slate-900 border border-white/10 rounded-ctl pl-8 pr-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
               </div>
               {/* 分类过滤 */}
               <div className="flex items-center gap-1.5 flex-wrap">
@@ -622,7 +622,7 @@ export default function ModelConfig() {
                     const isRelay = p.category === "relay";
                     return (
                       <button key={p.id} onClick={() => openAddModal(p)} disabled={added}
-                        className="text-left p-2.5 rounded-xl border border-white/5 bg-slate-900/40 hover:bg-white/5 hover:border-white/15 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-all group">
+                        className="text-left p-2.5 rounded-card border border-white/5 bg-slate-900/40 hover:bg-white/5 hover:border-white/15 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-all group">
                         <div className="flex items-center gap-2 min-w-0">
                           {isLocal ? <Laptop className="w-3.5 h-3.5 text-purple-400/70 flex-shrink-0" /> : isRelay ? <Server className="w-3.5 h-3.5 text-cyan-400/70 flex-shrink-0" /> : <Globe className="w-3.5 h-3.5 text-emerald-400/70 flex-shrink-0" />}
                           <span className="text-[11px] font-bold text-slate-200 truncate">{p.name}</span>
@@ -652,11 +652,11 @@ export default function ModelConfig() {
             {/* Footer：自定义入口 */}
             <div className="p-3 border-t border-white/5 bg-slate-900/20 flex justify-end gap-2">
               <button onClick={() => openAddModal()}
-                className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-[10px] font-semibold cursor-pointer flex items-center gap-1">
+                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-[10px] font-semibold cursor-pointer flex items-center gap-1">
                 <Plus className="w-3 h-3" />{t("modelcfg.customProvider")}
               </button>
               <button onClick={() => openAddModal({ id: "", name: "", category: "relay", website: "", openai_url: "", anthropic_url: "", google_url: "" })}
-                className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-[10px] font-semibold cursor-pointer flex items-center gap-1">
+                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-[10px] font-semibold cursor-pointer flex items-center gap-1">
                 <Plus className="w-3 h-3" />{t("modelcfg.customRelay")}
               </button>
             </div>
@@ -667,7 +667,7 @@ export default function ModelConfig() {
       {/* ─── 供应商详情弹窗 ─── */}
       {detailProvider && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 modal-mask flex items-center justify-center p-4" onClick={() => setDetailId(null)}>
-          <div className="w-full max-w-md bg-slate-950/95 border border-white/10 rounded-2xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden" onClick={e => e.stopPropagation()}>
+          <div className="w-full max-w-md bg-slate-950/95 border border-white/10 rounded-panel shadow-2xl flex flex-col max-h-[85vh] overflow-hidden" onClick={e => e.stopPropagation()}>
             {/* Header */}
             <div className="p-4 border-b border-white/5 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 min-w-0">
@@ -690,7 +690,7 @@ export default function ModelConfig() {
             <div className="flex-grow overflow-y-auto p-4 space-y-4">
               {/* 余额 */}
               {BALANCE_CAPABLE.has(detailProvider.id) && (
-                <div className="p-3 rounded-lg bg-slate-900/50 border border-white/5 space-y-2">
+                <div className="p-3 rounded-ctl bg-slate-900/50 border border-white/5 space-y-2">
                   <div className="flex items-center justify-between">
                     <label className="text-[10px] text-slate-400 font-semibold">{t("modelcfg.balance")}</label>
                     <button onClick={() => void runBalance(detailProvider)} disabled={balanceState?.pid === detailProvider.id && balanceState.loading}
@@ -719,7 +719,7 @@ export default function ModelConfig() {
               )}
 
               {/* 协议端点 */}
-              <div className="p-3 rounded-lg bg-slate-900/50 border border-white/5 space-y-1.5">
+              <div className="p-3 rounded-ctl bg-slate-900/50 border border-white/5 space-y-1.5">
                 <label className="text-[10px] text-slate-400 font-semibold">{t("modelcfg.endpoints")}</label>
                 {([
                   [t("modelcfg.openaiUrl"), detailProvider.openai_url, "text-blue-300", detailProvider.openai_include_v1 ?? null],
@@ -747,7 +747,7 @@ export default function ModelConfig() {
                 {detailProvider.models.length === 0 ? (
                   <div className="text-[10px] text-slate-600 py-2 text-center">{t("modelcfg.noModelsHint")}</div>
                 ) : (
-                  <div className="max-h-48 overflow-y-auto rounded-lg border border-white/5 divide-y divide-white/[0.03]">
+                  <div className="max-h-48 overflow-y-auto rounded-ctl border border-white/5 divide-y divide-white/[0.03]">
                     {detailProvider.models.map((model) => (
                       <div key={model.id} className="px-2.5 py-1 text-[10px] bg-white/[0.02]">
                         <span className="font-mono text-slate-300">{model.id}</span>
@@ -761,9 +761,9 @@ export default function ModelConfig() {
             {/* Footer */}
             <div className="p-4 border-t border-white/5 bg-slate-900/20 flex justify-end gap-2">
               <button onClick={() => { setDetailId(null); openEditModal(detailProvider); }}
-                className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:text-white text-[10px] font-semibold cursor-pointer">{t("modelcfg.edit")}</button>
+                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-300 hover:text-white text-[10px] font-semibold cursor-pointer">{t("modelcfg.edit")}</button>
               <button onClick={() => setDetailId(null)}
-                className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-[10px] font-semibold cursor-pointer">{t("modelcfg.cancel")}</button>
+                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-[10px] font-semibold cursor-pointer">{t("modelcfg.cancel")}</button>
             </div>
           </div>
         </div>
@@ -772,7 +772,7 @@ export default function ModelConfig() {
       {/* ─── 编辑/新增弹框 ─── */}
       {showModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 modal-mask flex items-center justify-center p-4">
-          <div className="w-full max-w-lg bg-slate-950/95 border border-white/10 rounded-2xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden" onClick={e => e.stopPropagation()}>
+          <div className="w-full max-w-lg bg-slate-950/95 border border-white/10 rounded-panel shadow-2xl flex flex-col max-h-[85vh] overflow-hidden" onClick={e => e.stopPropagation()}>
             {/* Header */}
             <div className="p-4 border-b border-white/5 flex items-center justify-between">
               <h3 className="text-xs font-bold text-slate-200">{modalMode === "add" ? t("modelcfg.modalAdd") : t("modelcfg.modalEdit")}</h3>
@@ -785,14 +785,14 @@ export default function ModelConfig() {
               <div>
                 <label className="text-[10px] text-slate-500 font-semibold block mb-1">{t("modelcfg.name")}</label>
                 <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
-                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
+                  className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
               </div>
 
               {/* Website */}
               <div>
                 <label className="text-[10px] text-slate-500 font-semibold block mb-1">{t("modelcfg.website")}</label>
                 <input value={form.website} onChange={e => setForm({ ...form, website: e.target.value })} placeholder="https://..."
-                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500" />
+                  className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500" />
               </div>
 
               {/* API Key */}
@@ -800,7 +800,7 @@ export default function ModelConfig() {
                 <label className="text-[10px] text-slate-500 font-semibold block mb-1">API Key</label>
                 <div className="relative">
                   <input type={showApiKey ? "text" : "password"} value={form.api_key} onChange={e => setForm({ ...form, api_key: e.target.value })} placeholder="sk-..."
-                    className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 pr-9 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
+                    className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 pr-9 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
                   <button
                     type="button"
                     onClick={() => setShowApiKey(v => !v)}
@@ -814,7 +814,7 @@ export default function ModelConfig() {
               </div>
 
               {/* 自定义上游请求头 */}
-              <div className="p-3 rounded-lg bg-slate-900/50 border border-white/5 space-y-2">
+              <div className="p-3 rounded-ctl bg-slate-900/50 border border-white/5 space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="text-[10px] text-slate-400 font-semibold">{t("modelcfg.customHeaders")}</label>
                   <button
@@ -836,13 +836,13 @@ export default function ModelConfig() {
                           value={h.key}
                           onChange={e => updateCustomHeader(idx, { key: e.target.value })}
                           placeholder={t("modelcfg.headerName")}
-                          className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
+                          className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded-ctl px-2 py-1 text-[11px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
                         />
                         <input
                           value={h.value}
                           onChange={e => updateCustomHeader(idx, { value: e.target.value })}
                           placeholder={t("modelcfg.headerValue")}
-                          className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
+                          className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded-ctl px-2 py-1 text-[11px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
                         />
                         <button
                           type="button"
@@ -859,7 +859,7 @@ export default function ModelConfig() {
               </div>
 
               {/* 协议端点 URL（每个支持的协议一个地址） */}
-              <div className="p-3 rounded-lg bg-slate-900/50 border border-white/5 space-y-3">
+              <div className="p-3 rounded-ctl bg-slate-900/50 border border-white/5 space-y-3">
                 <label className="text-[10px] text-slate-400 font-semibold block">{t("modelcfg.endpoints")}</label>
                 <p className="text-[9px] text-slate-600">{t("modelcfg.endpointsHint")}</p>
 
@@ -867,7 +867,7 @@ export default function ModelConfig() {
                   <label className="text-[9px] text-blue-300 font-semibold block">{t("modelcfg.openaiUrl")}</label>
                   <input value={form.openai_url} onChange={e => setForm({ ...form, openai_url: e.target.value })}
                     placeholder="https://api.openai.com/v1"
-                    className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500" />
+                    className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500" />
                   {/* 兼容层差异：有的端点要 `{base}/v1/chat/completions`，有的是 `{base}/chat/completions` */}
                   <div className="flex items-center gap-1.5">
                     <span className="text-[9px] text-slate-500">{t("modelcfg.includeV1")}</span>
@@ -886,7 +886,7 @@ export default function ModelConfig() {
                   <label className="text-[9px] text-amber-300 font-semibold block">{t("modelcfg.anthropicUrl")}</label>
                   <input value={form.anthropic_url} onChange={e => setForm({ ...form, anthropic_url: e.target.value })}
                     placeholder="https://api.anthropic.com"
-                    className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-amber-500" />
+                    className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-amber-500" />
                   <div className="flex items-center gap-1.5">
                     <span className="text-[9px] text-slate-500">{t("modelcfg.includeV1")}</span>
                     <select value={v1ToSelect(form.anthropic_include_v1)}
@@ -904,7 +904,7 @@ export default function ModelConfig() {
                   <label className="text-[9px] text-green-300 font-semibold block">{t("modelcfg.googleUrl")}</label>
                   <input value={form.google_url} onChange={e => setForm({ ...form, google_url: e.target.value })}
                     placeholder="https://generativelanguage.googleapis.com"
-                    className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-green-500" />
+                    className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-green-500" />
                 </div>
               </div>
 
@@ -928,7 +928,7 @@ export default function ModelConfig() {
                   onChange={e => setModelsText(e.target.value)}
                   rows={6}
                   placeholder={"gpt-4o\ngpt-4o-mini\nclaude-sonnet-4-20250514\ndeepseek-chat\ndeepseek-v4-pro"}
-                  className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)] resize-y leading-5"
+                  className="w-full bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)] resize-y leading-5"
                 />
                 <div className="text-[9px] text-slate-600 mt-1">
                   {t("modelcfg.enteredModels", { count: modelsText.split("\n").filter(l => l.trim()).length })}
@@ -937,7 +937,7 @@ export default function ModelConfig() {
 
               {/* 模型自定义启动参数 */}
               {modelsText.split("\n").map(l => l.trim()).filter(Boolean).length > 0 && (
-                <div className="rounded-lg border border-white/5 bg-slate-900/30 p-3 space-y-3">
+                <div className="rounded-ctl border border-white/5 bg-slate-900/30 p-3 space-y-3">
                   <div className="text-[10px] text-slate-500 font-semibold">
                     {t("modelcfg.customParams")}
                     <span className="text-slate-600 font-normal">{t("modelcfg.customParamsHint")}</span>
@@ -1002,7 +1002,7 @@ export default function ModelConfig() {
 
               {/* Error */}
               {formError && (
-                <div className="p-2 rounded-lg bg-red-500/10 border border-red-500/20 text-[10px] text-red-400 flex items-center gap-1.5">
+                <div className="p-2 rounded-ctl bg-red-500/10 border border-red-500/20 text-[10px] text-red-400 flex items-center gap-1.5">
                   <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />{formError}
                 </div>
               )}
@@ -1011,9 +1011,9 @@ export default function ModelConfig() {
             {/* Footer */}
             <div className="p-4 border-t border-white/5 bg-slate-900/20 flex justify-end gap-2">
               <button onClick={() => setShowModal(false)}
-                className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-[10px] font-semibold cursor-pointer">{t("modelcfg.cancel")}</button>
+                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-[10px] font-semibold cursor-pointer">{t("modelcfg.cancel")}</button>
               <button onClick={handleModalConfirm}
-                className="px-3.5 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[10px] font-semibold cursor-pointer">{t("modelcfg.confirm")}</button>
+                className="px-3.5 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[10px] font-semibold cursor-pointer">{t("modelcfg.confirm")}</button>
             </div>
           </div>
         </div>
@@ -1022,9 +1022,9 @@ export default function ModelConfig() {
       {/* ─── 删除确认弹框 ─── */}
       {deleteTarget && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 modal-mask flex items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-slate-950/95 border border-white/10 rounded-2xl shadow-2xl p-5" onClick={e => e.stopPropagation()}>
+          <div className="w-full max-w-sm bg-slate-950/95 border border-white/10 rounded-panel shadow-2xl p-5" onClick={e => e.stopPropagation()}>
             <div className="flex items-center gap-3 mb-4">
-              <div className="p-2 rounded-lg bg-red-500/10"><Trash2 className="w-4 h-4 text-red-400" /></div>
+              <div className="p-2 rounded-ctl bg-red-500/10"><Trash2 className="w-4 h-4 text-red-400" /></div>
               <div>
                 <h3 className="text-xs font-bold text-slate-200">{t("modelcfg.deleteTitle")}</h3>
                 <p className="text-[10px] text-slate-500 mt-0.5">{t("modelcfg.deleteHint", { name: config?.providers.find(p => p.id === deleteTarget)?.name ?? "" })}</p>
@@ -1032,9 +1032,9 @@ export default function ModelConfig() {
             </div>
             <div className="flex justify-end gap-2">
               <button onClick={() => setDeleteTarget(null)}
-                className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-[10px] font-semibold cursor-pointer">{t("modelcfg.cancel")}</button>
+                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-[10px] font-semibold cursor-pointer">{t("modelcfg.cancel")}</button>
               <button onClick={() => handleDelete(deleteTarget)}
-                className="px-3.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-[10px] font-semibold cursor-pointer">{t("modelcfg.deleteBtn")}</button>
+                className="px-3.5 py-1.5 rounded-ctl bg-red-600 hover:bg-red-500 text-white text-[10px] font-semibold cursor-pointer">{t("modelcfg.deleteBtn")}</button>
             </div>
           </div>
         </div>

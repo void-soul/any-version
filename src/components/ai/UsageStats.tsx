@@ -219,7 +219,7 @@ function SortableTable({
 
   if (rows.length === 0) {
     return (
-      <div className="rounded-xl bg-slate-900/30 border border-white/5">
+      <div className="rounded-card bg-slate-900/30 border border-white/5">
         <div className="flex items-center gap-1.5 px-3 py-2 text-[10px] font-bold text-slate-300">
           <span className={`p-1 rounded-md ${style.softClass} ${style.iconClass}`}>{icon}</span>
           {title}
@@ -236,7 +236,7 @@ function SortableTable({
   };
 
   return (
-    <div className="rounded-xl bg-slate-900/30 border border-white/5 overflow-hidden">
+    <div className="rounded-card bg-slate-900/30 border border-white/5 overflow-hidden">
       <div className="flex items-center gap-1.5 px-3 py-2 text-[10px] font-bold text-slate-200 border-b border-white/[0.04] bg-white/[0.015]">
         <span className={`p-1 rounded-md ${style.softClass} ${style.iconClass}`}>{icon}</span>
         {title}
@@ -451,7 +451,7 @@ export default function UsageStats() {
             <select
               value={refreshIntervalMs}
               onChange={(e) => changeRefreshInterval(Number(e.target.value))}
-              className="bg-white/5 border border-white/10 rounded-lg text-[10px] text-slate-300 px-1.5 py-1 cursor-pointer hover:text-white hover:bg-white/10 transition-all focus:outline-none"
+              className="bg-white/5 border border-white/10 rounded-ctl text-[10px] text-slate-300 px-1.5 py-1 cursor-pointer hover:text-white hover:bg-white/10 transition-all focus:outline-none"
             >
               {REFRESH_INTERVAL_OPTIONS_MS.map((ms) => (
                 <option key={ms} value={ms} className="bg-surface-topbar text-slate-200">
@@ -461,11 +461,11 @@ export default function UsageStats() {
             </select>
           </div>
           <button onClick={load} disabled={loading}
-            className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex items-center gap-1 disabled:opacity-50">
+            className="px-2.5 py-1 rounded-ctl bg-white/5 border border-white/10 text-[10px] text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex items-center gap-1 disabled:opacity-50">
             <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} /> {t("usagestats.refresh")}
           </button>
           <button onClick={handleClear} disabled={!hasData}
-            className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] text-slate-300 hover:text-red-400 hover:bg-red-500/10 cursor-pointer transition-all flex items-center gap-1 disabled:opacity-30 disabled:cursor-not-allowed">
+            className="px-2.5 py-1 rounded-ctl bg-white/5 border border-white/10 text-[10px] text-slate-300 hover:text-red-400 hover:bg-red-500/10 cursor-pointer transition-all flex items-center gap-1 disabled:opacity-30 disabled:cursor-not-allowed">
             <Trash2 className="w-3 h-3" /> {t("usagestats.clear")}
           </button>
         </div>
@@ -479,20 +479,20 @@ export default function UsageStats() {
           </div>
         ) : !hasData ? (
           <div className="h-full flex flex-col items-center justify-center text-slate-500">
-            <div className="p-4 rounded-2xl bg-slate-900/40 border border-white/5 mb-3">
+            <div className="p-4 rounded-panel bg-slate-900/40 border border-white/5 mb-3">
               <Hash className="w-8 h-8 text-slate-700" />
             </div>
             <span className="text-sm font-bold text-slate-400">{t("usagestats.emptyTitle")}</span>
             <span className="text-[10px] text-slate-600 mt-1">{t("usagestats.emptyDesc")}</span>
             <button onClick={load}
-              className="mt-3 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-[10px] text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex items-center gap-1">
+              className="mt-3 px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-[10px] text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex items-center gap-1">
               <RefreshCw className="w-3 h-3" /> {t("usagestats.refresh")}
             </button>
           </div>
         ) : (
           <>
             {/* 主卡：总 Token 消耗 + 输入/输出占比 */}
-            <div className="relative rounded-2xl bg-gradient-to-br from-[color-mix(in_srgb,var(--module-accent)_10%,transparent)] via-slate-900/30 to-amber-500/[0.06] border border-white/5 p-4 overflow-hidden">
+            <div className="relative rounded-panel bg-gradient-to-br from-[color-mix(in_srgb,var(--module-accent)_10%,transparent)] via-slate-900/30 to-amber-500/[0.06] border border-white/5 p-4 overflow-hidden">
               <div className="absolute -right-6 -top-6 w-24 h-24 rounded-full bg-[var(--module-accent-soft)] blur-2xl" />
               <div className="relative flex items-start justify-between">
                 <div>
@@ -507,10 +507,10 @@ export default function UsageStats() {
                   </div>
                 </div>
                 <div className="flex gap-1.5">
-                  <span className="px-2 py-1 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-300 text-[10px] font-semibold flex items-center gap-1 tabular-nums">
+                  <span className="px-2 py-1 rounded-ctl bg-blue-500/10 border border-blue-500/20 text-blue-300 text-[10px] font-semibold flex items-center gap-1 tabular-nums">
                     <ArrowDownRight className="w-3 h-3" />{formatTokens(totalInput)}
                   </span>
-                  <span className="px-2 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-[10px] font-semibold flex items-center gap-1 tabular-nums">
+                  <span className="px-2 py-1 rounded-ctl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-[10px] font-semibold flex items-center gap-1 tabular-nums">
                     <ArrowUpRight className="w-3 h-3" />{formatTokens(totalOutput)}
                   </span>
                 </div>
@@ -528,15 +528,15 @@ export default function UsageStats() {
 
             {/* 指标卡 */}
             <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-xl bg-slate-900/30 border border-white/5 p-3">
+              <div className="rounded-card bg-slate-900/30 border border-white/5 p-3">
                 <div className="text-[9px] text-slate-500 flex items-center gap-1"><Hash className="w-3 h-3 text-[var(--module-accent)]" />{t("usagestats.reqTotal")}</div>
                 <div className="text-lg font-bold text-slate-100 tabular-nums mt-1">{formatTokens(totalRecords)}</div>
               </div>
-              <div className="rounded-xl bg-slate-900/30 border border-white/5 p-3">
+              <div className="rounded-card bg-slate-900/30 border border-white/5 p-3">
                 <div className="text-[9px] text-slate-500 flex items-center gap-1"><ArrowDownRight className="w-3 h-3 text-blue-400" />{t("usagestats.inputTokens")}</div>
                 <div className="text-lg font-bold text-slate-100 tabular-nums mt-1">{formatTokens(totalInput)}</div>
               </div>
-              <div className="rounded-xl bg-slate-900/30 border border-white/5 p-3">
+              <div className="rounded-card bg-slate-900/30 border border-white/5 p-3">
                 <div className="text-[9px] text-slate-500 flex items-center gap-1"><ArrowUpRight className="w-3 h-3 text-emerald-400" />{t("usagestats.outputTokens")}</div>
                 <div className="text-lg font-bold text-slate-100 tabular-nums mt-1">{formatTokens(totalOutput)}</div>
               </div>

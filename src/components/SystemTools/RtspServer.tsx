@@ -482,7 +482,7 @@ export default function RtspServer() {
       {/* 头部控制栏固定，实例列表单独滚动 */}
       <div className="flex shrink-0 flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-4">
         <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] shadow-lg shadow-[var(--module-accent-ring)]">
+          <div className="p-2.5 rounded-card bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] shadow-lg shadow-[var(--module-accent-ring)]">
             <Video className="w-6 h-6" />
           </div>
           <div>
@@ -504,7 +504,7 @@ export default function RtspServer() {
         <div className="flex items-center gap-2 self-start md:self-auto">
           <button
             onClick={handleAddInstance}
-            className="px-3.5 py-2 rounded-xl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-[var(--module-accent-ring)] cursor-pointer"
+            className="px-3.5 py-2 rounded-card bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-[var(--module-accent-ring)] cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             {t("rtsp.addInstance")}
@@ -513,7 +513,7 @@ export default function RtspServer() {
           {instances.length - runningCount > 0 && (
             <button
               onClick={handleStartAll}
-              className="px-3.5 py-2 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+              className="px-3.5 py-2 rounded-card bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
             >
               <Play className="w-3.5 h-3.5 fill-current" />
               {t("rtsp.startAll", { count: instances.length - runningCount })}
@@ -523,7 +523,7 @@ export default function RtspServer() {
           {runningCount > 0 && (
             <button
               onClick={handleStopAll}
-              className="px-3.5 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+              className="px-3.5 py-2 rounded-card bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
             >
               <Square className="w-3.5 h-3.5 fill-current" />
               {t("rtsp.stopAll", { count: runningCount })}
@@ -541,7 +541,7 @@ export default function RtspServer() {
           return (
             <div
               key={inst.id}
-              className={`glass-panel border rounded-2xl transition-all overflow-hidden ${
+              className={`glass-panel border rounded-panel transition-all overflow-hidden ${
                 isRunning
                   ? "border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_3%,transparent)] shadow-lg shadow-[var(--module-accent-ring)]"
                   : "border-white/10 bg-slate-900/40 hover:border-white/20"
@@ -559,7 +559,7 @@ export default function RtspServer() {
                   </div>
 
                   <div
-                    className={`p-2 rounded-xl flex-shrink-0 ${
+                    className={`p-2 rounded-card flex-shrink-0 ${
                       isRunning
                         ? "bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] text-[var(--module-accent)] border border-[var(--module-accent-ring)]"
                         : "bg-white/5 text-slate-400 border border-white/10"
@@ -618,7 +618,7 @@ export default function RtspServer() {
                     <button
                       onClick={(e) => handleStartInstance(inst, e)}
                       disabled={inst.actionLoading}
-                      className="px-4 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-[var(--module-accent-ring)] cursor-pointer"
+                      className="px-4 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-card text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-[var(--module-accent-ring)] cursor-pointer"
                     >
                       <Play className="w-3.5 h-3.5 fill-current" />
                       {t("rtsp.startStream")}
@@ -627,7 +627,7 @@ export default function RtspServer() {
                     <button
                       onClick={(e) => handleStopInstance(inst.id, e)}
                       disabled={inst.actionLoading}
-                      className="px-4 py-1.5 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-rose-600/20 cursor-pointer"
+                      className="px-4 py-1.5 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-card text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-rose-600/20 cursor-pointer"
                     >
                       <Square className="w-3.5 h-3.5 fill-current" />
                       {t("rtsp.stopInstance")}
@@ -637,7 +637,7 @@ export default function RtspServer() {
                   {instances.length > 1 && !isRunning && (
                     <button
                       onClick={(e) => handleDeleteInstance(inst.id, e)}
-                      className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition-colors cursor-pointer border border-transparent hover:border-rose-500/20"
+                      className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-card transition-colors cursor-pointer border border-transparent hover:border-rose-500/20"
                       title={t("rtsp.deleteInstance")}
                     >
                       <Trash2 className="w-4 h-4" />
@@ -657,13 +657,13 @@ export default function RtspServer() {
                       onChange={(e) => updateInstanceConfig(inst.id, { title: e.target.value })}
                       disabled={isRunning}
                       placeholder={t("rtsp.aliasPh")}
-                      className="text-xs font-bold text-white bg-white/5 border border-white/10 rounded-lg px-2.5 py-1 focus:border-[var(--module-accent)] focus:outline-none transition-all flex-1"
+                      className="text-xs font-bold text-white bg-white/5 border border-white/10 rounded-ctl px-2.5 py-1 focus:border-[var(--module-accent)] focus:outline-none transition-all flex-1"
                     />
                     <button
                       onClick={(e) => { e.stopPropagation(); handleCopyConfigToAll(inst); }}
                       disabled={instances.length < 2}
                       title={instances.length < 2 ? t("rtsp.copyTitle") : t("rtsp.copyTitleN", { count: instances.length - 1 })}
-                      className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+                      className="px-2.5 py-1 rounded-ctl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
                     >
                       <Copy className="w-3.5 h-3.5" />
                       {t("rtsp.copyToAll", { count: instances.length - 1 })}
@@ -672,7 +672,7 @@ export default function RtspServer() {
 
                   {/* 运行中推流状态与 RTSP 链接复制区 */}
                   {isRunning && (
-                    <div className="rounded-xl bg-black/40 border border-[var(--module-accent-ring)] p-4 space-y-3">
+                    <div className="rounded-card bg-black/40 border border-[var(--module-accent-ring)] p-4 space-y-3">
                       <div className="flex flex-wrap items-center justify-between text-xs font-semibold text-[var(--module-accent)] gap-2 border-b border-white/5 pb-2">
                         <div className="flex items-center gap-2">
                           <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
@@ -685,14 +685,14 @@ export default function RtspServer() {
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         {inst.status.localUrl && (
-                          <div className="bg-white/[0.03] border border-white/10 rounded-xl p-3 flex items-center justify-between">
+                          <div className="bg-white/[0.03] border border-white/10 rounded-card p-3 flex items-center justify-between">
                             <div className="min-w-0 pr-2">
                               <div className="text-[10px] text-slate-400 font-semibold uppercase">{t("rtsp.loopbackLabel")}</div>
                               <div className="text-xs font-mono text-[var(--module-accent)] truncate mt-0.5">{inst.status.localUrl}</div>
                             </div>
                             <button
                               onClick={(e) => handleCopy(inst.status.localUrl!, e)}
-                              className="p-2 text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-colors cursor-pointer flex-shrink-0"
+                              className="p-2 text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 rounded-ctl transition-colors cursor-pointer flex-shrink-0"
                               title={t("rtsp.copyRtsp")}
                             >
                               {copiedUrl === inst.status.localUrl ? <CheckCircle className="w-4 h-4 text-[var(--module-accent)]" /> : <Copy className="w-4 h-4" />}
@@ -700,7 +700,7 @@ export default function RtspServer() {
                           </div>
                         )}
                         {inst.config.allowLan && allIps.length > 0 && (
-                          <div className="md:col-span-2 bg-white/[0.03] border border-white/10 rounded-xl p-3 space-y-2">
+                          <div className="md:col-span-2 bg-white/[0.03] border border-white/10 rounded-card p-3 space-y-2">
                             <div className="flex items-center justify-between">
                               <div className="text-[10px] text-slate-400 font-semibold uppercase">{t("rtsp.lanLabel")}</div>
                               <button
@@ -717,7 +717,7 @@ export default function RtspServer() {
                                   <div
                                     key={ip}
                                     onClick={(e) => handleCopy(url, e)}
-                                    className="flex items-center justify-between bg-black/30 border border-white/10 rounded-lg px-2.5 py-1.5 cursor-pointer hover:bg-white/[0.06] transition-colors group"
+                                    className="flex items-center justify-between bg-black/30 border border-white/10 rounded-ctl px-2.5 py-1.5 cursor-pointer hover:bg-white/[0.06] transition-colors group"
                                   >
                                     <div className="min-w-0 pr-2">
                                       <div className="text-[10px] text-slate-500 truncate">{name}</div>
@@ -742,7 +742,7 @@ export default function RtspServer() {
 
                   {/* 异常报错提示 */}
                   {inst.error && (
-                    <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300 flex items-start gap-2.5">
+                    <div className="p-3.5 rounded-card bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300 flex items-start gap-2.5">
                       <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
                       <div className="min-w-0 whitespace-pre-wrap font-mono text-[11px] leading-relaxed">{inst.error}</div>
                     </div>
@@ -751,9 +751,9 @@ export default function RtspServer() {
                   {/* 3 卡片配置区 */}
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
                     {/* ── 卡片 1：视频输入源 ── */}
-                    <div className="rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden">
+                    <div className="rounded-panel border border-white/10 bg-white/[0.02] overflow-hidden">
                       <div className="px-4 py-2.5 border-b border-white/5 bg-white/[0.02] flex items-center gap-2">
-                        <div className="p-1.5 rounded-lg bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)]">
+                        <div className="p-1.5 rounded-ctl bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)]">
                           <Sliders className="w-3.5 h-3.5 text-[var(--module-accent)]" />
                         </div>
                         <span className="text-xs font-semibold text-white">{t("rtsp.sourceTitle")}</span>
@@ -765,7 +765,7 @@ export default function RtspServer() {
                               key={st}
                               disabled={isLocked}
                               onClick={() => updateInstanceConfig(inst.id, { sourceType: st })}
-                              className={`h-9 text-xs font-medium rounded-xl border transition-all cursor-pointer ${
+                              className={`h-9 text-xs font-medium rounded-card border transition-all cursor-pointer ${
                                 inst.config.sourceType === st
                                   ? "bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] border-[color-mix(in_srgb,var(--module-accent)_50%,transparent)] text-[var(--module-accent)] font-semibold shadow-sm"
                                   : "bg-white/5 border-white/10 text-slate-400 hover:text-white"
@@ -793,7 +793,7 @@ export default function RtspServer() {
                                 value={inst.config.cameraName || ""}
                                 disabled={isLocked}
                                 onChange={(e) => updateInstanceConfig(inst.id, { cameraName: e.target.value })}
-                                className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
+                                className="w-full h-9 px-2.5 rounded-card bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
                               >
                                 {devices.videoDevices.length === 0 ? (
                                   <option value="">{t("rtsp.noCameraFound")}</option>
@@ -818,12 +818,12 @@ export default function RtspServer() {
                                 disabled={isLocked}
                                 onChange={(e) => updateInstanceConfig(inst.id, { filePath: e.target.value })}
                                 placeholder={t("rtsp.filePh")}
-                                className="flex-1 h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
+                                className="flex-1 h-9 px-2.5 rounded-card bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
                               />
                               <button
                                 disabled={isLocked}
                                 onClick={() => handleSelectFile(inst.id)}
-                                className="h-9 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer flex items-center justify-center"
+                                className="h-9 px-3 rounded-card bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer flex items-center justify-center"
                                 title={t("rtsp.pickFile")}
                               >
                                 <FolderOpen className="w-4 h-4" />
@@ -844,7 +844,7 @@ export default function RtspServer() {
 
                         {/* 音频设置：摄像头模式可选麦克风；测试画幅模式推送 1kHz 合成测试音 */}
                         {(inst.config.sourceType === "camera" || inst.config.sourceType === "testsrc") && (
-                          <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3 space-y-2">
+                          <div className="rounded-card border border-white/10 bg-white/[0.02] p-3 space-y-2">
                             <label className="flex items-center justify-between cursor-pointer">
                               <span className="text-[11px] text-slate-300 flex items-center gap-1.5">
                                 {inst.config.includeAudio ? (
@@ -881,7 +881,7 @@ export default function RtspServer() {
                                   value={inst.config.audioDevice || ""}
                                   disabled={isLocked}
                                   onChange={(e) => updateInstanceConfig(inst.id, { audioDevice: e.target.value })}
-                                  className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
+                                  className="w-full h-9 px-2.5 rounded-card bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
                                 >
                                   {devices.audioDevices.length === 0 ? (
                                     <option value="">{t("rtsp.noMicFound")}</option>
@@ -906,7 +906,7 @@ export default function RtspServer() {
                                   value={inst.config.testAudioType || "tone1000"}
                                   disabled={isLocked}
                                   onChange={(e) => updateInstanceConfig(inst.id, { testAudioType: e.target.value })}
-                                  className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
+                                  className="w-full h-9 px-2.5 rounded-card bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
                                 >
                                   <option value="tone1000">{t("rtsp.testAudioTone1000")}</option>
                                   <option value="tone440">{t("rtsp.testAudioTone440")}</option>
@@ -924,7 +924,7 @@ export default function RtspServer() {
                         )}
 
                         {inst.config.sourceType === "testsrc" && (
-                          <div className="text-[11px] text-slate-400 bg-white/[0.02] border border-white/5 rounded-xl p-2.5">
+                          <div className="text-[11px] text-slate-400 bg-white/[0.02] border border-white/5 rounded-card p-2.5">
                             {t("rtsp.testsrcDesc")}
                           </div>
                         )}
@@ -932,9 +932,9 @@ export default function RtspServer() {
                     </div>
 
                     {/* ── 卡片 2：网络与传输协议 ── */}
-                    <div className="rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden">
+                    <div className="rounded-panel border border-white/10 bg-white/[0.02] overflow-hidden">
                       <div className="px-4 py-2.5 border-b border-white/5 bg-white/[0.02] flex items-center gap-2">
-                        <div className="p-1.5 rounded-lg bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)]">
+                        <div className="p-1.5 rounded-ctl bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)]">
                           <Network className="w-3.5 h-3.5 text-[var(--module-accent)]" />
                         </div>
                         <span className="text-xs font-semibold text-white">{t("rtsp.netTitle")}</span>
@@ -950,7 +950,7 @@ export default function RtspServer() {
                               onChange={(e) =>
                                 updateInstanceConfig(inst.id, { port: parseInt(e.target.value) || 8554 })
                               }
-                              className="w-full h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] font-mono"
+                              className="w-full h-9 px-2.5 rounded-card bg-white/5 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] font-mono"
                             />
                           </div>
                           <div>
@@ -959,7 +959,7 @@ export default function RtspServer() {
                               disabled={isLocked}
                               value={inst.config.pathName}
                               onChange={(e) => updateInstanceConfig(inst.id, { pathName: e.target.value })}
-                              className="w-full h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] font-mono"
+                              className="w-full h-9 px-2.5 rounded-card bg-white/5 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] font-mono"
                             />
                           </div>
                         </div>
@@ -972,7 +972,7 @@ export default function RtspServer() {
                             onChange={(e) =>
                               updateInstanceConfig(inst.id, { transport: e.target.value as "tcp" | "udp" })
                             }
-                            className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
+                            className="w-full h-9 px-2.5 rounded-card bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
                           >
                             <option value="tcp">{t("rtsp.optTcp")}</option>
                             <option value="udp">{t("rtsp.optUdp")}</option>
@@ -1003,7 +1003,7 @@ export default function RtspServer() {
                                 </button>
                               </div>
                               {allIps.length === 0 ? (
-                                <div className="text-[10px] text-slate-500 bg-white/[0.02] border border-white/5 rounded-lg px-2.5 py-1.5">
+                                <div className="text-[10px] text-slate-500 bg-white/[0.02] border border-white/5 rounded-ctl px-2.5 py-1.5">
                                   {t("rtsp.noNicIp")}
                                 </div>
                               ) : (
@@ -1013,7 +1013,7 @@ export default function RtspServer() {
                                     <div
                                       key={ip}
                                       onClick={() => handleCopy(url)}
-                                      className="flex items-center justify-between bg-white/[0.03] border border-white/10 rounded-lg px-2.5 py-1.5 cursor-pointer hover:bg-white/[0.06] transition-colors group"
+                                      className="flex items-center justify-between bg-white/[0.03] border border-white/10 rounded-ctl px-2.5 py-1.5 cursor-pointer hover:bg-white/[0.06] transition-colors group"
                                     >
                                       <div className="min-w-0">
                                         <div className="text-[10px] text-slate-500 truncate">{name}</div>
@@ -1037,9 +1037,9 @@ export default function RtspServer() {
                     </div>
 
                     {/* ── 卡片 3：画幅与编码选项 ── */}
-                    <div className="rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden">
+                    <div className="rounded-panel border border-white/10 bg-white/[0.02] overflow-hidden">
                       <div className="px-4 py-2.5 border-b border-white/5 bg-white/[0.02] flex items-center gap-2">
-                        <div className="p-1.5 rounded-lg bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)]">
+                        <div className="p-1.5 rounded-ctl bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)]">
                           <Cpu className="w-3.5 h-3.5 text-[var(--module-accent)]" />
                         </div>
                         <span className="text-xs font-semibold text-white">{t("rtsp.codecTitle")}</span>
@@ -1054,7 +1054,7 @@ export default function RtspServer() {
                               onChange={(e) =>
                                 updateInstanceConfig(inst.id, { videoCodec: e.target.value as "h264" | "h265" })
                               }
-                              className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer font-semibold text-[var(--module-accent)]"
+                              className="w-full h-9 px-2.5 rounded-card bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer font-semibold text-[var(--module-accent)]"
                             >
                               <option value="h264">{t("rtsp.optH264")}</option>
                               <option value="h265">{t("rtsp.optH265")}</option>
@@ -1066,7 +1066,7 @@ export default function RtspServer() {
                               disabled={isLocked}
                               value={inst.config.resolution || "default"}
                               onChange={(e) => updateInstanceConfig(inst.id, { resolution: e.target.value })}
-                              className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
+                              className="w-full h-9 px-2.5 rounded-card bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
                             >
                               <option value="default">{t("rtsp.optResDefault")}</option>
                               <option value="3840x2160">{t("rtsp.optRes4k")}</option>
@@ -1085,7 +1085,7 @@ export default function RtspServer() {
                               max={240}
                               value={inst.config.fps ?? 30}
                               onChange={(e) => updateInstanceConfig(inst.id, { fps: Math.max(1, Math.min(240, parseInt(e.target.value) || 30)) })}
-                              className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)]"
+                              className="w-full h-9 px-2.5 rounded-card bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)]"
                               placeholder="30"
                             />
                             <span className="text-[9px] text-slate-500 mt-0.5 block">{inst.config.sourceType === "testsrc" ? t("rtsp.fpsHintTestsrc") : t("rtsp.fpsHint")}</span>
@@ -1102,7 +1102,7 @@ export default function RtspServer() {
                                 gpuAccel: e.target.value as any,
                               })
                             }
-                            className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
+                            className="w-full h-9 px-2.5 rounded-card bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
                           >
                             <option value="cpu">{t("rtsp.optCpu")}</option>
                             <option value="nvenc">{t("rtsp.optNvenc")}</option>
@@ -1121,7 +1121,7 @@ export default function RtspServer() {
                               step={0.1}
                               value={inst.config.bitrateMbps ?? 0}
                               onChange={(e) => updateInstanceConfig(inst.id, { bitrateMbps: Math.max(0, parseFloat(e.target.value) || 0) })}
-                              className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)]"
+                              className="w-full h-9 px-2.5 rounded-card bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)]"
                               placeholder={t("rtsp.bitratePh")}
                             />
                             <span className="text-[9px] text-slate-500 mt-0.5 block">{inst.config.gpuAccel === "copy" ? t("rtsp.bitrateHintCopy") : t("rtsp.bitrateHint")}</span>
@@ -1135,7 +1135,7 @@ export default function RtspServer() {
                               max={600}
                               value={inst.config.gop ?? 15}
                               onChange={(e) => updateInstanceConfig(inst.id, { gop: Math.max(1, Math.min(600, parseInt(e.target.value) || 15)) })}
-                              className="w-full h-9 px-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)]"
+                              className="w-full h-9 px-2.5 rounded-card bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-[var(--module-accent)]"
                               placeholder="15"
                             />
                             <span className="text-[9px] text-slate-500 mt-0.5 block">{inst.config.gpuAccel === "copy" ? t("rtsp.gopHintCopy") : t("rtsp.gopHint")}</span>
@@ -1162,7 +1162,7 @@ export default function RtspServer() {
                       </button>
 
                       {inst.showLogs && (
-                        <pre className="mt-2 text-[10px] text-slate-300 bg-black/60 border border-white/10 rounded-xl p-3.5 max-h-52 overflow-y-auto font-mono whitespace-pre-wrap leading-relaxed">
+                        <pre className="mt-2 text-[10px] text-slate-300 bg-black/60 border border-white/10 rounded-card p-3.5 max-h-52 overflow-y-auto font-mono whitespace-pre-wrap leading-relaxed">
                           {inst.status.logs.join("\n")}
                         </pre>
                       )}

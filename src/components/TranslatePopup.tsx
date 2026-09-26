@@ -451,7 +451,7 @@ export default function TranslatePopup() {
                 setSourceText(e.target.value);
               }}
               placeholder={t("translate.phInput")}
-              className="w-full min-h-[60px] bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-[var(--tl-accent)] resize-none leading-relaxed"
+              className="w-full min-h-[60px] bg-white/5 border border-white/10 rounded-ctl px-2 py-1.5 text-[11px] text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-[var(--tl-accent)] resize-none leading-relaxed"
             />
           </div>
 
@@ -463,7 +463,7 @@ export default function TranslatePopup() {
             <button
               onClick={doTranslate}
               disabled={translating || !sourceText.trim()}
-              className="px-3 py-1 rounded-lg text-[10px] font-semibold bg-[var(--tl-accent)] text-white hover:bg-[var(--tl-accent-strong)] transition cursor-pointer disabled:opacity-50 flex items-center gap-1"
+              className="px-3 py-1 rounded-ctl text-[10px] font-semibold bg-[var(--tl-accent)] text-white hover:bg-[var(--tl-accent-strong)] transition cursor-pointer disabled:opacity-50 flex items-center gap-1"
             >
               <ArrowRightLeft className="w-3 h-3" />
               {translating ? t("translate.translating") : t("translate.translate")}

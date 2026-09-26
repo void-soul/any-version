@@ -104,7 +104,7 @@ function ToastView({ items }: { items: ToastMsg[] }) {
         return (
           <div
             key={t.id}
-            className={`vex-neon-edge flex items-center gap-2.5 pl-3 pr-4 py-2.5 rounded-xl bg-slate-900/95 backdrop-blur-md ${t.kind === "err" ? "vex-toast-pulse" : t.kind === "ok" ? "vex-toast-light" : ""}`}
+            className={`vex-neon-edge flex items-center gap-2.5 pl-3 pr-4 py-2.5 rounded-card bg-slate-900/95 backdrop-blur-md ${t.kind === "err" ? "vex-toast-pulse" : t.kind === "ok" ? "vex-toast-light" : ""}`}
             style={
               {
                 boxShadow: glowShadow,

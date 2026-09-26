@@ -406,7 +406,7 @@ export default function MusicPanel() {
             className="glass-input w-full pl-7 pr-2 h-8 text-[11px]"
           />
         </div>
-        <div className="flex items-center gap-0.5 rounded-lg bg-white/5 p-0.5">
+        <div className="flex items-center gap-0.5 rounded-ctl bg-white/5 p-0.5">
           {(["sequence", "shuffle", "single"] as PlayMode[]).map((item) => {
             const Icon = MODE_ICONS[item];
             return (
@@ -590,7 +590,7 @@ export default function MusicPanel() {
           <button
             onClick={() => void togglePlay()}
             disabled={library.tracks.length === 0}
-            className="p-2 rounded-lg bg-[var(--module-accent)] text-white hover:opacity-85 cursor-pointer disabled:opacity-40"
+            className="p-2 rounded-ctl bg-[var(--module-accent)] text-white hover:opacity-85 cursor-pointer disabled:opacity-40"
             title={player?.status === "playing" ? t("music.pause") : t("music.play")}
           >
             {player?.status === "playing" ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
@@ -670,7 +670,7 @@ export default function MusicPanel() {
           }}
         >
           <div
-            className="w-[440px] max-w-full rounded-2xl border border-white/10 bg-slate-900 p-4 space-y-3"
+            className="w-[440px] max-w-full rounded-panel border border-white/10 bg-slate-900 p-4 space-y-3"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="text-[13px] font-bold text-white">{t("music.renameTitle")}</div>
@@ -686,7 +686,7 @@ export default function MusicPanel() {
               }}
               autoFocus
               spellCheck={false}
-              className="w-full bg-black/30 border border-white/10 rounded-lg px-2.5 py-2 text-[12px] text-slate-100 outline-none focus:border-[var(--module-accent)]"
+              className="w-full bg-black/30 border border-white/10 rounded-ctl px-2.5 py-2 text-[12px] text-slate-100 outline-none focus:border-[var(--module-accent)]"
             />
             <div className="text-[10px] text-slate-500">
               {renameFromTags ? t("music.renameFromTags") : t("music.renameNoTags")}

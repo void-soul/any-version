@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { theamedAlert, alertError } from "../shared/ThemedAlert";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -378,7 +379,7 @@ export default function ProjectDetailPanel({
       await invoke("project_install_version", { id: pid, version: cleanVer });
       await refreshSingle(pid);
     } catch (e: unknown) {
-      alert(t("projdetail.installFail", { err: String(e) }));
+      alertError(t("projdetail.installFail", { err: String(e) }));
     } finally {
       setTimeout(() => {
         if (eventProjectRef.current === pid) {
@@ -410,7 +411,7 @@ export default function ProjectDetailPanel({
       );
       patch(pid, { remoteVersions: result.versions, versionsUpdatedAt: result.updated_at, loadingRemote: false });
     } catch (e: unknown) {
-      alert(t("projdetail.refreshVersionsFail", { err: String(e) }));
+      alertError(t("projdetail.refreshVersionsFail", { err: String(e) }));
       patch(pid, { loadingRemote: false });
     }
   }, [pid, patch]);
@@ -422,7 +423,7 @@ export default function ProjectDetailPanel({
       await invoke("project_uninstall_version", { id: pid, version });
       await refreshSingle(pid);
     } catch (e: unknown) {
-      alert(t("projdetail.uninstallFail", { err: String(e) }));
+      alertError(t("projdetail.uninstallFail", { err: String(e) }));
     }
   }, [pid, refreshSingle, t]);
 
@@ -448,7 +449,7 @@ export default function ProjectDetailPanel({
       patch(pid, { detail, switchingVersion: null, detectStep: "" });
       if (onProjectUpdate) await onProjectUpdate(pid);
     } catch (e: unknown) {
-      alert(t("projdetail.switchFail", { err: String(e) }));
+      alertError(t("projdetail.switchFail", { err: String(e) }));
       patch(pid, { switchingVersion: null, detectStep: "" });
     }
   }, [pid, patch, loadDetail, onRefresh]);
@@ -459,9 +460,9 @@ export default function ProjectDetailPanel({
     try {
       await invoke("project_repair_env_vars", { id: pid });
       await refreshSingle(pid);
-      alert(t("projdetail.envFixed"));
+      theamedAlert(t("projdetail.envFixed"));
     } catch (e: unknown) {
-      alert(t("projdetail.envFixFail", { err: String(e) }));
+      alertError(t("projdetail.envFixFail", { err: String(e) }));
     } finally {
       patch(pid, { repairingEnv: false });
     }
@@ -489,7 +490,7 @@ export default function ProjectDetailPanel({
       setLocalDelegation(initialDelegation);
       patch(pid, { managePreview: preview, showManagePreview: true });
     } catch (e: unknown) {
-      alert(String(e));
+      theamedAlert(String(e));
     }
   }, [pid, ui.detail, patch]);
 
@@ -519,7 +520,7 @@ export default function ProjectDetailPanel({
       patch(pid, { showManagePreview: false, managePreview: null, managing: false });
       await refreshSingle(pid);
     } catch (e: unknown) {
-      alert(t("projdetail.manageFail", { err: String(e) }));
+      alertError(t("projdetail.manageFail", { err: String(e) }));
       patch(pid, { managing: false });
     }
   }, [pid, patch, localDelegation, refreshSingle]);
@@ -530,7 +531,7 @@ export default function ProjectDetailPanel({
       const preview = await invoke<ManagePreview>("project_preview_unmanage", { id: pid });
       patch(pid, { managePreview: preview, showManagePreview: true });
     } catch(e: unknown) {
-      alert(String(e));
+      theamedAlert(String(e));
     }
   }, [pid, patch]);
 
@@ -542,7 +543,7 @@ export default function ProjectDetailPanel({
       patch(pid, { showManagePreview: false, managePreview: null });
       await refreshSingle(pid);
     } catch (e: unknown) {
-      alert(t("projdetail.unmanageFail", { err: String(e) }));
+      alertError(t("projdetail.unmanageFail", { err: String(e) }));
     } finally {
       patch(pid, { unmanaging: false });
     }
@@ -557,7 +558,7 @@ export default function ProjectDetailPanel({
       await invoke("refresh_tray_menu");
       await refreshSingle(pid);
     } catch (e: unknown) {
-      alert(t("projdetail.serviceOpFail", { err: String(e) }));
+      alertError(t("projdetail.serviceOpFail", { err: String(e) }));
     } finally {
       patch(pid, { serviceCtrlLoading: false });
     }
@@ -593,7 +594,7 @@ export default function ProjectDetailPanel({
         }
       } else {
         if (!simpleService && !ui.detail.status.active_version) {
-          alert(t("projdetail.needEnableFirst"));
+          theamedAlert(t("projdetail.needEnableFirst"));
           patch(pid, { serviceCtrlLoading: false });
           return;
         }
@@ -605,7 +606,7 @@ export default function ProjectDetailPanel({
       await invoke("refresh_tray_menu");
       await refreshSingle(pid);
     } catch (e: unknown) {
-      alert(t("projdetail.serviceOpFail", { err: String(e) }));
+      alertError(t("projdetail.serviceOpFail", { err: String(e) }));
     } finally {
       patch(pid, { serviceCtrlLoading: false });
     }
@@ -661,7 +662,7 @@ export default function ProjectDetailPanel({
     const s = uiMap[pid];
     if (!s || !s.cacheDestPath) return;
     if (s.cacheDestPath.toLowerCase().startsWith("c:")) {
-      alert(t("projdetail.nonCDir"));
+      theamedAlert(t("projdetail.nonCDir"));
       return;
     }
     patch(pid, { migratingCache: true });
@@ -669,7 +670,7 @@ export default function ProjectDetailPanel({
       await invoke("migrate_cache_path", { name: pid, newPath: s.cacheDestPath });
       await loadDetail(pid);
     } catch (e: unknown) {
-      alert(t("projdetail.migrateCacheFail", { err: String(e) }));
+      alertError(t("projdetail.migrateCacheFail", { err: String(e) }));
     } finally {
       patch(pid, { migratingCache: false });
     }
@@ -897,7 +898,7 @@ export default function ProjectDetailPanel({
             {status.managed && (
               <button
                 onClick={() => setShowMenuConfig(!showMenuConfig)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] border cursor-pointer transition-all ${
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-ctl text-[10px] border cursor-pointer transition-all ${
                   showMenuConfig 
                     ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white" 
                     : "bg-white/5 border-white/5 text-slate-300 hover:bg-white/10"
@@ -910,7 +911,7 @@ export default function ProjectDetailPanel({
             <button
               onClick={async () => { if (pid) { await loadDetail(pid); await onRefresh(); } }}
               disabled={ui.detailLoading}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-[10px] border border-white/5 cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-ctl text-[10px] border border-white/5 cursor-pointer"
             >
               <RefreshCw className={`w-3 h-3 ${ui.detailLoading ? "animate-spin" : ""}`} /> {t("projdetail.refresh")}
             </button>
@@ -920,7 +921,7 @@ export default function ProjectDetailPanel({
       </div>
 
       {showMenuConfig && status.managed && (
-        <div className="mx-5 mt-4 p-4 glass-panel border border-white/5 rounded-2xl bg-white/2 space-y-3 animate-fadeIn flex-shrink-0">
+        <div className="mx-5 mt-4 p-4 glass-panel border border-white/5 rounded-panel bg-white/2 space-y-3 animate-fadeIn flex-shrink-0">
           <div className="flex items-center justify-between border-b border-white/5 pb-2">
             <span className="text-xs font-semibold text-white flex items-center gap-1.5">
               <Settings className="w-3.5 h-3.5 text-[var(--module-accent)]" />
@@ -1013,7 +1014,7 @@ export default function ProjectDetailPanel({
           </div>
           <button
             onClick={handleSelectCustomPath}
-            className="px-5 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white rounded-xl text-xs font-semibold shadow-lg shadow-[var(--module-accent-ring)] cursor-pointer transition-all flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]"
+            className="px-5 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white rounded-card text-xs font-semibold shadow-lg shadow-[var(--module-accent-ring)] cursor-pointer transition-all flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]"
           >
             {"手动指定目录"}
           </button>
@@ -1021,7 +1022,7 @@ export default function ProjectDetailPanel({
       ) : (
         <>
           {!status.managed && (
-            <div className="mx-5 mt-4 p-3 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] rounded-xl flex items-start gap-2.5 text-xs text-[var(--module-accent)]">
+            <div className="mx-5 mt-4 p-3 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] rounded-card flex items-start gap-2.5 text-xs text-[var(--module-accent)]">
               <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
               <div>
                 <p className="font-semibold text-slate-200">{t("projdetail.notManagedTitle")}</p>
@@ -1032,12 +1033,12 @@ export default function ProjectDetailPanel({
             </div>
           )}
           {availableTabs.length > 1 && (
-            <div className="flex bg-white/5 border border-white/5 rounded-xl p-0.5 mx-5 mt-4 flex-shrink-0">
+            <div className="flex bg-white/5 border border-white/5 rounded-card p-0.5 mx-5 mt-4 flex-shrink-0">
               {availableTabs.map((tab) => (
                 <button
                   key={tab}
                   onClick={() => pid && patch(pid, { activeSubTab: tab })}
-                  className={`flex-1 py-1.5 rounded-lg text-[10px] font-semibold transition-all cursor-pointer ${
+                  className={`flex-1 py-1.5 rounded-ctl text-[10px] font-semibold transition-all cursor-pointer ${
                     activeTab === tab ? "bg-[var(--module-accent)] text-white shadow-md" : "text-slate-400 hover:text-slate-200"
                   }`}
                 >
@@ -1130,7 +1131,7 @@ export default function ProjectDetailPanel({
               {/* 遮罩 */}
               <div className="absolute inset-0 modal-mask bg-black/60 backdrop-blur-sm" />
               {/* 弹框 */}
-              <div className={`relative w-full max-w-lg max-h-[82vh] rounded-2xl border shadow-2xl flex flex-col overflow-hidden animate-fadeIn ${isUnmanage ? "bg-surface-panel border-red-500/25" : "bg-surface-panel border-[var(--module-accent-ring)]"}`}>
+              <div className={`relative w-full max-w-lg max-h-[82vh] rounded-panel border shadow-2xl flex flex-col overflow-hidden animate-fadeIn ${isUnmanage ? "bg-surface-panel border-red-500/25" : "bg-surface-panel border-[var(--module-accent-ring)]"}`}>
                 {/* 头部 */}
                 <div className="flex-shrink-0 px-4 py-3 border-b border-white/10 bg-white/[0.02] flex items-center justify-between">
                   <h4 className={`text-xs font-semibold flex items-center gap-1.5 ${isUnmanage ? "text-red-300" : "text-[var(--module-accent)]"}`}>
@@ -1147,13 +1148,13 @@ export default function ProjectDetailPanel({
                     <p className="text-[11px] text-slate-400">{t("projdetail.willExecute")}</p>
                   )}
               {!isUnmanage && localDelegation && (
-                <div className="p-3 bg-white/5 border border-white/10 rounded-xl space-y-3">
+                <div className="p-3 bg-white/5 border border-white/10 rounded-card space-y-3">
                   <span className="text-[11px] font-semibold text-slate-300 block">{t("projdetail.chooseOptions")}</span>
                   
                   <div className="grid grid-cols-2 gap-3 text-xs">
                     {/* 1. 环境变量 */}
                     {envVars.length > 0 && (
-                      <div className="space-y-1.5 p-2 bg-black/25 border border-white/5 rounded-lg col-span-2">
+                      <div className="space-y-1.5 p-2 bg-black/25 border border-white/5 rounded-ctl col-span-2">
                         <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
                           <input
                             type="checkbox"
@@ -1192,7 +1193,7 @@ export default function ProjectDetailPanel({
 
                     {/* 2. PATH 变量 */}
                     {def?.bin_dirs && def.bin_dirs.length > 0 && (
-                      <div className="space-y-1.5 p-2 bg-black/25 border border-white/5 rounded-lg col-span-2">
+                      <div className="space-y-1.5 p-2 bg-black/25 border border-white/5 rounded-ctl col-span-2">
                         <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
                           <input
                             type="checkbox"
@@ -1229,7 +1230,7 @@ export default function ProjectDetailPanel({
 
                     {/* 3. 版本控制 */}
                     {hasVersionSupportOf(def) && (
-                      <div className="p-2 bg-black/25 border border-white/5 rounded-lg flex items-center">
+                      <div className="p-2 bg-black/25 border border-white/5 rounded-ctl flex items-center">
                         <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
                           <input
                             type="checkbox"
@@ -1248,7 +1249,7 @@ export default function ProjectDetailPanel({
                     )}
 
                     {/* 4. 创建链接 */}
-                    <div className="p-2 bg-black/25 border border-white/5 rounded-lg flex items-center">
+                    <div className="p-2 bg-black/25 border border-white/5 rounded-ctl flex items-center">
                       <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
                         <input
                           type="checkbox"
@@ -1266,7 +1267,7 @@ export default function ProjectDetailPanel({
                     </div>
 
                     {/* 5. 管理安装目录 */}
-                    <div className="p-2 bg-black/25 border border-white/5 rounded-lg flex items-center">
+                    <div className="p-2 bg-black/25 border border-white/5 rounded-ctl flex items-center">
                       <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
                         <input
                           type="checkbox"
@@ -1285,7 +1286,7 @@ export default function ProjectDetailPanel({
 
                     {/* 6. 管理数据目录 */}
                     {def?.data_dirs && def.data_dirs.length > 0 && (
-                      <div className="p-2 bg-black/25 border border-white/5 rounded-lg flex items-center">
+                      <div className="p-2 bg-black/25 border border-white/5 rounded-ctl flex items-center">
                         <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
                           <input
                             type="checkbox"
@@ -1305,7 +1306,7 @@ export default function ProjectDetailPanel({
 
                     {/* 7. 管理缓存目录 */}
                     {def?.has_cache && (
-                      <div className="p-2 bg-black/25 border border-white/5 rounded-lg flex items-center">
+                      <div className="p-2 bg-black/25 border border-white/5 rounded-ctl flex items-center">
                         <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
                           <input
                             type="checkbox"
@@ -1325,7 +1326,7 @@ export default function ProjectDetailPanel({
 
                     {/* 8. 管理附带的工具 */}
                     {def?.package_managers?.filter(p => !p.built_in).map(pm => (
-                      <div key={pm.id} className="p-2 bg-black/25 border border-white/5 rounded-lg flex items-center">
+                      <div key={pm.id} className="p-2 bg-black/25 border border-white/5 rounded-ctl flex items-center">
                         <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
                           <input
                             type="checkbox"
@@ -1349,7 +1350,7 @@ export default function ProjectDetailPanel({
 
                     {/* 9. 托盘显示（开托管时就定好，省得再进「托盘配置」勾一遍） */}
                     <div className="col-span-2 grid grid-cols-2 gap-3">
-                      <div className="p-2 bg-black/25 border border-white/5 rounded-lg flex items-center">
+                      <div className="p-2 bg-black/25 border border-white/5 rounded-ctl flex items-center">
                         <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
                           <input
                             type="checkbox"
@@ -1364,7 +1365,7 @@ export default function ProjectDetailPanel({
                         </label>
                       </div>
                       {(def?.category === "service" || def?.is_service) && (
-                        <div className="p-2 bg-black/25 border border-white/5 rounded-lg flex items-center">
+                        <div className="p-2 bg-black/25 border border-white/5 rounded-ctl flex items-center">
                           <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-200">
                             <input
                               type="checkbox"
@@ -1406,7 +1407,7 @@ export default function ProjectDetailPanel({
               </div>
 
               {preview?.has_local_install && (
-                <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-[10px]">
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-ctl text-[10px]">
                   <span className="text-emerald-300 font-medium">{t("projdetail.detectedLocal")}</span>
                   {preview.local_install_root && (
                     <p className="text-slate-400 mt-0.5">{t("projdetail.pathLabel", { path: preview.local_install_root })}</p>
@@ -1419,7 +1420,7 @@ export default function ProjectDetailPanel({
               )}
 
               {!(ui.isSimpleManage || status.is_simple_managed) && (
-                <div className="p-2.5 rounded-lg bg-black/20 border border-white/5 text-[10px] space-y-1.5">
+                <div className="p-2.5 rounded-ctl bg-black/20 border border-white/5 text-[10px] space-y-1.5">
                   <div className="flex items-center gap-1.5 text-slate-300">
                     <span className="font-semibold text-slate-200">{t("projdetail.backupLocation")}</span>
                     <span className="font-mono text-[var(--module-accent)]">%USERPROFILE%\\.any-version\\backup\\manage_{pid}_*.json</span>
@@ -1435,15 +1436,15 @@ export default function ProjectDetailPanel({
                 {/* 底部固定按钮区 */}
                 <div className="flex-shrink-0 px-4 py-3 border-t border-white/10 bg-white/[0.02] flex items-center gap-2">
                   {isUnmanage ? (
-                    <button onClick={handleUnmanage} disabled={ui.unmanaging} className="px-4 py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all">
+                    <button onClick={handleUnmanage} disabled={ui.unmanaging} className="px-4 py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-card text-xs font-semibold cursor-pointer transition-all">
                       {ui.unmanaging ? t("projdetail.executing") : t("projdetail.confirmUnmanage")}
                     </button>
                   ) : (
-                    <button onClick={() => handleManage()} disabled={ui.managing} className="px-4 py-2 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all">
+                    <button onClick={() => handleManage()} disabled={ui.managing} className="px-4 py-2 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-card text-xs font-semibold cursor-pointer transition-all">
                       {ui.managing ? t("projdetail.executing") : t("projdetail.confirmManage")}
                     </button>
                   )}
-                  <button onClick={() => patch(pid!, { showManagePreview: false, managePreview: null })} className="px-4 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl text-xs font-medium cursor-pointer border border-white/10">
+                  <button onClick={() => patch(pid!, { showManagePreview: false, managePreview: null })} className="px-4 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-card text-xs font-medium cursor-pointer border border-white/10">
                     {t("projdetail.cancel")}
                   </button>
                 </div>
@@ -1462,11 +1463,11 @@ export default function ProjectDetailPanel({
           </div>
           <div className="flex items-center gap-2">
             {status.managed ? (
-              <button onClick={handlePreviewUnmanage} disabled={ui.unmanaging || isOperating} className="px-4 py-2 bg-red-600/80 hover:bg-red-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5">
+              <button onClick={handlePreviewUnmanage} disabled={ui.unmanaging || isOperating} className="px-4 py-2 bg-red-600/80 hover:bg-red-500 disabled:opacity-50 text-white rounded-card text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5">
                 {ui.unmanaging ? t("projdetail.unmanaging") : t("projdetail.unmanage")}
               </button>
             ) : (
-              <button onClick={() => handlePreviewManage()} disabled={ui.managing} className="px-5 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]">
+              <button onClick={() => handlePreviewManage()} disabled={ui.managing} className="px-5 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-card text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]">
                 {ui.managing ? t("projdetail.managingBtn") : t("projdetail.manageProject")}
               </button>
             )}

@@ -11,6 +11,7 @@ import type { ApiEndpoint, ApiModule, UnitTest, UnitTestRunOutput } from "./type
 import { ASSERTION_TYPES } from "./types";
 import { methodIcon, fmtTime } from "./panelParts";
 import type { AiProvider } from "../ai/types";
+import { theamedAlert } from "../shared/ThemedAlert";
 
 // ─── 接口树行（方法图标 + 名称） ───
 export function EndpointRow({ ep, selected, onSelect, onDelete, onToggleFavorite }: {
@@ -73,7 +74,7 @@ export function UnitTestsPanel({ endpointId, tests, setTests, results, running, 
     for (const t of tests) {
       await invoke("api_save_unit_test", { test: t });
     }
-    window.alert(t("apisubs.saved"));
+    theamedAlert(t("apisubs.saved"), "info");
   };
 
   const deleteTest = async (id: string, i: number) => {
@@ -102,7 +103,7 @@ export function UnitTestsPanel({ endpointId, tests, setTests, results, running, 
       {tests.map((ut, ti) => {
         const result = results[ut.id];
         return (
-          <div key={ti} className={`rounded-xl border p-3 ${result ? (result.pass ? "border-emerald-500/30" : "border-rose-500/30") : "border-white/10"} bg-black/20`}>
+          <div key={ti} className={`rounded-card border p-3 ${result ? (result.pass ? "border-emerald-500/30" : "border-rose-500/30") : "border-white/10"} bg-black/20`}>
             <div className="flex items-center gap-2 mb-2">
               <input
                 value={ut.name}
@@ -212,11 +213,11 @@ export function DocsPanel({ draft, onSave }: { draft: ApiEndpoint; onSave: (md: 
           value={text}
           onChange={(e) => setText(e.target.value)}
           rows={16}
-          className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60"
+          className="w-full bg-black/30 border border-white/10 rounded-ctl px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60"
           placeholder={t("apisubs.docPh")}
         />
       ) : (
-        <div className="rounded-lg border border-white/10 bg-black/20 p-3 prose prose-invert prose-sm max-w-none">
+        <div className="rounded-ctl border border-white/10 bg-black/20 p-3 prose prose-invert prose-sm max-w-none">
           {draft.docs_md ? (
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{draft.docs_md}</ReactMarkdown>
           ) : (
@@ -316,7 +317,7 @@ export function ImportModal({ projectId, modules, onClose, onImported }: {
 
   return (
     <div className="fixed inset-0 z-50 modal-mask flex items-center justify-center bg-black/60">
-      <div className="w-[560px] glass-panel rounded-2xl border border-white/10 shadow-2xl p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+      <div className="w-[560px] glass-panel rounded-panel border border-white/10 shadow-2xl p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-sm font-semibold text-white">
             <Upload className="w-4 h-4" style={{ color: "var(--module-accent)" }} /> {t("apisubs.importTitle")}
@@ -446,11 +447,11 @@ export function ImportModal({ projectId, modules, onClose, onImported }: {
         )}
         {msg && <div className={`text-[11px] ${msgOk ? "text-emerald-400" : "text-rose-400"}`}>{msg}</div>}
         <div className="flex justify-end gap-2 pt-1">
-          <button onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">{t("common.close")}</button>
+          <button onClick={onClose} className="px-3 py-1.5 text-xs rounded-ctl bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">{t("common.close")}</button>
           <button
             onClick={doImport}
             disabled={busy || (kind === "postman" && !postmanJson.trim()) || (kind === "swagger" && !swaggerSource.trim()) || (kind === "framework" && !frameworkDir.trim()) || (kind === "ai" && (!aiDir.trim() || !aiProviderId))}
-            className="px-4 py-1.5 text-xs rounded-lg font-semibold text-white cursor-pointer disabled:opacity-50"
+            className="px-4 py-1.5 text-xs rounded-ctl font-semibold text-white cursor-pointer disabled:opacity-50"
             style={{ background: "var(--module-accent)" }}
           >
             {busy ? (kind === "ai" ? t("apisubs.aiAnalyzing") : t("apisubs.importing")) : (kind === "ai" ? t("apisubs.aiAnalyzeImport") : t("apisubs.import"))}

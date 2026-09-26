@@ -159,7 +159,7 @@ export default function GroupsPanel() {
         {groups.length === 0 && <div className="text-[11px] text-slate-500">{t("groups.empty")}</div>}
 
         {groups.map((g, gi) => (
-          <div key={gi} className="rounded-lg border border-white/5 bg-slate-900/40 p-2.5 space-y-2">
+          <div key={gi} className="rounded-ctl border border-white/5 bg-slate-900/40 p-2.5 space-y-2">
             <div className="flex items-center gap-2">
               <input className={`${inputCls} flex-1 min-w-0`} value={g.name}
                 onChange={(e) => patch(gi, { name: e.target.value })} />

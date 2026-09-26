@@ -99,7 +99,7 @@ export default function DataSyncPanel() {
   };
 
   return (
-    <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-5">
+    <div className="glass-panel rounded-panel p-6 border border-white/5 space-y-5">
       {/* 头部 */}
       <div className="flex items-center justify-between pb-3 border-b border-white/5">
         <div className="flex items-center gap-2">
@@ -115,7 +115,7 @@ export default function DataSyncPanel() {
 
       {/* 操作结果（完整展示，不截断） */}
       {msg && (
-        <div className="flex items-start gap-2 rounded-xl border border-[var(--module-accent)]/30 bg-[var(--module-accent)]/10 px-3.5 py-2.5 text-[11px] text-slate-200 leading-relaxed">
+        <div className="flex items-start gap-2 rounded-card border border-[var(--module-accent)]/30 bg-[var(--module-accent)]/10 px-3.5 py-2.5 text-[11px] text-slate-200 leading-relaxed">
           <span className="text-[var(--module-accent)] mt-0.5 shrink-0">✓</span>
           <span className="break-all">{msg}</span>
         </div>
@@ -123,13 +123,13 @@ export default function DataSyncPanel() {
 
       <div className="space-y-4">
         {/* 说明 */}
-        <div className="bg-white/[0.03] border border-white/10 rounded-xl p-3.5 text-[11px] text-slate-400 leading-relaxed">
+        <div className="bg-white/[0.03] border border-white/10 rounded-card p-3.5 text-[11px] text-slate-400 leading-relaxed">
           {t("datasync.snapshotHint1")}<b className="text-slate-200">{t("datasync.snapshotHint2")}</b>{t("datasync.snapshotHint3")}{" "}
           <b className="text-slate-200">{t("datasync.snapshotHintPicky")}</b>{t("datasync.snapshotHintTail")}
         </div>
 
         {/* 导出 */}
-        <div className="bg-white/[0.03] border border-white/10 rounded-xl p-4 space-y-3">
+        <div className="bg-white/[0.03] border border-white/10 rounded-card p-4 space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
               <FolderDown className="w-3.5 h-3.5 text-[var(--module-accent)]" /> {t("datasync.exportAll")}
@@ -137,7 +137,7 @@ export default function DataSyncPanel() {
             <button
               onClick={exportSnapshot}
               disabled={busy}
-              className="px-3 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
+              className="px-3 py-1.5 rounded-ctl text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
             >
               {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <FolderDown className="w-3 h-3" />} {t("datasync.exportSnapshot")}
             </button>
@@ -155,7 +155,7 @@ export default function DataSyncPanel() {
         </div>
 
         {/* 导入 */}
-        <div className="bg-white/[0.03] border border-white/10 rounded-xl p-4 space-y-3">
+        <div className="bg-white/[0.03] border border-white/10 rounded-card p-4 space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
               <FolderUp className="w-3.5 h-3.5 text-[var(--module-accent)]" /> {t("datasync.importAll")}
@@ -163,7 +163,7 @@ export default function DataSyncPanel() {
             <button
               onClick={importAll}
               disabled={busy}
-              className="px-3 py-1.5 rounded-lg text-[11px] bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 cursor-pointer disabled:opacity-50 flex items-center gap-1"
+              className="px-3 py-1.5 rounded-ctl text-[11px] bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 cursor-pointer disabled:opacity-50 flex items-center gap-1"
             >
               {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <FolderUp className="w-3 h-3" />} {t("datasync.chooseAndRestore")}
             </button>
@@ -177,7 +177,7 @@ export default function DataSyncPanel() {
               <span className="text-[10px] text-slate-300">{t("datasync.restartRequired")}</span>
               <button
                 onClick={restartApp}
-                className="px-3 py-1.5 rounded-lg text-[10px] font-semibold cursor-pointer transition-all flex items-center gap-1.5 bg-[var(--module-accent)] text-white hover:opacity-85"
+                className="px-3 py-1.5 rounded-ctl text-[10px] font-semibold cursor-pointer transition-all flex items-center gap-1.5 bg-[var(--module-accent)] text-white hover:opacity-85"
               >
                 <RefreshCw className="w-3 h-3" />
                 {t("datasync.restartNow")}

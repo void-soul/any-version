@@ -167,7 +167,7 @@ export default function WsDebugger() {
       </div>
 
       {/* 连接配置 */}
-      <div className="shrink-0 flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-lg p-3">
+      <div className="shrink-0 flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-ctl p-3">
         <input
           value={connId}
           onChange={(e) => setConnId(e.target.value)}
@@ -225,7 +225,7 @@ export default function WsDebugger() {
       )}
 
       {/* 日志 */}
-      <div ref={logRef} className="flex-1 min-h-0 overflow-auto rounded-lg border border-white/10 bg-white/[0.02] p-3 font-mono text-[12px] leading-5">
+      <div ref={logRef} className="flex-1 min-h-0 overflow-auto rounded-ctl border border-white/10 bg-white/[0.02] p-3 font-mono text-[12px] leading-5">
         {logs.length === 0 && (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-slate-600 select-none">
             <Network className="h-8 w-8 opacity-40" />
@@ -240,7 +240,7 @@ export default function WsDebugger() {
               <div key={i} className={`flex ${system ? "justify-center" : outgoing ? "justify-end" : "justify-start"}`}>
                 <div className={`flex max-w-[86%] items-end gap-2 ${outgoing ? "flex-row-reverse" : ""}`}>
                   <span className="shrink-0 text-[10px] text-slate-600">{entry.time}</span>
-                  <div className={`rounded-xl px-3 py-2 ${system ? "bg-white/[0.06]" : outgoing ? "bg-indigo-500/15" : entry.dir === "event" ? "bg-violet-500/15" : "bg-emerald-500/10"} ${colorCls(entry.dir)}`}>
+                  <div className={`rounded-card px-3 py-2 ${system ? "bg-white/[0.06]" : outgoing ? "bg-indigo-500/15" : entry.dir === "event" ? "bg-violet-500/15" : "bg-emerald-500/10"} ${colorCls(entry.dir)}`}>
                     <span className="mr-1.5 text-[10px] opacity-70">{entry.dir === "rx" ? t("wsdebug.dirRx") : entry.dir === "tx" ? t("wsdebug.dirTx") : entry.dir === "event" ? t("wsdebug.dirEvent") : entry.dir === "open" ? t("wsdebug.dirOpen") : entry.dir === "close" ? t("wsdebug.dirClose") : t("wsdebug.dirSys")}</span>
                     <span className="break-all whitespace-pre-wrap">{entry.text}</span>
                   </div>
@@ -253,7 +253,7 @@ export default function WsDebugger() {
 
       {/* 发送区 */}
       {canSend && (
-        <div className="shrink-0 flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-lg p-3">
+        <div className="shrink-0 flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-ctl p-3">
           <textarea
             value={sendData}
             onChange={(e) => setSendData(e.target.value)}

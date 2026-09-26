@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { theamedAlert, alertError } from "./shared/ThemedAlert";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen, emit } from "@tauri-apps/api/event";
@@ -83,7 +84,7 @@ function ModuleConfigRow({
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={`flex items-center gap-2 px-2.5 py-2 rounded-xl bg-white/[0.03] border border-white/5 ${
+      className={`flex items-center gap-2 px-2.5 py-2 rounded-card bg-white/[0.03] border border-white/5 ${
         isDragging ? "opacity-60 ring-1 ring-[var(--module-accent-ring)] z-10" : ""
       } ${disabled ? "opacity-50" : ""}`}
       {...attributes}
@@ -313,7 +314,7 @@ export default function GlobalSettings() {
         setAutostartOn(true);
       }
     } catch (e: any) {
-      alert(t("settings.setAutostartFail", { err: String(e) }));
+      alertError(t("settings.setAutostartFail", { err: String(e) }));
       // 失败后以系统真实状态为准
       await fetchAutostart();
     } finally {
@@ -590,9 +591,9 @@ export default function GlobalSettings() {
       );
       setAppearance({ ...appearance, globalFont: res.family, customFontPath: res.path });
       emit("appearance-updated");
-      alert(t("settings.fontImported", { family: res.family }));
+      theamedAlert(t("settings.fontImported", { family: res.family }));
     } catch (e: any) {
-      alert(t("settings.importFontFail", { err: String(e) }));
+      alertError(t("settings.importFontFail", { err: String(e) }));
     } finally {
       setImportingFont(false);
     }
@@ -603,9 +604,9 @@ export default function GlobalSettings() {
       await invoke("clear_custom_font");
       setAppearance({ ...appearance, globalFont: "", customFontPath: "" });
       emit("appearance-updated");
-      alert(t("settings.customFontRemoved"));
+      theamedAlert(t("settings.customFontRemoved"));
     } catch (e: any) {
-      alert(t("settings.removeFontFail", { err: String(e) }));
+      alertError(t("settings.removeFontFail", { err: String(e) }));
     }
   };
 
@@ -628,7 +629,7 @@ export default function GlobalSettings() {
       setLauncherSaved(true);
       setTimeout(() => setLauncherSaved(false), 2500);
     } catch (e: any) {
-      alert(t("settings.launcherSaveFail", { err: String(e) }));
+      alertError(t("settings.launcherSaveFail", { err: String(e) }));
     } finally {
       setSavingLauncher(false);
     }
@@ -785,7 +786,7 @@ export default function GlobalSettings() {
       if (migrated) setNeedRestart(true);
       await fetchConfig();
     } catch (e: any) {
-      alert(t("settings.configSaveFail", { err: String(e) }));
+      alertError(t("settings.configSaveFail", { err: String(e) }));
     } finally {
       unlisten();
       setProgress(null);
@@ -798,7 +799,7 @@ export default function GlobalSettings() {
     try {
       await relaunch();
     } catch (e) {
-      alert(t("settings.restartManual", { err: String(e) }));
+      alertError(t("settings.restartManual", { err: String(e) }));
     }
   };
 
@@ -811,7 +812,7 @@ export default function GlobalSettings() {
       // 清除残留目录列表
       setMigrateResult((prev) => (prev ? { ...prev, old_dirs_remain: [] } : prev));
     } catch (e: any) {
-      alert(t("settings.deleteFail", { err: String(e) }));
+      alertError(t("settings.deleteFail", { err: String(e) }));
     } finally {
       setDeletingOldDirs(false);
     }
@@ -853,7 +854,7 @@ export default function GlobalSettings() {
           setUpdateSource("plugin");
           return;
         }
-        alert(t("settings.alreadyLatest"));
+        theamedAlert(t("settings.alreadyLatest"));
         return;
       } catch (pluginErr) {
         // 插件未配置 / 网络异常时，降级为 GitHub API 通知（仅打开下载页）
@@ -879,7 +880,7 @@ export default function GlobalSettings() {
         setUpdateSource("github");
       } else {
         setUpdateError(null);
-        alert(t("settings.alreadyLatest"));
+        theamedAlert(t("settings.alreadyLatest"));
       }
     } catch (e: any) {
       setUpdateError(e.message || t("settings.updateCheckFail"));
@@ -917,7 +918,7 @@ export default function GlobalSettings() {
       const selected = await open({ directory: true, title: t("settings.chooseFolder") });
       if (selected) setter(selected as string);
     } catch {
-      alert(t("settings.folderPickerUnavailable"));
+      theamedAlert(t("settings.folderPickerUnavailable"));
     }
   };
 
@@ -930,7 +931,7 @@ export default function GlobalSettings() {
     <div className="flex-1 p-8 space-y-6 select-none max-w-3xl mx-auto">
       {/* Header */}
 
-      <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-6">
+      <div className="glass-panel rounded-panel p-6 border border-white/5 space-y-6">
         <div className="flex items-center gap-2 pb-3 border-b border-white/5">
           <FolderKanban className="w-4 h-4 text-[var(--module-accent)]" />
           <h3 className="text-xs font-semibold text-white">
@@ -960,7 +961,7 @@ export default function GlobalSettings() {
                 />
                 <button
                   onClick={() => handleBrowseFolder(setDataDir)}
-                  className="p-2.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 rounded-lg border border-white/5 cursor-pointer transition-all flex-shrink-0"
+                  className="p-2.5 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 rounded-ctl border border-white/5 cursor-pointer transition-all flex-shrink-0"
                   title={t("settings.chooseFolder")}
                 >
                   <FolderOpen className="w-4 h-4" />
@@ -969,7 +970,7 @@ export default function GlobalSettings() {
             </div>
 
             {/* 派生路径只读展示 */}
-            <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3 space-y-1.5">
+            <div className="rounded-card border border-white/5 bg-white/[0.02] p-3 space-y-1.5">
               <p className="text-[10px] text-slate-500 uppercase font-semibold">
                 {t("settings.derivedDirs")}
               </p>
@@ -1008,7 +1009,7 @@ export default function GlobalSettings() {
 
             {/* 路径变更确认弹窗 */}
             {showMigrateConfirm && (
-              <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl space-y-3 animate-fadeIn">
+              <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-card space-y-3 animate-fadeIn">
                 <h4 className="text-xs font-semibold text-amber-400 flex items-center gap-1.5">
                   <AlertTriangle className="w-4 h-4" />
                   {t("settings.confirmMigrate")}
@@ -1025,14 +1026,14 @@ export default function GlobalSettings() {
                   <button
                     onClick={handleSave}
                     disabled={saving}
-                    className="px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5"
+                    className="px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-card text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5"
                   >
                     <Save className="w-3 h-3" />
                     {saving ? t("settings.migrating") : t("settings.confirmMigrateSave")}
                   </button>
                   <button
                     onClick={() => setShowMigrateConfirm(false)}
-                    className="px-4 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl text-xs font-medium cursor-pointer border border-white/10"
+                    className="px-4 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-card text-xs font-medium cursor-pointer border border-white/10"
                   >
                     {t("common.cancel")}
                   </button>
@@ -1042,7 +1043,7 @@ export default function GlobalSettings() {
 
             {/* 迁移进度条 */}
             {progress && (
-              <div className="p-3 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] rounded-xl space-y-2 animate-fadeIn">
+              <div className="p-3 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] rounded-card space-y-2 animate-fadeIn">
                 <div className="flex items-center justify-between text-[10px]">
                   <span className="text-[var(--module-accent)] font-semibold flex items-center gap-1.5">
                     <Loader2 className="w-3 h-3 animate-spin" />
@@ -1075,7 +1076,7 @@ export default function GlobalSettings() {
 
             {/* 迁移结果展示 */}
             {migrateResult && (
-              <div className="p-4 bg-emerald-500/5 border border-emerald-500/15 rounded-xl space-y-2 text-[10px]">
+              <div className="p-4 bg-emerald-500/5 border border-emerald-500/15 rounded-card space-y-2 text-[10px]">
                 <h4 className="text-xs font-semibold text-emerald-400">
                   {t("settings.migrateDone")}
                 </h4>
@@ -1129,7 +1130,7 @@ export default function GlobalSettings() {
                       <button
                         onClick={handleDeleteOldDirs}
                         disabled={deletingOldDirs}
-                        className="px-3 py-1.5 bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] hover:bg-[color-mix(in_srgb,var(--module-accent)_40%,transparent)] disabled:opacity-50 text-[var(--module-accent)] rounded-lg text-[10px] font-medium cursor-pointer transition-all flex items-center gap-1.5 border border-[var(--module-accent-ring)]"
+                        className="px-3 py-1.5 bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] hover:bg-[color-mix(in_srgb,var(--module-accent)_40%,transparent)] disabled:opacity-50 text-[var(--module-accent)] rounded-ctl text-[10px] font-medium cursor-pointer transition-all flex items-center gap-1.5 border border-[var(--module-accent-ring)]"
                       >
                         <Trash2 className="w-3 h-3" />
                         {deletingOldDirs ? t("settings.deletingOld") : t("settings.deleteOldDirs")}
@@ -1142,7 +1143,7 @@ export default function GlobalSettings() {
 
             {/* 数据目录已切换：提示重启（进程内的数据库连接等仍指向旧目录） */}
             {needRestart && (
-              <div className="p-4 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] rounded-xl space-y-2.5">
+              <div className="p-4 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] rounded-card space-y-2.5">
                 <div className="flex items-start gap-1.5">
                   <Power className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-[var(--module-accent)]" />
                   <div className="text-[10px] text-slate-300 space-y-1">
@@ -1152,7 +1153,7 @@ export default function GlobalSettings() {
                 </div>
                 <button
                   onClick={restartApp}
-                  className="px-3 py-1.5 rounded-lg text-[10px] font-semibold cursor-pointer transition-all flex items-center gap-1.5 bg-[var(--module-accent)] text-white hover:opacity-85"
+                  className="px-3 py-1.5 rounded-ctl text-[10px] font-semibold cursor-pointer transition-all flex items-center gap-1.5 bg-[var(--module-accent)] text-white hover:opacity-85"
                 >
                   <RefreshCw className="w-3 h-3" />
                   {t("settings.restartNow")}
@@ -1175,7 +1176,7 @@ export default function GlobalSettings() {
               <button
                 onClick={handleSaveClick}
                 disabled={saving || !dataDir}
-                className="px-6 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-[var(--module-accent-ring)] cursor-pointer transition-all flex items-center gap-1.5"
+                className="px-6 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-card text-xs font-semibold shadow-lg shadow-[var(--module-accent-ring)] cursor-pointer transition-all flex items-center gap-1.5"
               >
                 <Save className="w-3.5 h-3.5" />
                 {saving ? t("settings.saving") : t("settings.saveConfig")}
@@ -1186,7 +1187,7 @@ export default function GlobalSettings() {
       </div>
 
       {/* 关于 Kira：名片 */}
-      <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-3">
+      <div className="glass-panel rounded-panel p-6 border border-white/5 space-y-3">
         <div className="flex items-center gap-4">
           <VexGlowAvatar size={56} />
           <div className="min-w-0">
@@ -1202,7 +1203,7 @@ export default function GlobalSettings() {
       </div>
 
       {/* 版本检查与升级 */}
-      <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-4">
+      <div className="glass-panel rounded-panel p-6 border border-white/5 space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-white/5">
           <div className="flex items-center gap-2">
             <RefreshCw className="w-4 h-4 text-[var(--module-accent)]" />
@@ -1211,7 +1212,7 @@ export default function GlobalSettings() {
           <button
             onClick={handleCheckUpdate}
             disabled={checkingUpdate}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-[10px] border border-white/5 cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-ctl text-[10px] border border-white/5 cursor-pointer"
           >
             <RefreshCw
               className={`w-3 h-3 ${checkingUpdate ? "animate-spin" : ""}`}
@@ -1228,13 +1229,13 @@ export default function GlobalSettings() {
         </div>
 
         {updateError && (
-          <div className="p-3 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] rounded-xl text-[10px] text-[var(--module-accent)]">
+          <div className="p-3 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] rounded-card text-[10px] text-[var(--module-accent)]">
             {updateError}
           </div>
         )}
 
         {latestVersion && (
-          <div className="p-4 bg-emerald-500/5 border border-emerald-500/15 rounded-xl space-y-2">
+          <div className="p-4 bg-emerald-500/5 border border-emerald-500/15 rounded-card space-y-2">
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold text-emerald-300">
                 {t("settings.newVersionFound", { version: latestVersion })}
@@ -1249,7 +1250,7 @@ export default function GlobalSettings() {
               <button
                 onClick={handleInstallUpdate}
                 disabled={installing}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5 disabled:opacity-60"
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-ctl text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5 disabled:opacity-60"
               >
                 <Loader2
                   className={`w-3 h-3 ${installing ? "animate-spin" : ""}`}
@@ -1259,7 +1260,7 @@ export default function GlobalSettings() {
             ) : (
               <button
                 onClick={handleDownloadUpdate}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5"
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-ctl text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5"
               >
                 <ExternalLink className="w-3 h-3" />
                 {t("settings.gotoDownloadPage")}
@@ -1276,7 +1277,7 @@ export default function GlobalSettings() {
       </div>
 
       {/* 应用行为 */}
-      <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-4">
+      <div className="glass-panel rounded-panel p-6 border border-white/5 space-y-4">
         <div className="flex items-center gap-2 pb-3 border-b border-white/5">
           <Power className="w-4 h-4 text-[var(--module-accent)]" />
           <h3 className="text-xs font-semibold text-white">{t("settings.behavior")}</h3>
@@ -1334,7 +1335,7 @@ export default function GlobalSettings() {
       </div>
 
       {/* 外观 (Appearance) */}
-      <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-5">
+      <div className="glass-panel rounded-panel p-6 border border-white/5 space-y-5">
         <div className="flex items-center justify-between pb-3 border-b border-white/5">
           <div className="flex items-center gap-2">
             <Sliders className="w-4 h-4 text-cyan-400" />
@@ -1374,14 +1375,14 @@ export default function GlobalSettings() {
                 key={c}
                 onClick={() => void handleSetThemeAccent(c)}
                 title={c}
-                className={`h-8 w-8 rounded-lg border transition cursor-pointer ${
+                className={`h-8 w-8 rounded-ctl border transition cursor-pointer ${
                   c === themeAccent ? "border-white ring-2 ring-white/40" : "border-white/15 hover:border-white/50"
                 }`}
                 style={{ background: c }}
               />
             ))}
             <label
-              className="relative h-8 w-8 rounded-lg border border-white/15 hover:border-white/50 cursor-pointer flex items-center justify-center overflow-hidden transition"
+              className="relative h-8 w-8 rounded-ctl border border-white/15 hover:border-white/50 cursor-pointer flex items-center justify-center overflow-hidden transition"
               title={t("settings.customColor")}
             >
               <span className="h-full w-full" style={{ background: "conic-gradient(red, yellow, lime, cyan, blue, magenta, red)" }} />
@@ -1407,13 +1408,13 @@ export default function GlobalSettings() {
                 value={fontSearch}
                 onChange={(e) => setFontSearch(e.target.value)}
                 placeholder={t("settings.searchFontsPh", { count: systemFonts.length })}
-                className="w-full glass-input pl-7 pr-2.5 py-1.5 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none focus:border-sky-400/50"
+                className="w-full glass-input pl-7 pr-2.5 py-1.5 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-sky-400/50"
               />
             </div>
             <button
               onClick={refreshSystemFonts}
               disabled={fontRefreshing}
-              className="p-1.5 rounded-lg text-[10px] text-slate-400 hover:text-slate-200 bg-white/5 hover:bg-white/10 border border-white/10 transition cursor-pointer flex-shrink-0 disabled:opacity-50"
+              className="p-1.5 rounded-ctl text-[10px] text-slate-400 hover:text-slate-200 bg-white/5 hover:bg-white/10 border border-white/10 transition cursor-pointer flex-shrink-0 disabled:opacity-50"
               title={t("settings.refreshFontsTitle")}
             >
               <RefreshCw className={`w-3.5 h-3.5 ${fontRefreshing ? "animate-spin" : ""}`} />
@@ -1435,7 +1436,7 @@ export default function GlobalSettings() {
             {appearance.customFontPath && (
               <button
                 onClick={handleClearCustomFont}
-                className="px-2.5 py-1.5 rounded-lg text-[10px] font-medium bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] border border-[color-mix(in_srgb,var(--module-accent)_40%,transparent)] text-[var(--module-accent)] hover:bg-[color-mix(in_srgb,var(--module-accent)_30%,transparent)] transition cursor-pointer whitespace-nowrap"
+                className="px-2.5 py-1.5 rounded-ctl text-[10px] font-medium bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] border border-[color-mix(in_srgb,var(--module-accent)_40%,transparent)] text-[var(--module-accent)] hover:bg-[color-mix(in_srgb,var(--module-accent)_30%,transparent)] transition cursor-pointer whitespace-nowrap"
                 title={t("settings.removeCustomFont")}
               >
                 {t("settings.removeCustomFont")}
@@ -1444,7 +1445,7 @@ export default function GlobalSettings() {
             <button
               onClick={handleImportFont}
               disabled={importingFont}
-              className="px-2.5 py-1.5 rounded-lg text-[10px] font-medium bg-cyan-600/20 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-600/30 transition cursor-pointer whitespace-nowrap flex items-center gap-1 disabled:opacity-50"
+              className="px-2.5 py-1.5 rounded-ctl text-[10px] font-medium bg-cyan-600/20 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-600/30 transition cursor-pointer whitespace-nowrap flex items-center gap-1 disabled:opacity-50"
               title={t("settings.importFontTitle")}
             >
               {importingFont ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
@@ -1484,7 +1485,7 @@ export default function GlobalSettings() {
                 <button
                   key={tc.value}
                   onClick={() => handleSetBackgroundTexture(tc.value)}
-                  className={`flex flex-col items-center gap-1 rounded-lg border p-1.5 transition cursor-pointer ${
+                  className={`flex flex-col items-center gap-1 rounded-ctl border p-1.5 transition cursor-pointer ${
                     active
                       ? "border-[var(--module-accent)] bg-[color-mix(in_srgb,var(--module-accent)_18%,transparent)]"
                       : "border-white/10 bg-white/[0.03] hover:border-white/25"
@@ -1515,7 +1516,7 @@ export default function GlobalSettings() {
                 <button
                   key={opt.value}
                   onClick={() => handleSetLanguage(opt.value)}
-                  className={`px-4 py-1.5 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
+                  className={`px-4 py-1.5 rounded-ctl text-[11px] font-semibold transition cursor-pointer ${
                     active
                       ? "bg-[var(--module-accent)] text-white"
                       : "bg-white/5 text-slate-300 hover:bg-white/10 border border-white/10"

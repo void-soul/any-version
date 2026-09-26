@@ -131,12 +131,12 @@ export function MindmapModuleSettings() {
               }
             }}
             placeholder={t("settings.externalEditorPh")}
-            className="flex-1 h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
+            className="flex-1 h-9 px-2.5 rounded-card bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
           />
           <button
             type="button"
             onClick={browseEditorExe}
-            className="h-9 px-3 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer flex items-center justify-center"
+            className="h-9 px-3 rounded-card bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer flex items-center justify-center"
             title={t("settings.chooseFolder")}
           >
             <FolderOpen className="w-4 h-4" />
@@ -183,7 +183,7 @@ export function MindmapModuleSettings() {
                     const n = Math.min(lim.max, Math.max(lim.min, Number(e.target.value) || lim.min));
                     void saveExplorer({ [key]: n } as Partial<ExplorerSettings>);
                   }}
-                  className="w-full h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white font-mono focus:outline-none focus:border-[var(--module-accent)]"
+                  className="w-full h-9 px-2.5 rounded-card bg-white/5 border border-white/10 text-xs text-white font-mono focus:outline-none focus:border-[var(--module-accent)]"
                 />
                 {hint ? <p className="text-[8px] text-slate-600 mt-0.5">{t(hint)}</p> : null}
               </div>

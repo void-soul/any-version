@@ -122,12 +122,12 @@ export default function PkgManager() {
 
         <div className="flex items-center gap-2">
           {/* SDK Toggle */}
-          <div className="flex bg-white/5 border border-white/5 rounded-xl p-0.5">
+          <div className="flex bg-white/5 border border-white/5 rounded-card p-0.5">
             {SDK_OPTIONS.map(opt => (
               <button
                 key={opt.id}
                 onClick={() => setActiveSdk(opt.id as "nodejs" | "python")}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-ctl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
                   activeSdk === opt.id
                     ? "bg-blue-600 text-white"
                     : "text-slate-400 hover:text-slate-200"
@@ -143,7 +143,7 @@ export default function PkgManager() {
             <button
               onClick={handleUpgradeAll}
               disabled={upgradingAll || loading}
-              className="flex items-center gap-2 px-3.5 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all shadow-lg shadow-amber-500/10"
+              className="flex items-center gap-2 px-3.5 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-card text-xs font-semibold cursor-pointer transition-all shadow-lg shadow-amber-500/10"
             >
               <Rocket className={`w-3.5 h-3.5 ${upgradingAll ? "animate-pulse" : ""}`} />
               {upgradingAll ? t("pkgmgr2.upgradingAll") : t("pkgmgr2.upgradeAll", { count: outdatedCount })}
@@ -153,7 +153,7 @@ export default function PkgManager() {
           <button
             onClick={() => fetchPackages(activeSdk)}
             disabled={loading}
-            className="flex items-center gap-2 px-3.5 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl text-xs border border-white/5 cursor-pointer transition-all"
+            className="flex items-center gap-2 px-3.5 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-card text-xs border border-white/5 cursor-pointer transition-all"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
             {t("pkgmgr2.refresh")}
@@ -163,14 +163,14 @@ export default function PkgManager() {
 
       {/* Error Message */}
       {errorMsg && (
-        <div className="p-3.5 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-xs flex items-center gap-1.5 font-medium">
+        <div className="p-3.5 bg-red-500/10 border border-red-500/20 text-red-400 rounded-card text-xs flex items-center gap-1.5 font-medium">
           <Terminal className="w-4 h-4 text-red-400" />
           {errorMsg}
         </div>
       )}
 
       {/* Packages Table */}
-      <div className="flex-1 min-h-0 glass-panel border border-white/5 rounded-2xl overflow-hidden flex flex-col h-[480px]">
+      <div className="flex-1 min-h-0 glass-panel border border-white/5 rounded-panel overflow-hidden flex flex-col h-[480px]">
         <div className="flex-1 overflow-y-auto">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
@@ -219,7 +219,7 @@ export default function PkgManager() {
                           <button
                             onClick={() => handleUpgrade(pkg.name)}
                             disabled={isUpgrading}
-                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-[10px] font-semibold cursor-pointer transition-all flex items-center justify-center gap-1 mx-auto"
+                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-ctl text-[10px] font-semibold cursor-pointer transition-all flex items-center justify-center gap-1 mx-auto"
                           >
                             <ArrowUpCircle className="w-3.5 h-3.5" />
                             {isUpgrading ? t("pkgmgr2.upgrading") : t("pkgmgr2.upgradeBtn")}

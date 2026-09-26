@@ -96,7 +96,7 @@ export default function SkillFileViewer({ skillId, onClose }: { skillId: string;
   if (loading) {
     return (
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 modal-mask flex items-center justify-center p-4">
-        <div className="w-full max-w-3xl bg-slate-950/95 border border-white/10 rounded-2xl shadow-2xl p-8" onClick={e => e.stopPropagation()}>
+        <div className="w-full max-w-3xl bg-slate-950/95 border border-white/10 rounded-panel shadow-2xl p-8" onClick={e => e.stopPropagation()}>
           <div className="text-center text-slate-500">{t("skillmgr.loading")}</div>
         </div>
       </div>
@@ -106,9 +106,9 @@ export default function SkillFileViewer({ skillId, onClose }: { skillId: string;
   if (error) {
     return (
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 modal-mask flex items-center justify-center p-4">
-        <div className="w-full max-w-3xl bg-slate-950/95 border border-white/10 rounded-2xl shadow-2xl p-8" onClick={e => e.stopPropagation()}>
+        <div className="w-full max-w-3xl bg-slate-950/95 border border-white/10 rounded-panel shadow-2xl p-8" onClick={e => e.stopPropagation()}>
   <div className="text-red-400 mb-4">{t("skillmgr.loadFail", { err: error })}</div>
-  <button onClick={onClose} className="px-4 py-2 bg-white/5 rounded-lg text-white cursor-pointer">{t("skillmgr.close")}</button>
+  <button onClick={onClose} className="px-4 py-2 bg-white/5 rounded-ctl text-white cursor-pointer">{t("skillmgr.close")}</button>
         </div>
       </div>
     );
@@ -118,7 +118,7 @@ export default function SkillFileViewer({ skillId, onClose }: { skillId: string;
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 modal-mask flex items-center justify-center p-4">
-      <div className="w-full max-w-4xl bg-slate-950/95 border border-white/10 rounded-2xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden" onClick={e => e.stopPropagation()}>
+      <div className="w-full max-w-4xl bg-slate-950/95 border border-white/10 rounded-panel shadow-2xl flex flex-col max-h-[85vh] overflow-hidden" onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="p-4 border-b border-white/5 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -139,7 +139,7 @@ export default function SkillFileViewer({ skillId, onClose }: { skillId: string;
             const isCopied = copiedFile === file.path;
 
             return (
-              <div key={file.path} className="rounded-lg border border-white/5 overflow-hidden">
+              <div key={file.path} className="rounded-ctl border border-white/5 overflow-hidden">
                 {/* File Header */}
                 <div
                   className="flex items-center gap-2 px-3 py-2 bg-white/[0.02] hover:bg-white/[0.04] cursor-pointer transition-all"
@@ -162,7 +162,7 @@ export default function SkillFileViewer({ skillId, onClose }: { skillId: string;
                   <div className="border-t border-white/5">
                     {isMarkdown ? (
                       <div
-                        className="p-4 text-sm text-slate-300 prose prose-invert max-w-none leading-relaxed [&_h1]:text-lg [&_h1]:font-bold [&_h1]:text-white [&_h1]:mb-2 [&_h2]:text-base [&_h2]:font-bold [&_h2]:text-white [&_h2]:mb-2 [&_h3]:text-sm [&_h3]:font-bold [&_h3]:text-white [&_h3]:mb-2 [&_p]:mb-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:mb-2 [&_li]:mb-1 [&_code]:bg-white/10 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-xs [&_pre]:bg-slate-900 [&_pre]:p-3 [&_pre]:rounded-lg [&_pre]:overflow-x-auto [&_pre]:mb-2 [&_pre>code]:bg-transparent [&_pre>code]:p-0 [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--module-accent)] [&_blockquote]:pl-3 [&_blockquote]:italic [&_a]:text-blue-400 [&_a]:underline"
+                        className="p-4 text-sm text-slate-300 prose prose-invert max-w-none leading-relaxed [&_h1]:text-lg [&_h1]:font-bold [&_h1]:text-white [&_h1]:mb-2 [&_h2]:text-base [&_h2]:font-bold [&_h2]:text-white [&_h2]:mb-2 [&_h3]:text-sm [&_h3]:font-bold [&_h3]:text-white [&_h3]:mb-2 [&_p]:mb-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:mb-2 [&_li]:mb-1 [&_code]:bg-white/10 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-xs [&_pre]:bg-slate-900 [&_pre]:p-3 [&_pre]:rounded-ctl [&_pre]:overflow-x-auto [&_pre]:mb-2 [&_pre>code]:bg-transparent [&_pre>code]:p-0 [&_blockquote]:border-l-2 [&_blockquote]:border-[var(--module-accent)] [&_blockquote]:pl-3 [&_blockquote]:italic [&_a]:text-blue-400 [&_a]:underline"
                         dangerouslySetInnerHTML={{ __html: renderMarkdown(file.contents) }}
                       />
                     ) : (

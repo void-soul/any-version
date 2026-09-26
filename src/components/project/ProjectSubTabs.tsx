@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { theamedAlert, alertError } from "../shared/ThemedAlert";
 import { useTranslation } from "react-i18next";
 import MonacoEditor from "../shared/MonacoEditor";
 import { invoke } from "@tauri-apps/api/core";
@@ -98,7 +99,7 @@ export function VersionsTab({
     <div className="space-y-6">
       {/* 安装进度面板 */}
       {installingVersion && (
-        <div className="glass-panel rounded-2xl p-5 border border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] space-y-4 animate-fadeIn">
+        <div className="glass-panel rounded-panel p-5 border border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] space-y-4 animate-fadeIn">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Loader className="w-4 h-4 text-[var(--module-accent)] animate-spin" />
@@ -109,7 +110,7 @@ export function VersionsTab({
             {onCancelInstall && (
               <button
                 onClick={onCancelInstall}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 text-[11px] font-semibold border border-red-500/20 cursor-pointer transition-all"
+                className="flex items-center gap-1 px-2.5 py-1 rounded-ctl bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 text-[11px] font-semibold border border-red-500/20 cursor-pointer transition-all"
                 title={t("projsub.cancelInstall")}
               >
                 <X className="w-3 h-3" /> {t("projsub.cancelInstall")}
@@ -199,7 +200,7 @@ export function VersionsTab({
               return (
                 <div
                   key={v}
-                  className={`p-3 rounded-xl border flex items-center justify-between transition-all ${isActive
+                  className={`p-3 rounded-card border flex items-center justify-between transition-all ${isActive
                     ? "bg-[var(--module-accent-soft)] border-[var(--module-accent-ring)] text-white shadow-md shadow-[var(--module-accent-ring)]"
                     : "bg-black/20 border-white/5 text-slate-300"
                     }`}
@@ -215,7 +216,7 @@ export function VersionsTab({
                       <button
                         onClick={() => onUse(v)}
                         disabled={isOperating || !project.managed || !project.delegation?.version_control}
-                        className="p-1.5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-slate-400 hover:text-slate-200 text-[13px] cursor-pointer transition-all flex items-center gap-0.5"
+                        className="p-1.5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed rounded-ctl text-slate-400 hover:text-slate-200 text-[13px] cursor-pointer transition-all flex items-center gap-0.5"
                         title={
                           !project.managed 
                             ? t("projsub.needHostToEnable") 
@@ -230,7 +231,7 @@ export function VersionsTab({
                     <button
                       onClick={() => onUninstall(v)}
                       disabled={isOperating || !project.managed || !project.delegation?.version_control}
-                      className="p-1.5 hover:bg-red-500/10 hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-slate-500 cursor-pointer transition-all"
+                      className="p-1.5 hover:bg-red-500/10 hover:text-red-400 disabled:opacity-40 disabled:cursor-not-allowed rounded-ctl text-slate-500 cursor-pointer transition-all"
                       title={
                         !project.managed 
                           ? t("projsub.needHostToUninstall") 
@@ -375,7 +376,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
       const selected = await open({ directory: true, title: t("projsub.pickFolder") });
       if (selected) setter(selected as string);
     } catch {
-      alert(t("projsub.pickerUnavailable"));
+      theamedAlert(t("projsub.pickerUnavailable"));
     }
   };
 
@@ -411,7 +412,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
       onRefresh();
       setWorkflowStep("done");
     } catch (e: unknown) {
-      alert(t("projsub.opFail", { err: String(e) }));
+      alertError(t("projsub.opFail", { err: String(e) }));
       setWorkflowStep("confirm");
     } finally {
       unlisten();
@@ -539,11 +540,11 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
         action,
         targetPath: null
       });
-      alert(t("projsub.opSuccess"));
+      theamedAlert(t("projsub.opSuccess"));
       await loadConflictManagers();
       onRefresh();
     } catch (e: any) {
-      alert(t("projsub.opFail", { err: String(e) }));
+      alertError(t("projsub.opFail", { err: String(e) }));
     } finally {
       setOperatingManagerId(null);
     }
@@ -559,7 +560,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
           managerId,
         });
       } catch (e: any) {
-        alert(t("projsub.opFail", { err: String(e) }));
+        alertError(t("projsub.opFail", { err: String(e) }));
         return;
       }
       setConfirmRequest({
@@ -608,7 +609,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
     // ── Step: 选择方式 ──
     if (workflowStep === "method") {
       return (
-        <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
+        <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
             <span className={`text-[12px] font-semibold ${accentText}`}>
               {t("projsub.wfTitle", { step: 1, total: totalSteps, label: stepLabels.method })}
@@ -617,7 +618,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
           </div>
           <div className="space-y-1.5">
             <p className="text-[12px] text-slate-300">{t("projsub.pickMethod")}</p>
-            <label className={`flex items-start gap-2 p-2.5 rounded-lg cursor-pointer transition-all border ${workflowMethod === "junction"
+            <label className={`flex items-start gap-2 p-2.5 rounded-ctl cursor-pointer transition-all border ${workflowMethod === "junction"
               ? `${accentBorder} bg-white/5`
               : "border-white/5 hover:bg-white/[0.02]"
               }`}>
@@ -630,7 +631,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                 </p>
               </div>
             </label>
-            <label className={`flex items-start gap-2 p-2.5 rounded-lg cursor-pointer transition-all border ${workflowMethod === "point"
+            <label className={`flex items-start gap-2 p-2.5 rounded-ctl cursor-pointer transition-all border ${workflowMethod === "point"
               ? `${accentBorder} bg-white/5`
               : "border-white/5 hover:bg-white/[0.02]"
               }`}>
@@ -657,7 +658,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
     // ── Step: 配置路径 ──
     if (workflowStep === "paths") {
       return (
-        <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
+        <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
             <span className={`text-[12px] font-semibold ${accentText}`}>
               {t("projsub.wfTitle", { step: 2, total: totalSteps, label: stepLabels.paths })}
@@ -718,7 +719,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
           {/* 旧文件处理方式（本卡片默认为移动/保留） */}
           <div className="pt-1 space-y-1">
             <p className="text-[13px] text-slate-400 font-semibold">{t("projsub.oldFilesLabel")}</p>
-            <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "move" ? "border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)]" : "border-white/5 hover:bg-white/[0.02]"}`}>
+            <label className={`flex items-start gap-2 p-2 rounded-ctl cursor-pointer border transition-all ${workflowFileAction === "move" ? "border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)]" : "border-white/5 hover:bg-white/[0.02]"}`}>
               <input type="radio" name="wf_file_action" value="move" checked={workflowFileAction === "move"}
                 onChange={() => setWorkflowFileAction("move")} className="mt-0.5" />
               <div>
@@ -726,7 +727,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                 <p className="text-[11px] text-slate-500 mt-0.5">{t("projsub.moveOldDesc", { action: workflowMethod === "junction" ? t("projsub.actionCreateLink") : t("projsub.actionModifyEnv") })}</p>
               </div>
             </label>
-            <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "keep" ? "border-slate-500/30 bg-slate-500/5" : "border-white/5 hover:bg-white/[0.02]"}`}>
+            <label className={`flex items-start gap-2 p-2 rounded-ctl cursor-pointer border transition-all ${workflowFileAction === "keep" ? "border-slate-500/30 bg-slate-500/5" : "border-white/5 hover:bg-white/[0.02]"}`}>
               <input type="radio" name="wf_file_action" value="keep" checked={workflowFileAction === "keep"}
                 onChange={() => setWorkflowFileAction("keep")} className="mt-0.5" />
               <div>
@@ -756,7 +757,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
     // ── Step: 确认预览 ──
     if (workflowStep === "confirm") {
       return (
-        <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
+        <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
             <span className={`text-[12px] font-semibold ${accentText}`}>
               {t("projsub.wfTitle", { step: 3, total: totalSteps, label: stepLabels.confirm })}
@@ -764,7 +765,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
             <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">{t("projsub.cancel")}</button>
           </div>
 
-          <div className="p-3 bg-black/20 rounded-lg border border-white/5 space-y-2">
+          <div className="p-3 bg-black/20 rounded-ctl border border-white/5 space-y-2">
             <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">{t("projsub.opPreview")}</p>
             <div className="text-[12px] text-slate-300 space-y-1 font-mono">
               {workflowMethod === "junction" ? (
@@ -805,14 +806,14 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
         : 0;
 
       return (
-        <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
+        <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
             <span className={`text-[12px] font-semibold ${accentText}`}>
               {t("projsub.wfTitle", { step: 4, total: totalSteps, label: stepLabels.executing })}
             </span>
           </div>
 
-          <div className="p-3 bg-black/20 rounded-lg border border-white/5 space-y-3">
+          <div className="p-3 bg-black/20 rounded-ctl border border-white/5 space-y-3">
             <div className="flex items-center justify-between text-xs text-slate-300">
               <span>{workflowProgress?.stage || t("projsub.executingStage")}</span>
               <span className="font-mono">{progressPercent}%</span>
@@ -837,14 +838,14 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
     // ── Step: 已完成 ──
     if (workflowStep === "done") {
       return (
-        <div className={`mt-3 p-3 rounded-xl border border-emerald-500/20 bg-emerald-500/10 space-y-3 animate-fadeIn`}>
+        <div className={`mt-3 p-3 rounded-card border border-emerald-500/20 bg-emerald-500/10 space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
             <span className="text-[12px] font-semibold text-emerald-400">
               {t("projsub.wfDoneTitle", { label: stepLabels.done })}
             </span>
           </div>
 
-          <div className="p-3 bg-black/20 rounded-lg border border-white/5 space-y-1">
+          <div className="p-3 bg-black/20 rounded-ctl border border-white/5 space-y-1">
             <p className="text-[12px] text-emerald-300 font-semibold flex items-center gap-1">
               <CheckCircle className="w-3.5 h-3.5" />
               {t("projsub.wfDoneMsg")}
@@ -915,7 +916,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
       setEditingVar(null);
       await loadUserVars();
     } catch (e: unknown) {
-      alert(t("projsub.setFail", { name, err: String(e) }));
+      alertError(t("projsub.setFail", { name, err: String(e) }));
     } finally {
       setSavingVar(null);
     }
@@ -926,7 +927,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
   return (
     <div className="space-y-5">
       {!isAdmin && (
-        <div className="flex items-start gap-2.5 p-3 rounded-xl border border-amber-500/20 bg-amber-500/10 text-[12.5px] text-amber-200">
+        <div className="flex items-start gap-2.5 p-3 rounded-card border border-amber-500/20 bg-amber-500/10 text-[12.5px] text-amber-200">
           <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
           <span>
             <strong>{t("projsub.permHint")}</strong>{t("projsub.permHintDesc")}
@@ -958,7 +959,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
               }}
               disabled={isOperating || repairingEnv}
               title={t("projsub.repairTitle")}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed text-amber-300 border border-amber-500/20 text-[13px] font-semibold cursor-pointer transition-all whitespace-nowrap"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-ctl bg-amber-500/10 hover:bg-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed text-amber-300 border border-amber-500/20 text-[13px] font-semibold cursor-pointer transition-all whitespace-nowrap"
             >
               {repairingEnv ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />}
               {t("projsub.repairEnv")}
@@ -968,7 +969,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
         {vars.length === 0 ? (
           <p className="text-[11px] text-slate-500">{t("projsub.noEnvVars")}</p>
         ) : (
-          <div className="border border-white/5 rounded-xl overflow-hidden overflow-x-auto">
+          <div className="border border-white/5 rounded-card overflow-hidden overflow-x-auto">
             <table className="w-full text-left border-collapse text-[13px] min-w-[450px]">
               <thead>
                 <tr className="bg-white/3 border-b border-white/5 text-slate-400 font-medium">
@@ -1034,7 +1035,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
             )}
             <span className="text-[12px] text-slate-500">{t("projsub.managedPathsHint")}</span>
           </div>
-          <div className="border border-white/5 rounded-xl overflow-hidden overflow-x-auto">
+          <div className="border border-white/5 rounded-card overflow-hidden overflow-x-auto">
             <table className="w-full text-left border-collapse text-[13px] min-w-[420px]">
               <thead>
                 <tr className="bg-white/3 border-b border-white/5 text-slate-400 font-medium">
@@ -1109,7 +1110,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
         ) : userVars.length === 0 ? (
           <p className="text-[13px] text-slate-500">{t("projsub.noRuntimeVars")}</p>
         ) : (
-          <div className="border border-white/5 rounded-xl overflow-hidden overflow-x-auto">
+          <div className="border border-white/5 rounded-card overflow-hidden overflow-x-auto">
             <table className="w-full text-left border-collapse text-[13px]">
               <thead>
                 <tr className="bg-white/3 border-b border-white/5 text-slate-400 font-medium">
@@ -1210,7 +1211,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                 const hasEnvConfigured = mgr.env_vars_status[primaryEnv] ? true : false;
                 
                 return (
-                  <div key={mgr.id} className="glass-panel border border-white/5 rounded-2xl p-4 bg-white/1 space-y-4">
+                  <div key={mgr.id} className="glass-panel border border-white/5 rounded-panel p-4 bg-white/1 space-y-4">
                     {/* 顶部标题与状态 */}
                     <div className="flex items-center justify-between pb-2 border-b border-white/3">
                       <span className="text-[14px] font-semibold text-slate-200">{mgr.display_name}</span>
@@ -1225,14 +1226,14 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
 
                     {/* 1. 缓存目录管理区域 */}
                     {mgr.cache_path && (
-                      <div className="p-3 bg-white/2 rounded-xl border border-white/5 space-y-3">
+                      <div className="p-3 bg-white/2 rounded-card border border-white/5 space-y-3">
                         <div className="flex items-center gap-1.5">
                           <HardDrive className="w-3.5 h-3.5 text-[var(--module-accent)]" />
                           <span className="text-[12px] font-semibold text-slate-300">{t("projsub.cacheDirTitle")}</span>
                         </div>
                         
                         {/* 路径与大小状态 */}
-                        <div className="flex items-start justify-between text-[12px] p-2.5 bg-black/20 rounded-lg border border-white/3">
+                        <div className="flex items-start justify-between text-[12px] p-2.5 bg-black/20 rounded-ctl border border-white/3">
                           <div className="space-y-1 flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
                               {hasEnvConfigured ? (
@@ -1269,7 +1270,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                           <button
                             onClick={() => handleConflictAction(mgr.id, "clean")}
                             disabled={isOperating || isOperatingMgr || workflowManagerId !== null}
-                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all font-semibold text-[11px]"
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-ctl bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all font-semibold text-[11px]"
                           >
                             <Trash2 className="w-3 h-3" />
                             {t("projsub.cleanCache")}
@@ -1278,7 +1279,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                           <button
                             onClick={() => openWorkflow(mgr)}
                             disabled={isOperating || isOperatingMgr || workflowManagerId !== null}
-                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 font-semibold text-[11px] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-ctl bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 font-semibold text-[11px] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                           >
                             <FolderSync className="w-3 h-3" />
                             {t("projsub.startChange")}
@@ -1291,13 +1292,13 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                     )}
 
                     {/* 2. 冲突规避与停用区域 */}
-                    <div className="p-3 bg-white/2 rounded-xl border border-white/5 space-y-3">
+                    <div className="p-3 bg-white/2 rounded-card border border-white/5 space-y-3">
                       <div className="flex items-center gap-1.5">
                         <Wrench className="w-3.5 h-3.5 text-amber-400" />
                         <span className="text-[12px] font-semibold text-slate-300">{t("projsub.conflictRegVars")}</span>
                       </div>
 
-                      <div className="text-[12px] text-slate-400 space-y-1.5 bg-black/20 p-2.5 rounded-lg border border-white/3">
+                      <div className="text-[12px] text-slate-400 space-y-1.5 bg-black/20 p-2.5 rounded-ctl border border-white/3">
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
                           <span className="text-slate-500">{t("projsub.regVar")}</span>
                           {Object.entries(mgr.env_vars_status).map(([key, val]) => (
@@ -1323,7 +1324,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                           <button
                             onClick={() => handleConflictAction(mgr.id, "disable")}
                             disabled={isOperating || isOperatingMgr}
-                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-orange-500/10 hover:bg-orange-500/20 text-orange-300 border border-orange-500/20 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all font-semibold text-[11px]"
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-ctl bg-orange-500/10 hover:bg-orange-500/20 text-orange-300 border border-orange-500/20 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all font-semibold text-[11px]"
                             title={t("projsub.deactivateTitle")}
                           >
                             <X className="w-3.5 h-3.5" />
@@ -1331,7 +1332,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
                           </button>
                         </div>
                       ) : (
-                        <div className="text-[12px] text-emerald-400 font-semibold flex items-center gap-1 bg-emerald-500/5 p-2 rounded-lg border border-emerald-500/10">
+                        <div className="text-[12px] text-emerald-400 font-semibold flex items-center gap-1 bg-emerald-500/5 p-2 rounded-ctl border border-emerald-500/10">
                           <Check className="w-3.5 h-3.5 text-emerald-400" />
                           {t("projsub.exclusiveMsg")}
                         </div>
@@ -1384,7 +1385,7 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
   return (
     <div className="space-y-4">
       {!isAdmin && svc?.system_service_name && (
-        <div className="flex items-start gap-2.5 p-3 rounded-xl border border-amber-500/20 bg-amber-500/10 text-[12.5px] text-amber-200 animate-fadeIn">
+        <div className="flex items-start gap-2.5 p-3 rounded-card border border-amber-500/20 bg-amber-500/10 text-[12.5px] text-amber-200 animate-fadeIn">
           <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
           <span>
             <strong>{t("projsub.svcPermHint")}</strong>{t("projsub.svcPermDesc", { name: svc.system_service_name })}
@@ -1392,58 +1393,58 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
         </div>
       )}
 
-      <div className="glass-panel border border-white/5 rounded-2xl p-5 bg-white/2 space-y-4">
+      <div className="glass-panel border border-white/5 rounded-panel p-5 bg-white/2 space-y-4">
         <div className="flex items-center gap-2 border-b border-white/5 pb-3">
           <Activity className="w-4 h-4 text-[var(--module-accent)]" />
           <h4 className="text-xs font-semibold text-white">{t("projsub.svcConsole")}</h4>
         </div>
 
         {externallyRunning && (
-          <div className="p-3 rounded-xl border border-sky-500/20 bg-sky-500/10 text-[12px] text-sky-200 flex items-start gap-2">
+          <div className="p-3 rounded-card border border-sky-500/20 bg-sky-500/10 text-[12px] text-sky-200 flex items-start gap-2">
             <Info className="w-4 h-4 text-sky-400 flex-shrink-0 mt-0.5" />
             <span>{t("projsub.svcExternal", { proc: svc.process_name ? t("projsub.procInfo", { name: svc.process_name, pid: svc.pid ? t("projsub.pidInfo", { pid: svc.pid }) : "" }) : "" })}</span>
           </div>
         )}
 
         {hasConflict && (
-          <div className="p-3 rounded-xl border border-amber-500/20 bg-amber-500/10 text-[12px] text-amber-200 flex items-start gap-2">
+          <div className="p-3 rounded-card border border-amber-500/20 bg-amber-500/10 text-[12px] text-amber-200 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
             <span>{t("projsub.portOccupied", { port: svc.port || def?.default_port || "?", proc: svc.process_name || t("projsub.otherProcess") })}</span>
           </div>
         )}
 
         {notInstalled && (
-          <div className="p-3 rounded-xl border border-slate-500/20 bg-slate-500/10 text-[12px] text-slate-300 flex items-start gap-2">
+          <div className="p-3 rounded-card border border-slate-500/20 bg-slate-500/10 text-[12px] text-slate-300 flex items-start gap-2">
             <Info className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />
             <span>{t("projsub.noInstallDir")}</span>
           </div>
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-          <div className="p-3 bg-black/20 rounded-xl border border-white/5 space-y-1.5">
+          <div className="p-3 bg-black/20 rounded-card border border-white/5 space-y-1.5">
             <span className="text-[13px] text-slate-400 font-semibold uppercase tracking-wider block">{t("projsub.curStatus")}</span>
             <div className="flex items-center gap-2">
               {externallyRunning ? (
-                <span className="px-2.5 py-1 rounded-lg bg-sky-500/10 text-sky-300 border border-sky-500/20 font-semibold flex items-center gap-1 animate-fadeIn">
+                <span className="px-2.5 py-1 rounded-ctl bg-sky-500/10 text-sky-300 border border-sky-500/20 font-semibold flex items-center gap-1 animate-fadeIn">
                   <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-ping" />
                   {t("projsub.extRunning", { pid: svc.pid ? t("projsub.runningPid", { pid: svc.pid }) : "" })}
                 </span>
               ) : svc.running ? (
-                <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold flex items-center gap-1 animate-fadeIn">
+                <span className="px-2.5 py-1 rounded-ctl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold flex items-center gap-1 animate-fadeIn">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
                   {t("projsub.running", { pid: svc.pid ? t("projsub.runningPid", { pid: svc.pid }) : "" })}
                 </span>
               ) : hasConflict ? (
-                <span className="px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 font-semibold">{t("projsub.portConflictBadge")}</span>
+                <span className="px-2.5 py-1 rounded-ctl bg-amber-500/10 text-amber-400 border border-amber-500/20 font-semibold">{t("projsub.portConflictBadge")}</span>
               ) : notInstalled ? (
-                <span className="px-2.5 py-1 rounded-lg bg-slate-500/10 text-slate-400 border border-white/5 font-semibold">{t("projsub.notSet")}</span>
+                <span className="px-2.5 py-1 rounded-ctl bg-slate-500/10 text-slate-400 border border-white/5 font-semibold">{t("projsub.notSet")}</span>
               ) : (
-                <span className="px-2.5 py-1 rounded-lg bg-slate-500/10 text-slate-400 border border-white/5 font-semibold">{t("projsub.stopped")}</span>
+                <span className="px-2.5 py-1 rounded-ctl bg-slate-500/10 text-slate-400 border border-white/5 font-semibold">{t("projsub.stopped")}</span>
               )}
             </div>
           </div>
 
-          <div className="p-3 bg-black/20 rounded-xl border border-white/5 space-y-1">
+          <div className="p-3 bg-black/20 rounded-card border border-white/5 space-y-1">
             <span className="text-[13px] text-slate-400 font-semibold uppercase tracking-wider block">{t("projsub.runParams")}</span>
             <div className="text-slate-300 font-mono space-y-0.5">
               <p>{t("projsub.port", { port: svc.port || def?.default_port || "-" })}</p>
@@ -1451,11 +1452,11 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
             </div>
           </div>
 
-          <div className="p-3 bg-black/20 rounded-xl border border-white/5 flex items-center justify-center gap-2">
+          <div className="p-3 bg-black/20 rounded-card border border-white/5 flex items-center justify-center gap-2">
             <button
               onClick={onServiceToggle}
               disabled={!canToggle}
-              className={`px-4 py-2 ${svc.running ? "bg-red-600 hover:bg-red-500" : "bg-emerald-600 hover:bg-emerald-500"} disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-xl text-xs cursor-pointer shadow-md transition-all flex items-center gap-1`}
+              className={`px-4 py-2 ${svc.running ? "bg-red-600 hover:bg-red-500" : "bg-emerald-600 hover:bg-emerald-500"} disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-card text-xs cursor-pointer shadow-md transition-all flex items-center gap-1`}
             >
               {serviceCtrlLoading ? t("projsub.operating") : externallyRunning ? t("projsub.externalRun") : svc.running ? t("projsub.stopSvc") : t("projsub.startSvc")}
             </button>
@@ -1464,25 +1465,25 @@ export function ServicesTab({ project, def, serviceCtrlLoading, onServiceToggle,
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs pt-2">
           {svc.install_root && (
-            <div className="p-3 bg-black/20 rounded-xl border border-white/5">
+            <div className="p-3 bg-black/20 rounded-card border border-white/5">
               <span className="text-[13px] text-slate-400 font-semibold block">{t("projsub.installDir")}</span>
               <p className="font-mono text-slate-300 truncate mt-1" title={svc.install_root}>{svc.install_root}</p>
             </div>
           )}
           {svc.config_file && (
-            <div className="p-3 bg-black/20 rounded-xl border border-white/5">
+            <div className="p-3 bg-black/20 rounded-card border border-white/5">
               <span className="text-[13px] text-slate-400 font-semibold block">{t("projsub.configFile")}</span>
               <p className="font-mono text-slate-300 truncate mt-1" title={svc.config_file}>{svc.config_file}</p>
             </div>
           )}
           {svc.data_dir && (
-            <div className="p-3 bg-black/20 rounded-xl border border-white/5">
+            <div className="p-3 bg-black/20 rounded-card border border-white/5">
               <span className="text-[13px] text-slate-400 font-semibold block">{t("projsub.dataDir")}</span>
               <p className="font-mono text-slate-300 truncate mt-1" title={svc.data_dir}>{svc.data_dir}</p>
             </div>
           )}
           {svc.log_dir && (
-            <div className="p-3 bg-black/20 rounded-xl border border-white/5">
+            <div className="p-3 bg-black/20 rounded-card border border-white/5">
               <span className="text-[13px] text-slate-400 font-semibold block">{t("projsub.logDir")}</span>
               <p className="font-mono text-slate-300 truncate mt-1" title={svc.log_dir}>{svc.log_dir}</p>
             </div>
@@ -1579,7 +1580,7 @@ function RemoteVersionSelector({
               onClick={onRefresh}
               disabled={disabled || loadingRemote || !!installingVersion}
               title={disabled ? disabledReason : t("projsub.refreshList")}
-              className="flex items-center gap-1 px-2.5 py-1 bg-white/5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300 rounded-lg text-[11px] border border-white/8 cursor-pointer transition-all"
+              className="flex items-center gap-1 px-2.5 py-1 bg-white/5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300 rounded-ctl text-[11px] border border-white/8 cursor-pointer transition-all"
             >
               <RefreshCw className={`w-3 h-3 ${loadingRemote ? "animate-spin text-[var(--module-accent)]" : ""}`} />
               {loadingRemote ? t("projsub.updating") : t("projsub.updateList")}
@@ -1596,7 +1597,7 @@ function RemoteVersionSelector({
       ) : (
         <div className="space-y-2">
           {disabled && disabledReason && (
-            <div className="p-3 rounded-xl border border-amber-500/15 bg-amber-500/5 text-amber-400 text-[11px] mb-2 leading-relaxed flex items-center gap-1.5 animate-fadeIn">
+            <div className="p-3 rounded-card border border-amber-500/15 bg-amber-500/5 text-amber-400 text-[11px] mb-2 leading-relaxed flex items-center gap-1.5 animate-fadeIn">
               <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
               <span>{disabledReason}</span>
             </div>
@@ -1627,7 +1628,7 @@ function RemoteVersionSelector({
                 onClick={handleInstall}
                 disabled={disabled || installingVersion !== null || isOperating || !search.trim() || !remoteVersions.includes(search.trim())}
                 title={disabled ? disabledReason : t("projsub.oneClickInstall")}
-                className="px-5 py-2 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-md shadow-[var(--module-accent-ring)] cursor-pointer transition-all flex items-center gap-1.5"
+                className="px-5 py-2 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-card text-xs font-semibold shadow-md shadow-[var(--module-accent-ring)] cursor-pointer transition-all flex items-center gap-1.5"
               >
                 <Download className="w-3.5 h-3.5" />
                 {installingVersion ? t("projsub.installingVer") : t("projsub.oneClickInstall")}
@@ -1636,7 +1637,7 @@ function RemoteVersionSelector({
 
             {/* 下拉列表 */}
             {open && filtered.length > 0 && (
-              <div className="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto glass-panel rounded-xl border border-white/10 bg-surface-panel shadow-2xl">
+              <div className="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto glass-panel rounded-card border border-white/10 bg-surface-panel shadow-2xl">
                 {filtered.map((v) => (
                   <button
                     key={v}
@@ -1652,7 +1653,7 @@ function RemoteVersionSelector({
 
             {/* 无匹配提示 */}
             {open && search.trim() && filtered.length === 0 && (
-              <div className="absolute z-50 mt-1 w-full glass-panel rounded-xl border border-white/10 bg-surface-panel shadow-2xl p-3 text-center">
+              <div className="absolute z-50 mt-1 w-full glass-panel rounded-card border border-white/10 bg-surface-panel shadow-2xl p-3 text-center">
                 <p className="text-[13px] text-slate-500">{t("projsub.noMatch", { kw: search })}</p>
               </div>
             )}
@@ -1725,9 +1726,9 @@ export function LegacyTab({ projectId }: { projectId: string }) {
   return (
     <div className="space-y-5">
       {/* 标题说明 */}
-      <div className="glass-panel rounded-2xl p-4 border border-amber-500/10 bg-amber-500/3">
+      <div className="glass-panel rounded-panel p-4 border border-amber-500/10 bg-amber-500/3">
         <div className="flex items-start gap-3">
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-amber-500/10 flex-shrink-0 mt-0.5">
+          <div className="w-9 h-9 rounded-card flex items-center justify-center bg-amber-500/10 flex-shrink-0 mt-0.5">
             <AlertTriangle className="w-4.5 h-4.5 text-amber-400" />
           </div>
           <div>
@@ -1741,26 +1742,26 @@ export function LegacyTab({ projectId }: { projectId: string }) {
 
       {/* 旧版安装信息 */}
       {(data.install_source || data.install_root || data.version) && (
-        <div className="glass-panel rounded-2xl p-4 border border-white/5 bg-white/2 space-y-3">
+        <div className="glass-panel rounded-panel p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center gap-2">
             <Download className="w-4 h-4 text-slate-400" />
             <h4 className="text-xs font-semibold text-white">{t("projsub.oldInstallInfo")}</h4>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[13px]">
             {data.version && (
-              <div className="p-2.5 bg-black/20 rounded-xl border border-white/5">
+              <div className="p-2.5 bg-black/20 rounded-card border border-white/5">
                 <span className="text-slate-500 block mb-0.5">{t("projsub.thVersion")}</span>
                 <span className="font-mono text-slate-200 font-semibold">{data.version}</span>
               </div>
             )}
             {data.install_source && (
-              <div className="p-2.5 bg-black/20 rounded-xl border border-white/5">
+              <div className="p-2.5 bg-black/20 rounded-card border border-white/5">
                 <span className="text-slate-500 block mb-0.5">{t("projsub.thInstallMethod")}</span>
                 <span className="font-mono text-slate-200">{data.install_source}</span>
               </div>
             )}
             {data.install_root && (
-              <div className="p-2.5 bg-black/20 rounded-xl border border-white/5">
+              <div className="p-2.5 bg-black/20 rounded-card border border-white/5">
                 <span className="text-slate-500 block mb-0.5">{t("projsub.thInstallPath")}</span>
                 <span className="font-mono text-slate-200 text-[12px] break-all">{data.install_root}</span>
               </div>
@@ -1771,7 +1772,7 @@ export function LegacyTab({ projectId }: { projectId: string }) {
 
       {/* 备份的环境变量 */}
       {envVarEntries.length > 0 && (
-        <div className="glass-panel rounded-2xl p-4 border border-white/5 bg-white/2 space-y-3">
+        <div className="glass-panel rounded-panel p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center gap-2">
             <Globe className="w-4 h-4 text-[var(--module-accent)]" />
             <h4 className="text-xs font-semibold text-white">{t("projsub.backedEnv")}</h4>
@@ -1795,7 +1796,7 @@ export function LegacyTab({ projectId }: { projectId: string }) {
 
       {/* 移除的 PATH 条目 */}
       {data.removed_path_entries.length > 0 && (
-        <div className="glass-panel rounded-2xl p-4 border border-white/5 bg-white/2 space-y-3">
+        <div className="glass-panel rounded-panel p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center gap-2">
             <Trash2 className="w-4 h-4 text-red-400" />
             <h4 className="text-xs font-semibold text-white">{t("projsub.removedPathEntries")}</h4>
@@ -1803,7 +1804,7 @@ export function LegacyTab({ projectId }: { projectId: string }) {
           </div>
           <div className="w-full space-y-1">
             {data.removed_path_entries.map((entry, idx) => (
-              <div key={idx} className="p-2 bg-black/20 rounded-lg border border-white/5 text-[12px] font-mono text-slate-400 break-all">
+              <div key={idx} className="p-2 bg-black/20 rounded-ctl border border-white/5 text-[12px] font-mono text-slate-400 break-all">
                 {entry}
               </div>
             ))}
@@ -1920,17 +1921,17 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
       const selected = await open({ directory: true, title: t("projsub.pickFolder") });
       if (selected) setter(selected as string);
     } catch {
-      alert(t("projsub.pickerUnavailable"));
+      theamedAlert(t("projsub.pickerUnavailable"));
     }
   };
 
   const executeWorkflow = async (dirId: string, oldPath: string, exists: boolean) => {
     if (workflowMethod === "junction" && !workflowActualPath) {
-      alert(t("projsub.needTargetPath"));
+      theamedAlert(t("projsub.needTargetPath"));
       return;
     }
     if (workflowMethod === "point" && !workflowPointPath) {
-      alert(t("projsub.needPointPath"));
+      theamedAlert(t("projsub.needPointPath"));
       return;
     }
 
@@ -1962,7 +1963,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
       setWorkflowStep("done");
       await onRefresh();
     } catch (e: any) {
-      alert(t("projsub.opFail", { err: String(e) }));
+      alertError(t("projsub.opFail", { err: String(e) }));
       setWorkflowStep("confirm");
     } finally {
       setWorkflowExecuting(false);
@@ -1977,10 +1978,10 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
         projectId: project.id,
         path,
       });
-      alert(t("projsub.deleteSuccess"));
+      theamedAlert(t("projsub.deleteSuccess"));
       await onRefresh();
     } catch (e: unknown) {
-      alert(t("projsub.deleteFail", { err: String(e) }));
+      alertError(t("projsub.deleteFail", { err: String(e) }));
     }
   };
 
@@ -2028,7 +2029,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
     // ── Step: 选择方式 ──
     if (workflowStep === "method") {
       return (
-        <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
+        <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
             <span className={`text-[12px] font-semibold ${accentText}`}>
               {t("projsub.wfStoreTitle", { step: 1, total: totalSteps, label: stepLabels.method })}
@@ -2037,7 +2038,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
           </div>
           <div className="space-y-1.5">
             <p className="text-[12px] text-slate-300">{t("projsub.pickStoreMethod")}</p>
-            <label className={`flex items-start gap-2 p-2.5 rounded-lg cursor-pointer transition-all border ${workflowMethod === "junction"
+            <label className={`flex items-start gap-2 p-2.5 rounded-ctl cursor-pointer transition-all border ${workflowMethod === "junction"
               ? `${accentBorder} bg-white/5`
               : "border-white/5 hover:bg-white/[0.02]"
               }`}>
@@ -2051,7 +2052,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
               </div>
             </label>
             {supportsDirect && (
-              <label className={`flex items-start gap-2 p-2.5 rounded-lg cursor-pointer transition-all border ${workflowMethod === "point"
+              <label className={`flex items-start gap-2 p-2.5 rounded-ctl cursor-pointer transition-all border ${workflowMethod === "point"
                 ? `${accentBorder} bg-white/5`
                 : "border-white/5 hover:bg-white/[0.02]"
                 }`}>
@@ -2084,7 +2085,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
     // ── Step: 配置路径 ──
     if (workflowStep === "paths") {
       return (
-        <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
+        <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
             <span className={`text-[12px] font-semibold ${accentText}`}>
               {t("projsub.wfStoreTitle", { step: 2, total: totalSteps, label: stepLabels.paths })}
@@ -2145,7 +2146,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                 {dir.exists && (
                   <div className="pt-1 space-y-1">
                     <p className="text-[12px] text-slate-400 font-semibold">{t("projsub.storeOldLabel")}</p>
-                    <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "move" ? "border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)]" : "border-white/5 hover:bg-white/[0.02]"}`}>
+                    <label className={`flex items-start gap-2 p-2 rounded-ctl cursor-pointer border transition-all ${workflowFileAction === "move" ? "border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)]" : "border-white/5 hover:bg-white/[0.02]"}`}>
                       <input type="radio" name="wf_file_action" value="move" checked={workflowFileAction === "move"}
                         onChange={() => setWorkflowFileAction("move")} className="mt-0.5" />
                       <div>
@@ -2153,7 +2154,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                         <p className="text-[10px] text-slate-500 mt-0.5">{t("projsub.storeMoveOldDesc")}</p>
                       </div>
                     </label>
-                    <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "keep" ? "border-slate-500/30 bg-slate-500/5" : "border-white/5 hover:bg-white/[0.02]"}`}>
+                    <label className={`flex items-start gap-2 p-2 rounded-ctl cursor-pointer border transition-all ${workflowFileAction === "keep" ? "border-slate-500/30 bg-slate-500/5" : "border-white/5 hover:bg-white/[0.02]"}`}>
                       <input type="radio" name="wf_file_action" value="keep" checked={workflowFileAction === "keep"}
                         onChange={() => setWorkflowFileAction("keep")} className="mt-0.5" />
                       <div>
@@ -2190,7 +2191,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
         && workflowLinkPath.toLowerCase().replace(/[\\/]+$/, "")
         === workflowActualPath.toLowerCase().replace(/[\\/]+$/, "");
       return (
-        <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
+        <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
             <span className={`text-[12px] font-semibold ${accentText}`}>
               {t("projsub.wfStoreTitle", { step: 3, total: totalSteps, label: stepLabels.confirm })}
@@ -2198,7 +2199,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
             <button onClick={closeWorkflow} className="text-[11px] text-slate-500 hover:text-slate-300 cursor-pointer">{t("projsub.cancel")}</button>
           </div>
 
-          <div className="p-3 bg-black/20 rounded-lg border border-white/5 space-y-2">
+          <div className="p-3 bg-black/20 rounded-ctl border border-white/5 space-y-2">
             <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">{t("projsub.storePreviewOp")}</p>
             <div className="space-y-1.5">
               <div className="flex items-center gap-2 text-[12px]">
@@ -2259,7 +2260,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
     // ── Step: 执行中 ──
     if (workflowStep === "executing") {
       return (
-        <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
+        <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center gap-2">
             <Loader className="w-3.5 h-3.5 animate-spin text-[var(--module-accent)]" />
             <span className={`text-[12px] font-semibold ${accentText}`}>
@@ -2290,7 +2291,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
     // ── Step: 完成 ──
     if (workflowStep === "done") {
       return (
-        <div className={`mt-3 p-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 space-y-3 animate-fadeIn`}>
+        <div className={`mt-3 p-3 rounded-card border border-emerald-500/20 bg-emerald-500/5 space-y-3 animate-fadeIn`}>
           <div className="flex items-center gap-2">
             <CheckCircle className="w-4 h-4 text-emerald-400" />
             <span className="text-[12px] font-semibold text-emerald-300">{t("projsub.storeSuccess")}</span>
@@ -2340,7 +2341,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
 
   return (
     <div className="space-y-6">
-      <div className="glass-panel rounded-2xl p-5 border border-white/5 bg-white/2 space-y-4">
+      <div className="glass-panel rounded-panel p-5 border border-white/5 bg-white/2 space-y-4">
         <div className="flex items-center gap-2">
           <HardDrive className="w-5 h-5 text-[var(--module-accent)]" />
           <div>
@@ -2359,7 +2360,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
               const kindLabel = dirKindLabel(dir.kind);
               const sourceLabel = dirSourceLabel(dir.source);
               return (
-                <div key={dir.id + "_" + dir.path} className="p-4 bg-black/20 rounded-xl border border-white/5 space-y-3 animate-fadeIn">
+                <div key={dir.id + "_" + dir.path} className="p-4 bg-black/20 rounded-card border border-white/5 space-y-3 animate-fadeIn">
                   <div className="flex items-start justify-between">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -2400,7 +2401,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                       )}
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-slate-300 font-mono text-[13px] font-semibold bg-white/5 px-2.5 py-1 rounded-lg">
+                      <span className="text-slate-300 font-mono text-[13px] font-semibold bg-white/5 px-2.5 py-1 rounded-ctl">
                         {dir.size}
                       </span>
                     </div>
@@ -2411,13 +2412,13 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                     <div className="flex items-center gap-2 pt-1 border-t border-white/5">
                       <button
                         onClick={() => openWorkflow(dir)}
-                        className="px-3 py-1.5 bg-[color-mix(in_srgb,var(--module-accent)_80%,transparent)] hover:bg-[var(--module-accent)] text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all"
+                        className="px-3 py-1.5 bg-[color-mix(in_srgb,var(--module-accent)_80%,transparent)] hover:bg-[var(--module-accent)] text-white rounded-ctl text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all"
                       >
                         <FolderSync className="w-3.5 h-3.5" /> {t("projsub.startChangeBtn")}
                       </button>
                       <button
                         onClick={() => handleDelete(dir.path)}
-                        className="px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-400 rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all"
+                        className="px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-400 rounded-ctl text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all"
                       >
                         <Trash2 className="w-3.5 h-3.5" /> {t("projsub.deleteData")}
                       </button>
@@ -2482,10 +2483,10 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
     setSavingConfig(true);
     try {
       await invoke("write_service_config", { name: project.id, content: configContent });
-      alert(t("projsub.configSaved"));
+      theamedAlert(t("projsub.configSaved"));
       await onRefresh();
     } catch (e: any) {
-      alert(t("projsub.saveFail", { err: String(e) }));
+      alertError(t("projsub.saveFail", { err: String(e) }));
     } finally {
       setSavingConfig(false);
     }
@@ -2636,18 +2637,18 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
     <div className="space-y-6">
       {/* 1. 运行参数显示 */}
       {port && (
-        <div className="glass-panel border border-white/5 rounded-2xl p-5 bg-white/2 space-y-4">
+        <div className="glass-panel border border-white/5 rounded-panel p-5 bg-white/2 space-y-4">
           <div className="flex items-center gap-2 border-b border-white/5 pb-3">
             <Wrench className="w-4 h-4 text-[var(--module-accent)]" />
             <h4 className="text-xs font-semibold text-white">{t("projsub.runParamsTitle")}</h4>
           </div>
 
-          <div className="flex items-center justify-between p-3 bg-black/20 rounded-xl border border-white/5">
+          <div className="flex items-center justify-between p-3 bg-black/20 rounded-card border border-white/5">
             <div>
               <span className="text-[13px] text-slate-400 font-semibold block">{t("projsub.listenPort")}</span>
               <span className="text-[11px] text-slate-500 mt-0.5">{t("projsub.listenPortDesc")}</span>
             </div>
-            <span className="text-slate-300 font-mono text-[13px] font-bold bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] px-3 py-1 rounded-lg">
+            <span className="text-slate-300 font-mono text-[13px] font-bold bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] px-3 py-1 rounded-ctl">
               {port}
             </span>
           </div>
@@ -2656,7 +2657,7 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
 
       {/* 2. 配置文件可视化编辑 */}
       {configPath && (
-        <div className="glass-panel border border-white/5 rounded-2xl p-5 bg-white/2 space-y-4">
+        <div className="glass-panel border border-white/5 rounded-panel p-5 bg-white/2 space-y-4">
           <div className="flex items-center justify-between border-b border-white/5 pb-3">
             <div className="flex items-center gap-2">
               <FileText className="w-4 h-4 text-[var(--module-accent)]" />
@@ -2671,7 +2672,7 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
               <button
                 onClick={handleSaveConfig}
                 disabled={savingConfig}
-                className="px-3 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-lg text-xs font-semibold cursor-pointer flex items-center gap-1 transition-all"
+                className="px-3 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-ctl text-xs font-semibold cursor-pointer flex items-center gap-1 transition-all"
               >
                 {savingConfig ? <Loader className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
                 {t("projsub.saveConfig")}
@@ -2684,7 +2685,7 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
               <Loader className="w-4 h-4 animate-spin text-[var(--module-accent)]" /> {t("projsub.readingConfig")}
             </div>
           ) : errorMessage ? (
-            <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-200 text-xs rounded-xl space-y-2">
+            <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-200 text-xs rounded-card space-y-2">
               <p>{t("projsub.loadConfigFail", { err: errorMessage })}</p>
               <button
                 onClick={loadConfigContent}
@@ -2695,7 +2696,7 @@ export function ConfigTab({ project, def, onRefresh }: { project: ProjectStatus;
             </div>
           ) : (
             <div className="space-y-3">
-              <div className="border border-white/5 rounded-xl overflow-hidden h-80 bg-[#1e1e1e]">
+              <div className="border border-white/5 rounded-card overflow-hidden h-80 bg-[#1e1e1e]">
                 <MonacoEditor
                   height="100%"
                   language={getEditorLanguage(project.id)}

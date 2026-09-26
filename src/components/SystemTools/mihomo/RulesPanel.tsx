@@ -104,7 +104,7 @@ function RuleOverrideEditor({
         <span className="text-[11px] text-slate-300 font-semibold">{title}</span>
         <span className="text-[10px] text-slate-500">{hint}</span>
       </div>
-      <div className="rounded-xl border border-white/10 bg-white/[0.02] divide-y divide-white/5 max-h-32 overflow-y-auto">
+      <div className="rounded-card border border-white/10 bg-white/[0.02] divide-y divide-white/5 max-h-32 overflow-y-auto">
         {data[k].length === 0 && <div className="px-3 py-2 text-[11px] text-slate-500">{t("rules.empty")}</div>}
         {data[k].map((r, i) => (
           <div key={`${r}-${i}`} className="px-3 py-1.5 flex items-center gap-2">
@@ -282,7 +282,7 @@ export default function RulesPanel({ running }: { running: boolean; onNavigate?:
         <div className="relative flex-1">
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
-            className="w-full h-8 pl-8 pr-2.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+            className="w-full h-8 pl-8 pr-2.5 rounded-ctl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
             placeholder={t("rules.filterPh")}
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
@@ -312,7 +312,7 @@ export default function RulesPanel({ running }: { running: boolean; onNavigate?:
           <div className="text-[11px] text-slate-400 mb-2 font-semibold">{t("rules.ruleSets", { count: providerList.length })}</div>
           <div className="grid grid-cols-2 gap-1.5">
             {providerList.map(([name, p]) => (
-              <div key={name} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-white/[0.03] border border-white/5">
+              <div key={name} className="flex items-center gap-2 px-2.5 py-1.5 rounded-ctl bg-white/[0.03] border border-white/5">
                 <div className="min-w-0 flex-1">
                   <div className="text-[11px] text-slate-200 truncate">{name}</div>
                   <div className="text-[10px] text-slate-500">

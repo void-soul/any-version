@@ -152,7 +152,7 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
     <div className="space-y-2">
       {/* 顶栏 */}
       <div className="flex items-center gap-2 flex-wrap">
-        <div className="flex items-center rounded-lg bg-white/5 border border-white/10 overflow-hidden">
+        <div className="flex items-center rounded-ctl bg-white/5 border border-white/10 overflow-hidden">
           {(["active", "closed"] as const).map((k) => (
             <button
               key={k}
@@ -168,7 +168,7 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
         <div className="relative flex-1 min-w-40">
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
-            className="w-full h-8 pl-8 pr-2.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
+            className="w-full h-8 pl-8 pr-2.5 rounded-ctl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)]"
             placeholder={t("mihomo.connFilter")}
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
@@ -177,7 +177,7 @@ export default function ConnectionsPanel({ info, running }: { info: any; running
         {viewMode === "list" && (
           <>
             <select
-              className="h-8 px-2 rounded-lg bg-white/10 border border-white/10 text-[11px] text-slate-200 cursor-pointer focus:outline-none"
+              className="h-8 px-2 rounded-ctl bg-white/10 border border-white/10 text-[11px] text-slate-200 cursor-pointer focus:outline-none"
               value={orderBy}
               onChange={(e) => patchCfg({ connectionOrderBy: e.target.value })}
             >

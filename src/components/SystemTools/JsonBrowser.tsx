@@ -2,6 +2,7 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } f
 import { useTranslation } from "react-i18next";
 import { JsonFlowCanvas } from "../CanvasFlow";
 import MonacoEditor from "../shared/MonacoEditor";
+import { theamedConfirm } from "../shared/ThemedAlert";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
@@ -578,10 +579,11 @@ export default function JsonBrowser() {
     }
   }, [active, flash, updateActive]);
 
-  const closeTab = useCallback((id: string) => {
+  const closeTab = useCallback(async (id: string) => {
     const target = tabs.find((tab) => tab.id === id);
     if (!target) return;
-    if (target.savedText !== null && target.savedText !== target.text && !window.confirm(t("jsonb.unsavedClose", { name: target.name }))) return;
+    if (target.savedText !== null && target.savedText !== target.text
+      && !(await theamedConfirm(t("jsonb.unsavedClose", { name: target.name })))) return;
     const index = tabs.findIndex((tab) => tab.id === id);
     const next = tabs.filter((tab) => tab.id !== id);
     if (next.length === 0) {

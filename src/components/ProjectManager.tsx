@@ -121,7 +121,7 @@ export default function ProjectManager({ selectedId, onSelectId }: ProjectManage
       >
         {/* 左侧面板 */}
         <div
-          className="h-full rounded-xl border border-white/5 overflow-hidden bg-white/[0.01] flex-shrink-0"
+          className="h-full rounded-card border border-white/5 overflow-hidden bg-white/[0.01] flex-shrink-0"
           style={{ width: leftWidth }}
         >
           <ProjectListPanel
@@ -152,7 +152,7 @@ export default function ProjectManager({ selectedId, onSelectId }: ProjectManage
         </div>
 
         {/* 右侧面板 */}
-        <div className="flex-1 h-full min-w-[200px] rounded-xl border border-white/5 overflow-hidden bg-white/[0.01]">
+        <div className="flex-1 h-full min-w-[200px] rounded-card border border-white/5 overflow-hidden bg-white/[0.01]">
           <ProjectDetailPanel
             project={selectedProject}
             onRefresh={async () => { await fetchProjects(false, false); }}

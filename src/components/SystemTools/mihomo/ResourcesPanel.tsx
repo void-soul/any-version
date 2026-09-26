@@ -102,7 +102,7 @@ export default function ResourcesPanel({ running }: { running: boolean }) {
         {geoRow("mmdb", "MMDB")}
         {geoRow("asn", "ASN")}
         <SettingItem title={t("resources.geoDataMode")}>
-          <div className="flex rounded-lg bg-white/5 border border-white/10 overflow-hidden">
+          <div className="flex rounded-ctl bg-white/5 border border-white/10 overflow-hidden">
             {([["db", false], ["dat", true]] as const).map(([t, v]) => (
               <button key={t} onClick={() => patchC({ "geodata-mode": v })}
                 className={`px-3 py-1.5 text-[11px] font-semibold cursor-pointer transition-all ${

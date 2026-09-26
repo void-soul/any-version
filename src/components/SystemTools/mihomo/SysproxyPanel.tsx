@@ -109,7 +109,7 @@ export default function SysproxyPanel() {
         </SettingItem>
 
         <SettingItem title={t("sysproxy.mode")}>
-          <div className="flex rounded-lg bg-white/5 border border-white/10 overflow-hidden">
+          <div className="flex rounded-ctl bg-white/5 border border-white/10 overflow-hidden">
             {([["manual", "sysproxy.manual"], ["auto", "sysproxy.pac"]] as const).map(([k, label]) => (
               <button
                 key={k}
@@ -182,7 +182,7 @@ export default function SysproxyPanel() {
           }
         >
           <textarea
-            className="w-full h-80 p-3 rounded-xl bg-black/40 border border-white/10 text-[12px] font-mono text-slate-200 focus:outline-none focus:border-emerald-500 resize-none"
+            className="w-full h-80 p-3 rounded-card bg-black/40 border border-white/10 text-[12px] font-mono text-slate-200 focus:outline-none focus:border-emerald-500 resize-none"
             value={pacDraft}
             onChange={(e) => setPacDraft(e.target.value)}
             spellCheck={false}

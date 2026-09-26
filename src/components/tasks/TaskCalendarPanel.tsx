@@ -228,7 +228,7 @@ export default function TaskCalendarPanel() {
             </span>
           )}
           {/* 视图切换：分段按钮，与模块内其它控件同一套外观 */}
-          <div className="flex items-center gap-0.5 rounded-lg border border-white/10 bg-white/[0.03] p-0.5">
+          <div className="flex items-center gap-0.5 rounded-ctl border border-white/10 bg-white/[0.03] p-0.5">
             {(["month", "week"] as const).map((v) => (
               <button key={v} type="button" onClick={() => setView(v)}
                 className={`rounded-md px-2 py-0.5 text-[10px] transition ${
@@ -251,7 +251,7 @@ export default function TaskCalendarPanel() {
       </div>
 
       {err && (
-        <div className="flex flex-shrink-0 items-start gap-2 rounded-lg border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-300">
+        <div className="flex flex-shrink-0 items-start gap-2 rounded-ctl border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-300">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span className="min-w-0 flex-1 break-all">{t("taskPlan.loadFailed", { err })}</span>
           <button type="button" onClick={() => setErr("")} className="shrink-0 text-rose-300/70 hover:text-white">✕</button>
@@ -259,7 +259,7 @@ export default function TaskCalendarPanel() {
       )}
 
       {/* 日历网格 */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-white/10">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-card border border-white/10">
         <div className="grid flex-shrink-0 grid-cols-7 border-b border-white/10 bg-white/[0.02]">
           {WEEKDAY_KEYS.map((key) => (
             <div key={key} className="px-2 py-1 text-center text-[10px] font-semibold text-slate-500">{t(key)}</div>
@@ -274,7 +274,7 @@ export default function TaskCalendarPanel() {
 
       {/* 未排期收集箱：拖到格子里即完成排期（不显示的话，这些任务等于在日历上消失） */}
       {showInbox && (
-        <div className="flex max-h-28 flex-shrink-0 flex-col gap-1 overflow-hidden rounded-xl border border-white/10 bg-white/[0.02] p-2">
+        <div className="flex max-h-28 flex-shrink-0 flex-col gap-1 overflow-hidden rounded-card border border-white/10 bg-white/[0.02] p-2">
           <div className="flex shrink-0 items-center gap-1.5 text-[10px] font-semibold text-slate-400">
             <Inbox className="h-3 w-3" />
             {t("taskPlan.inboxTitle")}
@@ -420,7 +420,7 @@ function TaskEditorModal({
       }
     >
       {err && (
-        <div className="flex items-start gap-2 rounded-lg border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-300">
+        <div className="flex items-start gap-2 rounded-ctl border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-300">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span className="min-w-0 flex-1 break-all">{err}</span>
         </div>
@@ -458,7 +458,7 @@ function TaskEditorModal({
           <div className="flex items-center gap-1">
             {PRIORITY_ORDER.map((p) => (
               <button key={p} type="button" onClick={() => setPriority(p)}
-                className={`flex-1 rounded-lg border px-1.5 py-1 text-[10px] transition ${
+                className={`flex-1 rounded-ctl border px-1.5 py-1 text-[10px] transition ${
                   priority === p ? `${PRIORITY_META[p].bg} ${PRIORITY_META[p].text} font-semibold` : "border-white/10 text-slate-400 hover:bg-white/5"
                 }`}>
                 {t(PRIORITY_LABEL[p])}

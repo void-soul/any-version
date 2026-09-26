@@ -32,7 +32,7 @@ export default function EnvManager() {
         <span className="text-sm font-bold text-white">{t("envmgr.title")}</span>
         <span className="text-[10px] text-slate-500">{t("envmgr.subtitle")}</span>
         <div className="flex-1" />
-        <div className="flex items-center gap-0.5 bg-white/5 border border-white/5 rounded-lg p-0.5">
+        <div className="flex items-center gap-0.5 bg-white/5 border border-white/5 rounded-ctl p-0.5">
           {tabBtn("path", t("envmgr.pathTab"), ListOrdered)}
           {tabBtn("backup", t("envmgr.backupTab"), ShieldCheck)}
         </div>

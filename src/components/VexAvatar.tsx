@@ -27,7 +27,7 @@ export default function VexAvatar({
   return (
     <img
       src={VEX_AVATAR}
-      className={`object-cover select-none ${still ? "" : "vex-breathe vex-hover"} ${round ? "rounded-full" : "rounded-lg"} ${className}`}
+      className={`object-cover select-none ${still ? "" : "vex-breathe vex-hover"} ${round ? "rounded-full" : "rounded-ctl"} ${className}`}
       style={{ width: size, height: size }}
       alt="Kira"
       title={title ?? "Kira"}

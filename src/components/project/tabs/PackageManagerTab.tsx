@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { theamedAlert, alertError } from "../../shared/ThemedAlert";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -199,7 +200,7 @@ export function PackageManagerTab({
       const { open } = await import("@tauri-apps/plugin-dialog");
       const selected = await open({ directory: true, title: t("pkgmgr.selectFolder") });
       if (selected) setter(selected as string);
-    } catch { alert(t("pkgmgr.folderPickerUnavailable")); }
+    } catch { theamedAlert(t("pkgmgr.folderPickerUnavailable")); }
   };
 
   /** 真正执行存储变更工作流（由确认弹窗或无需确认的路径直接调用） */
@@ -255,7 +256,7 @@ export function PackageManagerTab({
       await runDetection();
       setWorkflowStep("done");
     } catch (e: unknown) {
-      alert(t("pkgmgr.opFailed", { err: String(e) }));
+      alertError(t("pkgmgr.opFailed", { err: String(e) }));
       setWorkflowStep("confirm"); // 回到确认步骤
     } finally {
       unlisten();
@@ -346,7 +347,7 @@ export function PackageManagerTab({
                 setGitRepoStatus(newStatus);
                 cachedData.gitRepoStatus = newStatus;
               } catch (err) {
-                alert(t("pkgmgr.autoInitFail", { name: pm.display_name, err: String(err) }));
+                alertError(t("pkgmgr.autoInitFail", { name: pm.display_name, err: String(err) }));
               } finally {
                 setBootstrapping(false);
               }
@@ -583,7 +584,7 @@ export function PackageManagerTab({
       await invoke("run_cmd_capture", { cmd: pm.install_cmd, projectId });
       await runDetection();
     } catch (e: unknown) {
-      alert(t("pkgmgr.installFail", { name: pm.display_name, err: String(e) }));
+      alertError(t("pkgmgr.installFail", { name: pm.display_name, err: String(e) }));
     } finally {
       setInstalling(false);
       setInstallProgress(false);
@@ -599,7 +600,7 @@ export function PackageManagerTab({
       await invoke("run_cmd_capture", { cmd: pm.install_cmd, projectId });
       await runDetection();
     } catch (e: unknown) {
-      alert(t("pkgmgr.upgradeFail", { name: pm.display_name, err: String(e) }));
+      alertError(t("pkgmgr.upgradeFail", { name: pm.display_name, err: String(e) }));
     } finally {
       setUpgrading(false);
       setInstallProgress(false);
@@ -632,7 +633,7 @@ export function PackageManagerTab({
       setCurrentMirror(url || null);
       updatePmCache({ currentMirror: url || null });
     } catch (e: unknown) {
-      alert(t("pkgmgr.switchMirrorFail", { err: String(e) }));
+      alertError(t("pkgmgr.switchMirrorFail", { err: String(e) }));
     } finally {
       setSwitchingMirror(null);
     }
@@ -654,7 +655,7 @@ export function PackageManagerTab({
       });
       await runDetection();
     } catch (e: unknown) {
-      alert(t("pkgmgr.cleanCacheFail", { err: String(e) }));
+      alertError(t("pkgmgr.cleanCacheFail", { err: String(e) }));
     } finally {
       unlisten();
       setCleaningCache(false);
@@ -682,7 +683,7 @@ export function PackageManagerTab({
     // 防注入：代理值会拼入 PowerShell/命令行模板执行，拒绝 shell 元字符
     const v = proxyInput.trim();
     if (v && /['";&|<>`$()\r\n]/.test(v)) {
-      alert(t("pkgmgr.proxyInvalidChars"));
+      theamedAlert(t("pkgmgr.proxyInvalidChars"));
       return;
     }
     setSettingProxy(true);
@@ -701,7 +702,7 @@ export function PackageManagerTab({
       setProxyDetected(proxyInput.trim() || null);
       updatePmCache({ proxyDetected: proxyInput.trim() || null, proxyInput: proxyInput.trim() });
     } catch (e: unknown) {
-      alert(t("pkgmgr.setProxyFail", { err: String(e) }));
+      alertError(t("pkgmgr.setProxyFail", { err: String(e) }));
     } finally {
       setSettingProxy(false);
     }
@@ -733,7 +734,7 @@ export function PackageManagerTab({
       await invoke("upgrade_global_package", { sdkName: pm.id, pkgName });
       await loadPackages();
     } catch (e: unknown) {
-      alert(t("pkgmgr.upgradePkgFail", { name: pkgName, err: String(e) }));
+      alertError(t("pkgmgr.upgradePkgFail", { name: pkgName, err: String(e) }));
     } finally {
       setUpgradingPkg(null);
     }
@@ -767,7 +768,7 @@ export function PackageManagerTab({
     // ── Step: 选择方式 ──
     if (workflowStep === "method") {
       return (
-        <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
+        <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
             <span className={`text-[12px] font-semibold ${accentText}`}>
               {t("pkgmgr.wfStepHeader", { kind: kindLabel, step: 1, total: totalSteps, label: stepLabels.method })}
@@ -776,7 +777,7 @@ export function PackageManagerTab({
           </div>
           <div className="space-y-1.5">
             <p className="text-[12px] text-slate-300">{t("pkgmgr.chooseMethod")}</p>
-            <label className={`flex items-start gap-2 p-2.5 rounded-lg cursor-pointer transition-all border ${workflowMethod === "junction"
+            <label className={`flex items-start gap-2 p-2.5 rounded-ctl cursor-pointer transition-all border ${workflowMethod === "junction"
               ? `${accentBorder} bg-white/5`
               : "border-white/5 hover:bg-white/[0.02]"
               }`}>
@@ -790,7 +791,7 @@ export function PackageManagerTab({
               </div>
             </label>
             {wfCanPoint && (
-              <label className={`flex items-start gap-2 p-2.5 rounded-lg cursor-pointer transition-all border ${workflowMethod === "point"
+              <label className={`flex items-start gap-2 p-2.5 rounded-ctl cursor-pointer transition-all border ${workflowMethod === "point"
                 ? `${accentBorder} bg-white/5`
                 : "border-white/5 hover:bg-white/[0.02]"
                 }`}>
@@ -818,7 +819,7 @@ export function PackageManagerTab({
     // ── Step: 配置路径 ──
     if (workflowStep === "paths") {
       return (
-        <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
+        <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
             <span className={`text-[12px] font-semibold ${accentText}`}>
               {t("pkgmgr.wfStepHeader", { kind: kindLabel, step: 2, total: totalSteps, label: stepLabels.paths })}
@@ -880,7 +881,7 @@ export function PackageManagerTab({
           <div className="pt-1 space-y-1">
             <p className="text-[13px] text-slate-400 font-semibold">{t("pkgmgr.oldFileAction")}</p>
             {/* 移动旧文件 */}
-            <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "move" ? "border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)]" : "border-white/5 hover:bg-white/[0.02]"}`}>
+            <label className={`flex items-start gap-2 p-2 rounded-ctl cursor-pointer border transition-all ${workflowFileAction === "move" ? "border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)]" : "border-white/5 hover:bg-white/[0.02]"}`}>
               <input type="radio" name="wf_file_action" value="move" checked={workflowFileAction === "move"}
                 onChange={() => setWorkflowFileAction("move")} className="mt-0.5" />
               <div>
@@ -889,7 +890,7 @@ export function PackageManagerTab({
               </div>
             </label>
             {/* 删除旧文件 */}
-            <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "delete" ? "border-red-500/30 bg-red-500/5" : "border-white/5 hover:bg-white/[0.02]"}`}>
+            <label className={`flex items-start gap-2 p-2 rounded-ctl cursor-pointer border transition-all ${workflowFileAction === "delete" ? "border-red-500/30 bg-red-500/5" : "border-white/5 hover:bg-white/[0.02]"}`}>
               <input type="radio" name="wf_file_action" value="delete" checked={workflowFileAction === "delete"}
                 onChange={() => setWorkflowFileAction("delete")} className="mt-0.5" />
               <div>
@@ -900,7 +901,7 @@ export function PackageManagerTab({
               </div>
             </label>
             {/* 不做改动 */}
-            <label className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer border transition-all ${workflowFileAction === "keep" ? "border-slate-500/30 bg-slate-500/5" : "border-white/5 hover:bg-white/[0.02]"}`}>
+            <label className={`flex items-start gap-2 p-2 rounded-ctl cursor-pointer border transition-all ${workflowFileAction === "keep" ? "border-slate-500/30 bg-slate-500/5" : "border-white/5 hover:bg-white/[0.02]"}`}>
               <input type="radio" name="wf_file_action" value="keep" checked={workflowFileAction === "keep"}
                 onChange={() => setWorkflowFileAction("keep")} className="mt-0.5" />
               <div>
@@ -930,7 +931,7 @@ export function PackageManagerTab({
     // ── Step: 确认预览 ──
     if (workflowStep === "confirm") {
       return (
-        <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
+        <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center justify-between">
             <span className={`text-[12px] font-semibold ${accentText}`}>
               {t("pkgmgr.wfStepHeader", { kind: kindLabel, step: 3, total: totalSteps, label: stepLabels.confirm })}
@@ -939,7 +940,7 @@ export function PackageManagerTab({
           </div>
 
           {/* 预览卡片 */}
-          <div className="p-3 bg-black/20 rounded-lg border border-white/5 space-y-2">
+          <div className="p-3 bg-black/20 rounded-ctl border border-white/5 space-y-2">
             <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">{t("pkgmgr.opPreview")}</p>
             <div className="space-y-1.5">
               <div className="flex items-center gap-2 text-[12px]">
@@ -1000,7 +1001,7 @@ export function PackageManagerTab({
     // ── Step: 执行中 ──
     if (workflowStep === "executing") {
       return (
-        <div className={`mt-3 p-3 rounded-xl border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
+        <div className={`mt-3 p-3 rounded-card border ${accentBorder} ${accentBg} space-y-3 animate-fadeIn`}>
           <div className="flex items-center gap-2">
             <Loader className="w-3.5 h-3.5 animate-spin text-[var(--module-accent)]" />
             <span className={`text-[12px] font-semibold ${accentText}`}>
@@ -1036,7 +1037,7 @@ export function PackageManagerTab({
     // ── Step: 完成 ──
     if (workflowStep === "done") {
       return (
-        <div className={`mt-3 p-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 space-y-3 animate-fadeIn`}>
+        <div className={`mt-3 p-3 rounded-card border border-emerald-500/20 bg-emerald-500/5 space-y-3 animate-fadeIn`}>
           <div className="flex items-center gap-2">
             <CheckCircle className="w-4 h-4 text-emerald-400" />
             <span className="text-[12px] font-semibold text-emerald-300">{t("pkgmgr.opSuccess")}</span>
@@ -1063,7 +1064,7 @@ export function PackageManagerTab({
   return (
     <div className="space-y-5">
       {projectStatus && !projectStatus.managed && (
-        <div className="flex items-start gap-2.5 p-3 rounded-xl border border-[var(--module-accent-ring)] bg-[var(--module-accent-soft)] text-[12.5px] text-[var(--module-accent)] animate-fadeIn">
+        <div className="flex items-start gap-2.5 p-3 rounded-card border border-[var(--module-accent-ring)] bg-[var(--module-accent-soft)] text-[12.5px] text-[var(--module-accent)] animate-fadeIn">
           <Info className="w-4.5 h-4.5 text-[var(--module-accent)] flex-shrink-0 mt-0.5" />
           <span>
             <strong>{t("pkgmgr.readonlyTitle")}</strong>{t("pkgmgr.readonlyDesc")}
@@ -1071,10 +1072,10 @@ export function PackageManagerTab({
         </div>
       )}
       {/* 头部状态栏 */}
-      <div className="glass-panel rounded-2xl p-4 border border-white/5 bg-white/2">
+      <div className="glass-panel rounded-panel p-4 border border-white/5 bg-white/2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${installed ? "bg-emerald-500/10" : "bg-slate-500/10"}`}>
+            <div className={`w-9 h-9 rounded-card flex items-center justify-center ${installed ? "bg-emerald-500/10" : "bg-slate-500/10"}`}>
               <Package className={`w-4.5 h-4.5 ${installed ? "text-emerald-400" : "text-slate-500"}`} />
             </div>
             <div>
@@ -1094,13 +1095,13 @@ export function PackageManagerTab({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={runDetection} disabled={checking || installing || upgrading} className="p-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg border border-white/5 cursor-pointer transition-all" title={t("pkgmgr.refreshDetect")}>
+            <button onClick={runDetection} disabled={checking || installing || upgrading} className="p-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-ctl border border-white/5 cursor-pointer transition-all" title={t("pkgmgr.refreshDetect")}>
               <RefreshCw className={`w-3.5 h-3.5 ${checking ? "animate-spin" : ""}`} />
             </button>
             {installed && !pm.built_in && pm.install_cmd && (
               <>
                 {latestVersion && version && versionGt(latestVersion, version) ? (
-                  <button onClick={handleUpgrade} disabled={!projectStatus?.managed || upgrading || installing} className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-lg text-[11px] font-semibold cursor-pointer transition-all flex items-center gap-1.5" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
+                  <button onClick={handleUpgrade} disabled={!projectStatus?.managed || upgrading || installing} className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-ctl text-[11px] font-semibold cursor-pointer transition-all flex items-center gap-1.5" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
                     <Download className="w-3.5 h-3.5" />{upgrading ? t("pkgmgr.upgrading") : t("pkgmgr.upgradeTo", { version: latestVersion })}
                   </button>
                 ) : latestVersion && version && !versionGt(latestVersion, version) ? (
@@ -1109,7 +1110,7 @@ export function PackageManagerTab({
               </>
             )}
             {!installed && pm.install_cmd && (
-              <button onClick={handleInstall} disabled={!projectStatus?.managed || installing || upgrading} className="px-4 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-lg text-[11px] font-semibold cursor-pointer transition-all flex items-center gap-1.5" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
+              <button onClick={handleInstall} disabled={!projectStatus?.managed || installing || upgrading} className="px-4 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-ctl text-[11px] font-semibold cursor-pointer transition-all flex items-center gap-1.5" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
                 <Download className="w-3.5 h-3.5" />{installing ? t("pkgmgr.installing") : t("pkgmgr.install")}
               </button>
             )}
@@ -1136,7 +1137,7 @@ export function PackageManagerTab({
 
       {/* Git Update Notification (通用 is_git_repo) */}
       {projectDef?.is_git_repo && gitRepoStatus?.has_update && (
-        <div className="glass-panel rounded-2xl p-4 border border-amber-500/15 bg-amber-500/5 flex items-center justify-between animate-fadeIn mb-4">
+        <div className="glass-panel rounded-panel p-4 border border-amber-500/15 bg-amber-500/5 flex items-center justify-between animate-fadeIn mb-4">
           <div className="flex items-center gap-2.5 flex-1 min-w-0">
             <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
             <div className="min-w-0">
@@ -1155,14 +1156,14 @@ export function PackageManagerTab({
                 await invoke("update_git_repo", { path: installRoot, bootstrapCmd: projectDef.bootstrap_cmd ?? null });
                 await runDetection();
               } catch (e) {
-                alert(t("pkgmgr.gitUpdateFail", { name: pm.display_name, err: String(e) }));
+                alertError(t("pkgmgr.gitUpdateFail", { name: pm.display_name, err: String(e) }));
               } finally {
                 setUpdatingGitRepo(false);
                 setDetectStep("");
               }
             }}
             disabled={updatingGitRepo}
-            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-lg text-[10px] font-semibold cursor-pointer transition-all flex items-center gap-1 flex-shrink-0 ml-2"
+            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-ctl text-[10px] font-semibold cursor-pointer transition-all flex items-center gap-1 flex-shrink-0 ml-2"
           >
             {updatingGitRepo ? (
               <><Loader className="w-3 h-3 animate-spin" />{t("pkgmgr.updating")}</>
@@ -1175,7 +1176,7 @@ export function PackageManagerTab({
 
       {/* Git 仓库尚未初始化提示 (通用 is_git_repo) */}
       {projectDef?.is_git_repo && gitRepoStatus?.is_git && !gitRepoStatus?.has_exe && !checking && (
-        <div className="glass-panel rounded-2xl p-6 border border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] text-center space-y-4 animate-fadeIn">
+        <div className="glass-panel rounded-panel p-6 border border-[var(--module-accent-ring)] bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] text-center space-y-4 animate-fadeIn">
           <Package className="w-10 h-10 text-[var(--module-accent)] mx-auto opacity-70 animate-pulse" />
           <div>
             <p className="text-[var(--module-accent)] text-sm font-semibold">{t("pkgmgr.notInitTitle", { name: pm.display_name })}</p>
@@ -1192,14 +1193,14 @@ export function PackageManagerTab({
                 await invoke("bootstrap_git_repo", { path: installRoot, cmd: projectDef.bootstrap_cmd });
                 await runDetection();
               } catch (e) {
-                alert(t("pkgmgr.initFail", { name: pm.display_name, err: String(e) }));
+                alertError(t("pkgmgr.initFail", { name: pm.display_name, err: String(e) }));
               } finally {
                 setBootstrapping(false);
                 setDetectStep("");
               }
             }}
             disabled={bootstrapping}
-            className="px-5 py-2 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-xl text-xs font-semibold cursor-pointer transition-all inline-flex items-center gap-1.5"
+            className="px-5 py-2 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-card text-xs font-semibold cursor-pointer transition-all inline-flex items-center gap-1.5"
           >
             {bootstrapping ? (
               <><Loader className="w-3.5 h-3.5 animate-spin" />{t("pkgmgr.compilingInit")}</>
@@ -1212,7 +1213,7 @@ export function PackageManagerTab({
 
       {/* 未安装提示 */}
       {hasChecked && !installed && !checking && !(projectDef?.is_git_repo && gitRepoStatus?.is_git && !gitRepoStatus?.has_exe) && (
-        <div className="glass-panel rounded-2xl p-6 border border-white/5 bg-white/2 text-center animate-fadeIn">
+        <div className="glass-panel rounded-panel p-6 border border-white/5 bg-white/2 text-center animate-fadeIn">
           <Package className="w-10 h-10 text-slate-500 mx-auto mb-3 opacity-50" />
           <p className="text-slate-400 text-sm font-semibold">{t("pkgmgr.notInstalledTitle", { name: pm.display_name })}</p>
           <p className="text-[13px] text-slate-500 mt-1">{t("pkgmgr.notInstalledDesc")}</p>
@@ -1222,7 +1223,7 @@ export function PackageManagerTab({
       {/* 缓存管理 */}
       {/* 缓存管理 — 展示所有可配置缓存路径（主缓存 store + 附加缓存），即使无法直接配置也可用 junction */}
       {hasChecked && installed && (cacheInfo || pm.cache_default_path || pm.cache_detect_cmd || (pm.extra_caches && pm.extra_caches.length > 0)) && (
-        <div className="glass-panel rounded-2xl p-4 border border-white/5 bg-white/2 space-y-3">
+        <div className="glass-panel rounded-panel p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center gap-2">
             <HardDrive className="w-4 h-4 text-amber-400" />
             <h4 className="text-xs font-semibold text-white">{t("pkgmgr.cacheTitle")}</h4>
@@ -1231,7 +1232,7 @@ export function PackageManagerTab({
 
           {/* 主缓存（pnpm 的 store 等） */}
           {cacheInfo ? (
-            <div className="p-4 bg-black/20 rounded-xl border border-white/5 space-y-3">
+            <div className="p-4 bg-black/20 rounded-card border border-white/5 space-y-3">
               <div className="flex items-start justify-between">
                 <div className="space-y-1 flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -1258,7 +1259,7 @@ export function PackageManagerTab({
                   )}
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="text-slate-300 font-mono text-[13px] font-semibold bg-white/5 px-2.5 py-1 rounded-lg">
+                  <span className="text-slate-300 font-mono text-[13px] font-semibold bg-white/5 px-2.5 py-1 rounded-ctl">
                     {cacheInfo.size}
                   </span>
                 </div>
@@ -1267,11 +1268,11 @@ export function PackageManagerTab({
               {/* 操作行 */}
               <div className="pt-2 border-t border-white/5 flex items-center gap-2">
                 <button onClick={() => openWorkflow("cache")} disabled={!projectStatus?.managed || workflowType !== null}
-                  className="px-3 py-1.5 bg-amber-600/80 hover:bg-amber-600 disabled:opacity-40 text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
+                  className="px-3 py-1.5 bg-amber-600/80 hover:bg-amber-600 disabled:opacity-40 text-white rounded-ctl text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
                   <FolderSync className="w-3.5 h-3.5" />{t("pkgmgr.startChange")}
                 </button>
                 <button onClick={handleCleanCache} disabled={!projectStatus?.managed || cleaningCache || workflowType !== null}
-                  className="px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-400 disabled:opacity-40 text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
+                  className="px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-400 disabled:opacity-40 text-white rounded-ctl text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
                   <Trash2 className="w-3.5 h-3.5" />{cleaningCache ? t("pkgmgr.cleaning") : t("pkgmgr.cleanCache")}
                 </button>
               </div>
@@ -1304,7 +1305,7 @@ export function PackageManagerTab({
               {pm.extra_caches.map(extra => {
                 const eInfo = extraCacheInfos[extra.id];
                 return (
-                  <div key={extra.id} className="p-4 bg-black/20 rounded-xl border border-white/5 space-y-2">
+                  <div key={extra.id} className="p-4 bg-black/20 rounded-card border border-white/5 space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <div className="space-y-1 flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -1326,10 +1327,10 @@ export function PackageManagerTab({
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         {eInfo && (
-                          <span className="text-slate-300 font-mono text-[13px] font-semibold bg-white/5 px-2.5 py-1 rounded-lg">{eInfo.size}</span>
+                          <span className="text-slate-300 font-mono text-[13px] font-semibold bg-white/5 px-2.5 py-1 rounded-ctl">{eInfo.size}</span>
                         )}
                         <button onClick={() => openWorkflow("cache", extra.id)} disabled={!projectStatus?.managed || workflowType !== null}
-                          className="px-3 py-1.5 bg-amber-600/70 hover:bg-amber-600 disabled:opacity-40 text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
+                          className="px-3 py-1.5 bg-amber-600/70 hover:bg-amber-600 disabled:opacity-40 text-white rounded-ctl text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-all" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
                           <FolderSync className="w-3.5 h-3.5" />{t("pkgmgr.adjustPath")}
                         </button>
                       </div>
@@ -1346,13 +1347,13 @@ export function PackageManagerTab({
 
       {/* 数据管理 — 安全迁移（必须拷贝，不可删） */}
       {hasChecked && installed && pm.data_detect_cmd && (
-        <div className="glass-panel rounded-2xl p-4 border border-white/5 bg-white/2 space-y-3">
+        <div className="glass-panel rounded-panel p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center gap-2">
             <HardDrive className="w-4 h-4 text-red-400" />
             <h4 className="text-xs font-semibold text-white">{t("pkgmgr.dataTitle")}</h4>
             <span className="text-[11px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20">{t("pkgmgr.dataTag")}</span>
           </div>
-          <div className="p-4 bg-black/20 rounded-xl border border-white/5 space-y-3">
+          <div className="p-4 bg-black/20 rounded-card border border-white/5 space-y-3">
             {/* 数据状态 */}
             {dataInfo ? (
               <div className="flex items-start justify-between">
@@ -1381,7 +1382,7 @@ export function PackageManagerTab({
                   )}
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="text-slate-300 font-mono text-[13px] font-semibold bg-white/5 px-2.5 py-1 rounded-lg">
+                  <span className="text-slate-300 font-mono text-[13px] font-semibold bg-white/5 px-2.5 py-1 rounded-ctl">
                     {dataInfo.size}
                   </span>
                 </div>
@@ -1402,7 +1403,7 @@ export function PackageManagerTab({
             {/* 操作行 */}
             <div className="pt-2 border-t border-white/5 flex items-center gap-2">
               <button onClick={() => openWorkflow("data")} disabled={!projectStatus?.managed || workflowType !== null}
-                className="px-3 py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white rounded-lg text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-colors" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white rounded-ctl text-[12px] font-semibold cursor-pointer flex items-center gap-1 transition-colors" title={!projectStatus?.managed ? t("pkgmgr.managedFirst") : ""}>
                 <FolderSync className="w-3.5 h-3.5" />{dataInfo ? t("pkgmgr.startMigrate") : t("pkgmgr.setDataDir")}
               </button>
             </div>
@@ -1415,7 +1416,7 @@ export function PackageManagerTab({
 
       {/* 镜像配置 */}
       {hasChecked && installed && pm.mirror_options && pm.mirror_options.length > 0 && (
-        <div className="glass-panel rounded-2xl p-4 border border-white/5 bg-white/2 space-y-3">
+        <div className="glass-panel rounded-panel p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center gap-2">
             <Globe className="w-4 h-4 text-[var(--module-accent)]" />
             <h4 className="text-xs font-semibold text-white">{t("pkgmgr.mirrorTitle")}</h4>
@@ -1428,7 +1429,7 @@ export function PackageManagerTab({
               const isCurrent = opt.url === "" ? !currentMirror : currentMirror === opt.url;
               return (
                 <button key={opt.mirror_type} onClick={() => handleSwitchMirror(opt.url, opt.mirror_type)} disabled={!projectStatus?.managed || switchingMirror !== null || isCurrent}
-                  className={`flex items-center justify-between px-3 py-2 rounded-lg text-[13px] font-medium cursor-pointer transition-all border
+                  className={`flex items-center justify-between px-3 py-2 rounded-ctl text-[13px] font-medium cursor-pointer transition-all border
                     ${isCurrent ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300" : "bg-black/20 border-white/5 text-slate-300 hover:bg-white/5"}`} title={!projectStatus?.managed ? "请先托管项目" : ""}>
                   <span>{opt.name}</span>
                   <div className="flex items-center gap-1.5 ml-auto">
@@ -1446,7 +1447,7 @@ export function PackageManagerTab({
 
       {/* 代理配置 */}
       {hasChecked && installed && pm.proxy_detect_cmd && (
-        <div className="glass-panel rounded-2xl p-4 border border-white/5 bg-white/2 space-y-3">
+        <div className="glass-panel rounded-panel p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center gap-2">
             {proxyDetected ? <Wifi className="w-4 h-4 text-emerald-400" /> : <WifiOff className="w-4 h-4 text-slate-500" />}
             <h4 className="text-xs font-semibold text-white">{t("pkgmgr.proxyTitle")}</h4>
@@ -1459,7 +1460,7 @@ export function PackageManagerTab({
             <input type="text" value={proxyInput} onChange={(e) => setProxyInput(e.target.value)} disabled={!projectStatus?.managed}
               className="flex-1 glass-input px-3 py-1.5 text-[13px] font-mono disabled:opacity-50 disabled:cursor-not-allowed" placeholder="http://proxy.example.com:8080" />
             <button onClick={handleSetProxy} disabled={!projectStatus?.managed || settingProxy}
-              className="px-3 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-[13px] font-semibold cursor-pointer flex-shrink-0" title={!projectStatus?.managed ? "请先托管项目" : ""}>
+              className="px-3 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-ctl text-[13px] font-semibold cursor-pointer flex-shrink-0" title={!projectStatus?.managed ? "请先托管项目" : ""}>
               {settingProxy ? t("pkgmgr.settingProxy") : proxyInput ? t("pkgmgr.setProxy") : t("pkgmgr.clearProxy")}
             </button>
           </div>
@@ -1469,13 +1470,13 @@ export function PackageManagerTab({
 
       {/* 全局包 */}
       {hasChecked && installed && pm.pkg_list_cmd && (
-        <div className="glass-panel rounded-2xl p-4 border border-white/5 bg-white/2 space-y-3">
+        <div className="glass-panel rounded-panel p-4 border border-white/5 bg-white/2 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Package className="w-4 h-4 text-[var(--module-accent)]" />
               <h4 className="text-xs font-semibold text-white">{t("pkgmgr.packagesTitle")}</h4>
             </div>
-            <button onClick={loadPackages} disabled={loadingPackages} className="flex items-center gap-1 px-2.5 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-[13px] border border-white/5 cursor-pointer">
+            <button onClick={loadPackages} disabled={loadingPackages} className="flex items-center gap-1 px-2.5 py-1 bg-white/5 hover:bg-white/10 text-slate-300 rounded-ctl text-[13px] border border-white/5 cursor-pointer">
               <RefreshCw className={`w-3 h-3 ${loadingPackages ? "animate-spin" : ""}`} />{t("pkgmgr.refresh")}
             </button>
           </div>

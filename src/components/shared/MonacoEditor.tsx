@@ -57,7 +57,7 @@ export default function MonacoEditor(props: MonacoEditorProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (!ready) return <>{props.loading ?? <div className="h-full w-full rounded-lg bg-slate-950/60" />}</>;
+  if (!ready) return <>{props.loading ?? <div className="h-full w-full rounded-ctl bg-slate-950/60" />}</>;
   if (fallback) return <>{fallback}</>;
   if (!Comp) return null;
   return <Comp {...props} />;

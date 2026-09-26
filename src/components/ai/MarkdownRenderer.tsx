@@ -129,7 +129,7 @@ function CodeBlock({ lang, children }: { lang: string; children: React.ReactNode
   }, [children]);
 
   return (
-    <div className="relative my-2 rounded-lg overflow-hidden border border-white/10 bg-slate-900/80">
+    <div className="relative my-2 rounded-ctl overflow-hidden border border-white/10 bg-slate-900/80">
       <div className="flex items-center justify-between px-2.5 py-1 bg-slate-800/60 border-b border-white/5">
         <span className="text-[9px] font-mono text-slate-400 uppercase tracking-wide">{lang}</span>
         <button

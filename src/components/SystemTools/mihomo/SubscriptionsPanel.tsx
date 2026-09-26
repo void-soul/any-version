@@ -440,33 +440,33 @@ export default function SubscriptionsPanel({
                   )}
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                  <button className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
+                  <button className="p-1.5 rounded-ctl hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
                     title={t("subs.moveUp")} onClick={() => move(idx, -1)}>
                     <ChevronUp className="w-3.5 h-3.5" />
                   </button>
-                  <button className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
+                  <button className="p-1.5 rounded-ctl hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
                     title={t("subs.moveDown")} onClick={() => move(idx, 1)}>
                     <ChevronDown className="w-3.5 h-3.5" />
                   </button>
                   {it.url && (
-                    <button className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-emerald-300 cursor-pointer"
+                    <button className="p-1.5 rounded-ctl hover:bg-white/10 text-slate-400 hover:text-emerald-300 cursor-pointer"
                       title={t("subs.update")} onClick={() => doUpdate(it)}>
                       <RefreshCw className={`w-3.5 h-3.5 ${busy === it.id ? "animate-spin" : ""}`} />
                     </button>
                   )}
-                  <button className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
+                  <button className="p-1.5 rounded-ctl hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
                     title={t("subs.editInfo")} onClick={() => setEditInfo(it)}>
                     <Pencil className="w-3.5 h-3.5" />
                   </button>
-                  <button className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
+                  <button className="p-1.5 rounded-ctl hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
                     title={t("subs.editFile")} onClick={() => openEditFile(it)}>
                     <FileCode2 className="w-3.5 h-3.5" />
                   </button>
-                  <button className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
+                  <button className="p-1.5 rounded-ctl hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
                     title={t("subs.openFolder")} onClick={() => openInExplorer(it)}>
                     <FolderOpen className="w-3.5 h-3.5" />
                   </button>
-                  <button className="p-1.5 rounded-lg hover:bg-rose-500/20 text-slate-400 hover:text-rose-300 cursor-pointer"
+                  <button className="p-1.5 rounded-ctl hover:bg-rose-500/20 text-slate-400 hover:text-rose-300 cursor-pointer"
                     title={t("subs.delete")} onClick={() => doRemove(it)}>
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -707,7 +707,7 @@ function EditInfoModal({ item, overrides, onClose, onSaved }: any) {
               return (
                 <button
                   key={o.id}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] border transition-all cursor-pointer ${
+                  className={`px-2.5 py-1 rounded-ctl text-[11px] border transition-all cursor-pointer ${
                     on
                       ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)] border-[var(--module-accent-ring)]"
                       : "bg-white/5 text-slate-400 border-white/10 hover:text-white"
@@ -761,7 +761,7 @@ function EditFileModal({ item, initial, isCurrent, onClose, onSaved }: any) {
         </>
       }
     >
-      <div className="w-full h-[55vh] rounded-xl border border-white/10 overflow-hidden">
+      <div className="w-full h-[55vh] rounded-card border border-white/10 overflow-hidden">
         <MonacoEditor
           height="55vh"
           language="yaml"

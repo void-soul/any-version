@@ -203,7 +203,7 @@ export default function PathEnvManager() {
   }, [selectedPathInfo, conflictMap]);
 
   return (
-    <div className="flex-grow flex flex-col min-h-0 bg-slate-950/20 text-slate-100 rounded-xl overflow-hidden border border-white/5">
+    <div className="flex-grow flex flex-col min-h-0 bg-slate-950/20 text-slate-100 rounded-card overflow-hidden border border-white/5">
       {/* 顶部工具栏 */}
       <div className="p-4 border-b border-white/5 bg-slate-900/40 backdrop-blur-md flex flex-wrap items-center justify-between gap-4">
         <div>
@@ -217,7 +217,7 @@ export default function PathEnvManager() {
           <button
             onClick={fetchPaths}
             disabled={loading || saving}
-            className="px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-[10px] font-semibold text-slate-300 hover:text-white hover:bg-white/10 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+            className="px-2.5 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-[10px] font-semibold text-slate-300 hover:text-white hover:bg-white/10 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
             {t("pathenv.refresh")}
@@ -226,7 +226,7 @@ export default function PathEnvManager() {
           <button
             onClick={() => handleSave(false)}
             disabled={loading || saving}
-            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-semibold flex items-center gap-1 transition-all shadow-lg shadow-emerald-500/10 cursor-pointer disabled:opacity-50"
+            className="px-3 py-1.5 rounded-ctl bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-semibold flex items-center gap-1 transition-all shadow-lg shadow-emerald-500/10 cursor-pointer disabled:opacity-50"
             title={t("pathenv.saveUserTitle")}
           >
             <Save className="w-3.5 h-3.5" />
@@ -236,7 +236,7 @@ export default function PathEnvManager() {
           <button
             onClick={() => handleSave(true)}
             disabled={loading || saving}
-            className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-semibold flex items-center gap-1 transition-all shadow-lg shadow-blue-500/10 cursor-pointer disabled:opacity-50"
+            className="px-3 py-1.5 rounded-ctl bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-semibold flex items-center gap-1 transition-all shadow-lg shadow-blue-500/10 cursor-pointer disabled:opacity-50"
             title={t("pathenv.saveAllTitle")}
           >
             <Save className="w-3.5 h-3.5" />
@@ -276,26 +276,26 @@ export default function PathEnvManager() {
         {/* 左栏：路径物理排序 */}
         <div className="flex-1 overflow-y-auto p-4 border-r border-white/5 min-w-[55%]">
           {/* 添加新路径栏 */}
-          <div className="mb-4 p-3 bg-white/5 border border-white/5 rounded-xl flex flex-wrap items-center gap-2">
+          <div className="mb-4 p-3 bg-white/5 border border-white/5 rounded-card flex flex-wrap items-center gap-2">
             <input
               type="text"
               placeholder={t("pathenv.addPh")}
               value={newPathInput}
               onChange={(e) => setNewPathInput(e.target.value)}
-              className="flex-1 min-w-[200px] bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-[11px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+              className="flex-1 min-w-[200px] bg-slate-900 border border-white/10 rounded-ctl px-2.5 py-1.5 text-[11px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
             />
             <div className="flex items-center gap-1">
               <select
                 value={newPathSource}
                 onChange={(e) => setNewPathSource(e.target.value as "HKCU" | "HKLM")}
-                className="bg-slate-900 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-slate-300 focus:outline-none"
+                className="bg-slate-900 border border-white/10 rounded-ctl px-2 py-1.5 text-[11px] text-slate-300 focus:outline-none"
               >
                 <option value="HKCU">{t("pathenv.optHkcu")}</option>
                 <option value="HKLM">{t("pathenv.optHklm")}</option>
               </select>
               <button
                 onClick={handleAddPath}
-                className="p-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-all cursor-pointer"
+                className="p-1.5 rounded-ctl bg-blue-600 hover:bg-blue-500 text-white transition-all cursor-pointer"
                 title={t("pathenv.addTitle")}
               >
                 <Plus className="w-4 h-4" />
@@ -320,7 +320,7 @@ export default function PathEnvManager() {
                   <div
                     key={`${pInfo.source}-${pInfo.path}-${index}`}
                     onClick={() => setSelectedPath(pInfo.path)}
-                    className={`p-2.5 rounded-xl border flex items-center justify-between gap-3 cursor-pointer group transition-all ${
+                    className={`p-2.5 rounded-card border flex items-center justify-between gap-3 cursor-pointer group transition-all ${
                       isSelected
                         ? "bg-blue-600/10 border-blue-500/40"
                         : "bg-slate-900/40 border-white/5 hover:border-white/10"
@@ -411,7 +411,7 @@ export default function PathEnvManager() {
                   <div
                     key={`${pInfo.source}-${pInfo.path}-${index}`}
                     onClick={() => setSelectedPath(pInfo.path)}
-                    className={`p-2.5 rounded-xl border flex items-center justify-between gap-3 cursor-pointer group transition-all ${
+                    className={`p-2.5 rounded-card border flex items-center justify-between gap-3 cursor-pointer group transition-all ${
                       isSelected
                         ? "bg-blue-600/10 border-blue-500/40"
                         : "bg-slate-900/40 border-white/5 hover:border-white/10"
@@ -494,18 +494,18 @@ export default function PathEnvManager() {
                 <Folder className="w-3.5 h-3.5" />
                 {selectedPathInfo.source === "HKCU" ? t("pathenv.detailHkcu") : t("pathenv.detailHklm")}
               </div>
-              <h3 className="text-xs font-bold text-slate-200 break-all mb-4 bg-slate-900 border border-white/5 p-2.5 rounded-lg select-all">
+              <h3 className="text-xs font-bold text-slate-200 break-all mb-4 bg-slate-900 border border-white/5 p-2.5 rounded-ctl select-all">
                 {selectedPathInfo.path}
               </h3>
 
               {!selectedPathInfo.exists ? (
-                <div className="flex-1 flex flex-col items-center justify-center p-8 border border-dashed border-red-500/20 rounded-xl bg-red-500/5 text-center">
+                <div className="flex-1 flex flex-col items-center justify-center p-8 border border-dashed border-red-500/20 rounded-card bg-red-500/5 text-center">
                   <AlertTriangle className="w-8 h-8 text-red-500 mb-2" />
                   <span className="text-[11px] font-bold text-red-400">{t("pathenv.dirMissing")}</span>
                   <span className="text-[9px] text-slate-500 mt-1 max-w-[200px]">{t("pathenv.dirMissingHint")}</span>
                 </div>
               ) : selectedPathInfo.executables.length === 0 ? (
-                <div className="flex-1 flex flex-col items-center justify-center p-8 border border-dashed border-white/5 rounded-xl bg-white/5 text-center">
+                <div className="flex-1 flex flex-col items-center justify-center p-8 border border-dashed border-white/5 rounded-card bg-white/5 text-center">
                   <Folder className="w-8 h-8 text-slate-600 mb-2" />
                   <span className="text-[11px] font-bold text-slate-400">{t("pathenv.noExec")}</span>
                   <span className="text-[9px] text-slate-500 mt-1 max-w-[200px]">{t("pathenv.noExecHint")}</span>
@@ -533,7 +533,7 @@ export default function PathEnvManager() {
                       return (
                         <div
                           key={exe}
-                          className={`p-2.5 rounded-lg border text-[10.5px] transition-all ${
+                          className={`p-2.5 rounded-ctl border text-[10.5px] transition-all ${
                             isConflict
                               ? "bg-yellow-500/5 border-yellow-500/25 hover:bg-yellow-500/10"
                               : "bg-slate-900/60 border-white/5 hover:bg-slate-900"

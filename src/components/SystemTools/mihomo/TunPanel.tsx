@@ -140,7 +140,7 @@ export default function TunPanel() {
       </SettingItem>
 
       <SettingItem title={t("tun.stack")}>
-        <div className="flex rounded-lg bg-white/5 border border-white/10 overflow-hidden">
+        <div className="flex rounded-ctl bg-white/5 border border-white/10 overflow-hidden">
           {(["gvisor", "mixed", "system"] as const).map((k) => (
             <button
               key={k}

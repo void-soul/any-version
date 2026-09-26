@@ -91,7 +91,7 @@ function ChainRow({
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={`flex items-center gap-2 px-2 py-1.5 rounded-lg border bg-slate-900/40 ${
+      className={`flex items-center gap-2 px-2 py-1.5 rounded-ctl border bg-slate-900/40 ${
         isDragging ? "border-[var(--module-accent)] bg-slate-900/80" : "border-white/5"
       }`}
     >
@@ -390,7 +390,7 @@ export default function RouteAggregate() {
   return (
     <div className="h-full flex flex-col min-h-0 space-y-3">
       {/* 说明 */}
-      <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-2.5 flex items-start gap-2">
+      <div className="rounded-card border border-white/5 bg-white/[0.02] px-4 py-2.5 flex items-start gap-2">
         <RouteIcon className="w-4 h-4 text-[var(--module-accent)] flex-shrink-0 mt-0.5" />
         <div className="min-w-0">
           <div className="text-[11px] font-bold text-slate-200">
@@ -403,7 +403,7 @@ export default function RouteAggregate() {
 
       <div className="flex-1 min-h-0 grid grid-cols-2 gap-3">
         {/* 左：仓库候选（勾选入链） */}
-        <div className="flex flex-col min-h-0 rounded-xl border border-white/5 bg-white/[0.02] overflow-hidden">
+        <div className="flex flex-col min-h-0 rounded-card border border-white/5 bg-white/[0.02] overflow-hidden">
           <div className="px-3 py-2 border-b border-white/5 flex items-center justify-between gap-2">
             <span className="text-[11px] font-bold text-slate-300">{t("aggregate.repoTitle")}</span>
             <span className="text-[9px] text-slate-600">{candidates.length}</span>
@@ -415,7 +415,7 @@ export default function RouteAggregate() {
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder={t("aggregate.searchPh")}
-                className="w-full bg-slate-900 border border-white/10 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
+                className="w-full bg-slate-900 border border-white/10 rounded-ctl pl-8 pr-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
               />
             </div>
           </div>
@@ -437,7 +437,7 @@ export default function RouteAggregate() {
               // 搜索时自动展开命中的分组，否则按用户手动展开状态（默认折叠）
               const isOpen = searching || expanded.has(group.providerId);
               return (
-                <div key={group.providerId} className="rounded-lg border border-white/5 overflow-hidden">
+                <div key={group.providerId} className="rounded-ctl border border-white/5 overflow-hidden">
                   {/* 分组头：点击展开/折叠；三态勾选 = 全选/清空该供应商 */}
                   <div className="flex items-center gap-1.5 px-1.5 py-1.5 bg-white/[0.02] hover:bg-white/[0.05] transition-colors">
                     <button
@@ -522,7 +522,7 @@ export default function RouteAggregate() {
         </div>
 
         {/* 右：链路顺序（拖拽排序） */}
-        <div className="flex flex-col min-h-0 rounded-xl border border-white/5 bg-white/[0.02] overflow-hidden">
+        <div className="flex flex-col min-h-0 rounded-card border border-white/5 bg-white/[0.02] overflow-hidden">
           <div className="px-3 py-2 border-b border-white/5 flex items-center justify-between gap-2">
             <span className="text-[11px] font-bold text-slate-300">{t("aggregate.chainTitle")}</span>
             <span className="text-[9px] text-slate-600">{t("aggregate.count", { count: chain.length })}</span>
@@ -556,7 +556,7 @@ export default function RouteAggregate() {
 
       {/* Headroom 上下文压缩（链路管线的一环：请求前压缩） */}
       {headroom && (
-        <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-2.5 space-y-2">
+        <div className="rounded-card border border-white/5 bg-white/[0.02] px-4 py-2.5 space-y-2">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
@@ -589,9 +589,9 @@ export default function RouteAggregate() {
                 <input type="number" min={1} max={65535} value={headroom.port}
                   onChange={e => setHeadroom({ ...headroom, port: Number(e.target.value) || 0 })}
                   onBlur={e => patchHeadroom({ port: Number(e.target.value) || 8791 })}
-                  className="w-20 bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
+                  className="w-20 bg-slate-900 border border-white/10 rounded-ctl px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
                 <button onClick={() => void checkHeadroom(headroom.port)} disabled={checkingHeadroom}
-                  className="px-2 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] text-slate-300 hover:text-white cursor-pointer transition-all flex items-center gap-1 disabled:opacity-40">
+                  className="px-2 py-1 rounded-ctl bg-white/5 border border-white/10 text-[10px] text-slate-300 hover:text-white cursor-pointer transition-all flex items-center gap-1 disabled:opacity-40">
                   <RefreshCw className={`w-3 h-3 ${checkingHeadroom ? "animate-spin" : ""}`} />
                   {t("aggregate.headroomCheck")}
                 </button>
@@ -609,7 +609,7 @@ export default function RouteAggregate() {
                 <label className="text-[10px] text-slate-500 w-14 flex-shrink-0">{t("aggregate.headroomOnUnavailable")}</label>
                 <select value={headroom.on_unavailable}
                   onChange={e => patchHeadroom({ on_unavailable: e.target.value })}
-                  className="bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)] cursor-pointer">
+                  className="bg-slate-900 border border-white/10 rounded-ctl px-2 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)] cursor-pointer">
                   <option value="failOpen">{t("aggregate.headroomFailOpen")}</option>
                   <option value="failClosed">{t("aggregate.headroomFailClosed")}</option>
                 </select>
@@ -631,7 +631,7 @@ export default function RouteAggregate() {
 
       {/* 聚合服务：端口 / 上下文限制 / 启停 / 日志 */}
       {aggregate && (
-        <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-2.5 space-y-2">
+        <div className="rounded-card border border-white/5 bg-white/[0.02] px-4 py-2.5 space-y-2">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
@@ -655,12 +655,12 @@ export default function RouteAggregate() {
             </div>
             {aggStatus?.running ? (
               <button onClick={() => void stopAggregate()} disabled={aggBusy}
-                className="px-2.5 py-1 rounded-lg bg-red-500/10 border border-red-500/20 text-[10px] font-semibold text-red-400 hover:bg-red-500/20 cursor-pointer transition-all flex items-center gap-1 disabled:opacity-40">
+                className="px-2.5 py-1 rounded-ctl bg-red-500/10 border border-red-500/20 text-[10px] font-semibold text-red-400 hover:bg-red-500/20 cursor-pointer transition-all flex items-center gap-1 disabled:opacity-40">
                 <Square className="w-3 h-3" /> {t("aggregate.serviceStop")}
               </button>
             ) : (
               <button onClick={() => void startAggregate()} disabled={aggBusy || chain.length === 0}
-                className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-semibold text-emerald-400 hover:bg-emerald-500/20 cursor-pointer transition-all flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="px-2.5 py-1 rounded-ctl bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-semibold text-emerald-400 hover:bg-emerald-500/20 cursor-pointer transition-all flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
                 title={chain.length === 0 ? t("aggregate.needCandidates") : undefined}>
                 <Play className="w-3 h-3" /> {t("aggregate.serviceStart")}
               </button>
@@ -673,14 +673,14 @@ export default function RouteAggregate() {
               <input type="number" min={1} max={65535} value={aggregate.port} disabled={!!aggStatus?.running}
                 onChange={e => setAggregate({ ...aggregate, port: Number(e.target.value) || 0 })}
                 onBlur={e => patchAggregate({ port: Number(e.target.value) || 15888 })}
-                className="w-20 bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)] disabled:opacity-50" />
+                className="w-20 bg-slate-900 border border-white/10 rounded-ctl px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)] disabled:opacity-50" />
             </div>
             <div className="flex items-center gap-2">
               <label className="text-[10px] text-slate-500 flex-shrink-0">{t("aggregate.contextLimit")}</label>
               <input type="number" min={1000} step={1000} value={aggregate.context_limit}
                 onChange={e => setAggregate({ ...aggregate, context_limit: Number(e.target.value) || 0 })}
                 onBlur={e => patchAggregate({ context_limit: Number(e.target.value) || 128000 })}
-                className="w-24 bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
+                className="w-24 bg-slate-900 border border-white/10 rounded-ctl px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
               <span className="text-[9px] text-slate-600">tokens</span>
             </div>
             <div className="flex items-center gap-2">
@@ -688,7 +688,7 @@ export default function RouteAggregate() {
               <input type="number" min={1} max={5} value={aggregate.retry_count}
                 onChange={e => setAggregate({ ...aggregate, retry_count: Number(e.target.value) || 1 })}
                 onBlur={e => patchAggregate({ retry_count: Math.min(5, Math.max(1, Number(e.target.value) || 2)) })}
-                className="w-14 bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
+                className="w-14 bg-slate-900 border border-white/10 rounded-ctl px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
               <span className="text-[9px] text-slate-600">{t("aggregate.retryCountHint")}</span>
             </div>
             <div className="flex items-center gap-2">
@@ -697,7 +697,7 @@ export default function RouteAggregate() {
                 onChange={e => setAggregate({ ...aggregate, entry_model: e.target.value })}
                 onBlur={e => patchAggregate({ entry_model: e.target.value.trim() || "kiro-proxy" })}
                 placeholder="kiro-proxy"
-                className="w-32 bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
+                className="w-32 bg-slate-900 border border-white/10 rounded-ctl px-2 py-1 text-[10px] text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
               <span className="text-[9px] text-slate-600">{t("aggregate.entryModelHint")}</span>
             </div>
           </div>

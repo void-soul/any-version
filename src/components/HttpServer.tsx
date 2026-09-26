@@ -112,7 +112,7 @@ export default function HttpServer() {
       </div>
 
       {/* 启动表单 */}
-      <form onSubmit={handleStart} className="glass-panel border border-white/5 rounded-2xl p-5 bg-white/2 space-y-4">
+      <form onSubmit={handleStart} className="glass-panel border border-white/5 rounded-panel p-5 bg-white/2 space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="md:col-span-3 space-y-1.5">
             <label className="text-[10px] text-slate-500 uppercase font-semibold">{t("httpserver.rootDir")}</label>
@@ -127,7 +127,7 @@ export default function HttpServer() {
               <button
                 type="button"
                 onClick={handleSelectFolder}
-                className="p-2 bg-white/5 hover:bg-white/10 border border-white/5 text-slate-400 hover:text-slate-200 rounded-lg cursor-pointer transition-colors"
+                className="p-2 bg-white/5 hover:bg-white/10 border border-white/5 text-slate-400 hover:text-slate-200 rounded-ctl cursor-pointer transition-colors"
                 title={t("httpserver.pickFolder")}
               >
                 <FolderOpen className="w-4 h-4" />
@@ -158,7 +158,7 @@ export default function HttpServer() {
         </label>
 
         {error && (
-          <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-200 text-xs rounded-xl flex items-center gap-2">
+          <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-200 text-xs rounded-card flex items-center gap-2">
             <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
             <span>{error}</span>
           </div>
@@ -168,7 +168,7 @@ export default function HttpServer() {
           <button
             type="submit"
             disabled={loading}
-            className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center gap-1.5"
+            className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-card text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center gap-1.5"
           >
             <Play className="w-3.5 h-3.5" />
             {loading ? t("httpserver.starting") : t("httpserver.start")}
@@ -177,7 +177,7 @@ export default function HttpServer() {
       </form>
 
       {/* 运行中的服务列表 */}
-      <div className="glass-panel border border-white/5 rounded-2xl p-5 bg-white/2 space-y-4">
+      <div className="glass-panel border border-white/5 rounded-panel p-5 bg-white/2 space-y-4">
         <div className="flex items-center gap-2 border-b border-white/5 pb-3">
           <Server className="w-4 h-4 text-blue-400" />
           <h4 className="text-xs font-semibold text-white">{t("httpserver.runningTitle", { count: runningServers.length })}</h4>
@@ -192,7 +192,7 @@ export default function HttpServer() {
             {runningServers.map((srv) => (
               <div 
                 key={srv.port}
-                className="flex flex-col md:flex-row md:items-center justify-between p-3.5 bg-black/20 border border-white/5 rounded-xl gap-3"
+                className="flex flex-col md:flex-row md:items-center justify-between p-3.5 bg-black/20 border border-white/5 rounded-card gap-3"
               >
                 <div className="space-y-1 min-w-0">
                   <div className="flex items-center gap-2">
@@ -212,7 +212,7 @@ export default function HttpServer() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => handleCopyLink(srv.port)}
-                    className="p-2 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 rounded-lg border border-white/5 cursor-pointer transition-colors"
+                    className="p-2 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-slate-200 rounded-ctl border border-white/5 cursor-pointer transition-colors"
                     title={t("httpserver.copyLink")}
                   >
                     {copiedPort === srv.port ? (
@@ -223,7 +223,7 @@ export default function HttpServer() {
                   </button>
                   <button
                     onClick={() => handleStop(srv.port)}
-                    className="px-3 py-2 bg-red-600/20 hover:bg-red-600/30 border border-red-500/20 hover:border-red-500/30 text-red-300 rounded-lg text-[10px] font-semibold cursor-pointer transition-all flex items-center gap-1"
+                    className="px-3 py-2 bg-red-600/20 hover:bg-red-600/30 border border-red-500/20 hover:border-red-500/30 text-red-300 rounded-ctl text-[10px] font-semibold cursor-pointer transition-all flex items-center gap-1"
                     title={t("httpserver.closeService")}
                   >
                     <Square className="w-3 h-3" />

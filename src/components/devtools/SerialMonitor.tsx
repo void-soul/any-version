@@ -303,7 +303,7 @@ export default function SerialMonitor() {
         <Usb className="w-4 h-4 text-teal-400" />
         <h1 className="text-base font-semibold">{t("serial.title")}</h1>
         {/* 模式切换 */}
-        <div className="flex rounded-lg overflow-hidden border border-white/10 text-[11px]">
+        <div className="flex rounded-ctl overflow-hidden border border-white/10 text-[11px]">
           <button
             onClick={() => void switchMode("real")}
             className={`px-3 py-1 flex items-center gap-1 cursor-pointer ${mode === "real" ? "bg-teal-600 text-white" : "bg-white/5 text-slate-400 hover:text-slate-200"}`}
@@ -341,7 +341,7 @@ export default function SerialMonitor() {
 
       {/* 连接配置（真实串口）/ 应答脚本编辑器（模拟设备） */}
       {mode === "real" ? (
-        <div className="shrink-0 flex flex-wrap items-center gap-2 bg-white/[0.03] border border-white/10 rounded-lg p-3">
+        <div className="shrink-0 flex flex-wrap items-center gap-2 bg-white/[0.03] border border-white/10 rounded-ctl p-3">
           <select value={portName} onChange={(e) => setPortName(e.target.value)} className={`${selectCls} min-w-44`}>
             {ports.length === 0 && <option value="">{t("serial.noPorts")}</option>}
             {ports.map((p) => (
@@ -404,7 +404,7 @@ export default function SerialMonitor() {
           )}
         </div>
       ) : (
-        <div className="shrink-0 bg-white/[0.03] border border-violet-500/30 rounded-lg p-3 space-y-2">
+        <div className="shrink-0 bg-white/[0.03] border border-violet-500/30 rounded-ctl p-3 space-y-2">
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <Bot className="w-4 h-4 text-violet-400" />
             <span>
@@ -503,7 +503,7 @@ export default function SerialMonitor() {
       )}
 
       {/* 收发日志 */}
-      <div ref={logRef} className="flex-1 min-h-0 overflow-auto rounded-lg border border-white/10 bg-white/[0.02] p-3 font-mono text-[12px] leading-5">
+      <div ref={logRef} className="flex-1 min-h-0 overflow-auto rounded-ctl border border-white/10 bg-white/[0.02] p-3 font-mono text-[12px] leading-5">
         {logs.length === 0 && (
           <div className="h-full flex flex-col items-center justify-center text-slate-600 gap-2 select-none">
             {mode === "sim" ? <Bot className="w-8 h-8 opacity-40" /> : <Usb className="w-8 h-8 opacity-40" />}
@@ -518,7 +518,7 @@ export default function SerialMonitor() {
               <div key={i} className={`flex ${system ? "justify-center" : outgoing ? "justify-end" : "justify-start"}`}>
                 <div className={`flex max-w-[86%] items-end gap-2 ${outgoing ? "flex-row-reverse" : ""}`}>
                   <span className="shrink-0 text-[10px] text-slate-600">{entry.time}</span>
-                  <div className={`rounded-xl px-3 py-2 ${system ? "bg-white/[0.06] text-yellow-200" : outgoing ? "bg-cyan-500/15 text-cyan-100" : entry.dir === "dev" ? "bg-violet-500/15 text-violet-100" : "bg-emerald-500/10 text-slate-200"}`}>
+                  <div className={`rounded-card px-3 py-2 ${system ? "bg-white/[0.06] text-yellow-200" : outgoing ? "bg-cyan-500/15 text-cyan-100" : entry.dir === "dev" ? "bg-violet-500/15 text-violet-100" : "bg-emerald-500/10 text-slate-200"}`}>
                     <span className="mr-1.5 text-[10px] opacity-70">{entry.dir === "rx" ? t("serial.dirDevice") : entry.dir === "tx" ? t("serial.dirSend") : entry.dir === "dev" ? t("serial.dirResp") : t("serial.dirSys")}</span>
                     <span className="break-all whitespace-pre-wrap">{hexView && entry.hex !== undefined ? entry.hex : entry.text}</span>
                   </div>
@@ -530,7 +530,7 @@ export default function SerialMonitor() {
       </div>
 
       {/* 发送区 */}
-      <div className="shrink-0 bg-white/[0.03] border border-white/10 rounded-lg p-3 space-y-2">
+      <div className="shrink-0 bg-white/[0.03] border border-white/10 rounded-ctl p-3 space-y-2">
         {/* 行游标提示 */}
         {lines.length > 1 && (
           <div className="flex items-center justify-between text-[11px] text-slate-500">

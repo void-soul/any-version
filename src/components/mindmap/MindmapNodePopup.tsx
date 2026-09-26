@@ -205,7 +205,7 @@ export default function MindmapNodePopup() {
   useEffect(() => { inputRef.current?.focus(); }, [full, docId]);
 
   return (
-    <div ref={rootRef} className="h-screen w-screen overflow-hidden rounded-xl border border-white/10 bg-surface-panel shadow-2xl flex flex-col text-slate-200 select-none" style={themeVars}>
+    <div ref={rootRef} className="h-screen w-screen overflow-hidden rounded-card border border-white/10 bg-surface-panel shadow-2xl flex flex-col text-slate-200 select-none" style={themeVars}>
       {/* 标题栏 */}
       <div className="flex shrink-0 cursor-grab items-center gap-2 border-b border-white/10 px-3 py-2 active:cursor-grabbing" onMouseDown={onTitleMouseDown} style={{ backgroundColor: "var(--mm-accent-soft)" }}>
         <VexGlowAvatar size={18} />
@@ -308,7 +308,7 @@ export default function MindmapNodePopup() {
         {done && <div className="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1.5 text-[10px] text-emerald-300">✓ {done}</div>}
 
         <button onClick={() => void submit()} disabled={busy || !name.trim()}
-          className="shrink-0 rounded-lg py-1.5 text-xs font-semibold text-white disabled:opacity-40"
+          className="shrink-0 rounded-ctl py-1.5 text-xs font-semibold text-white disabled:opacity-40"
           style={{ backgroundColor: "var(--mm-accent)" }}>
           {busy ? t("mmdpop.recording") : t("mmdpop.recordNode")}
         </button>

@@ -37,7 +37,7 @@ export function ModuleSettingsButton({
   const [open, setOpen] = useState(false);
   const baseCls = label
     ? "inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-[10px]"
-    : "p-2 rounded-lg";
+    : "p-2 rounded-ctl";
   const iconCls = label ? "h-3 w-3" : "w-4 h-4";
   return (
     <>

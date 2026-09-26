@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { theamedConfirm } from "../shared/ThemedAlert";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import hljs from "highlight.js/lib/core";
@@ -353,11 +354,12 @@ export default function MarkdownReader() {
   }, [openPath]);
 
   const closeTab = useCallback(
-    (path: string, e?: React.MouseEvent) => {
+    async (path: string, e?: React.MouseEvent) => {
       e?.stopPropagation();
+      // 未保存确认要 await，所以不能在 setTabs 的 updater 里问（updater 必须同步返回）
+      const tab = tabs.find((x) => x.path === path);
+      if (tab?.dirty && !(await theamedConfirm(t("mdreader.dirtyCloseConfirm", { name: tab.name })))) return;
       setTabs((prev) => {
-        const tab = prev.find((x) => x.path === path);
-        if (tab?.dirty && !window.confirm(t("mdreader.dirtyCloseConfirm", { name: tab.name }))) return prev;
         const idx = prev.findIndex((x) => x.path === path);
         const next = prev.filter((x) => x.path !== path);
         // 关掉的是当前标签时，激活右邻居，没有则激活左邻居
@@ -368,7 +370,7 @@ export default function MarkdownReader() {
         return next;
       });
     },
-    [activePath]
+    [activePath, tabs]
   );
 
   /** 编辑器内容变更（带撤销栈） */
@@ -442,7 +444,7 @@ export default function MarkdownReader() {
 
   const reloadActive = useCallback(async () => {
     if (!active) return;
-    if (active.dirty && !window.confirm(t("mdreader.reloadDirtyConfirm"))) return;
+    if (active.dirty && !(await theamedConfirm(t("mdreader.reloadDirtyConfirm")))) return;
     const path = active.path;
     setTabs((prev) =>
       prev.map((t) => (t.path === path ? { ...t, loading: true, error: null } : t))
@@ -1040,7 +1042,7 @@ function CodeBlock({ lang, children }: { lang: string; children: React.ReactNode
   }, [lang, text]);
 
   return (
-    <div className="relative my-3 rounded-lg overflow-hidden border border-white/10 bg-slate-900/80">
+    <div className="relative my-3 rounded-ctl overflow-hidden border border-white/10 bg-slate-900/80">
       <div className="flex items-center justify-between px-2.5 py-1 bg-slate-800/60 border-b border-white/5">
         <span className="text-[9px] font-mono text-slate-400 uppercase tracking-wide">
           {lang || "text"}

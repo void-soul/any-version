@@ -70,6 +70,7 @@ import AddItemModal from "./AddItemModal";
 import VexGlowAvatar from "../VexGlowAvatar";
 import VexBusy from "../VexBusy";
 import VexGreeting from "../VexGreeting";
+import { theamedConfirm } from "../shared/ThemedAlert";
 
 // ---------- dnd-kit 辅助组件（模块级，避免渲染期内重新挂载破坏排序动画） ----------
 
@@ -145,7 +146,7 @@ function cardClass(
 ): string {
   const missing = checkResults[item.id] && !checkResults[item.id].exists;
   return [
-    "group relative rounded-xl border cursor-pointer min-w-0 flex items-center",
+    "group relative rounded-card border cursor-pointer min-w-0 flex items-center",
     view.densityCard,
     view.cardBorderClass,
     missing
@@ -173,7 +174,7 @@ function ItemCardBody(props: {
       )}
       {missing && <div className="absolute -top-1 -left-1 w-2 h-2 rounded-full bg-red-500 shadow shadow-red-500/50" />}
       <div
-        className={`rounded-lg flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition overflow-hidden ${
+        className={`rounded-ctl flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition overflow-hidden ${
           itemIconBg
             ? item.data.iconBackgroundColor
               ? ""
@@ -1222,9 +1223,9 @@ export default function LauncherPanel() {
       return;
     }
     const invalidCount = allItems.filter((it) => it.data.exists === false).length;
-    const ok = window.confirm(
-      t("launcher.confirmDeleteInvalid", { count: invalidCount })
-    );
+    const ok = await theamedConfirm(t("launcher.confirmDeleteInvalid", { count: invalidCount }), {
+      danger: true,
+    });
     if (!ok) return;
     try {
       const deleted = await invoke<number>("launcher_delete_invalid_items");
@@ -1338,7 +1339,7 @@ export default function LauncherPanel() {
         key={cat.id}
         id={`cat:${cat.id}`}
         dataCatId={cat.id}
-        className={`space-y-1.5 rounded-xl p-1.5 transition ${
+        className={`space-y-1.5 rounded-card p-1.5 transition ${
           isGroupHovered ? "bg-[var(--module-accent-soft)] ring-1 ring-[var(--module-accent-ring)]" : ""
         }`}
         onDragOver={(e) => handleHtml5DragOver(e, cat.id)}
@@ -1414,7 +1415,7 @@ export default function LauncherPanel() {
               setTargetClassificationId(cat.id);
               setItemModalOpen(true);
             }}
-            className="border border-dashed border-white/5 hover:border-[var(--module-accent-ring)] rounded-xl min-h-[64px] flex items-center justify-center py-3 text-center text-slate-600 hover:text-slate-400 text-[11px] cursor-pointer transition"
+            className="border border-dashed border-white/5 hover:border-[var(--module-accent-ring)] rounded-card min-h-[64px] flex items-center justify-center py-3 text-center text-slate-600 hover:text-slate-400 text-[11px] cursor-pointer transition"
           >
             + {t("launcher.clickAddToGroup")}
           </div>
@@ -1443,7 +1444,7 @@ export default function LauncherPanel() {
       {/* Drag Over Overlay Toast / Indicator */}
       {isDragOver && (
         <div className="absolute inset-x-0 top-12 z-50 flex justify-center pointer-events-none animate-in fade-in slide-in-from-top-2 duration-150">
-          <div className="bg-[color-mix(in_srgb,var(--module-accent)_90%,transparent)] backdrop-blur-md border border-[var(--module-accent)] text-white px-5 py-2.5 rounded-2xl shadow-[0_0_16px_color-mix(in_srgb,var(--module-accent)_45%,transparent),0_0_40px_color-mix(in_srgb,var(--module-accent)_25%,transparent)] flex items-center gap-2.5">
+          <div className="bg-[color-mix(in_srgb,var(--module-accent)_90%,transparent)] backdrop-blur-md border border-[var(--module-accent)] text-white px-5 py-2.5 rounded-panel shadow-[0_0_16px_color-mix(in_srgb,var(--module-accent)_45%,transparent),0_0_40px_color-mix(in_srgb,var(--module-accent)_25%,transparent)] flex items-center gap-2.5">
             <UploadCloud className="w-5 h-5 text-[var(--module-accent)] animate-bounce" />
             <div className="text-xs">
               <span className="font-bold">{t("launcher.dropAdd", { name: currentDragTargetName })}</span>
@@ -1470,7 +1471,7 @@ export default function LauncherPanel() {
               if (isSearchOpen) closeSearch();
               else openSearch();
             }}
-            className={`px-2.5 py-1 rounded-lg text-xs flex items-center gap-1.5 border transition cursor-pointer ${
+            className={`px-2.5 py-1 rounded-ctl text-xs flex items-center gap-1.5 border transition cursor-pointer ${
               isSearchOpen
                 ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white shadow-md shadow-[var(--module-accent-ring)]"
                 : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
@@ -1486,7 +1487,7 @@ export default function LauncherPanel() {
           <button
             onClick={runCheck}
             disabled={checking || allItems.length === 0}
-            className={`px-2.5 py-1 rounded-lg text-xs flex items-center gap-1.5 border transition cursor-pointer ${
+            className={`px-2.5 py-1 rounded-ctl text-xs flex items-center gap-1.5 border transition cursor-pointer ${
               missingCount > 0
                 ? "bg-red-600/20 border-red-500/40 text-red-300 hover:bg-red-600/30"
                 : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
@@ -1513,7 +1514,7 @@ export default function LauncherPanel() {
               checking ||
               (missingCount === 0 && !allItems.some((it) => it.data.exists === false))
             }
-            className={`px-2.5 py-1 rounded-lg text-xs flex items-center gap-1.5 border transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+            className={`px-2.5 py-1 rounded-ctl text-xs flex items-center gap-1.5 border transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
               missingCount > 0
                 ? "bg-red-600/20 border-red-500/40 text-red-300 hover:bg-red-600/30"
                 : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
@@ -1528,7 +1529,7 @@ export default function LauncherPanel() {
           <button
             onClick={handleToggleCollapseAll}
             disabled={activeSubIds.length === 0}
-            className={`px-2.5 py-1 rounded-lg text-xs flex items-center gap-1.5 border transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+            className={`px-2.5 py-1 rounded-ctl text-xs flex items-center gap-1.5 border transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
               isAllCollapsed
                 ? "bg-[var(--module-accent)]/15 border-[var(--module-accent)]/40 text-[var(--module-accent)]"
                 : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
@@ -1546,7 +1547,7 @@ export default function LauncherPanel() {
           {/* 使用统计 */}
           <button
             onClick={() => setUsageStatsOpen((v) => !v)}
-            className={`px-2.5 py-1 rounded-lg text-xs flex items-center gap-1.5 border transition cursor-pointer ${
+            className={`px-2.5 py-1 rounded-ctl text-xs flex items-center gap-1.5 border transition cursor-pointer ${
               usageStatsOpen
                 ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white"
                 : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
@@ -1561,7 +1562,7 @@ export default function LauncherPanel() {
           <div className="relative" ref={viewSettingsRef}>
             <button
               onClick={() => setViewSettingsOpen((v) => !v)}
-              className={`px-2.5 py-1 rounded-lg text-xs flex items-center gap-1.5 border transition cursor-pointer ${
+              className={`px-2.5 py-1 rounded-ctl text-xs flex items-center gap-1.5 border transition cursor-pointer ${
                 viewSettingsOpen
                   ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white"
                   : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
@@ -1573,7 +1574,7 @@ export default function LauncherPanel() {
             </button>
 
             {viewSettingsOpen && (
-              <div className="absolute right-0 mt-1 z-[150] w-64 bg-surface-panel border border-white/15 rounded-xl shadow-2xl shadow-black/50 p-3 space-y-3 max-h-[75vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-100">
+              <div className="absolute right-0 mt-1 z-[150] w-64 bg-surface-panel border border-white/15 rounded-card shadow-2xl shadow-black/50 p-3 space-y-3 max-h-[75vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-100">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-semibold text-slate-200 flex items-center gap-1">
                     <Settings2 className="w-3 h-3 text-[var(--module-accent)]" />
@@ -1605,7 +1606,7 @@ export default function LauncherPanel() {
                       <button
                         key={col}
                         onClick={() => saveViewSettings({ itemColumnNumber: col })}
-                        className={`px-2 py-1 rounded-lg text-[10px] border transition cursor-pointer ${
+                        className={`px-2 py-1 rounded-ctl text-[10px] border transition cursor-pointer ${
                           (settings.itemColumnNumber ?? 0) === col
                             ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white"
                             : "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10"
@@ -1629,7 +1630,7 @@ export default function LauncherPanel() {
                       <button
                         key={opt.key}
                         onClick={() => saveViewSettings({ cardDensity: opt.key as LauncherSetting["cardDensity"] })}
-                        className={`px-2 py-1.5 rounded-lg text-[10px] border transition cursor-pointer ${
+                        className={`px-2 py-1.5 rounded-ctl text-[10px] border transition cursor-pointer ${
                           (settings.cardDensity ?? "cozy") === opt.key
                             ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white"
                             : "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10"
@@ -1780,7 +1781,7 @@ export default function LauncherPanel() {
               setTargetClassificationId(activeTopCategory ? activeTopCategory.id : 1);
               setItemModalOpen(true);
             }}
-            className="px-3 py-1 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white rounded-lg text-xs font-medium transition cursor-pointer shadow-md shadow-[var(--module-accent-ring)] flex items-center gap-1"
+            className="px-3 py-1 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white rounded-ctl text-xs font-medium transition cursor-pointer shadow-md shadow-[var(--module-accent-ring)] flex items-center gap-1"
           >
             <Plus className="w-3 h-3" />
             <span className="text-[11px]">{t("launcher.addItem")}</span>
@@ -1869,7 +1870,7 @@ export default function LauncherPanel() {
                     e.preventDefault();
                     setCategoryContextMenu({ x: e.clientX, y: e.clientY, category: cat });
                   }}
-                  className={`w-full px-3 py-2 rounded-xl text-xs flex items-center justify-between transition cursor-pointer group ${
+                  className={`w-full px-3 py-2 rounded-card text-xs flex items-center justify-between transition cursor-pointer group ${
                     isActive
                       ? "bg-slate-200 text-slate-900 font-bold shadow-md"
                       : "text-slate-400 hover:text-slate-200 hover:bg-white/5 font-medium"
@@ -1903,7 +1904,7 @@ export default function LauncherPanel() {
                 setCategoryParentId(null);
                 setCategoryModalOpen(true);
               }}
-              className="w-full py-1.5 px-2 rounded-xl text-slate-400 hover:text-slate-200 hover:bg-white/5 text-[11px] font-medium flex items-center justify-center gap-1 border border-dashed border-white/10 hover:border-white/20 transition cursor-pointer"
+              className="w-full py-1.5 px-2 rounded-card text-slate-400 hover:text-slate-200 hover:bg-white/5 text-[11px] font-medium flex items-center justify-center gap-1 border border-dashed border-white/10 hover:border-white/20 transition cursor-pointer"
             >
               <Plus className="w-3 h-3" />
               <span>{t("launcher.newCategory")}</span>
@@ -1932,7 +1933,7 @@ export default function LauncherPanel() {
               <Droppable
                 id={activeTopCategory ? `cat:${activeTopCategory.id}` : `cat:-1`}
                 dataCatId={activeTopCategory ? activeTopCategory.id : undefined}
-                className={`space-y-2.5 rounded-xl transition ${
+                className={`space-y-2.5 rounded-card transition ${
                   targetDragSubId === activeTopCategory?.id
                     ? "bg-[var(--module-accent-soft)] ring-1 ring-[var(--module-accent-ring)]"
                     : ""
@@ -2009,7 +2010,7 @@ export default function LauncherPanel() {
                           );
                           setItemModalOpen(true);
                         }}
-                        className="px-3.5 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-xs font-medium rounded-xl transition cursor-pointer flex items-center gap-1.5"
+                        className="px-3.5 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-xs font-medium rounded-card transition cursor-pointer flex items-center gap-1.5"
                       >
                         <Plus className="w-3.5 h-3.5" />
                         {t("launcher.addItem")}
@@ -2023,7 +2024,7 @@ export default function LauncherPanel() {
                           );
                           setCategoryModalOpen(true);
                         }}
-                        className="px-3.5 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-medium rounded-xl border border-white/10 transition cursor-pointer flex items-center gap-1.5"
+                        className="px-3.5 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-medium rounded-card border border-white/10 transition cursor-pointer flex items-center gap-1.5"
                       >
                         <FolderPlus className="w-3.5 h-3.5 text-[var(--module-accent)]" />
                         {t("launcher.newSubCategory")}
@@ -2046,7 +2047,7 @@ export default function LauncherPanel() {
                   <p className="text-[10px] text-slate-500">{t("launcher.usageStatsHint")}</p>
                 </div>
               </div>
-              <button type="button" onClick={() => setUsageStatsOpen(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white" title={t("launcher.closeUsageStats")}>
+              <button type="button" onClick={() => setUsageStatsOpen(false)} className="rounded-ctl p-1.5 text-slate-400 hover:bg-white/10 hover:text-white" title={t("launcher.closeUsageStats")}>
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -2061,9 +2062,9 @@ export default function LauncherPanel() {
                   {usageStats.map((item, index) => {
                     const cat = classificationMap.get(item.classificationId);
                     return (
-                      <button key={item.id} type="button" onClick={() => { setUsageStatsOpen(false); setActiveParentId(cat?.parentId ?? cat?.id ?? activeParentId); handleExecuteItem(item); }} className="group flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 text-left transition hover:border-[var(--module-accent-ring)] hover:bg-[var(--module-accent-soft)]">
+                      <button key={item.id} type="button" onClick={() => { setUsageStatsOpen(false); setActiveParentId(cat?.parentId ?? cat?.id ?? activeParentId); handleExecuteItem(item); }} className="group flex items-center gap-3 rounded-card border border-white/10 bg-white/[0.03] px-3 py-2.5 text-left transition hover:border-[var(--module-accent-ring)] hover:bg-[var(--module-accent-soft)]">
                         <span className="w-6 shrink-0 text-center font-mono text-[10px] text-slate-600">{index + 1}</span>
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white/10">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-ctl bg-white/10">
                           {item.data.icon ? <img src={item.data.icon} className="h-7 w-7 object-contain" alt="" /> : item.data.htmlIcon ? <span className="text-lg">{item.data.htmlIcon}</span> : <FileText className="h-5 w-5 text-[var(--module-accent)]" />}
                         </div>
                         <div className="min-w-0 flex-1">
@@ -2116,11 +2117,11 @@ export default function LauncherPanel() {
                     }
                   }}
                   placeholder={t("launcher.searchPlaceholder")}
-                  className="w-full bg-white/5 border border-[var(--module-accent-ring)] rounded-xl pl-10 pr-10 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)] transition shadow-lg shadow-[var(--module-accent-ring)]"
+                  className="w-full bg-white/5 border border-[var(--module-accent-ring)] rounded-card pl-10 pr-10 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)] transition shadow-lg shadow-[var(--module-accent-ring)]"
                 />
                 <button
                   onClick={closeSearch}
-                  className="absolute right-3 p-1 text-slate-400 hover:text-white rounded-lg hover:bg-white/10 transition cursor-pointer"
+                  className="absolute right-3 p-1 text-slate-400 hover:text-white rounded-ctl hover:bg-white/10 transition cursor-pointer"
                   title={t("launcher.closeSearch")}
                 >
                   <X className="w-4 h-4" />
@@ -2142,14 +2143,14 @@ export default function LauncherPanel() {
                         handleExecuteItem(item);
                         closeSearch();
                       }}
-                      className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs transition cursor-pointer ${
+                      className={`flex items-center gap-3 px-3.5 py-2.5 rounded-card text-xs transition cursor-pointer ${
                         isSelected
                           ? "bg-[var(--module-accent)] text-white font-medium shadow-md shadow-[var(--module-accent-ring)]"
                           : "text-slate-200 hover:bg-white/5"
                       }`}
                     >
                       {/* Icon */}
-                      <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                      <div className="w-6 h-6 rounded-ctl bg-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden">
                         {item.data.icon ? (
                           <img src={item.data.icon} className="w-5 h-5 object-contain" alt="" />
                         ) : item.data.htmlIcon ? (
@@ -2222,7 +2223,7 @@ export default function LauncherPanel() {
               ? { bottom: (typeof window !== "undefined" ? window.innerHeight : 0) - itemContextMenu.y, top: "auto" }
               : { top: itemContextMenu.y }),
           }}
-          className="fixed z-[200] bg-surface-panel border border-white/15 rounded-xl shadow-2xl p-1.5 min-w-[160px] text-xs space-y-0.5 animate-in fade-in zoom-in-95 duration-100"
+          className="fixed z-[200] bg-surface-panel border border-white/15 rounded-card shadow-2xl p-1.5 min-w-[160px] text-xs space-y-0.5 animate-in fade-in zoom-in-95 duration-100"
           onClick={(e) => e.stopPropagation()}
         >
           <button
@@ -2230,7 +2231,7 @@ export default function LauncherPanel() {
               handleExecuteItem(itemContextMenu.item);
               setItemContextMenu(null);
             }}
-            className="w-full px-3 py-1.5 rounded-lg text-left text-slate-200 hover:bg-[var(--module-accent)] hover:text-white flex items-center gap-2 cursor-pointer"
+            className="w-full px-3 py-1.5 rounded-ctl text-left text-slate-200 hover:bg-[var(--module-accent)] hover:text-white flex items-center gap-2 cursor-pointer"
           >
             <ExternalLink className="w-3.5 h-3.5" />
             <span>{t("launcher.open")}</span>
@@ -2243,7 +2244,7 @@ export default function LauncherPanel() {
               });
               setItemContextMenu(null);
             }}
-            className="w-full px-3 py-1.5 rounded-lg text-left text-amber-300 hover:bg-amber-600 hover:text-white flex items-center gap-2 cursor-pointer"
+            className="w-full px-3 py-1.5 rounded-ctl text-left text-amber-300 hover:bg-amber-600 hover:text-white flex items-center gap-2 cursor-pointer"
           >
             <Shield className="w-3.5 h-3.5" />
             <span>{t("launcher.runAsAdmin")}</span>
@@ -2254,7 +2255,7 @@ export default function LauncherPanel() {
                 invoke("launcher_open_file_location", { path: itemContextMenu.item.data.target });
                 setItemContextMenu(null);
               }}
-              className="w-full px-3 py-1.5 rounded-lg text-left text-slate-300 hover:bg-white/10 flex items-center gap-2 cursor-pointer"
+              className="w-full px-3 py-1.5 rounded-ctl text-left text-slate-300 hover:bg-white/10 flex items-center gap-2 cursor-pointer"
             >
               <FolderOpen className="w-3.5 h-3.5" />
               <span>{t("launcher.openFileLocation")}</span>
@@ -2267,7 +2268,7 @@ export default function LauncherPanel() {
                 showToast(t("launcher.copiedPath"));
                 setItemContextMenu(null);
               }}
-              className="w-full px-3 py-1.5 rounded-lg text-left text-slate-300 hover:bg-white/10 flex items-center gap-2 cursor-pointer"
+              className="w-full px-3 py-1.5 rounded-ctl text-left text-slate-300 hover:bg-white/10 flex items-center gap-2 cursor-pointer"
             >
               <Copy className="w-3.5 h-3.5" />
               <span>{t("launcher.copyPath")}</span>
@@ -2281,7 +2282,7 @@ export default function LauncherPanel() {
               setItemModalOpen(true);
               setItemContextMenu(null);
             }}
-            className="w-full px-3 py-1.5 rounded-lg text-left text-slate-300 hover:bg-white/10 flex items-center gap-2 cursor-pointer"
+            className="w-full px-3 py-1.5 rounded-ctl text-left text-slate-300 hover:bg-white/10 flex items-center gap-2 cursor-pointer"
           >
             <Edit2 className="w-3.5 h-3.5" />
             <span>{t("launcher.editProperties")}</span>
@@ -2291,7 +2292,7 @@ export default function LauncherPanel() {
               handleDeleteItem(itemContextMenu.item.id);
               setItemContextMenu(null);
             }}
-            className="w-full px-3 py-1.5 rounded-lg text-left text-red-400 hover:bg-red-500 hover:text-white flex items-center gap-2 cursor-pointer"
+            className="w-full px-3 py-1.5 rounded-ctl text-left text-red-400 hover:bg-red-500 hover:text-white flex items-center gap-2 cursor-pointer"
           >
             <Trash2 className="w-3.5 h-3.5" />
             <span>{t("launcher.deleteItem")}</span>
@@ -2308,7 +2309,7 @@ export default function LauncherPanel() {
               ? { bottom: (typeof window !== "undefined" ? window.innerHeight : 0) - categoryContextMenu.y, top: "auto" }
               : { top: categoryContextMenu.y }),
           }}
-          className="fixed z-[200] bg-surface-panel border border-white/15 rounded-xl shadow-2xl p-1.5 min-w-[150px] text-xs space-y-0.5 animate-in fade-in zoom-in-95 duration-100"
+          className="fixed z-[200] bg-surface-panel border border-white/15 rounded-card shadow-2xl p-1.5 min-w-[150px] text-xs space-y-0.5 animate-in fade-in zoom-in-95 duration-100"
           onClick={(e) => e.stopPropagation()}
         >
           <button
@@ -2318,7 +2319,7 @@ export default function LauncherPanel() {
               setCategoryModalOpen(true);
               setCategoryContextMenu(null);
             }}
-            className="w-full px-3 py-1.5 rounded-lg text-left text-slate-200 hover:bg-[var(--module-accent)] hover:text-white flex items-center gap-2 cursor-pointer"
+            className="w-full px-3 py-1.5 rounded-ctl text-left text-slate-200 hover:bg-[var(--module-accent)] hover:text-white flex items-center gap-2 cursor-pointer"
           >
             <Edit2 className="w-3.5 h-3.5" />
             <span>{t("launcher.editCategory")}</span>
@@ -2330,7 +2331,7 @@ export default function LauncherPanel() {
               setCategoryModalOpen(true);
               setCategoryContextMenu(null);
             }}
-            className="w-full px-3 py-1.5 rounded-lg text-left text-slate-300 hover:bg-white/10 flex items-center gap-2 cursor-pointer"
+            className="w-full px-3 py-1.5 rounded-ctl text-left text-slate-300 hover:bg-white/10 flex items-center gap-2 cursor-pointer"
           >
             <FolderPlus className="w-3.5 h-3.5" />
             <span>{t("launcher.addSubCategory")}</span>
@@ -2342,7 +2343,7 @@ export default function LauncherPanel() {
               setItemModalOpen(true);
               setCategoryContextMenu(null);
             }}
-            className="w-full px-3 py-1.5 rounded-lg text-left text-slate-300 hover:bg-white/10 flex items-center gap-2 cursor-pointer"
+            className="w-full px-3 py-1.5 rounded-ctl text-left text-slate-300 hover:bg-white/10 flex items-center gap-2 cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>{t("launcher.addItemToCategory")}</span>
@@ -2350,7 +2351,7 @@ export default function LauncherPanel() {
           <button
             onClick={() => openMoveItemsModal(categoryContextMenu.category)}
             title={t("launcher.moveSubCategoriesTitle")}
-            className="w-full px-3 py-1.5 rounded-lg text-left text-slate-300 hover:bg-white/10 flex items-center gap-2 cursor-pointer"
+            className="w-full px-3 py-1.5 rounded-ctl text-left text-slate-300 hover:bg-white/10 flex items-center gap-2 cursor-pointer"
           >
             <ArrowRightLeft className="w-3.5 h-3.5 text-cyan-400" />
             <span>{t("launcher.moveSubCategories")}</span>
@@ -2361,7 +2362,7 @@ export default function LauncherPanel() {
               setCategoryContextMenu(null);
               handleDeleteCategory(categoryContextMenu.category);
             }}
-            className="w-full px-3 py-1.5 rounded-lg text-left text-red-400 hover:bg-red-500 hover:text-white flex items-center gap-2 cursor-pointer"
+            className="w-full px-3 py-1.5 rounded-ctl text-left text-red-400 hover:bg-red-500 hover:text-white flex items-center gap-2 cursor-pointer"
           >
             <Trash2 className="w-3.5 h-3.5" />
             <span>{t("launcher.deleteCategory")}</span>
@@ -2375,7 +2376,7 @@ export default function LauncherPanel() {
           className="fixed inset-0 z-[250] modal-mask bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-100"
         >
           <div
-            className="w-full max-w-sm bg-surface-panel border border-white/15 rounded-2xl p-5 shadow-2xl space-y-4 text-xs"
+            className="w-full max-w-sm bg-surface-panel border border-white/15 rounded-panel p-5 shadow-2xl space-y-4 text-xs"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-2 border-b border-white/10">
@@ -2421,7 +2422,7 @@ export default function LauncherPanel() {
                         type="button"
                         key={c.id}
                         onClick={() => setMoveItemsTarget(c.id)}
-                        className={`w-full text-left px-3 py-1.5 rounded-lg border transition cursor-pointer flex items-center gap-2 ${
+                        className={`w-full text-left px-3 py-1.5 rounded-ctl border transition cursor-pointer flex items-center gap-2 ${
                           isSelected
                             ? "bg-cyan-500/20 border-cyan-500 text-white"
                             : "bg-white/[0.02] border-white/5 text-slate-300 hover:bg-white/[0.05]"
@@ -2444,7 +2445,7 @@ export default function LauncherPanel() {
                 type="button"
                 disabled={moveItemsLoading}
                 onClick={() => setMoveItemsModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer disabled:opacity-50"
+                className="px-4 py-2 rounded-card text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer disabled:opacity-50"
               >
                 {t("launcher.cancel")}
               </button>
@@ -2452,7 +2453,7 @@ export default function LauncherPanel() {
                 type="button"
                 disabled={moveItemsLoading || moveItemsTarget === null}
                 onClick={handleMoveItemsConfirm}
-                className="px-5 py-2 rounded-xl text-xs font-semibold bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg shadow-cyan-600/30 transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                className="px-5 py-2 rounded-card text-xs font-semibold bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg shadow-cyan-600/30 transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
               >
                 <ArrowRightLeft className="w-3.5 h-3.5" />
                 {moveItemsLoading ? t("launcher.moving") : t("launcher.confirmMove")}
@@ -2464,7 +2465,7 @@ export default function LauncherPanel() {
 
       {/* Toast Notification */}
       {toastMsg && (
-        <div className="fixed bottom-6 right-6 z-[300] bg-[var(--module-accent)] text-white text-xs px-4 py-2.5 rounded-xl shadow-[0_0_14px_color-mix(in_srgb,var(--module-accent)_48%,transparent),0_0_36px_color-mix(in_srgb,var(--module-accent)_26%,transparent)] flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2 duration-150">
+        <div className="fixed bottom-6 right-6 z-[300] bg-[var(--module-accent)] text-white text-xs px-4 py-2.5 rounded-card shadow-[0_0_14px_color-mix(in_srgb,var(--module-accent)_48%,transparent),0_0_36px_color-mix(in_srgb,var(--module-accent)_26%,transparent)] flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2 duration-150">
           <Check className="w-4 h-4" />
           <span>{toastMsg}</span>
         </div>
@@ -2502,7 +2503,7 @@ export default function LauncherPanel() {
           className="fixed inset-0 z-[110] modal-mask flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
         >
           <div
-            className="bg-surface-panel border rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-slate-100"
+            className="bg-surface-panel border rounded-panel w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-slate-100"
             style={{ borderColor: "var(--module-accent-ring)" }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -2594,7 +2595,7 @@ export default function LauncherPanel() {
                   type="button"
                   disabled={deletingCategory}
                   onClick={() => setPendingDeleteCategory(null)}
-                  className="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer disabled:opacity-50"
+                  className="px-4 py-2 rounded-card text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer disabled:opacity-50"
                 >
                   {t("common.cancel")}
                 </button>
@@ -2602,7 +2603,7 @@ export default function LauncherPanel() {
                   type="button"
                   disabled={deletingCategory}
                   onClick={confirmDeleteCategory}
-                  className={`px-5 py-2 rounded-xl text-xs font-semibold text-white shadow-lg transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5 ${
+                  className={`px-5 py-2 rounded-card text-xs font-semibold text-white shadow-lg transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5 ${
                     deleteCascade
                       ? "bg-red-600 hover:bg-red-500 shadow-red-600/30"
                       : "bg-[var(--module-accent)] hover:brightness-110"

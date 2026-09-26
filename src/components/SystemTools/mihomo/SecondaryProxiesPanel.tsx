@@ -137,7 +137,7 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
         {/* 列数切换（与代理页一致） */}
         <div className="flex items-center gap-1.5">
           <span className="text-[10px] text-slate-400">{t("secproxy.colsLabel")}</span>
-          <div className="flex items-center rounded-lg bg-white/10 p-0.5">
+          <div className="flex items-center rounded-ctl bg-white/10 p-0.5">
             {[1, 2, 3, 4].map((c) => (
               <button
                 key={c}
@@ -160,7 +160,7 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
           </span>
         </button>
         <button
-          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[12px] font-semibold cursor-pointer transition-all whitespace-nowrap"
+          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-card bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[12px] font-semibold cursor-pointer transition-all whitespace-nowrap"
           onClick={() => { setEditing({ id: genId(), name: "", host: "", port: 0, username: "", password: "" }); setIsNew(true); }}
         >
           <Plus className="w-4 h-4" /> {t("secproxy.addSec")}
@@ -173,7 +173,7 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
         {/* 不使用二级代理 */}
         <div
           onClick={() => toggleActive("")}
-          className={`px-2.5 py-2 rounded-xl border cursor-pointer transition-all ${
+          className={`px-2.5 py-2 rounded-card border cursor-pointer transition-all ${
             empty ? "bg-emerald-500/10 border-emerald-500/40" : "bg-white/[0.03] border-white/5 hover:border-white/20"
           }`}
         >
@@ -195,7 +195,7 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
             <div
               key={s.id}
               onClick={() => toggleActive(s.id)}
-              className={`px-2.5 py-2 rounded-xl border cursor-pointer transition-all ${
+              className={`px-2.5 py-2 rounded-card border cursor-pointer transition-all ${
                 isActive ? "bg-emerald-500/10 border-emerald-500/40" : "bg-white/[0.03] border-white/5 hover:border-white/20"
               }`}
             >
@@ -434,7 +434,7 @@ function SecondaryPresetPanel({ profileId }: { running: boolean; profileId: stri
           <button className={btnSec} disabled={busy || !checked.size} onClick={removeRules}>
             <span className="inline-flex items-center gap-1"><X className="w-3 h-3" />{t("secproxy.removeSelected")}</span>
           </button>
-          <button className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[12px] font-semibold cursor-pointer disabled:opacity-40"
+          <button className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-card bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[12px] font-semibold cursor-pointer disabled:opacity-40"
             disabled={busy || !checked.size} onClick={applyRules}>
             <Check className="w-3.5 h-3.5" /> {t("secproxy.addToSec", { n: totalChecked ? `(${totalChecked})` : "" })}
           </button>
@@ -449,7 +449,7 @@ function SecondaryPresetPanel({ profileId }: { running: boolean; profileId: stri
           const allSelected = item.domains.every((d) => checked.has(d));
           const cnt = countByCat(item.cat);
           return (
-            <div key={item.cat} className="rounded-lg border border-white/5 bg-white/[0.02] p-2">
+            <div key={item.cat} className="rounded-ctl border border-white/5 bg-white/[0.02] p-2">
               <div className="flex items-center gap-1.5">
                 <input
                   type="checkbox"

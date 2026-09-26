@@ -117,7 +117,7 @@ export function GithubTokenDialog({
       {/* 三步引导 */}
       <div className="space-y-2 mt-1">
         {/* 步骤 1 */}
-        <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/5">
+        <div className="p-2.5 rounded-card bg-white/[0.03] border border-white/5">
           <div className="flex items-start gap-2">
             <span className="flex-shrink-0 w-4 h-4 rounded-full bg-[var(--module-accent)]/20 text-[var(--module-accent)] text-[10px] font-bold flex items-center justify-center mt-px">1</span>
             <div className="min-w-0 flex-1">
@@ -134,7 +134,7 @@ export function GithubTokenDialog({
           </div>
         </div>
         {/* 步骤 2 */}
-        <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/5">
+        <div className="p-2.5 rounded-card bg-white/[0.03] border border-white/5">
           <div className="flex items-start gap-2">
             <span className="flex-shrink-0 w-4 h-4 rounded-full bg-[var(--module-accent)]/20 text-[var(--module-accent)] text-[10px] font-bold flex items-center justify-center mt-px">2</span>
             <div className="min-w-0 flex-1">
@@ -144,7 +144,7 @@ export function GithubTokenDialog({
           </div>
         </div>
         {/* 步骤 3 */}
-        <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/5">
+        <div className="p-2.5 rounded-card bg-white/[0.03] border border-white/5">
           <div className="flex items-start gap-2">
             <span className="flex-shrink-0 w-4 h-4 rounded-full bg-[var(--module-accent)]/20 text-[var(--module-accent)] text-[10px] font-bold flex items-center justify-center mt-px">3</span>
             <div className="min-w-0 flex-1">

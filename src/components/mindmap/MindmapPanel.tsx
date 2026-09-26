@@ -137,7 +137,7 @@ const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<FlowNodeData>>)
 
   return (
     <article
-      className={`group relative w-[200px] rounded-xl border shadow-lg transition-all cursor-pointer ${selected ? "shadow-cyan-500/30 ring-1 ring-cyan-400/40" : isFolded ? "" : "hover:shadow-xl"}`}
+      className={`group relative w-[200px] rounded-card border shadow-lg transition-all cursor-pointer ${selected ? "shadow-cyan-500/30 ring-1 ring-cyan-400/40" : isFolded ? "" : "hover:shadow-xl"}`}
       style={{
         borderColor: isFolded ? c : selected ? c : `${c}55`,
         borderWidth: isFolded ? 2 : 1,
@@ -339,7 +339,7 @@ function ConfirmModal({ title, message, accent, confirmText = "mindmap.confirmDe
   const confirmLabel = String(confirmText).includes(".") ? (t as any)(confirmText) : confirmText;
   return createPortal(
     <div className="fixed inset-0 z-[210] modal-mask flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]">
-      <div className="w-[360px] overflow-hidden rounded-xl border border-white/10 bg-surface-panel shadow-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="w-[360px] overflow-hidden rounded-card border border-white/10 bg-surface-panel shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
           <AlertTriangle className="h-4 w-4 shrink-0" style={{ color: accent }} />
           <h3 className="text-sm font-semibold text-white">{title}</h3>
@@ -489,7 +489,7 @@ function DetailModal({ node, onUpdate, onClose, projectRoot }: { node: MindmapNo
 
   return createPortal(
     <div className="fixed inset-0 z-[200] modal-mask flex items-center justify-center bg-black/70 p-4 backdrop-blur-[3px]">
-      <div ref={cardRef} className={`flex ${fullscreen ? "h-full w-full" : "w-[min(92vw,680px)]"} flex-col overflow-hidden rounded-xl border border-white/10 bg-surface-panel shadow-2xl`} style={fullscreen ? undefined : { height: fitH ?? "auto" }} onClick={(e) => e.stopPropagation()}>
+      <div ref={cardRef} className={`flex ${fullscreen ? "h-full w-full" : "w-[min(92vw,680px)]"} flex-col overflow-hidden rounded-card border border-white/10 bg-surface-panel shadow-2xl`} style={fullscreen ? undefined : { height: fitH ?? "auto" }} onClick={(e) => e.stopPropagation()}>
         <div className="flex h-11 shrink-0 items-center gap-2 border-b border-white/10 px-3" style={{ backgroundColor: `${c}1f` }}>
           <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: c, boxShadow: `0 0 9px ${c}` }} />
           <input className="min-w-0 flex-1 bg-transparent text-[12px] font-semibold text-slate-100 outline-none" value={name} onChange={(e) => setName(e.target.value)} onBlur={save} />
@@ -566,15 +566,15 @@ function CreateDocModal({ onClose, onCreate, folderId }: { onClose: () => void; 
 
   return createPortal(
     <div className="fixed inset-0 z-[200] modal-mask flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]">
-      <div className="w-[380px] rounded-xl border border-white/10 bg-surface-panel p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="w-[380px] rounded-card border border-white/10 bg-surface-panel p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-semibold text-white">{t("mindmap.newMapTitle")}</h3>
           <button type="button" className="text-slate-500 hover:text-white" onClick={onClose}><X className="h-4 w-4" /></button>
         </div>
         <div className="space-y-3">
-          <div><label className="text-[10px] text-slate-400 block mb-1">{t("mindmap.nameLabel")}</label><input ref={inputRef} className="w-full h-9 rounded-lg bg-slate-900 border border-white/10 px-3 text-xs text-white outline-none" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("mindmap.mapNamePh")} onKeyDown={(e) => { if (e.key === "Enter" && name.trim()) onCreate(name.trim(), desc, folderId); }} /></div>
-          <div><label className="text-[10px] text-slate-400 block mb-1">{t("mindmap.descLabel")}</label><textarea className="w-full h-16 rounded-lg bg-slate-900 border border-white/10 px-3 py-2 text-xs text-white outline-none resize-none" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder={t("mindmap.descPh")} /></div>
-          <button type="button" className="w-full rounded-lg py-2 text-[11px] font-semibold text-white disabled:opacity-40" style={{ backgroundColor: ACCENT }}
+          <div><label className="text-[10px] text-slate-400 block mb-1">{t("mindmap.nameLabel")}</label><input ref={inputRef} className="w-full h-9 rounded-ctl bg-slate-900 border border-white/10 px-3 text-xs text-white outline-none" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("mindmap.mapNamePh")} onKeyDown={(e) => { if (e.key === "Enter" && name.trim()) onCreate(name.trim(), desc, folderId); }} /></div>
+          <div><label className="text-[10px] text-slate-400 block mb-1">{t("mindmap.descLabel")}</label><textarea className="w-full h-16 rounded-ctl bg-slate-900 border border-white/10 px-3 py-2 text-xs text-white outline-none resize-none" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder={t("mindmap.descPh")} /></div>
+          <button type="button" className="w-full rounded-ctl py-2 text-[11px] font-semibold text-white disabled:opacity-40" style={{ backgroundColor: ACCENT }}
             disabled={!name.trim()} onClick={() => { if (name.trim()) onCreate(name.trim(), desc, folderId); }}>{t("mindmap.create")}</button>
         </div>
       </div>
@@ -647,14 +647,14 @@ function AiImportReportModal({ result, onClose, onOpenDoc }: {
   const allOk = result.reports.length > 0 && result.reports.every(r => r.diagnostics.length === 0) && result.failures.length === 0;
   return createPortal(
     <div className="fixed inset-0 z-[410] modal-mask flex items-center justify-center bg-black/70 p-4 backdrop-blur-[3px]" onClick={onClose}>
-      <div className="w-[min(94vw,560px)] rounded-xl border border-white/10 bg-surface-panel p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="w-[min(94vw,560px)] rounded-card border border-white/10 bg-surface-panel p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-center justify-between">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-white"><Sparkles className="h-4 w-4 text-cyan-400" />{t("mindmap.aiReportTitle")}</h3>
           <button type="button" className="cursor-pointer rounded p-1 text-slate-400 hover:text-white" onClick={onClose} title={t("mindmap.close")}><X className="h-4 w-4" /></button>
         </div>
         {/* 本次运行总消耗（含路由/探索阶段，来自后端累计） */}
         {result.usage && (result.usage.requests > 0 || result.usage.totalTokens > 0) && (
-          <div className="mb-2 flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[9px]">
+          <div className="mb-2 flex items-center gap-2 rounded-ctl border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[9px]">
             <BarChart3 className="h-3 w-3 shrink-0 text-emerald-300" />
             <span className="shrink-0 font-semibold text-slate-300">{t("mindmap.aiRunUsage")}</span>
             <span className="font-mono tabular-nums text-slate-400">{t("mindmap.aiRunUsageLine", { req: result.usage.requests, in: fmtNum(result.usage.inputTokens), out: fmtNum(result.usage.outputTokens), total: fmtNum(result.usage.totalTokens) })}</span>
@@ -664,7 +664,7 @@ function AiImportReportModal({ result, onClose, onOpenDoc }: {
         {result.exploration && result.exploration.length > 0 && (() => {
           const expFiles = result.exploration.reduce((n, r) => n + r.files.length, 0);
           return (
-            <div className="mb-2 rounded-lg border border-white/10 bg-white/[0.03]">
+            <div className="mb-2 rounded-ctl border border-white/10 bg-white/[0.03]">
               <button type="button"
                 onClick={() => setExpOpen(v => !v)}
                 className="flex w-full cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-left">
@@ -709,7 +709,7 @@ function AiImportReportModal({ result, onClose, onOpenDoc }: {
             return (
               <button key={r.documentId} type="button"
                 onClick={() => onOpenDoc(r.documentId)}
-                className="block w-full cursor-pointer rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-left transition hover:bg-white/[0.08]"
+                className="block w-full cursor-pointer rounded-ctl border border-white/10 bg-white/[0.03] px-3 py-2 text-left transition hover:bg-white/[0.08]"
                 title={t("mindmap.openDoc")}>
                 <div className="flex items-center justify-between gap-2">
                   <span className="flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-slate-200">
@@ -745,7 +745,7 @@ function AiImportReportModal({ result, onClose, onOpenDoc }: {
             );
           })}
           {result.failures.length > 0 && (
-            <div className="rounded-lg border border-amber-500/20 bg-amber-500/[0.06] px-3 py-2">
+            <div className="rounded-ctl border border-amber-500/20 bg-amber-500/[0.06] px-3 py-2">
               <div className="text-[10px] font-semibold text-amber-300">{t("mindmap.failedViews")}</div>
               {result.failures.map((f, i) => (
                 <div key={i} className="mt-1 text-[9px] leading-relaxed text-amber-200/80">「{viewLabel(t, f.view)}」：{f.reason}</div>
@@ -1684,7 +1684,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
               两栏底栏视觉一致；计划日历入口不在这里 —— 它展示的是跨全部文档的聚合计划（全局视图），
               入口统一放第一栏（文档栏）底部。收起成窄条时整块隐藏，避免挤在 36px 宽里 */}
           <div className={`pointer-events-auto flex shrink-0 flex-col gap-1 p-1.5 pt-0 ${treeOpen ? "" : "hidden"}`}>
-            <div className="rounded-lg border border-white/10 bg-slate-900/95 p-1 shadow-lg flex flex-col gap-0.5">
+            <div className="rounded-ctl border border-white/10 bg-slate-900/95 p-1 shadow-lg flex flex-col gap-0.5">
               <button type="button" className={`${button} w-full justify-start`} onClick={relayout} title={t("mindmap.autoLayout")}><LayoutGrid className="h-3 w-3" />{t("mindmap.layout")}</button>
               {/* 布局方式：原下拉框改为按钮组 —— 与同类操作按钮同一外观，且一步直达（少一次展开） */}
               <div className="grid grid-cols-4 gap-0.5" title={t("mindmap.layoutDir")}>
@@ -1710,13 +1710,13 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
             </div>
             {/* 自动保存指示 */}
             {lastSaved && (
-              <div className="rounded-lg border border-emerald-400/20 bg-emerald-950/60 px-2 py-1 text-[8px] text-emerald-300 shadow-lg">
+              <div className="rounded-ctl border border-emerald-400/20 bg-emerald-950/60 px-2 py-1 text-[8px] text-emerald-300 shadow-lg">
                 {t("mindmap.autoSaved", { time: new Date(lastSaved).toLocaleTimeString("zh-CN", { hour12: false }) })}
               </div>
             )}
             {/* Keyboard hints */}
             {selectedId && (
-              <div className="rounded-lg border border-white/10 bg-slate-900/95 p-1.5 shadow-lg text-[8px] text-slate-600 leading-relaxed">
+              <div className="rounded-ctl border border-white/10 bg-slate-900/95 p-1.5 shadow-lg text-[8px] text-slate-600 leading-relaxed">
                 <div><kbd className="rounded border border-white/15 px-1 py-0.5 text-[7px] text-slate-400">Tab</kbd> {t("mindmap.kbdChild")}</div>
                 <div><kbd className="rounded border border-white/15 px-1 py-0.5 text-[7px] text-slate-400">↑↓←→</kbd> {t("mindmap.kbdNavigate")}</div>
                 <div><kbd className="rounded border border-white/15 px-1 py-0.5 text-[7px] text-slate-400">Enter</kbd> {t("mindmap.kbdDetail")}</div>
@@ -1748,7 +1748,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
         const fromName = byId.get(linkDraft.sourceId)?.name ?? linkDraft.sourceId;
         const toName = byId.get(linkDraft.targetId)?.name ?? linkDraft.targetId;
         return (
-          <div className="fixed z-[220] w-[248px] rounded-lg border border-cyan-400/25 bg-surface-modal p-2 shadow-2xl"
+          <div className="fixed z-[220] w-[248px] rounded-ctl border border-cyan-400/25 bg-surface-modal p-2 shadow-2xl"
             style={{ left: Math.max(8, Math.min(linkDraft.x, window.innerWidth - 256)), top: Math.max(8, Math.min(linkDraft.y, window.innerHeight - 132)) }}
             onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}>
             <div className="mb-1.5 flex items-center gap-1 text-[10px] text-slate-400">
@@ -1780,7 +1780,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       })()}
 
       {ctxMenu && (
-        <div className="fixed z-50 min-w-[160px] rounded-lg border border-white/10 bg-surface-modal py-1 shadow-2xl" style={{ left: ctxMenu.x, top: ctxMenu.y }} onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}>
+        <div className="fixed z-50 min-w-[160px] rounded-ctl border border-white/10 bg-surface-modal py-1 shadow-2xl" style={{ left: ctxMenu.x, top: ctxMenu.y }} onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}>
           <div className="border-b border-white/10 px-3 py-1.5 text-[10px] font-semibold text-slate-400">{byId.get(ctxMenu.nodeId)?.name ?? ctxMenu.nodeId}</div>
           <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-[11px] text-slate-300 transition hover:bg-white/[0.08] hover:text-white"
             onClick={() => { const n = byId.get(ctxMenu.nodeId); if (n) setDetailNode(n); setCtxMenu(null); }}><Sparkles className="h-3.5 w-3.5" />{t("mindmap.viewDetail")}</button>
@@ -1821,7 +1821,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
             onMouseEnter={() => { previewHoverRef.current = true; if (previewCloseTimer.current) { window.clearTimeout(previewCloseTimer.current); previewCloseTimer.current = null; } }}
             onMouseLeave={() => { previewHoverRef.current = false; setPreview(null); }}
             onWheel={(e) => e.stopPropagation()}>
-            <div className="w-[350px] rounded-xl border border-white/10 bg-surface-panel shadow-2xl">
+            <div className="w-[350px] rounded-card border border-white/10 bg-surface-panel shadow-2xl">
               <div className="flex items-center gap-1.5 border-b border-white/10 px-3 py-2">
                 <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: pc, boxShadow: `0 0 6px ${pc}` }} />
                 <span className="min-w-0 truncate text-[11px] font-semibold" style={{ color: pc }}>{preview.node.name}</span>
@@ -3042,22 +3042,22 @@ export default function MindmapPanel() {
       {/* 导入目标选择：新建 / 追加到当前文档 / 替换当前文档内容 */}
       {importPick && createPortal(
         <div className="fixed inset-0 z-[200] modal-mask flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]">
-          <div className="w-[380px] rounded-xl border border-white/10 bg-surface-panel p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="w-[380px] rounded-card border border-white/10 bg-surface-panel p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="mb-1 text-sm font-semibold text-white">{t("mindmap.importTargetTitle")}</h3>
             <p className="mb-4 truncate text-[10px] text-slate-500" title={importPick.path}>{t("mindmap.importTargetDesc", { file: importPick.path.split(/[\\/]/).pop() ?? importPick.path })}</p>
             <div className="space-y-1.5">
               <button type="button"
-                className="w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-[11px] text-slate-200 transition hover:border-cyan-400/50 hover:text-white"
+                className="w-full rounded-ctl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-[11px] text-slate-200 transition hover:border-cyan-400/50 hover:text-white"
                 onClick={() => { const p = importPick; setImportPick(null); void runImportJson(p.path, null).catch((e) => setError(String(e))); }}>
                 <Plus className="mr-1.5 inline h-3 w-3" />{t("mindmap.importTargetNew")}
               </button>
               <button type="button"
-                className="w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-[11px] text-slate-200 transition hover:border-cyan-400/50 hover:text-white"
+                className="w-full rounded-ctl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-[11px] text-slate-200 transition hover:border-cyan-400/50 hover:text-white"
                 onClick={() => confirmImportTarget(false)}>
                 <FileDown className="mr-1.5 inline h-3 w-3" />{t("mindmap.importTargetAppend", { name: importPick.docName })}
               </button>
               <button type="button"
-                className="w-full rounded-lg border border-rose-400/25 bg-rose-500/[0.06] px-3 py-2 text-left text-[11px] text-rose-300 transition hover:border-rose-400/60 hover:text-rose-200"
+                className="w-full rounded-ctl border border-rose-400/25 bg-rose-500/[0.06] px-3 py-2 text-left text-[11px] text-rose-300 transition hover:border-rose-400/60 hover:text-rose-200"
                 onClick={() => confirmImportTarget(true)}>
                 <Trash2 className="mr-1.5 inline h-3 w-3" />{t("mindmap.importTargetReplace", { name: importPick.docName })}
               </button>
@@ -3070,9 +3070,9 @@ export default function MindmapPanel() {
       {/* Folder create/edit modal */}
       {showFolderCreate && createPortal(
         <div className="fixed inset-0 z-[200] modal-mask flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]">
-          <div className="w-[340px] rounded-xl border border-white/10 bg-surface-panel p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="w-[340px] rounded-card border border-white/10 bg-surface-panel p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="mb-4 text-sm font-semibold text-white">{t("mindmap.newFolderTitle")}</h3>
-            <input className="w-full h-9 rounded-lg bg-slate-900 border border-white/10 px-3 text-xs text-white outline-none mb-4" value={folderName} onChange={(e) => setFolderName(e.target.value)} placeholder={t("mindmap.folderNamePh")} autoFocus onKeyDown={(e) => e.key === "Enter" && createFolder()} />
+            <input className="w-full h-9 rounded-ctl bg-slate-900 border border-white/10 px-3 text-xs text-white outline-none mb-4" value={folderName} onChange={(e) => setFolderName(e.target.value)} placeholder={t("mindmap.folderNamePh")} autoFocus onKeyDown={(e) => e.key === "Enter" && createFolder()} />
             <div className="flex justify-end gap-2">
               <button type="button" className="rounded-md px-4 py-1.5 text-[11px] text-slate-400 hover:text-white" onClick={() => setShowFolderCreate(false)}>{t("mindmap.cancel")}</button>
               <button type="button" className="rounded-md px-4 py-1.5 text-[11px] font-semibold text-white disabled:opacity-40" style={{ backgroundColor: ACCENT }} disabled={!folderName.trim()} onClick={createFolder}>{t("mindmap.create")}</button>
@@ -3081,9 +3081,9 @@ export default function MindmapPanel() {
         </div>, document.body)}
       {editingFolder && createPortal(
         <div className="fixed inset-0 z-[200] modal-mask flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]">
-          <div className="w-[340px] rounded-xl border border-white/10 bg-surface-panel p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="w-[340px] rounded-card border border-white/10 bg-surface-panel p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="mb-4 text-sm font-semibold text-white">{t("mindmap.renameFolderTitle")}</h3>
-            <input className="w-full h-9 rounded-lg bg-slate-900 border border-white/10 px-3 text-xs text-white outline-none mb-4" value={folderName} onChange={(e) => setFolderName(e.target.value)} autoFocus onKeyDown={(e) => e.key === "Enter" && updateFolder()} />
+            <input className="w-full h-9 rounded-ctl bg-slate-900 border border-white/10 px-3 text-xs text-white outline-none mb-4" value={folderName} onChange={(e) => setFolderName(e.target.value)} autoFocus onKeyDown={(e) => e.key === "Enter" && updateFolder()} />
             <div className="flex justify-end gap-2">
               <button type="button" className="rounded-md px-4 py-1.5 text-[11px] text-slate-400 hover:text-white" onClick={() => setEditingFolder(null)}>{t("mindmap.cancel")}</button>
               <button type="button" className="rounded-md px-4 py-1.5 text-[11px] font-semibold text-white disabled:opacity-40" style={{ backgroundColor: ACCENT }} disabled={!folderName.trim()} onClick={updateFolder}>{t("mindmap.save")}</button>

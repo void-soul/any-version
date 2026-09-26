@@ -99,7 +99,7 @@ export default function OverviewPanel({ info, running, onNavigate }: {
       <div className={`${cardCls} p-2 flex`}>
         {([["rule", "overview.rule"], ["global", "overview.global"], ["direct", "overview.direct"]] as const).map(([k, label]) => (
           <button key={k} onClick={() => onChangeMode(k)} disabled={!running}
-            className={`flex-1 py-2 rounded-xl text-[12px] font-semibold cursor-pointer transition-all disabled:opacity-40 ${
+            className={`flex-1 py-2 rounded-card text-[12px] font-semibold cursor-pointer transition-all disabled:opacity-40 ${
               mode === k ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
             }`}>{t(label)}</button>
         ))}

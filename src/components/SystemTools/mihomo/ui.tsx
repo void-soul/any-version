@@ -2,17 +2,17 @@
 import { useTranslation } from "react-i18next";
 
 export const inputCls =
-  "vex-input-cyan w-full h-9 px-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none";
+  "vex-input-cyan w-full h-9 px-2.5 rounded-card bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none";
 export const labelCls = "text-[11px] text-slate-400 mb-1 block font-medium";
 export const btnSec =
-  "px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 text-[11px] font-semibold transition-all cursor-pointer vex-btn-neon";
+  "px-3 py-1.5 rounded-ctl bg-white/10 hover:bg-white/20 text-slate-200 text-[11px] font-semibold transition-all cursor-pointer vex-btn-neon";
 export const btnDanger =
-  "px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-[11px] font-semibold transition-all cursor-pointer vex-btn-neon-danger";
+  "px-3 py-1.5 rounded-ctl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-[11px] font-semibold transition-all cursor-pointer vex-btn-neon-danger";
 export const btnPrimary =
-  "px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold transition-all cursor-pointer vex-btn-neon-primary";
+  "px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold transition-all cursor-pointer vex-btn-neon-primary";
 export const tagCls =
   "text-[10px] px-2 py-0.5 rounded-md bg-white/5 text-slate-400 border border-white/10";
-export const cardCls = "glass-panel rounded-2xl border border-white/10 bg-white/[0.02]";
+export const cardCls = "glass-panel rounded-panel border border-white/10 bg-white/[0.02]";
 
 export function Toggle({ label, v, onChange, disabled }: { label?: string; v: boolean; onChange: (b: boolean) => void; disabled?: boolean }) {
   return (
@@ -53,7 +53,7 @@ export function BusyOverlay({ show, text }: { show: boolean; text?: string }) {
   const { t } = useTranslation();
   if (!show) return null;
   return (
-    <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-2 rounded-2xl bg-surface-deep/70 backdrop-blur-[2px]">
+    <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-2 rounded-panel bg-surface-deep/70 backdrop-blur-[2px]">
       <span className="w-6 h-6 rounded-full border-2 border-[var(--module-accent-ring)] border-t-[var(--module-accent)] animate-spin" />
       <span className="text-[11px] text-slate-300">{text || t("mihomoui.processing")}</span>
     </div>
@@ -65,7 +65,7 @@ export function Modal({ title, onClose, children, footer, wide, busy, busyText }
   return (
     <div className="fixed inset-0 z-50 modal-mask flex items-center justify-center bg-black/60 p-4">
       <div
-        className={`relative w-full ${wide ? "max-w-4xl" : "max-w-2xl"} max-h-[85vh] overflow-y-auto rounded-2xl border border-white/10 bg-surface-raised shadow-2xl`}
+        className={`relative w-full ${wide ? "max-w-4xl" : "max-w-2xl"} max-h-[85vh] overflow-y-auto rounded-panel border border-white/10 bg-surface-raised shadow-2xl`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 sticky top-0 bg-surface-raised z-10">

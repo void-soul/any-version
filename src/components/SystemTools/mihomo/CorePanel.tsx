@@ -273,7 +273,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
           </SettingItem>
           <SettingItem title={t("mihomo.coreStrategy")}>
             <select
-              className="h-8 px-2 rounded-lg bg-white/10 border border-white/10 text-[11px] text-slate-200 cursor-pointer focus:outline-none"
+              className="h-8 px-2 rounded-ctl bg-white/10 border border-white/10 text-[11px] text-slate-200 cursor-pointer focus:outline-none"
               value={app?.smartCoreStrategy ?? "sticky-sessions"}
               onChange={(e) => patchApp({ smartCoreStrategy: e.target.value }, true)}
             >
@@ -379,7 +379,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
                   <ExternalLink className="w-3 h-3 text-slate-400" />
                 </button></span>}>
                 <select
-                  className="h-8 px-2 rounded-lg bg-white/10 border border-white/10 text-[11px] text-slate-200 cursor-pointer focus:outline-none"
+                  className="h-8 px-2 rounded-ctl bg-white/10 border border-white/10 text-[11px] text-slate-200 cursor-pointer focus:outline-none"
                   value={externalUiUrl}
                   onChange={async (e) => {
                     await onChangeNeedRestart({ "external-ui-url": e.target.value });
@@ -474,7 +474,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
 
         <SettingItem title={t("mihomo.coreLogLevel")}>
           <select
-            className="h-8 px-2 rounded-lg bg-white/10 border border-white/10 text-[11px] text-slate-200 cursor-pointer focus:outline-none"
+            className="h-8 px-2 rounded-ctl bg-white/10 border border-white/10 text-[11px] text-slate-200 cursor-pointer focus:outline-none"
             value={c?.["log-level"] ?? "info"}
             onChange={(e) => onChangeNeedRestart({ "log-level": e.target.value })}
           >
@@ -485,7 +485,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
         </SettingItem>
         <SettingItem title={t("mihomo.coreFindProcess")} divider={false}>
           <select
-            className="h-8 px-2 rounded-lg bg-white/10 border border-white/10 text-[11px] text-slate-200 cursor-pointer focus:outline-none"
+            className="h-8 px-2 rounded-ctl bg-white/10 border border-white/10 text-[11px] text-slate-200 cursor-pointer focus:outline-none"
             value={c?.["find-process-mode"] ?? "strict"}
             onChange={(e) => onChangeNeedRestart({ "find-process-mode": e.target.value })}
           >
@@ -502,7 +502,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
 
         <SettingItem title={t("mihomo.coreCpuPriority")}>
           <select
-            className="h-8 px-2 rounded-lg bg-white/10 border border-white/10 text-[11px] text-slate-200 cursor-pointer focus:outline-none"
+            className="h-8 px-2 rounded-ctl bg-white/10 border border-white/10 text-[11px] text-slate-200 cursor-pointer focus:outline-none"
             value={app?.cpuPriority ?? "NORMAL_PRIORITY_CLASS"}
             onChange={(e) => patchApp({ cpuPriority: e.target.value }, true)}
           >

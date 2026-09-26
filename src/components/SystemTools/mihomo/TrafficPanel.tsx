@@ -122,7 +122,7 @@ export default function TrafficPanel() {
     <div className="space-y-3">
       {/* 时间范围 + 清空 */}
       <div className="flex items-center gap-2">
-        <div className="flex rounded-lg bg-white/5 border border-white/10 overflow-hidden">
+        <div className="flex rounded-ctl bg-white/5 border border-white/10 overflow-hidden">
           {TIME_RANGES.map((r) => (
             <button key={r} onClick={() => setTimeRange(r)}
               className={`px-3 py-1.5 text-[11px] font-semibold cursor-pointer transition-all ${
@@ -186,7 +186,7 @@ export default function TrafficPanel() {
       </div>
 
       {/* 维度切换 */}
-      <div className="flex rounded-lg bg-white/5 border border-white/10 overflow-hidden w-fit">
+      <div className="flex rounded-ctl bg-white/5 border border-white/10 overflow-hidden w-fit">
         {(Object.keys(VIEW_LABEL) as DataUsageType[]).map((v) => (
           <button key={v} onClick={() => setActiveView(v)}
             className={`px-3 py-1.5 text-[11px] font-semibold cursor-pointer transition-all ${
@@ -202,7 +202,7 @@ export default function TrafficPanel() {
           {rankings.length === 0 && <div className="text-[11px] text-slate-500 text-center pt-8">{t("traffic.noData")}</div>}
           {rankings.slice(0, 50).map((r) => (
             <div key={r.label}
-              className={`px-2 py-1.5 rounded-lg cursor-pointer mb-0.5 ${selectedRow === r.label ? "bg-emerald-500/15" : "hover:bg-white/5"}`}
+              className={`px-2 py-1.5 rounded-ctl cursor-pointer mb-0.5 ${selectedRow === r.label ? "bg-emerald-500/15" : "hover:bg-white/5"}`}
               onClick={() => handleSelectRow(r.label)}>
               <div className="flex justify-between gap-2 text-[11px]">
                 <span className="text-slate-200 truncate">{r.label}</span>
@@ -222,7 +222,7 @@ export default function TrafficPanel() {
               <div key={t.timestamp} className="flex-1 flex flex-col justify-end h-full group relative">
                 <div className="w-full bg-sky-500/70 rounded-t-sm" style={{ height: `${(t.upload / maxTrend) * 100}%` }} />
                 <div className="w-full bg-emerald-500/70" style={{ height: `${(t.download / maxTrend) * 100}%` }} />
-                <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 rounded-lg bg-black/90 text-[10px] text-white whitespace-nowrap z-20 pointer-events-none">
+                <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 rounded-ctl bg-black/90 text-[10px] text-white whitespace-nowrap z-20 pointer-events-none">
                   {fmtBucketTime(t.timestamp, bucketSizeMs)}<br />
                   ↑ {calcTraffic(t.upload)} ↓ {calcTraffic(t.download)}
                 </div>

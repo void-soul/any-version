@@ -144,7 +144,7 @@ export default function PortScanner() {
   return (
     <div className="grid h-full min-h-0 grid-cols-2 gap-4">
       {/* 端口查询 */}
-      <div className="glass-panel flex min-h-0 flex-col rounded-2xl border border-white/5 p-5">
+      <div className="glass-panel flex min-h-0 flex-col rounded-panel border border-white/5 p-5">
         <div className="flex shrink-0 items-center gap-2 border-b border-white/5 pb-2">
           <Search className="w-4 h-4 text-blue-400" />
           <h4 className="font-semibold text-white text-xs">{t("portscan.title")}</h4>
@@ -160,26 +160,26 @@ export default function PortScanner() {
             placeholder={t("portscan.portPh")}
           />
           <button onClick={handleCheck} disabled={checking || !portInput}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold cursor-pointer transition-all">
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-ctl text-xs font-semibold cursor-pointer transition-all">
             {checking ? t("portscan.checking") : t("portscan.check")}
           </button>
         </div>
 
         <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
           {errorMsg && (
-            <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-xs flex items-center gap-1.5">
+            <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-card text-xs flex items-center gap-1.5">
               <AlertTriangle className="w-3.5 h-3.5" /> {errorMsg}
             </div>
           )}
           {successMsg && (
-            <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-xl text-xs flex items-center gap-1.5">
+            <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-card text-xs flex items-center gap-1.5">
               <CheckCircle className="w-3.5 h-3.5" /> {successMsg}
             </div>
           )}
 
           {status && (
             <div className="space-y-3">
-              <div className="flex items-center justify-between bg-black/20 p-3 rounded-xl border border-white/5">
+              <div className="flex items-center justify-between bg-black/20 p-3 rounded-card border border-white/5">
                 <div>
                   <span className="text-[10px] text-slate-500 font-mono">{t("portscan.portLabel", { n: status.port })}</span>
                   <p className="text-xs text-white font-semibold mt-0.5">
@@ -198,14 +198,14 @@ export default function PortScanner() {
               </div>
 
               {status.reserved && (
-                <p className="text-[10px] text-amber-400/90 bg-amber-500/5 border border-amber-500/10 p-2.5 rounded-lg flex items-start gap-1.5">
+                <p className="text-[10px] text-amber-400/90 bg-amber-500/5 border border-amber-500/10 p-2.5 rounded-ctl flex items-start gap-1.5">
                   <ShieldAlert className="w-3 h-3 mt-0.5 flex-shrink-0" />
                   {t("portscan.reservedHint")}
                 </p>
               )}
 
               {status.occupied && status.owner && (
-                <div className="bg-black/10 border border-white/5 rounded-xl p-3 space-y-3">
+                <div className="bg-black/10 border border-white/5 rounded-card p-3 space-y-3">
                   <div className="grid grid-cols-2 gap-3 font-mono text-[10px]">
                     <div>
                       <span className="text-slate-500 block">{t("portscan.pid")}</span>
@@ -219,7 +219,7 @@ export default function PortScanner() {
                     </div>
                   </div>
                   <button onClick={handleRelease} disabled={releasing}
-                    className="w-full py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold cursor-pointer transition-all flex items-center justify-center gap-1.5">
+                    className="w-full py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-ctl text-xs font-semibold cursor-pointer transition-all flex items-center justify-center gap-1.5">
                     <Trash2 className="w-3 h-3" />
                     {releasing ? t("portscan.killing") : t("portscan.killProc")}
                   </button>
@@ -231,14 +231,14 @@ export default function PortScanner() {
       </div>
 
       {/* 系统保留端口 */}
-      <div className="glass-panel flex min-h-0 flex-col rounded-2xl border border-white/5 p-5">
+      <div className="glass-panel flex min-h-0 flex-col rounded-panel border border-white/5 p-5">
         <div className="flex shrink-0 items-center justify-between">
           <div className="flex items-center gap-2">
             <ShieldAlert className="w-4 h-4 text-amber-400" />
             <h4 className="font-semibold text-white text-xs">{t("portscan.reservedTitle")}</h4>
           </div>
           <button onClick={handleShowReserved} disabled={loadingReserved}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-[10px] border border-white/5 cursor-pointer">
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-ctl text-[10px] border border-white/5 cursor-pointer">
             <List className={`w-3 h-3 ${loadingReserved ? "animate-spin" : ""}`} />
             {reservedRanges ? t("portscan.collapse") : loadingReserved ? t("portscan.loading") : t("portscan.viewReserved")}
           </button>

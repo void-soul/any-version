@@ -97,7 +97,7 @@ export function Menu({
       {open && (
         <div
           role="menu"
-          className={`absolute top-full mt-1 z-[260] min-w-[180px] max-w-[300px] py-1 rounded-lg border border-white/10 bg-surface-panel shadow-2xl ${
+          className={`absolute top-full mt-1 z-[260] min-w-[180px] max-w-[300px] py-1 rounded-ctl border border-white/10 bg-surface-panel shadow-2xl ${
             align === "right" ? "right-0" : "left-0"
           }`}
         >

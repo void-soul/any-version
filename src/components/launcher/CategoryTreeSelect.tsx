@@ -164,7 +164,7 @@ export default function CategoryTreeSelect({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full bg-surface-inset border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 transition cursor-pointer flex items-center justify-between gap-2 text-left"
+        className="w-full bg-surface-inset border border-white/10 rounded-card px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 transition cursor-pointer flex items-center justify-between gap-2 text-left"
       >
         <span className="flex items-center gap-1.5 min-w-0 truncate">
           <FolderTree className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" />
@@ -175,7 +175,7 @@ export default function CategoryTreeSelect({
 
       {/* Dropdown */}
       {open && (
-        <div className="absolute z-50 mt-1 w-full bg-surface-panel border border-white/10 rounded-xl shadow-2xl shadow-black/50 overflow-hidden">
+        <div className="absolute z-50 mt-1 w-full bg-surface-panel border border-white/10 rounded-card shadow-2xl shadow-black/50 overflow-hidden">
           {/* Search box */}
           <div className="p-2 border-b border-white/5">
             <input
@@ -186,7 +186,7 @@ export default function CategoryTreeSelect({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={`${t("cattree.pickCategory")}...`}
-              className="w-full bg-black/30 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
+              className="w-full bg-black/30 border border-white/10 rounded-ctl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
             />
           </div>
 
@@ -200,7 +200,7 @@ export default function CategoryTreeSelect({
                   setOpen(false);
                   setSearch("");
                 }}
-                className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs transition cursor-pointer flex items-center gap-1.5 ${
+                className={`w-full text-left px-2.5 py-1.5 rounded-ctl text-xs transition cursor-pointer flex items-center gap-1.5 ${
                   value === 0
                     ? "bg-purple-600/20 text-white"
                     : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
@@ -223,7 +223,7 @@ export default function CategoryTreeSelect({
               return (
                 <div
                   key={c.id}
-                  className="flex items-center gap-1 rounded-lg cursor-pointer hover:bg-white/5 transition"
+                  className="flex items-center gap-1 rounded-ctl cursor-pointer hover:bg-white/5 transition"
                   style={{ paddingLeft: `${depth * 16 + 8}px` }}
                 >
                   {hasChildren ? (
@@ -248,7 +248,7 @@ export default function CategoryTreeSelect({
                       setOpen(false);
                       setSearch("");
                     }}
-                    className={`flex-1 flex items-center gap-1.5 px-1.5 py-1.5 rounded-lg text-xs transition cursor-pointer min-w-0 ${
+                    className={`flex-1 flex items-center gap-1.5 px-1.5 py-1.5 rounded-ctl text-xs transition cursor-pointer min-w-0 ${
                       isSelected
                         ? "bg-purple-600/20 text-white"
                         : "text-slate-300 hover:text-white"

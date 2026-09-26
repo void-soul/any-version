@@ -42,6 +42,7 @@ import { Menu } from "../shared/Menu";
 import { useVirtualList } from "../shared/useVirtualList";
 import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
 import { toast } from "../shared/Toast";
+import { theamedConfirm } from "../shared/ThemedAlert";
 import { GithubTokenDialog } from "../project/GithubTokenDialog";
 import { MarkdownRenderer } from "../ai/MarkdownRenderer";
 import { CredentialDialog } from "./CredentialDialog";
@@ -360,7 +361,7 @@ export default function FavoritesPanel() {
 
   const deleteCat = async (id: number) => {
     const cur = findCat(id);
-    if (!window.confirm(t("favorites.deleteCategoryConfirm", { name: cur?.name || "" }))) return;
+    if (!(await theamedConfirm(t("favorites.deleteCategoryConfirm", { name: cur?.name || "" }), { danger: true }))) return;
     try {
       await invoke("fav_delete_category", { id });
       if (categoryId === id) {
@@ -1489,7 +1490,7 @@ export default function FavoritesPanel() {
 
                 {/* 展开的正文：知乎是导入时顺手缓存的内容，GitHub 是懒抓的 README（优先中文版） */}
                 {expandedId === item.id && (
-                  <div className="mt-1.5 rounded-lg border border-white/10 bg-black/25 p-2">
+                  <div className="mt-1.5 rounded-ctl border border-white/10 bg-black/25 p-2">
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-[9px] text-slate-500 truncate">
                         {contentBusy === item.id
@@ -1558,7 +1559,7 @@ export default function FavoritesPanel() {
                 style={{ width: aiWidth }}
               >
                 <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg bg-[var(--module-accent)]/15 border border-[var(--module-accent)]/30 flex items-center justify-center">
+                  <div className="w-7 h-7 rounded-ctl bg-[var(--module-accent)]/15 border border-[var(--module-accent)]/30 flex items-center justify-center">
                     <Bot className="w-3.5 h-3.5 text-[var(--module-accent)]" />
                   </div>
                   <div className="flex-1 min-w-0">
@@ -1580,12 +1581,12 @@ export default function FavoritesPanel() {
                     onChange={(e) => setAiInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void runAiSearch(); } }}
                     placeholder={t("favorites.aiSearchPh")}
-                    className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
+                    className="flex-1 min-w-0 bg-slate-900 border border-white/10 rounded-ctl px-2 py-1.5 text-[11px] text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
                   />
                   <button
                     onClick={() => void runAiSearch()}
                     disabled={aiBusy || !aiInput.trim()}
-                    className="px-2 py-1.5 rounded-lg text-[10px] bg-[var(--module-accent)] hover:opacity-90 text-white font-semibold cursor-pointer disabled:opacity-40 flex items-center gap-1"
+                    className="px-2 py-1.5 rounded-ctl text-[10px] bg-[var(--module-accent)] hover:opacity-90 text-white font-semibold cursor-pointer disabled:opacity-40 flex items-center gap-1"
                   >
                     {aiBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
                     {aiBusy ? t("favorites.aiSearchRunning") : t("favorites.aiSearchGo")}
@@ -1594,7 +1595,7 @@ export default function FavoritesPanel() {
 
                 {/* 检索过程：让用户看得见 agent 到底查了什么，而不是黑箱等结果 */}
                 {aiSteps.length > 0 && (
-                  <div ref={aiLogRef} className="max-h-24 shrink-0 overflow-y-auto rounded-lg border border-white/5 bg-black/30 p-2 space-y-1">
+                  <div ref={aiLogRef} className="max-h-24 shrink-0 overflow-y-auto rounded-ctl border border-white/5 bg-black/30 p-2 space-y-1">
                     {aiSteps.map((s, i) => (
                       <div key={i} className="text-[9px] text-slate-500 flex gap-1.5">
                         <span className="flex-shrink-0 text-slate-600">{AI_TOOL_LABEL[s.tool ?? ""] ?? "过程"}</span>
@@ -1604,7 +1605,7 @@ export default function FavoritesPanel() {
                   </div>
                 )}
 
-                <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-white/5 bg-slate-900/30 p-2.5">
+                <div className="min-h-0 flex-1 overflow-y-auto rounded-card border border-white/5 bg-slate-900/30 p-2.5">
                   {aiError ? (
                     <div className="text-[11px] text-rose-400 break-all">{aiError}</div>
                   ) : aiResult ? (
@@ -1660,7 +1661,7 @@ export default function FavoritesPanel() {
       {/* 已删除条目（墓碑）：重新纳入后，下次导入会把它们再拉进来 */}
       {deletedOpen && (
         <div className="fixed inset-0 z-[300] modal-mask bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-surface-panel border border-white/15 rounded-2xl p-4 shadow-2xl space-y-3 text-xs">
+          <div className="w-full max-w-md bg-surface-panel border border-white/15 rounded-panel p-4 shadow-2xl space-y-3 text-xs">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-white">{t("favorites.deletedTitle")}</h3>
               <button onClick={() => setDeletedOpen(false)} className="text-slate-400 hover:text-white p-1">
@@ -1670,7 +1671,7 @@ export default function FavoritesPanel() {
             <p className="text-[10px] text-slate-500 leading-relaxed">{t("favorites.deletedHint")}</p>
             <div className="max-h-64 overflow-y-auto space-y-1">
               {deletedRows.map((d) => (
-                <div key={`${d.source}-${d.externalId}`} className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-2 py-1.5">
+                <div key={`${d.source}-${d.externalId}`} className="flex items-center gap-2 rounded-ctl border border-white/5 bg-white/[0.02] px-2 py-1.5">
                   <span className="shrink-0 text-[9px] text-slate-500">{SOURCE_LABELS[d.source] ?? d.source}</span>
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[11px] text-slate-200">{d.title || d.externalId}</div>
@@ -1678,7 +1679,7 @@ export default function FavoritesPanel() {
                   </div>
                   <button
                     onClick={() => void restoreDeleted(d.source, d.externalId)}
-                    className="shrink-0 px-2 py-1 rounded-lg border border-white/10 text-[10px] text-slate-300 hover:text-[var(--module-accent)] cursor-pointer"
+                    className="shrink-0 px-2 py-1 rounded-ctl border border-white/10 text-[10px] text-slate-300 hover:text-[var(--module-accent)] cursor-pointer"
                   >
                     {t("favorites.deletedRestore")}
                   </button>
@@ -1688,13 +1689,13 @@ export default function FavoritesPanel() {
             <div className="flex items-center justify-end gap-2 pt-1">
               <button
                 onClick={() => void restoreDeleted()}
-                className="px-2.5 py-1.5 rounded-lg border border-white/10 text-[10px] text-slate-300 hover:text-white cursor-pointer"
+                className="px-2.5 py-1.5 rounded-ctl border border-white/10 text-[10px] text-slate-300 hover:text-white cursor-pointer"
               >
                 {t("favorites.deletedRestoreAll", { count: deletedRows.length })}
               </button>
               <button
                 onClick={() => setDeletedOpen(false)}
-                className="px-2.5 py-1.5 rounded-lg bg-[var(--module-accent)] text-white text-[10px] font-semibold cursor-pointer"
+                className="px-2.5 py-1.5 rounded-ctl bg-[var(--module-accent)] text-white text-[10px] font-semibold cursor-pointer"
               >
                 {t("favorites.deletedClose")}
               </button>
@@ -1751,7 +1752,7 @@ export default function FavoritesPanel() {
       {/* 分类右键菜单 */}
       {catMenu && (
         <div
-          className="fixed z-[300] bg-surface-panel border border-white/15 rounded-lg shadow-2xl py-1 text-[11px] min-w-[140px]"
+          className="fixed z-[300] bg-surface-panel border border-white/15 rounded-ctl shadow-2xl py-1 text-[11px] min-w-[140px]"
           style={{ left: catMenu.x, top: catMenu.y }}
           onMouseLeave={() => setCatMenu(null)}
         >
@@ -1788,7 +1789,7 @@ export default function FavoritesPanel() {
       {/* 条目分类选择器：勾选式，支持多级 */}
       {pickerFor && (
         <div className="fixed inset-0 z-[300] modal-mask bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-surface-panel border border-white/15 rounded-2xl p-4 shadow-2xl space-y-3 text-xs">
+          <div className="w-full max-w-sm bg-surface-panel border border-white/15 rounded-panel p-4 shadow-2xl space-y-3 text-xs">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-white">{t("favorites.pickCategoryTitle")}</h3>
               <button onClick={() => setPickerFor(null)} className="text-slate-400 hover:text-white p-1">
@@ -1814,7 +1815,7 @@ export default function FavoritesPanel() {
                 {t("common.save")}
               </SharedButton>
               <button onClick={() => setPickerFor(null)}
-                className="px-3 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[11px] text-slate-300 cursor-pointer">
+                className="px-3 py-1 rounded-ctl bg-white/5 hover:bg-white/10 text-[11px] text-slate-300 cursor-pointer">
                 {t("common.cancel")}
               </button>
             </div>

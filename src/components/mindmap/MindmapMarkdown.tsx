@@ -112,7 +112,7 @@ function MindmapBlock({ code }: { code: string }) {
   const { t } = useTranslation();
   const tree = useMemo(() => parseMindmapTree(code.split("\n")), [code]);
   return (
-    <div className="my-2 rounded-lg border border-cyan-400/20 bg-slate-950/70 p-2.5">
+    <div className="my-2 rounded-ctl border border-cyan-400/20 bg-slate-950/70 p-2.5">
       <div className="mb-1.5 flex items-center gap-1 text-[9px] uppercase tracking-wide text-cyan-300/80">
         <ListTree className="h-3 w-3" />{t("mmdmark.builtinMindmap")}
       </div>
@@ -177,7 +177,7 @@ export const MindmapMarkdown = memo(function MindmapMarkdown({ content }: { cont
   return (
     <div className="mindmap-markdown text-[11px] leading-relaxed text-slate-200 break-words">
       {toc.length >= 2 && (
-        <div className="mb-3 rounded-lg border border-white/10 bg-slate-900/60">
+        <div className="mb-3 rounded-ctl border border-white/10 bg-slate-900/60">
           <button type="button" className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-[9px] uppercase tracking-wide text-slate-400 hover:text-slate-200"
             onClick={() => setShowToc(!showToc)}>
             <PanelRight className="h-3 w-3" />{t("mmdmark.toc")}

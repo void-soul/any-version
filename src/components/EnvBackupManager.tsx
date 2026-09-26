@@ -128,7 +128,7 @@ export default function EnvBackupManager() {
   };
 
   return (
-    <div className="glass-panel rounded-2xl p-6 border border-white/5 space-y-5">
+    <div className="glass-panel rounded-panel p-6 border border-white/5 space-y-5">
       {/* Section header */}
       <div className="flex items-center justify-between pb-3 border-b border-white/5">
         <div className="flex items-center gap-2">
@@ -144,7 +144,7 @@ export default function EnvBackupManager() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowCreateForm(!showCreateForm)}
-            className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98]"
+            className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-card text-xs font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98]"
           >
             <Plus className="w-4 h-4" />
             {t("envbackup.create")}
@@ -153,7 +153,7 @@ export default function EnvBackupManager() {
           <button
             onClick={fetchBackups}
             disabled={loading}
-            className="flex items-center gap-2 px-3.5 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl text-xs border border-white/5 cursor-pointer transition-all"
+            className="flex items-center gap-2 px-3.5 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-card text-xs border border-white/5 cursor-pointer transition-all"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
             {t("envbackup.refresh")}
@@ -162,7 +162,7 @@ export default function EnvBackupManager() {
           {/* <button
             onClick={handleRepairRegistry}
             disabled={repairing}
-            className="flex items-center gap-1.5 px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-amber-500/20 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
+            className="flex items-center gap-1.5 px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-card text-xs font-semibold shadow-lg shadow-amber-500/20 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
           >
             <Wrench className="w-4 h-4" />
             {repairing ? "修复中..." : "修复注册表"}
@@ -172,7 +172,7 @@ export default function EnvBackupManager() {
 
       {/* Backup Form Overlay/Dropdown */}
       {showCreateForm && (
-        <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-4 max-w-xl animate-fadeIn">
+        <div className="glass-panel p-5 rounded-panel border border-white/5 space-y-4 max-w-xl animate-fadeIn">
           <h3 className="text-xs font-semibold text-white">{t("envbackup.createFormTitle")}</h3>
           <div className="space-y-3">
             <input
@@ -185,14 +185,14 @@ export default function EnvBackupManager() {
             <div className="flex justify-end gap-2 text-xs">
               <button
                 onClick={() => setShowCreateForm(false)}
-                className="px-3.5 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg cursor-pointer"
+                className="px-3.5 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-ctl cursor-pointer"
               >
                 {t("envbackup.cancel")}
               </button>
               <button
                 onClick={handleCreateBackup}
                 disabled={creating}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg font-semibold cursor-pointer transition-all"
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-ctl font-semibold cursor-pointer transition-all"
               >
                 {creating ? t("envbackup.backingUp") : t("envbackup.backupNow")}
               </button>
@@ -203,7 +203,7 @@ export default function EnvBackupManager() {
 
       {/* Restore Result Notification Alert */}
       {restoreMessage && (
-        <div className={`p-4 rounded-xl border flex items-start gap-3 animate-fadeIn ${restoreMessage.isError
+        <div className={`p-4 rounded-card border flex items-start gap-3 animate-fadeIn ${restoreMessage.isError
             ? "bg-amber-500/10 border-amber-500/20 text-amber-300"
             : "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
           }`}>
@@ -221,7 +221,7 @@ export default function EnvBackupManager() {
 
       {/* Repair Log */}
       {repairLog && repairLog.length > 0 && (
-        <div className="glass-panel p-4 rounded-2xl border border-amber-500/20 animate-fadeIn max-h-64 overflow-y-auto">
+        <div className="glass-panel p-4 rounded-panel border border-amber-500/20 animate-fadeIn max-h-64 overflow-y-auto">
           <h4 className="text-xs font-semibold text-amber-300 mb-2 flex items-center gap-1.5">
             <Wrench className="w-3.5 h-3.5" />
             {t("envbackup.repairLog")}
@@ -251,7 +251,7 @@ export default function EnvBackupManager() {
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left pane: Backups History */}
-        <div className="lg:col-span-5 glass-panel rounded-2xl border border-white/5 overflow-hidden flex flex-col h-[520px]">
+        <div className="lg:col-span-5 glass-panel rounded-panel border border-white/5 overflow-hidden flex flex-col h-[520px]">
           <div className="p-4 bg-white/3 border-b border-white/5 flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-300">{t("envbackup.historyTitle")}</span>
             <span className="text-[10px] text-slate-500">{t("envbackup.count", { count: backups.length })}</span>
@@ -317,7 +317,7 @@ export default function EnvBackupManager() {
         {/* Right pane: Backup Variables Inspection & Restore */}
         <div className="lg:col-span-7 flex flex-col h-[520px]">
           {selectedBackup ? (
-            <div className="flex-1 glass-panel rounded-2xl border border-white/5 overflow-hidden flex flex-col">
+            <div className="flex-1 glass-panel rounded-panel border border-white/5 overflow-hidden flex flex-col">
               {/* Backup details header */}
               <div className="p-5 border-b border-white/5 flex items-center justify-between bg-white/2">
                 <div className="min-w-0">
@@ -328,7 +328,7 @@ export default function EnvBackupManager() {
                 <button
                   onClick={() => handleRestoreBackup(selectedBackup.id)}
                   disabled={restoring}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-emerald-500/10 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98]"
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-card text-xs font-semibold flex items-center gap-1.5 shadow-lg shadow-emerald-500/10 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98]"
                 >
                   <RotateCcw className={`w-3.5 h-3.5 ${restoring ? "animate-spin" : ""}`} />
                   {restoring ? t("envbackup.restoring") : t("envbackup.restore")}
@@ -358,7 +358,7 @@ export default function EnvBackupManager() {
                     <h4 className="text-xs font-semibold text-slate-300">{t("envbackup.userVarsTitle")}</h4>
                   </div>
 
-                  <div className="border border-white/5 rounded-xl overflow-hidden font-mono text-[10px]">
+                  <div className="border border-white/5 rounded-card overflow-hidden font-mono text-[10px]">
                     <table className="w-full text-left border-collapse">
                       <thead>
                         <tr className="bg-white/3 text-slate-400 font-semibold border-b border-white/5">
@@ -391,7 +391,7 @@ export default function EnvBackupManager() {
                     <h4 className="text-xs font-semibold text-slate-300">{t("envbackup.sysVarsTitle")}</h4>
                   </div>
 
-                  <div className="border border-white/5 rounded-xl overflow-hidden font-mono text-[10px]">
+                  <div className="border border-white/5 rounded-card overflow-hidden font-mono text-[10px]">
                     <table className="w-full text-left border-collapse">
                       <thead>
                         <tr className="bg-white/3 text-slate-400 font-semibold border-b border-white/5">
@@ -419,7 +419,7 @@ export default function EnvBackupManager() {
               </div>
             </div>
           ) : (
-            <div className="flex-1 glass-panel rounded-2xl border border-white/5 flex flex-col items-center justify-center text-center text-slate-500 p-8">
+            <div className="flex-1 glass-panel rounded-panel border border-white/5 flex flex-col items-center justify-center text-center text-slate-500 p-8">
               <Info className="w-12 h-12 text-slate-600 mb-4" />
               <p className="text-xs font-medium text-slate-400">{t("envbackup.selectHint")}</p>
             </div>

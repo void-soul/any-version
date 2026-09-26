@@ -669,7 +669,7 @@ export default function NodeManagerPanel() {
                 <button
                   key={tab.id}
                   onClick={() => setActiveTabId(tab.id)}
-                  className={`group flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-[11px] font-semibold transition-all cursor-pointer flex-shrink-0 ${
+                  className={`group flex items-center gap-1.5 px-3 py-1.5 rounded-t-ctl text-[11px] font-semibold transition-all cursor-pointer flex-shrink-0 ${
                     active
                       ? "bg-white/10 text-white border-b-2 border-[var(--module-accent)]"
                       : "text-slate-400 hover:text-slate-200 hover:bg-white/5 border-b-2 border-transparent"
@@ -695,7 +695,7 @@ export default function NodeManagerPanel() {
             <button
               onClick={() => activeTab && reloadTab(activeTab.id)}
               disabled={!activeTab}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-ctl text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
               title={t("nodeproj.refreshHomeTitle")}
             >
               <RefreshCw className="w-3.5 h-3.5" /> {t("nodeproj.refreshHome")}
@@ -703,7 +703,7 @@ export default function NodeManagerPanel() {
             <button
               onClick={() => activeTab && void openDevTools(activeTab)}
               disabled={!activeTab}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-ctl text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer transition-all flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
               title={t("nodeproj.devToolsTitle")}
             >
               <Code2 className="w-3.5 h-3.5" /> {t("nodeproj.devTools")}
@@ -863,10 +863,10 @@ function ProjectCard({
   }, [logs]);
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden">
+    <div className="rounded-panel border border-white/10 bg-white/[0.02] overflow-hidden">
       {/* 卡片头部 */}
       <div className="flex items-center gap-3 px-5 py-4">
-        <div className="w-10 h-10 rounded-xl bg-[color-mix(in_srgb,var(--module-accent)_15%,transparent)] border border-[var(--module-accent-ring)] flex items-center justify-center">
+        <div className="w-10 h-10 rounded-card bg-[color-mix(in_srgb,var(--module-accent)_15%,transparent)] border border-[var(--module-accent-ring)] flex items-center justify-center">
           <Icon className="w-5 h-5 text-[var(--module-accent)]" />
         </div>
         <div className="flex-1 min-w-0">
@@ -1120,7 +1120,7 @@ function ProjectCard({
           </div>
           {logOpen && (
             <div
-              className="mt-1 max-h-56 overflow-y-auto rounded-lg bg-black/40 border border-white/5 p-2 font-mono text-[10px] leading-relaxed"
+              className="mt-1 max-h-56 overflow-y-auto rounded-ctl bg-black/40 border border-white/5 p-2 font-mono text-[10px] leading-relaxed"
               onClick={() => endRef.current?.scrollIntoView({ block: "end" })}
             >
               {logs.map((l, i) => (
@@ -1151,7 +1151,7 @@ function ProjectCard({
       {/* 首次初始化提示：装完还不能直接用，要先拉取运行时资源（wigolo 约 1.5GB） */}
       {needsInit && (
         <div className="px-5 pt-2">
-          <div className="flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2">
+          <div className="flex items-center gap-2 rounded-ctl border border-amber-500/20 bg-amber-500/10 px-3 py-2">
             <Sparkles className="w-3.5 h-3.5 text-amber-300 flex-shrink-0" />
             <div className="flex-1 text-[11px] text-amber-200/90 leading-snug">
               {t("nodeproj.initBanner")}
@@ -1173,7 +1173,7 @@ function ProjectCard({
 
       {installed && (
         <div className="px-5 py-2 flex items-center gap-2">
-          <div className="flex-1 flex items-center gap-1.5 bg-black/20 border border-white/10 rounded-lg px-2.5 py-1.5 focus-within:border-[var(--module-accent)] transition-all">
+          <div className="flex-1 flex items-center gap-1.5 bg-black/20 border border-white/10 rounded-ctl px-2.5 py-1.5 focus-within:border-[var(--module-accent)] transition-all">
             <Terminal className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
             <input
               value={cmdInput}
@@ -1359,7 +1359,7 @@ function ActionButton({
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className={`flex-1 justify-center px-2 py-1 rounded-lg text-[10px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed ${color} text-white`}
+      className={`flex-1 justify-center px-2 py-1 rounded-ctl text-[10px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed ${color} text-white`}
     >
       {busy ? (
         <Loader2 className="w-3.5 h-3.5 animate-spin" />

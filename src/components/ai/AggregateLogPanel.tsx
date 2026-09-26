@@ -19,7 +19,7 @@ export default function AggregateLogPanel({
   }, [logs]);
 
   return (
-    <div className="rounded-lg border border-white/5 bg-black/30 overflow-hidden">
+    <div className="rounded-ctl border border-white/5 bg-black/30 overflow-hidden">
       <div className="px-2.5 py-1.5 border-b border-white/5 flex items-center justify-between">
         <span className="text-[10px] font-bold text-slate-400">{t("aggregate.logTitle")}</span>
         <button

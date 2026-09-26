@@ -34,7 +34,7 @@ type KV = { domain: string; value: any };
 
 function SegTabs({ options, value, onChange }: { options: [string, string][]; value: string; onChange: (k: string) => void }) {
   return (
-    <div className="flex rounded-lg bg-white/5 border border-white/10 overflow-hidden">
+    <div className="flex rounded-ctl bg-white/5 border border-white/10 overflow-hidden">
       {options.map(([k, t]) => (
         <button key={k} onClick={() => onChange(k)}
           className={`px-3 py-1.5 text-[11px] font-semibold cursor-pointer transition-all ${

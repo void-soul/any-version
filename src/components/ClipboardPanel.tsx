@@ -27,6 +27,7 @@ import { listen } from "@tauri-apps/api/event";
 import { toast } from "./shared/Toast";
 import { SharedModal } from "./shared/Modal";
 import { SharedButton } from "./shared/Button";
+import { theamedConfirm, theamedAlert } from "./shared/ThemedAlert";
 
 interface ClipboardItem {
   id: number;
@@ -160,7 +161,7 @@ function PreviewModal({
       className="fixed inset-0 z-[110] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
     >
       <div
-        className={`flex flex-col rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl shadow-black/60 overflow-hidden max-h-[90vh] ${
+        className={`flex flex-col rounded-panel border border-white/10 bg-slate-900/95 shadow-2xl shadow-black/60 overflow-hidden max-h-[90vh] ${
           item.kind === "image" ? "w-[820px] max-w-[95vw]" : "w-[640px] max-w-[95vw]"
         }`}
         onClick={(e) => e.stopPropagation()}
@@ -168,7 +169,7 @@ function PreviewModal({
         {/* 头部：类型 + 来源 + 时间 + 格式 */}
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-white/10 bg-white/[0.02] flex-shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="p-1.5 rounded-lg bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] flex-shrink-0">
+            <div className="p-1.5 rounded-ctl bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] flex-shrink-0">
               {item.kind === "image" ? <ImageIcon className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
             </div>
             <div className="min-w-0">
@@ -230,14 +231,14 @@ function PreviewModal({
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={onCopy}
-              className="px-3 h-8 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] text-slate-300 transition-all cursor-pointer flex items-center gap-1.5"
+              className="px-3 h-8 rounded-ctl bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] text-slate-300 transition-all cursor-pointer flex items-center gap-1.5"
               title={t("clip.copyTip")}
             >
               <Copy className="w-3 h-3" /> {t("clip.copy")}
             </button>
             <button
               onClick={onPaste}
-              className="px-3 h-8 rounded-lg bg-[var(--module-accent)] hover:opacity-85 text-[11px] font-semibold text-white transition-all cursor-pointer flex items-center gap-1.5"
+              className="px-3 h-8 rounded-ctl bg-[var(--module-accent)] hover:opacity-85 text-[11px] font-semibold text-white transition-all cursor-pointer flex items-center gap-1.5"
               title={t("clip.copyPasteTip")}
             >
               <ClipboardPaste className="w-3 h-3" /> {t("clip.copyPaste")}
@@ -271,7 +272,7 @@ function Row({
   return (
     <div
       onClick={onPaste}
-      className={`h-full flex items-center gap-3 rounded-lg border px-2.5 transition-all cursor-pointer group ${
+      className={`h-full flex items-center gap-3 rounded-ctl border px-2.5 transition-all cursor-pointer group ${
         item.pinned
           ? "bg-amber-500/[0.06] border-amber-500/25"
           : "bg-white/[0.03] border-white/10 hover:bg-white/[0.06] hover:border-white/20"
@@ -532,7 +533,7 @@ export default function ClipboardPanel() {
       setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, pinned: !item.pinned } : i)));
       load(true);
     } catch (e) {
-      alert(String(e));
+      theamedAlert(String(e));
     }
   };
 
@@ -542,17 +543,17 @@ export default function ClipboardPanel() {
       setItems((prev) => prev.filter((i) => i.id !== id));
       setTotal((t) => Math.max(0, t - 1));
     } catch (e) {
-      alert(String(e));
+      theamedAlert(String(e));
     }
   };
 
   const clearHistory = async () => {
-    if (!window.confirm(t("clip.clearConfirm"))) return;
+    if (!(await theamedConfirm(t("clip.clearConfirm"), { danger: true }))) return;
     try {
       await invoke("clipboard_clear_history", { keepPinned: true });
       load(true);
     } catch (e) {
-      alert(String(e));
+      theamedAlert(String(e));
     }
   };
 
@@ -562,7 +563,7 @@ export default function ClipboardPanel() {
       await invoke("clipboard_save_settings", { settings });
       setShowSettings(false);
     } catch (e) {
-      alert(String(e));
+      theamedAlert(String(e));
     }
   };
 
@@ -574,7 +575,7 @@ export default function ClipboardPanel() {
       setIgnoredApps((prev) => [...prev, app]);
       setNewApp("");
     } catch (e) {
-      alert(String(e));
+      theamedAlert(String(e));
     }
   };
 
@@ -583,7 +584,7 @@ export default function ClipboardPanel() {
       await invoke("clipboard_remove_ignored_app", { app });
       setIgnoredApps((prev) => prev.filter((a) => a !== app));
     } catch (e) {
-      alert(String(e));
+      theamedAlert(String(e));
     }
   };
 
@@ -597,7 +598,7 @@ export default function ClipboardPanel() {
       {/* 头部 */}
       <div className="flex items-center justify-between gap-4 shrink-0">
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="p-2 rounded-xl bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] flex-shrink-0">
+          <div className="p-2 rounded-card bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] flex-shrink-0">
             <Clipboard className="w-5 h-5" />
           </div>
           <div className="min-w-0">
@@ -624,13 +625,13 @@ export default function ClipboardPanel() {
         <div className="flex items-center gap-2 flex-shrink-0">
           <button
             onClick={clearHistory}
-            className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-red-500/15 border border-white/10 text-[10px] text-slate-300 hover:text-red-300 transition-all cursor-pointer flex items-center gap-1.5"            title={t("clip.clearTip")}
+            className="px-2.5 py-1.5 rounded-ctl bg-white/5 hover:bg-red-500/15 border border-white/10 text-[10px] text-slate-300 hover:text-red-300 transition-all cursor-pointer flex items-center gap-1.5"            title={t("clip.clearTip")}
             >
             <Eraser className="w-3 h-3" /> {t("clip.clear")}
           </button>
           <button
             onClick={() => setShowSettings(true)}
-            className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] text-slate-300 transition-all cursor-pointer flex items-center gap-1.5"
+            className="px-2.5 py-1.5 rounded-ctl bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] text-slate-300 transition-all cursor-pointer flex items-center gap-1.5"
             title={t("clip.settingsTip")}
           >
             <Settings2 className="w-3 h-3" /> {t("clip.settings")}
@@ -640,7 +641,7 @@ export default function ClipboardPanel() {
 
       {/* 工具栏：搜索 / 类型过滤 / 仅置顶 */}
       <div className="flex items-center gap-2 shrink-0 flex-wrap">
-        <div className="flex items-center gap-1 flex-1 min-w-[200px] bg-white/5 border border-white/10 rounded-lg pl-2.5 pr-1 h-8">
+        <div className="flex items-center gap-1 flex-1 min-w-[200px] bg-white/5 border border-white/10 rounded-ctl pl-2.5 pr-1 h-8">
           <Search className="w-3 h-3 text-slate-500 flex-shrink-0" />
           <input
             value={searchInput}
@@ -674,7 +675,7 @@ export default function ClipboardPanel() {
             </button>
           )}
         </div>
-        <div className="flex items-center gap-0.5 bg-white/5 border border-white/10 rounded-lg p-0.5">
+        <div className="flex items-center gap-0.5 bg-white/5 border border-white/10 rounded-ctl p-0.5">
           {[
             { k: "", t: t("clip.filterAll") },
             { k: "text", t: t("clip.filterText") },
@@ -693,7 +694,7 @@ export default function ClipboardPanel() {
         </div>
         <button
           onClick={() => setPinnedOnly((v) => !v)}
-          className={`px-2.5 py-1.5 rounded-lg border text-[10.5px] font-medium flex items-center gap-1.5 transition-all cursor-pointer ${
+          className={`px-2.5 py-1.5 rounded-ctl border text-[10.5px] font-medium flex items-center gap-1.5 transition-all cursor-pointer ${
             pinnedOnly
               ? "bg-amber-500/15 border-amber-500/30 text-amber-300"
               : "bg-white/5 border-white/10 text-slate-400 hover:text-slate-200"
@@ -777,7 +778,7 @@ export default function ClipboardPanel() {
           }
         >
             {/* 监控开关 */}
-            <div className="flex items-center justify-between rounded-xl bg-white/[0.03] border border-white/10 p-3">
+            <div className="flex items-center justify-between rounded-card bg-white/[0.03] border border-white/10 p-3">
               <div>
                 <p className="text-[12px] text-slate-200 font-medium">{t("clip.monitorOn")}</p>
                 <p className="text-[10.5px] text-slate-500 mt-0.5">{t("clip.monitorHint")}</p>
@@ -804,7 +805,7 @@ export default function ClipboardPanel() {
                   max={10000}
                   value={settings.maxItems}
                   onChange={(e) => setSettings({ ...settings, maxItems: Math.max(50, Math.min(10000, Number(e.target.value) || 1000)) })}
-                  className="mt-1 w-full h-9 px-3 rounded-lg bg-white/5 border border-white/10 text-[12px] text-slate-200 outline-none focus:border-[var(--module-accent-ring)]"
+                  className="mt-1 w-full h-9 px-3 rounded-ctl bg-white/5 border border-white/10 text-[12px] text-slate-200 outline-none focus:border-[var(--module-accent-ring)]"
                 />
               </label>
               <div className="flex items-end pb-1">
@@ -818,7 +819,7 @@ export default function ClipboardPanel() {
               { k: "ignoreBlank" as const, t: "忽略纯空白文本", d: "空白 / 空行不记录" },
               { k: "ignoreShort" as const, t: "忽略过短文本", d: "长度 ≤ 2 的文本不记录" },
             ]).map((opt) => (
-              <div key={opt.k} className="flex items-center justify-between rounded-xl bg-white/[0.03] border border-white/10 p-3">
+              <div key={opt.k} className="flex items-center justify-between rounded-card bg-white/[0.03] border border-white/10 p-3">
                 <div>
                   <p className="text-[12px] text-slate-200 font-medium">{opt.t}</p>
                   <p className="text-[10.5px] text-slate-500 mt-0.5">{opt.d}</p>
@@ -858,11 +859,11 @@ export default function ClipboardPanel() {
                   onChange={(e) => setNewApp(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && addIgnoredApp()}
                   placeholder="输入程序名，如 chrome.exe"
-                  className="flex-1 h-9 px-3 rounded-lg bg-white/5 border border-white/10 text-[12px] text-slate-200 outline-none focus:border-[var(--module-accent-ring)]"
+                  className="flex-1 h-9 px-3 rounded-ctl bg-white/5 border border-white/10 text-[12px] text-slate-200 outline-none focus:border-[var(--module-accent-ring)]"
                 />
                 <button
                   onClick={addIgnoredApp}
-                  className="px-3 h-9 rounded-lg bg-[var(--module-accent)] hover:opacity-85 text-[11px] font-semibold text-white transition-all cursor-pointer flex items-center gap-1"
+                  className="px-3 h-9 rounded-ctl bg-[var(--module-accent)] hover:opacity-85 text-[11px] font-semibold text-white transition-all cursor-pointer flex items-center gap-1"
                 >
                   <Plus className="w-3.5 h-3.5" /> 添加
                 </button>

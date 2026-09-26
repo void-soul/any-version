@@ -346,13 +346,13 @@ export default function AddItemModal({
       className="fixed inset-0 z-[100] modal-mask flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
     >
       <div
-        className="bg-surface-panel border border-white/10 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-150 text-slate-100"
+        className="bg-surface-panel border border-white/10 rounded-panel w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-150 text-slate-100"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-white/[0.02]">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-purple-600/20 border border-purple-500/30 flex items-center justify-center text-purple-400">
+            <div className="w-8 h-8 rounded-card bg-purple-600/20 border border-purple-500/30 flex items-center justify-center text-purple-400">
               {icon ? (
                 <img src={icon} className="w-5 h-5 object-contain" alt="" />
               ) : htmlIcon ? (
@@ -372,7 +372,7 @@ export default function AddItemModal({
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
+            className="p-1.5 rounded-ctl text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -397,7 +397,7 @@ export default function AddItemModal({
                 if (t.id === 5 && startMenuList.length === 0) handleScanStartMenu();
                 if (t.id === 4 && appxList.length === 0) handleScanAppx();
               }}
-              className={`px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
+              className={`px-3 py-1.5 rounded-card text-xs font-medium flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
                 activeTab === t.id
                   ? "bg-purple-600 text-white shadow-md shadow-purple-600/20"
                   : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
@@ -433,7 +433,7 @@ export default function AddItemModal({
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder={t("additem.nameExample")}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text transition"
+                className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text transition"
               />
             </div>
           </div>
@@ -444,7 +444,7 @@ export default function AddItemModal({
             <div className="flex items-center gap-3">
               {/* 图标预览 */}
               <div
-                className="w-12 h-12 rounded-xl flex items-center justify-center overflow-hidden flex-shrink-0 border border-white/10"
+                className="w-12 h-12 rounded-card flex items-center justify-center overflow-hidden flex-shrink-0 border border-white/10"
                 style={{
                   backgroundColor: iconBg ? iconBgValue : "rgba(255,255,255,0.05)",
                 }}
@@ -463,7 +463,7 @@ export default function AddItemModal({
                   type="button"
                   onClick={handleUploadIcon}
                   title={t("additem.uploadImageTitle")}
-                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs rounded-lg transition cursor-pointer flex items-center gap-1.5"
+                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs rounded-ctl transition cursor-pointer flex items-center gap-1.5"
                 >
                   <ImageIcon className="w-3.5 h-3.5 text-purple-400" />
                   {t("additem.uploadImage")}
@@ -475,7 +475,7 @@ export default function AddItemModal({
                     if (!netIconUrl) setNetIconUrl(target.trim().startsWith("http") ? target.trim() : "");
                   }}
                   title={t("additem.netIconTitle")}
-                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs rounded-lg transition cursor-pointer flex items-center gap-1.5"
+                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs rounded-ctl transition cursor-pointer flex items-center gap-1.5"
                 >
                   <Link2 className="w-3.5 h-3.5 text-blue-400" />
                   {t("additem.netIcon")}
@@ -485,7 +485,7 @@ export default function AddItemModal({
                   onClick={handleRestoreDefaultIcon}
                   disabled={!target.trim()}
                   title={t("additem.restoreDefaultTitle")}
-                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs rounded-lg transition cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs rounded-ctl transition cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <RotateCcw className="w-3.5 h-3.5 text-cyan-400" />
                   {t("additem.restoreDefault")}
@@ -495,7 +495,7 @@ export default function AddItemModal({
                   onClick={handleClearIcon}
                   disabled={!icon && !htmlIcon}
                   title={t("additem.clearIconTitle")}
-                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs rounded-lg transition cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs rounded-ctl transition cursor-pointer flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <X className="w-3.5 h-3.5 text-red-400" />
                   {t("additem.clearIcon")}
@@ -505,7 +505,7 @@ export default function AddItemModal({
                     type="button"
                     onClick={() => setIconBg((v) => !v)}
                     title={t("additem.iconBgTitle")}
-                    className={`px-2.5 py-1.5 border text-xs rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
+                    className={`px-2.5 py-1.5 border text-xs rounded-ctl transition cursor-pointer flex items-center gap-1.5 ${
                       iconBg
                         ? "bg-white/10 border-[var(--module-accent-ring)] text-white"
                         : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white"
@@ -519,7 +519,7 @@ export default function AddItemModal({
                   </button>
                   {iconBg && (
                     <label
-                      className="w-8 h-8 rounded-lg overflow-hidden border border-white/10 cursor-pointer flex items-center justify-center hover:bg-white/10 transition"
+                      className="w-8 h-8 rounded-ctl overflow-hidden border border-white/10 cursor-pointer flex items-center justify-center hover:bg-white/10 transition"
                       title={t("additem.iconBgColorTitle")}
                     >
                       <input
@@ -545,13 +545,13 @@ export default function AddItemModal({
                     value={netIconUrl}
                     onChange={(e) => setNetIconUrl(e.target.value)}
                     placeholder={t("additem.netIconPlaceholder")}
-                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
+                    className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                   />
                   <button
                     type="button"
                     onClick={handleDownloadNetIcon}
                     disabled={netIconLoading || !netIconUrl.trim()}
-                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs rounded-xl transition cursor-pointer flex items-center gap-1.5"
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs rounded-card transition cursor-pointer flex items-center gap-1.5"
                   >
                     <Download className={`w-3.5 h-3.5 ${netIconLoading ? "animate-pulse" : ""}`} />
                     {netIconLoading ? t("additem.downloading") : t("additem.download")}
@@ -583,12 +583,12 @@ export default function AddItemModal({
                     value={target}
                     onChange={(e) => setTarget(e.target.value)}
                     placeholder={t("additem.fileTargetPlaceholder")}
-                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
+                    className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                   />
                   <button
                     type="button"
                     onClick={handleSelectFile}
-                    className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded-xl transition cursor-pointer flex items-center gap-1.5"
+                    className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded-card transition cursor-pointer flex items-center gap-1.5"
                   >
                     <Upload className="w-3.5 h-3.5" />
                     {t("additem.browseFile")}
@@ -606,7 +606,7 @@ export default function AddItemModal({
                     value={params}
                     onChange={(e) => setParams(e.target.value)}
                     placeholder={t("additem.paramsExample")}
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
+                    className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                   />
                 </div>
                 <div>
@@ -618,7 +618,7 @@ export default function AddItemModal({
                     value={startLocation}
                     onChange={(e) => setStartLocation(e.target.value)}
                     placeholder={t("additem.startDirPlaceholder")}
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
+                    className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                   />
                 </div>
               </div>
@@ -638,12 +638,12 @@ export default function AddItemModal({
                   value={target}
                   onChange={(e) => setTarget(e.target.value)}
                   placeholder={t("additem.folderPlaceholder")}
-                  className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
+                  className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                 />
                 <button
                   type="button"
                   onClick={handleSelectFolder}
-                  className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded-xl transition cursor-pointer flex items-center gap-1.5"
+                  className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs rounded-card transition cursor-pointer flex items-center gap-1.5"
                 >
                   <Folder className="w-3.5 h-3.5" />
                   {t("additem.browseFolder")}
@@ -666,13 +666,13 @@ export default function AddItemModal({
                     value={target}
                     onChange={(e) => setTarget(e.target.value)}
                     placeholder={t("additem.urlExample")}
-                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
+                    className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                   />
                   <button
                     type="button"
                     onClick={handleFetchUrl}
                     disabled={urlFetching || !target.trim()}
-                    className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs rounded-xl transition cursor-pointer flex items-center gap-1.5"
+                    className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs rounded-card transition cursor-pointer flex items-center gap-1.5"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${urlFetching ? "animate-spin" : ""}`} />
                     {urlFetching ? t("additem.fetching") : t("additem.fetchInfo")}
@@ -686,7 +686,7 @@ export default function AddItemModal({
           {activeTab === 3 && (
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1.5">{t("additem.pickSystemTool")}</label>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto p-1 bg-white/[0.02] border border-white/5 rounded-xl">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto p-1 bg-white/[0.02] border border-white/5 rounded-card">
                 {PRESET_SYSTEM_TOOLS.map((sys) => (
                   <button
                     type="button"
@@ -700,7 +700,7 @@ export default function AddItemModal({
                       setIcon(null);
                       setRemark(t(sys.desc));
                     }}
-                    className={`p-2 rounded-xl text-left border transition cursor-pointer flex items-center gap-2 ${
+                    className={`p-2 rounded-card text-left border transition cursor-pointer flex items-center gap-2 ${
                       target === sys.target
                         ? "bg-purple-600/20 border-purple-500 text-white"
                         : "bg-white/[0.02] border-white/5 text-slate-300 hover:bg-white/[0.05]"
@@ -741,11 +741,11 @@ export default function AddItemModal({
                   value={appxSearch}
                   onChange={(e) => setAppxSearch(e.target.value)}
                   placeholder={t("additem.searchAppx")}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
+                  className="w-full bg-white/5 border border-white/10 rounded-card pl-9 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1 bg-white/[0.02] border border-white/5 rounded-xl">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1 bg-white/[0.02] border border-white/5 rounded-card">
                 {appxList
                   .filter((a) =>
                     !appxSearch.trim() ||
@@ -762,7 +762,7 @@ export default function AddItemModal({
                         if (app.logo) setIcon(app.logo);
                         setHtmlIcon("📱");
                       }}
-                      className={`p-2 rounded-xl text-left border transition cursor-pointer flex items-center gap-2.5 ${
+                      className={`p-2 rounded-card text-left border transition cursor-pointer flex items-center gap-2.5 ${
                         target.includes(app.familyName)
                           ? "bg-purple-600/20 border-purple-500 text-white"
                           : "bg-white/[0.02] border-white/5 text-slate-300 hover:bg-white/[0.05]"
@@ -808,11 +808,11 @@ export default function AddItemModal({
                   value={startMenuSearch}
                   onChange={(e) => setStartMenuSearch(e.target.value)}
                   placeholder={t("additem.searchStartMenu")}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
+                  className="w-full bg-white/5 border border-white/10 rounded-card pl-9 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1 bg-white/[0.02] border border-white/5 rounded-xl">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1 bg-white/[0.02] border border-white/5 rounded-card">
                 {startMenuList
                   .filter((p) =>
                     !startMenuSearch.trim() ||
@@ -829,7 +829,7 @@ export default function AddItemModal({
                         if (prog.params) setParams(prog.params);
                         if (prog.icon) setIcon(prog.icon);
                       }}
-                      className={`p-2 rounded-xl text-left border transition cursor-pointer flex items-center gap-2.5 ${
+                      className={`p-2 rounded-card text-left border transition cursor-pointer flex items-center gap-2.5 ${
                         target === prog.target
                           ? "bg-purple-600/20 border-purple-500 text-white"
                           : "bg-white/[0.02] border-white/5 text-slate-300 hover:bg-white/[0.05]"
@@ -863,7 +863,7 @@ export default function AddItemModal({
                       { name: t("additem.subTaskName", { n: prev.length + 1 }), target: "", params: "", runAsAdmin: false, delayMs: 500 },
                     ])
                   }
-                  className="px-2.5 py-1 bg-purple-600/30 hover:bg-purple-600/50 text-purple-300 text-xs rounded-lg flex items-center gap-1 cursor-pointer"
+                  className="px-2.5 py-1 bg-purple-600/30 hover:bg-purple-600/50 text-purple-300 text-xs rounded-ctl flex items-center gap-1 cursor-pointer"
                 >
                   <Plus className="w-3 h-3" />
                   {t("additem.addSubItem")}
@@ -872,7 +872,7 @@ export default function AddItemModal({
 
               <div className="space-y-2 max-h-48 overflow-y-auto">
                 {multiItems.map((sub, idx) => (
-                  <div key={idx} className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5 flex items-center gap-2">
+                  <div key={idx} className="p-2.5 rounded-card bg-white/[0.02] border border-white/5 flex items-center gap-2">
                     <span className="text-xs text-slate-500 w-5 text-center">{idx + 1}</span>
                     <input
                       type="text"
@@ -885,7 +885,7 @@ export default function AddItemModal({
                         setMultiItems(next);
                       }}
                       placeholder={t("additem.subItemName")}
-                      className="w-24 bg-black/20 border border-white/10 rounded-lg px-2 py-1 text-xs text-white select-text"
+                      className="w-24 bg-black/20 border border-white/10 rounded-ctl px-2 py-1 text-xs text-white select-text"
                     />
                     <input
                       type="text"
@@ -898,7 +898,7 @@ export default function AddItemModal({
                         setMultiItems(next);
                       }}
                       placeholder={t("additem.subTarget")}
-                      className="flex-1 bg-black/20 border border-white/10 rounded-lg px-2 py-1 text-xs text-white select-text"
+                      className="flex-1 bg-black/20 border border-white/10 rounded-ctl px-2 py-1 text-xs text-white select-text"
                     />
                     <div className="flex items-center gap-1">
                       <span className="text-[10px] text-slate-400">{t("additem.delay")}</span>
@@ -912,7 +912,7 @@ export default function AddItemModal({
                           next[idx] = { ...next[idx], delayMs: Number(e.target.value) };
                           setMultiItems(next);
                         }}
-                        className="w-16 bg-black/20 border border-white/10 rounded-lg px-1.5 py-1 text-xs text-white text-center select-text"
+                        className="w-16 bg-black/20 border border-white/10 rounded-ctl px-1.5 py-1 text-xs text-white text-center select-text"
                       />
                       <span className="text-[10px] text-slate-500">ms</span>
                     </div>
@@ -964,7 +964,7 @@ export default function AddItemModal({
                 value={remark}
                 onChange={(e) => setRemark(e.target.value)}
                 placeholder={t("additem.remarkPlaceholder")}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
+                className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500 select-text"
               />
             </div>
           </div>
@@ -974,14 +974,14 @@ export default function AddItemModal({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
+              className="px-4 py-2 rounded-card text-xs font-medium text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
             >
               {t("additem.cancel")}
             </button>
             <button
               type="submit"
               disabled={saving}
-              className="px-5 py-2 rounded-xl text-xs font-semibold bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/30 transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+              className="px-5 py-2 rounded-card text-xs font-semibold bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/30 transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
             >
               <Check className="w-3.5 h-3.5" />
               {saving ? t("additem.saving") : t("additem.saveItem")}

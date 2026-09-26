@@ -103,7 +103,7 @@ export default function InstallAgentPanel({ seed }: { seed?: string } = {}) {
   return (
     <div className="h-full flex flex-col min-h-0 p-4 gap-3">
       <div className="flex items-center gap-2 flex-shrink-0">
-        <div className="w-9 h-9 rounded-xl bg-[var(--module-accent)]/15 border border-[var(--module-accent)]/30 flex items-center justify-center">
+        <div className="w-9 h-9 rounded-card bg-[var(--module-accent)]/15 border border-[var(--module-accent)]/30 flex items-center justify-center">
           <Bot className="w-4 h-4 text-[var(--module-accent)]" />
         </div>
         <div className="flex-1 min-w-0">
@@ -138,7 +138,7 @@ export default function InstallAgentPanel({ seed }: { seed?: string } = {}) {
 
       <div
         ref={logRef}
-        className="flex-1 min-h-0 overflow-y-auto rounded-xl border border-white/5 bg-slate-900/30 p-3 space-y-2"
+        className="flex-1 min-h-0 overflow-y-auto rounded-card border border-white/5 bg-slate-900/30 p-3 space-y-2"
       >
         {lines.length === 0 && (
           <div className="text-[11px] text-slate-500 py-6 text-center">
@@ -150,7 +150,7 @@ export default function InstallAgentPanel({ seed }: { seed?: string } = {}) {
           if (line.role === "user") {
             return (
               <div key={i} className="flex justify-end">
-                <div className="max-w-[80%] rounded-lg px-2.5 py-1.5 text-[11px] bg-[var(--module-accent)]/20 text-white break-all">
+                <div className="max-w-[80%] rounded-ctl px-2.5 py-1.5 text-[11px] bg-[var(--module-accent)]/20 text-white break-all">
                   {line.text}
                 </div>
               </div>
@@ -198,12 +198,12 @@ export default function InstallAgentPanel({ seed }: { seed?: string } = {}) {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }}
           placeholder={t("installagent.inputPh")}
-          className="flex-1 bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
+          className="flex-1 bg-slate-900 border border-white/10 rounded-ctl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
         />
         <button
           onClick={() => void send()}
           disabled={busy || !input.trim()}
-          className="px-3 py-2 rounded-lg text-[11px] bg-[var(--module-accent)] hover:opacity-90 text-white font-semibold cursor-pointer disabled:opacity-40 flex items-center gap-1"
+          className="px-3 py-2 rounded-ctl text-[11px] bg-[var(--module-accent)] hover:opacity-90 text-white font-semibold cursor-pointer disabled:opacity-40 flex items-center gap-1"
         >
           <Send className="w-3 h-3" />
           {busy ? t("installagent.running") : t("installagent.send")}

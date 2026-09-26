@@ -4,7 +4,7 @@ import type { LoadTestReport } from "./types";
 // ─── 压测报告视图 ───
 export function StatCard({ label, value, accent }: { label: string; value: string; accent?: string }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-black/25 px-2.5 py-1.5 text-center">
+    <div className="rounded-ctl border border-white/10 bg-black/25 px-2.5 py-1.5 text-center">
       <div className="text-[9px] text-slate-500">{label}</div>
       <div className="text-sm font-semibold" style={{ color: accent ?? "#e2e8f0" }}>{value}</div>
     </div>

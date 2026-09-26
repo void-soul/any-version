@@ -50,7 +50,7 @@ export function PresetHeadersModal({ projectId, sets, onClose, onChanged }: {
       }
     >
       {local.map((s, i) => (
-        <div key={i} className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-2">
+        <div key={i} className="rounded-card border border-white/10 bg-black/20 p-3 space-y-2">
           <div className="flex items-center gap-2">
             <input value={s.name} onChange={(e) => update(i, { name: e.target.value })} className="flex-1 bg-transparent border border-white/10 rounded-md px-2 py-1 text-xs font-semibold text-slate-100 focus:outline-none" />
             <button onClick={() => setLocal(local.filter((_, idx) => idx !== i))} className="p-1 text-slate-500 hover:text-rose-400 cursor-pointer"><Trash2 className="w-3.5 h-3.5" /></button>
@@ -312,7 +312,7 @@ export function ProjectModal({ project, onClose, onSave, initialSection }: {
               onChange={(e) => setName(e.target.value)}
               placeholder={t("pmodals.projectNamePh")}
               onKeyDown={(e) => e.key === "Enter" && name.trim() && onSave(name.trim(), description, commonHeaders, commonParams, commonBody)}
-              className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-[var(--module-accent)]/60"
+              className="w-full bg-black/30 border border-white/10 rounded-ctl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-[var(--module-accent)]/60"
             />
           </label>
           <label className="block">
@@ -322,10 +322,10 @@ export function ProjectModal({ project, onClose, onSave, initialSection }: {
               onChange={(e) => setDescription(e.target.value)}
               placeholder={t("pmodals.projectDescPh")}
               rows={2}
-              className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 resize-none focus:outline-none focus:border-[var(--module-accent)]/60"
+              className="w-full bg-black/30 border border-white/10 rounded-ctl px-3 py-2 text-xs text-slate-200 resize-none focus:outline-none focus:border-[var(--module-accent)]/60"
             />
           </label>
-          <div ref={headerRef} className={`rounded-lg border transition-all duration-300 ${highlight === "headers" ? "border-[var(--module-accent)]/70 ring-2 ring-[color-mix(in_srgb,var(--module-accent)_30%,transparent)]" : "border-transparent"}`}>
+          <div ref={headerRef} className={`rounded-ctl border transition-all duration-300 ${highlight === "headers" ? "border-[var(--module-accent)]/70 ring-2 ring-[color-mix(in_srgb,var(--module-accent)_30%,transparent)]" : "border-transparent"}`}>
             <div className="flex items-center gap-1.5 mb-1 px-1 pt-1">
               <Link2 className="w-3 h-3" style={{ color: ACCENT }} />
               <span className="text-[11px] text-slate-400">{t("pmodals.commonHeaders")}</span>
@@ -333,7 +333,7 @@ export function ProjectModal({ project, onClose, onSave, initialSection }: {
             </div>
             <KvEditor items={commonHeaders} onChange={setCommonHeaders} placeholderKey={t("pmodals.kvHeaderPh")} placeholderValue={t("pmodals.kvValue")} withDescription={false} />
           </div>
-          <div ref={paramsRef} className={`rounded-lg border transition-all duration-300 ${highlight === "params" ? "border-[var(--module-accent)]/70 ring-2 ring-[color-mix(in_srgb,var(--module-accent)_30%,transparent)]" : "border-transparent"}`}>
+          <div ref={paramsRef} className={`rounded-ctl border transition-all duration-300 ${highlight === "params" ? "border-[var(--module-accent)]/70 ring-2 ring-[color-mix(in_srgb,var(--module-accent)_30%,transparent)]" : "border-transparent"}`}>
             <div className="flex items-center gap-1.5 mb-1 px-1 pt-1">
               <ListTree className="w-3 h-3" style={{ color: ACCENT }} />
               <span className="text-[11px] text-slate-400">{t("pmodals.commonParams")}</span>
@@ -341,7 +341,7 @@ export function ProjectModal({ project, onClose, onSave, initialSection }: {
             </div>
             <KvEditor items={commonParams} onChange={setCommonParams} placeholderKey={t("pmodals.kvParamPh")} placeholderValue={t("pmodals.kvValue")} withDescription={false} />
           </div>
-          <div ref={bodyRef} className={`rounded-lg border transition-all duration-300 ${highlight === "body" ? "border-[var(--module-accent)]/70 ring-2 ring-[color-mix(in_srgb,var(--module-accent)_30%,transparent)]" : "border-transparent"}`}>
+          <div ref={bodyRef} className={`rounded-ctl border transition-all duration-300 ${highlight === "body" ? "border-[var(--module-accent)]/70 ring-2 ring-[color-mix(in_srgb,var(--module-accent)_30%,transparent)]" : "border-transparent"}`}>
             <div className="flex items-center gap-1.5 mb-1 px-1 pt-1">
               <Braces className="w-3 h-3" style={{ color: ACCENT }} />
               <span className="text-[11px] text-slate-400">{t("pmodals.commonBody")}</span>
@@ -394,7 +394,7 @@ export function ModuleModal({ module, onClose, onSave }: {
               onChange={(e) => setName(e.target.value)}
               placeholder={t("pmodals.moduleNamePh")}
               onKeyDown={(e) => e.key === "Enter" && name.trim() && onSave(name.trim(), description)}
-              className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-[var(--module-accent)]/60"
+              className="w-full bg-black/30 border border-white/10 rounded-ctl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-[var(--module-accent)]/60"
             />
           </label>
           <label className="block">
@@ -404,7 +404,7 @@ export function ModuleModal({ module, onClose, onSave }: {
               onChange={(e) => setDescription(e.target.value)}
               placeholder={t("pmodals.moduleDescPh")}
               rows={3}
-              className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 resize-none focus:outline-none focus:border-[var(--module-accent)]/60"
+              className="w-full bg-black/30 border border-white/10 rounded-ctl px-3 py-2 text-xs text-slate-200 resize-none focus:outline-none focus:border-[var(--module-accent)]/60"
             />
           </label>
       </div>

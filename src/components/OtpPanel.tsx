@@ -1,5 +1,6 @@
 // OTP 模块面板（复刻 CloudOTP 电脑端核心：TOTP/HOTP/MOTP/Steam/Yandex + 分类 + 扫码 + 品牌图标）
 import { useState, useEffect, useCallback } from "react";
+import { theamedAlert, alertError } from "./shared/ThemedAlert";
 import {
   Plus,
   Search,
@@ -260,13 +261,13 @@ export default function OtpPanel() {
         const added = await invoke<OtpToken[]>("otp_import_uri", { text });
         load();
         if (added.length === 0) {
-          alert(t("otp.scanNotOtpauth"));
+          theamedAlert(t("otp.scanNotOtpauth"));
         }
       } else {
-        alert(t("otp.scanIgnored", { text }));
+        theamedAlert(t("otp.scanIgnored", { text }));
       }
     } catch (e) {
-      alert(t("otp.scanFail", { err: String(e) }));
+      alertError(t("otp.scanFail", { err: String(e) }));
     } finally {
       setBusy(false);
     }
@@ -290,7 +291,7 @@ export default function OtpPanel() {
       setCatModal(null);
       load();
     } catch (e) {
-      alert(t("otp.catSaveFail", { err: String(e) }));
+      alertError(t("otp.catSaveFail", { err: String(e) }));
     }
   };
   const deleteCategory = (cat: OtpCategory) => {
@@ -341,7 +342,7 @@ export default function OtpPanel() {
       setEditing(null);
       load();
     } catch (e) {
-      alert(t("otp.saveFail", { err: String(e) }));
+      alertError(t("otp.saveFail", { err: String(e) }));
     } finally {
       setBusy(false);
     }
@@ -354,9 +355,9 @@ export default function OtpPanel() {
       setShowImport(false);
       setImportText("");
       load();
-      if (added.length === 0) alert(t("otp.noValidOtpauth"));
+      if (added.length === 0) theamedAlert(t("otp.noValidOtpauth"));
     } catch (e) {
-      alert(t("otp.importFail", { err: String(e) }));
+      alertError(t("otp.importFail", { err: String(e) }));
     } finally {
       setBusy(false);
     }
@@ -391,20 +392,20 @@ export default function OtpPanel() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t("otp.searchPh")}
-            className="glass-input pl-7 pr-2 py-1.5 text-xs bg-black/30 border border-white/10 rounded-lg w-40 focus:outline-none focus:border-sky-400/50"
+            className="glass-input pl-7 pr-2 py-1.5 text-xs bg-black/30 border border-white/10 rounded-ctl w-40 focus:outline-none focus:border-sky-400/50"
           />
         </div>
         <button
           onClick={scanQr}
           disabled={busy}
-          className="px-2.5 py-1.5 rounded-lg text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+          className="px-2.5 py-1.5 rounded-ctl text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
           title={t("otp.scanTitle")}
         >
           {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <ScanLine className="w-3 h-3" />} {t("otp.scan")}
         </button>
         <button
           onClick={() => setShowImport(true)}
-          className="px-2.5 py-1.5 rounded-lg text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition"
+          className="px-2.5 py-1.5 rounded-ctl text-[11px] bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition"
         >
           <Import className="w-3 h-3" /> {t("otp.import")}
         </button>
@@ -413,7 +414,7 @@ export default function OtpPanel() {
             setEditing(null);
             setShowAdd(true);
           }}
-          className="px-2.5 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold flex items-center gap-1 cursor-pointer transition"
+          className="px-2.5 py-1.5 rounded-ctl text-[11px] bg-[var(--module-accent)] hover:opacity-85 text-white font-semibold flex items-center gap-1 cursor-pointer transition"
         >
           <Plus className="w-3 h-3" /> {t("otp.add")}
         </button>
@@ -426,7 +427,7 @@ export default function OtpPanel() {
           <div className="p-2 space-y-0.5">
             <button
               onClick={() => setActiveCategory(null)}
-              className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[11px] transition cursor-pointer ${
+              className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-ctl text-[11px] transition cursor-pointer ${
                 activeCategory === null
                   ? "bg-[var(--module-accent)]/20 text-white"
                   : "text-slate-400 hover:bg-white/5"
@@ -437,7 +438,7 @@ export default function OtpPanel() {
             {categories.map((cat) => (
               <div
                 key={cat.id}
-                className={`group w-full flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] transition cursor-pointer ${
+                className={`group w-full flex items-center gap-1 px-2.5 py-1.5 rounded-ctl text-[11px] transition cursor-pointer ${
                   activeCategory === cat.id
                     ? "bg-[var(--module-accent)]/20 text-white"
                     : "text-slate-400 hover:bg-white/5"
@@ -465,7 +466,7 @@ export default function OtpPanel() {
             ))}
             <button
               onClick={addCategory}
-              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[11px] text-slate-500 hover:text-slate-300 hover:bg-white/5 transition cursor-pointer"
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-ctl text-[11px] text-slate-500 hover:text-slate-300 hover:bg-white/5 transition cursor-pointer"
             >
               <FolderPlus className="w-3 h-3" /> {t("otp.newCat")}
             </button>
@@ -519,7 +520,7 @@ export default function OtpPanel() {
       {/* 导入弹窗 */}
       {showImport && (
         <div className="fixed inset-0 z-[110] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="w-[480px] max-w-[95vw] rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl p-5" onClick={(e) => e.stopPropagation()}>
+          <div className="w-[480px] max-w-[95vw] rounded-panel border border-white/10 bg-slate-900/95 shadow-2xl p-5" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-bold text-white">{t("otp.importTitle")}</h3>
               <button onClick={() => setShowImport(false)} className="p-1 rounded hover:bg-white/10 text-slate-400 cursor-pointer">
@@ -530,14 +531,14 @@ export default function OtpPanel() {
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
               placeholder={t("otp.importPh")}
-              className="w-full h-32 glass-input px-3 py-2 text-xs font-mono bg-black/30 border border-white/10 rounded-lg focus:outline-none focus:border-sky-400/50 resize-none"
+              className="w-full h-32 glass-input px-3 py-2 text-xs font-mono bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-sky-400/50 resize-none"
             />
             <div className="flex justify-end gap-2 mt-3">
-              <button onClick={() => setShowImport(false)} className="px-3 py-1.5 rounded-lg text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer">{t("otp.cancel")}</button>
+              <button onClick={() => setShowImport(false)} className="px-3 py-1.5 rounded-ctl text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer">{t("otp.cancel")}</button>
               <button
                 onClick={doImport}
                 disabled={busy}
-                className="px-3 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
+                className="px-3 py-1.5 rounded-ctl text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
               >
                 {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Import className="w-3 h-3" />} {t("otp.import")}
               </button>
@@ -587,7 +588,7 @@ function BrandIcon({ token }: { token: OtpToken }) {
   const hue = Math.abs(hash) % 360;
   return (
     <div
-      className="w-8 h-8 rounded-lg flex items-center justify-center text-[13px] font-bold text-white flex-shrink-0"
+      className="w-8 h-8 rounded-ctl flex items-center justify-center text-[13px] font-bold text-white flex-shrink-0"
       style={{ background: `linear-gradient(135deg, hsl(${hue},65%,45%), hsl(${(hue + 40) % 360},65%,35%))` }}
     >
       {initial}
@@ -636,7 +637,7 @@ function TokenCard({
 
   return (
     <div
-      className={`group relative rounded-xl border p-3 pb-9 transition cursor-pointer ${
+      className={`group relative rounded-card border p-3 pb-9 transition cursor-pointer ${
         token.pinned
           ? "bg-amber-500/[0.06] border-amber-500/25"
           : "bg-white/[0.03] border-white/10 hover:bg-white/[0.05] hover:border-white/20"
@@ -802,7 +803,7 @@ function TokenForm({
 
   const submit = () => {
     if (!form.secret.trim()) {
-      alert(t("otp.needSecret"));
+      theamedAlert(t("otp.needSecret"));
       return;
     }
     onSave(form, selectedCatIds);
@@ -815,7 +816,7 @@ function TokenForm({
 
   return (
     <div className="fixed inset-0 z-[110] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="w-[460px] max-w-[95vw] max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl p-5" onClick={(e) => e.stopPropagation()}>
+      <div className="w-[460px] max-w-[95vw] max-h-[90vh] overflow-y-auto rounded-panel border border-white/10 bg-slate-900/95 shadow-2xl p-5" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-bold text-white">{token ? t("otp.editToken") : t("otp.addToken")}</h3>
           <button onClick={onClose} className="p-1 rounded hover:bg-white/10 text-slate-400 cursor-pointer">
@@ -837,7 +838,7 @@ function TokenForm({
                   algorithm: t === "Steam" || t === "Yandex" || t === "MOTP" ? "SHA1" : f.algorithm,
                 }));
               }}
-              className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none"
+              className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
             >
               <option value="TOTP">{t("otp.totp")}</option>
               <option value="HOTP">{t("otp.hotp")}</option>
@@ -854,7 +855,7 @@ function TokenForm({
                 value={form.issuer}
                 onChange={(e) => set("issuer", e.target.value)}
                 placeholder={t("otp.issuerPh")}
-                className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none"
+                className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
               />
             </div>
             <div>
@@ -863,7 +864,7 @@ function TokenForm({
                 value={form.account}
                 onChange={(e) => set("account", e.target.value)}
                 placeholder={t("otp.accountPh")}
-                className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none"
+                className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
               />
             </div>
           </div>
@@ -874,7 +875,7 @@ function TokenForm({
               value={form.secret}
               onChange={(e) => set("secret", e.target.value)}
               placeholder={t("otp.secretPh")}
-              className="w-full glass-input px-3 py-2 text-xs font-mono bg-black/30 border border-white/10 rounded-lg focus:outline-none"
+              className="w-full glass-input px-3 py-2 text-xs font-mono bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
             />
           </div>
 
@@ -884,7 +885,7 @@ function TokenForm({
               value={form.description}
               onChange={(e) => set("description", e.target.value)}
               placeholder={t("otp.descPh")}
-              className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none"
+              className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
             />
           </div>
 
@@ -925,7 +926,7 @@ function TokenForm({
                 value={form.tags}
                 onChange={(e) => set("tags", e.target.value)}
                 placeholder={t("otp.tagsPh")}
-                className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none"
+                className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
               />
             </div>
             <div>
@@ -934,7 +935,7 @@ function TokenForm({
                 value={form.customIcon}
                 onChange={(e) => set("customIcon", e.target.value)}
                 placeholder={t("otp.iconPh")}
-                className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none"
+                className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
               />
             </div>
           </div>
@@ -946,7 +947,7 @@ function TokenForm({
                 <select
                   value={form.algorithm}
                   onChange={(e) => set("algorithm", e.target.value)}
-                  className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none"
+                  className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
                 >
                   <option value="SHA1">SHA1</option>
                   <option value="SHA256">SHA256</option>
@@ -958,7 +959,7 @@ function TokenForm({
                 <select
                   value={form.digits}
                   onChange={(e) => set("digits", Number(e.target.value))}
-                  className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none"
+                  className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
                 >
                   {[5, 6, 7, 8].map((d) => (
                     <option key={d} value={d}>{t("otp.digitsCount", { count: d })}</option>
@@ -975,7 +976,7 @@ function TokenForm({
                 type="number"
                 value={form.counter}
                 onChange={(e) => set("counter", Number(e.target.value))}
-                className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none"
+                className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
               />
             </div>
           ) : !isSteam && !isYandex ? (
@@ -985,7 +986,7 @@ function TokenForm({
                 type="number"
                 value={form.period}
                 onChange={(e) => set("period", Number(e.target.value))}
-                className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none"
+                className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
               />
             </div>
           ) : null}
@@ -997,18 +998,18 @@ function TokenForm({
                 value={form.pin}
                 onChange={(e) => set("pin", e.target.value)}
                 placeholder={isMotp ? t("otp.pinPh") : t("otp.pinPhShort")}
-                className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none"
+                className="w-full glass-input px-3 py-2 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
               />
             </div>
           )}
         </div>
 
         <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer">{t("otp.cancel")}</button>
+          <button onClick={onClose} className="px-3 py-1.5 rounded-ctl text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer">{t("otp.cancel")}</button>
           <button
             onClick={submit}
             disabled={busy}
-            className="px-3 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
+            className="px-3 py-1.5 rounded-ctl text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
           >
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {t("otp.save")}
           </button>
@@ -1050,11 +1051,11 @@ function CategoryModal({
       className="fixed inset-0 z-[120] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
     >
       <div
-        className="w-[360px] max-w-[95vw] rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl p-5"
+        className="w-[360px] max-w-[95vw] rounded-panel border border-white/10 bg-slate-900/95 shadow-2xl p-5"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2.5 mb-4">
-          <div className="w-9 h-9 rounded-xl bg-[var(--module-accent)]/15 border border-[var(--module-accent)]/30 flex items-center justify-center">
+          <div className="w-9 h-9 rounded-card bg-[var(--module-accent)]/15 border border-[var(--module-accent)]/30 flex items-center justify-center">
             {mode === "add" ? (
               <FolderPlus className="w-4 h-4 text-[var(--module-accent)]" />
             ) : (
@@ -1071,7 +1072,7 @@ function CategoryModal({
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 cursor-pointer"
+            className="p-1.5 rounded-ctl hover:bg-white/10 text-slate-400 cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -1083,20 +1084,20 @@ function CategoryModal({
           onChange={(e) => setName(e.target.value)}
           onKeyDown={onKey}
           placeholder={t("otp.catNamePh")}
-          className="w-full glass-input px-3 py-2.5 text-xs bg-black/30 border border-white/10 rounded-lg focus:outline-none focus:border-[var(--module-accent)]/60 placeholder:text-slate-600"
+          className="w-full glass-input px-3 py-2.5 text-xs bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-[var(--module-accent)]/60 placeholder:text-slate-600"
         />
 
         <div className="flex justify-end gap-2 mt-4">
           <button
             onClick={onClose}
-            className="px-3 py-1.5 rounded-lg text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer"
+            className="px-3 py-1.5 rounded-ctl text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer"
           >
             {t("otp.cancel")}
           </button>
           <button
             onClick={submit}
             disabled={busy || !name.trim()}
-            className="px-4 py-1.5 rounded-lg text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
+            className="px-4 py-1.5 rounded-ctl text-[11px] bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
           >
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {t("otp.save")}
           </button>
@@ -1126,12 +1127,12 @@ function ConfirmModal({
       className="fixed inset-0 z-[130] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
     >
       <div
-        className="w-[360px] max-w-[95vw] rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl p-5"
+        className="w-[360px] max-w-[95vw] rounded-panel border border-white/10 bg-slate-900/95 shadow-2xl p-5"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2.5 mb-4">
           <div
-            className={`w-9 h-9 rounded-xl flex items-center justify-center border ${
+            className={`w-9 h-9 rounded-card flex items-center justify-center border ${
               danger
                 ? "bg-rose-500/15 border-rose-500/30 text-rose-400"
                 : "bg-[var(--module-accent)]/15 border-[var(--module-accent)]/30 text-[var(--module-accent)]"
@@ -1147,7 +1148,7 @@ function ConfirmModal({
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 cursor-pointer"
+            className="p-1.5 rounded-ctl hover:bg-white/10 text-slate-400 cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -1158,13 +1159,13 @@ function ConfirmModal({
         <div className="flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="px-3 py-1.5 rounded-lg text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer"
+            className="px-3 py-1.5 rounded-ctl text-[11px] text-slate-400 hover:bg-white/5 cursor-pointer"
           >
             {t("otp.cancel")}
           </button>
           <button
             onClick={onConfirm}
-            className={`px-4 py-1.5 rounded-lg text-[11px] text-white font-semibold cursor-pointer hover:opacity-85 flex items-center gap-1 ${
+            className={`px-4 py-1.5 rounded-ctl text-[11px] text-white font-semibold cursor-pointer hover:opacity-85 flex items-center gap-1 ${
               danger
                 ? "bg-rose-600 hover:bg-rose-500"
                 : "bg-[var(--module-accent)] hover:opacity-85"

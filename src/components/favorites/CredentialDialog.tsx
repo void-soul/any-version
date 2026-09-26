@@ -82,7 +82,7 @@ export function CredentialDialog({
       onClick={onClose}
     >
       <div
-        className="w-[460px] max-w-full rounded-2xl border border-white/10 bg-slate-900 p-4 space-y-3"
+        className="w-[460px] max-w-full rounded-panel border border-white/10 bg-slate-900 p-4 space-y-3"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="text-[13px] font-bold text-white">{title}</div>
@@ -110,7 +110,7 @@ export function CredentialDialog({
             placeholder={placeholder}
             spellCheck={false}
             autoComplete="off"
-            className="w-full bg-black/30 border border-white/10 rounded-lg px-2.5 py-2 text-[12px] font-mono text-slate-100 outline-none focus:border-[var(--module-accent)]"
+            className="w-full bg-black/30 border border-white/10 rounded-ctl px-2.5 py-2 text-[12px] font-mono text-slate-100 outline-none focus:border-[var(--module-accent)]"
           />
         )}
         {note && <p className="text-[10px] text-amber-400/80 leading-snug">{note}</p>}

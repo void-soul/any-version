@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { theamedAlert, alertError } from "../shared/ThemedAlert";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -227,7 +228,7 @@ export default function CertManager() {
           <button
             key={k}
             onClick={() => changeTab(k)}
-            className={`w-full px-3 py-2 rounded-lg text-[11px] font-semibold flex items-center gap-2 transition-all cursor-pointer text-left ${
+            className={`w-full px-3 py-2 rounded-ctl text-[11px] font-semibold flex items-center gap-2 transition-all cursor-pointer text-left ${
               tab === k
                 ? "bg-[var(--module-accent)] text-white shadow-md shadow-[var(--module-accent-ring)]"
                 : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
@@ -282,7 +283,7 @@ function CertList() {
       await invoke("cert_issue_now", { id });
       await refresh();
     } catch (e) {
-      alert(t("certmgr.applyFail", { err: String(e) }));
+      alertError(t("certmgr.applyFail", { err: String(e) }));
     } finally {
       markIssuing(id, false);
     }
@@ -298,7 +299,7 @@ function CertList() {
       setDetail(await invoke<CertDetail>("cert_detail", { id }));
     } catch (e) {
       setDetailId(null);
-      alert(String(e));
+      theamedAlert(String(e));
     }
   };
   const closeDetail = () => {
@@ -332,9 +333,9 @@ function CertList() {
         id: detailId,
         targetPath: filePath,
       });
-      alert(t("certmgr.downloadDone", { path: saved }));
+      theamedAlert(t("certmgr.downloadDone", { path: saved }));
     } catch (e) {
-      alert(t("certmgr.downloadFail", { err: String(e) }));
+      alertError(t("certmgr.downloadFail", { err: String(e) }));
     } finally {
       setDownloading(false);
     }
@@ -346,7 +347,7 @@ function CertList() {
         <h3 className="text-sm font-bold text-slate-200">{t("certmgr.certsTitle")}</h3>
         <button
           onClick={() => setShowForm((v) => !v)}
-          className="px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold flex items-center gap-1.5"
+          className="px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold flex items-center gap-1.5"
         >
           <Plus className="w-3.5 h-3.5" /> {t("certmgr.newCert")}
         </button>
@@ -363,7 +364,7 @@ function CertList() {
         />
       )}
 
-      <div className="overflow-x-auto rounded-lg border border-white/5">
+      <div className="overflow-x-auto rounded-ctl border border-white/5">
         <table className="w-full text-[11px] text-slate-300">
           <thead className="bg-white/5 text-slate-400">
             <tr>
@@ -419,7 +420,7 @@ function CertList() {
       {detail && (
         <div className="fixed inset-0 modal-mask bg-black/60 flex items-center justify-center z-50">
           <div
-            className="bg-slate-900 border border-white/10 rounded-xl w-[70vw] max-h-[85vh] flex flex-col"
+            className="bg-slate-900 border border-white/10 rounded-card w-[70vw] max-h-[85vh] flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
             {/* 头部：标题 + 下载 + 关闭 */}
@@ -493,7 +494,7 @@ function CertList() {
               {Object.entries(detail.pems).map(([name, content]) => (
                 <div
                   key={name}
-                  className="rounded-lg border border-white/10 bg-black/20 overflow-hidden"
+                  className="rounded-ctl border border-white/10 bg-black/20 overflow-hidden"
                 >
                   <div className="flex items-center gap-2 px-2.5 py-1.5 bg-white/5">
                     <span className="text-[10px] text-slate-300 font-mono">{name}</span>
@@ -570,7 +571,7 @@ function CertForm({ creds, nodes, onDone }: { creds: Credential[]; nodes: Deploy
   };
 
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4 space-y-3">
+    <div className="rounded-ctl border border-white/10 bg-white/5 p-4 space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <label className="text-[11px] text-slate-400">
           {t("certmgr.domainLabel")}
@@ -626,8 +627,8 @@ function CertForm({ creds, nodes, onDone }: { creds: Credential[]; nodes: Deploy
       </div>
       {err && <div className="text-[11px] text-rose-400">{err}</div>}
       <div className="flex gap-2">
-        <button onClick={submit} className="px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold">{t("certmgr.createSave")}</button>
-        <button onClick={onDone} className="px-3 py-1.5 rounded-lg bg-white/10 text-slate-300 text-[11px]">{t("certmgr.cancel")}</button>
+        <button onClick={submit} className="px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold">{t("certmgr.createSave")}</button>
+        <button onClick={onDone} className="px-3 py-1.5 rounded-ctl bg-white/10 text-slate-300 text-[11px]">{t("certmgr.cancel")}</button>
       </div>
     </div>
   );
@@ -667,7 +668,7 @@ function DeployNodes() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-bold text-slate-200">{t("certmgr.nodesTitle")}</h3>
-        <button onClick={() => { setEditing(null); setShowForm(true); }} className="px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold flex items-center gap-1.5">
+        <button onClick={() => { setEditing(null); setShowForm(true); }} className="px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold flex items-center gap-1.5">
           <Plus className="w-3.5 h-3.5" /> {t("certmgr.newNode")}
         </button>
       </div>
@@ -676,7 +677,7 @@ function DeployNodes() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {nodes.map((n) => (
-          <div key={n.id} className="rounded-lg border border-white/5 bg-white/5 p-3">
+          <div key={n.id} className="rounded-ctl border border-white/5 bg-white/5 p-3">
             <div className="flex items-center justify-between">
               <div className="text-xs font-semibold text-slate-200">{n.name}</div>
               <span className="text-[10px] px-2 py-0.5 rounded bg-sky-500/20 text-sky-300">{n.node_type}</span>
@@ -741,7 +742,7 @@ function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDone: () 
   const fields = NODE_FIELDS[nodeType] || [];
 
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4 space-y-3">
+    <div className="rounded-ctl border border-white/10 bg-white/5 p-4 space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <label className="text-[11px] text-slate-400">
           {t("certmgr.name")}
@@ -783,8 +784,8 @@ function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDone: () 
       </div>
       {err && <div className="text-[11px] text-rose-400">{err}</div>}
       <div className="flex gap-2">
-        <button onClick={submit} className="px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold">{t("certmgr.save")}</button>
-        <button onClick={onDone} className="px-3 py-1.5 rounded-lg bg-white/10 text-slate-300 text-[11px]">{t("certmgr.cancel")}</button>
+        <button onClick={submit} className="px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold">{t("certmgr.save")}</button>
+        <button onClick={onDone} className="px-3 py-1.5 rounded-ctl bg-white/10 text-slate-300 text-[11px]">{t("certmgr.cancel")}</button>
       </div>
     </div>
   );
@@ -813,14 +814,14 @@ function Credentials() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-bold text-slate-200">{t("certmgr.credsTitle")}</h3>
-        <button onClick={() => setShowForm((v) => !v)} className="px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold flex items-center gap-1.5">
+        <button onClick={() => setShowForm((v) => !v)} className="px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold flex items-center gap-1.5">
           <Plus className="w-3.5 h-3.5" /> {t("certmgr.newCred")}
         </button>
       </div>
       {showForm && <CredForm onDone={() => { setShowForm(false); refresh(); }} />}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {creds.map((c) => (
-          <div key={c.id} className="rounded-lg border border-white/5 bg-white/5 p-3">
+          <div key={c.id} className="rounded-ctl border border-white/5 bg-white/5 p-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-slate-200">{c.name}</span>
               <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300">{c.cred_type}</span>
@@ -880,7 +881,7 @@ function CredForm({ onDone }: { onDone: () => void }) {
   const fields = CRED_FIELDS[credType] || [];
 
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4 space-y-3">
+    <div className="rounded-ctl border border-white/10 bg-white/5 p-4 space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <label className="text-[11px] text-slate-400">
           {t("certmgr.name")}
@@ -924,8 +925,8 @@ function CredForm({ onDone }: { onDone: () => void }) {
       </label>
       {err && <div className="text-[11px] text-rose-400">{err}</div>}
       <div className="flex gap-2">
-        <button onClick={submit} className="px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold">{t("certmgr.save")}</button>
-        <button onClick={onDone} className="px-3 py-1.5 rounded-lg bg-white/10 text-slate-300 text-[11px]">{t("certmgr.cancel")}</button>
+        <button onClick={submit} className="px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] font-semibold">{t("certmgr.save")}</button>
+        <button onClick={onDone} className="px-3 py-1.5 rounded-ctl bg-white/10 text-slate-300 text-[11px]">{t("certmgr.cancel")}</button>
       </div>
     </div>
   );
@@ -950,7 +951,7 @@ function SchedulerView() {
       await invoke("cert_scheduler_set", { enabled, intervalMinutes: state?.interval_minutes || 360 });
       await refresh();
     } catch (e) {
-      alert(String(e));
+      theamedAlert(String(e));
     }
   };
   const runNow = async () => {
@@ -968,16 +969,16 @@ function SchedulerView() {
   return (
     <div className="space-y-4">
       <h3 className="text-sm font-bold text-slate-200">{t("certmgr.schedTitle")}</h3>
-      <div className="rounded-lg border border-white/5 bg-white/5 p-4 text-[11px] text-slate-300 space-y-2">
+      <div className="rounded-ctl border border-white/5 bg-white/5 p-4 text-[11px] text-slate-300 space-y-2">
         <div>{t("certmgr.statusLabel")}{state?.enabled ? <span className="text-emerald-400">{t("certmgr.stateRunning")}</span> : <span className="text-amber-400">{t("certmgr.statePaused")}</span>}</div>
         <div>{t("certmgr.scanInterval", { count: state?.interval_minutes ?? 0 })}</div>
         <div>{t("certmgr.lastRun", { time: fmtDate(state?.last_run_at) })}</div>
         <div>{t("certmgr.nextRun", { time: fmtDate(state?.next_run_at) })}</div>
         <div className="flex gap-2 pt-1">
-          <button onClick={() => toggle(!state?.enabled)} className="px-3 py-1.5 rounded-lg bg-white/10 text-slate-200 text-[11px]">
+          <button onClick={() => toggle(!state?.enabled)} className="px-3 py-1.5 rounded-ctl bg-white/10 text-slate-200 text-[11px]">
             {state?.enabled ? t("certmgr.pause") : t("certmgr.enable")}
           </button>
-          <button onClick={runNow} disabled={running} className="px-3 py-1.5 rounded-lg bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] flex items-center gap-1.5">
+          <button onClick={runNow} disabled={running} className="px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-[11px] flex items-center gap-1.5">
             <Play className="w-3 h-3" /> {running ? t("certmgr.runningNow") : t("certmgr.runAll")}
           </button>
         </div>
