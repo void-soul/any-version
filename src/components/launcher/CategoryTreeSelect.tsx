@@ -164,10 +164,10 @@ export default function CategoryTreeSelect({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full bg-surface-inset border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-purple-500 transition cursor-pointer flex items-center justify-between gap-2 text-left"
+        className="w-full bg-surface-inset border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-[var(--module-accent)] transition cursor-pointer flex items-center justify-between gap-2 text-left"
       >
         <span className="flex items-center gap-1.5 min-w-0 truncate">
-          <FolderTree className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" />
+          <FolderTree className="w-3.5 h-3.5 text-[var(--module-accent)] flex-shrink-0" />
           <span className="truncate">{selectedLabel}</span>
         </span>
         <ChevronDown className={`w-3.5 h-3.5 text-slate-500 flex-shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
@@ -202,7 +202,7 @@ export default function CategoryTreeSelect({
                 }}
                 className={`w-full text-left px-2.5 py-1.5 rounded-ctl text-body transition cursor-pointer flex items-center gap-1.5 ${
                   value === 0
-                    ? "bg-purple-600/20 text-white"
+                    ? "ui-selected"
                     : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
                 }`}
               >
@@ -250,7 +250,7 @@ export default function CategoryTreeSelect({
                     }}
                     className={`flex-1 flex items-center gap-1.5 px-1.5 py-1.5 rounded-ctl text-body transition cursor-pointer min-w-0 ${
                       isSelected
-                        ? "bg-purple-600/20 text-white"
+                        ? "ui-selected"
                         : "text-slate-300 hover:text-white"
                     }`}
                   >

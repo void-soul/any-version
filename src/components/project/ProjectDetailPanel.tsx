@@ -823,7 +823,7 @@ export default function ProjectDetailPanel({
                   ? "bg-blue-500/10 text-blue-400 border-blue-500/20"
                   : status.category === "tool"
                   ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                  : "bg-purple-500/10 text-purple-400 border-purple-500/20"
+                  : "bg-[var(--module-accent-soft)] text-[var(--module-accent)] border-[var(--module-accent-ring)]"
               }`}>
                 {categoryLabel(status.category)}
               </span>

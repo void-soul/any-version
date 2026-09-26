@@ -312,7 +312,7 @@ export default function SerialMonitor() {
           </button>
           <button
             onClick={() => void switchMode("sim")}
-            className={`px-3 py-1 flex items-center gap-1 cursor-pointer ${mode === "sim" ? "bg-violet-600 text-white" : "bg-white/5 text-slate-400 hover:text-slate-200"}`}
+            className={`px-3 py-1 flex items-center gap-1 cursor-pointer ${mode === "sim" ? "bg-[var(--module-accent)] text-white" : "bg-white/5 text-slate-400 hover:text-slate-200"}`}
           >
             <Bot className="w-3.5 h-3.5" /> {t("serial.modeSim")}
           </button>
@@ -404,9 +404,9 @@ export default function SerialMonitor() {
           )}
         </div>
       ) : (
-        <div className="shrink-0 bg-white/[0.03] border border-violet-500/30 rounded-ctl p-3 space-y-2">
+        <div className="shrink-0 bg-white/[0.03] border border-[var(--module-accent-ring)] rounded-ctl p-3 space-y-2">
           <div className="flex items-center gap-2 text-body text-slate-400">
-            <Bot className="w-4 h-4 text-violet-400" />
+            <Bot className="w-4 h-4 text-[var(--module-accent)]" />
             <span>
               <span dangerouslySetInnerHTML={{ __html: t("serial.simDesc") }} />
             </span>
@@ -422,7 +422,7 @@ export default function SerialMonitor() {
                   <Square className="w-3.5 h-3.5" /> {t("serial.stopDevice")}
                 </button>
               ) : (
-                <button onClick={() => void toggleSim()} className="px-3 py-1.5 rounded-md bg-violet-600 hover:bg-violet-500 flex items-center gap-1 cursor-pointer">
+                <button onClick={() => void toggleSim()} className="px-3 py-1.5 rounded-md bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] flex items-center gap-1 cursor-pointer">
                   <Play className="w-3.5 h-3.5" /> {t("serial.startDevice")}
                 </button>
               )}
@@ -460,7 +460,7 @@ export default function SerialMonitor() {
                     className={`${inputCls} w-full resize-y min-h-[2rem]`}
                   />
                   <label className="flex items-center gap-1 text-caption text-slate-500 cursor-pointer">
-                    <input type="checkbox" checked={r.pattern_hex} onChange={(e) => updateRule(i, { pattern_hex: e.target.checked })} className="accent-violet-500" /> {t("serial.hexMatch")}
+                    <input type="checkbox" checked={r.pattern_hex} onChange={(e) => updateRule(i, { pattern_hex: e.target.checked })} className="accent-[var(--module-accent)]" /> {t("serial.hexMatch")}
                   </label>
                 </div>
                 <div className="space-y-1">
@@ -473,10 +473,10 @@ export default function SerialMonitor() {
                   />
                   <div className="flex items-center gap-2 text-caption text-slate-500">
                     <label className="flex items-center gap-1 cursor-pointer">
-                      <input type="checkbox" checked={r.response_hex} onChange={(e) => updateRule(i, { response_hex: e.target.checked })} className="accent-violet-500" /> HEX
+                      <input type="checkbox" checked={r.response_hex} onChange={(e) => updateRule(i, { response_hex: e.target.checked })} className="accent-[var(--module-accent)]" /> HEX
                     </label>
                     <label className="flex items-center gap-1 cursor-pointer" title={t("serial.appendNlTip")}>
-                      <input type="checkbox" checked={r.append_newline} onChange={(e) => updateRule(i, { append_newline: e.target.checked })} className="accent-violet-500" /> \n
+                      <input type="checkbox" checked={r.append_newline} onChange={(e) => updateRule(i, { append_newline: e.target.checked })} className="accent-[var(--module-accent)]" /> \n
                     </label>
                   </div>
                 </div>
@@ -518,7 +518,7 @@ export default function SerialMonitor() {
               <div key={i} className={`flex ${system ? "justify-center" : outgoing ? "justify-end" : "justify-start"}`}>
                 <div className={`flex max-w-[86%] items-end gap-2 ${outgoing ? "flex-row-reverse" : ""}`}>
                   <span className="shrink-0 text-tiny text-slate-600">{entry.time}</span>
-                  <div className={`rounded-card px-3 py-2 ${system ? "bg-white/[0.06] text-yellow-200" : outgoing ? "bg-cyan-500/15 text-cyan-100" : entry.dir === "dev" ? "bg-violet-500/15 text-violet-100" : "bg-emerald-500/10 text-slate-200"}`}>
+                  <div className={`rounded-card px-3 py-2 ${system ? "bg-white/[0.06] text-yellow-200" : outgoing ? "bg-cyan-500/15 text-cyan-100" : entry.dir === "dev" ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]" : "bg-emerald-500/10 text-slate-200"}`}>
                     <span className="mr-1.5 text-tiny opacity-70">{entry.dir === "rx" ? t("serial.dirDevice") : entry.dir === "tx" ? t("serial.dirSend") : entry.dir === "dev" ? t("serial.dirResp") : t("serial.dirSys")}</span>
                     <span className="break-all whitespace-pre-wrap">{hexView && entry.hex !== undefined ? entry.hex : entry.text}</span>
                   </div>

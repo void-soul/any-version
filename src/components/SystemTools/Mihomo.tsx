@@ -244,7 +244,8 @@ export default function Mihomo() {
             </div>
           ))}
           {state?.is_admin === false && (
-            <div className="pt-1">
+            // 居中：这个按钮是告警块的唯一出口，靠左会看着像正文的一部分
+            <div className="pt-1 flex justify-center">
               <button
                 onClick={() => act("elevate", () => mihomoApi.restartAsAdmin())}
                 disabled={busy === "elevate"}

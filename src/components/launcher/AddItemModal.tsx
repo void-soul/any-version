@@ -352,7 +352,7 @@ export default function AddItemModal({
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-white/[0.02]">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-card bg-purple-600/20 border border-purple-500/30 flex items-center justify-center text-purple-400">
+            <div className="w-8 h-8 rounded-card ui-note ui-note-info border-[var(--module-accent-ring)] flex items-center justify-center text-[var(--module-accent)]">
               {icon ? (
                 <img src={icon} className="w-5 h-5 object-contain" alt="" />
               ) : htmlIcon ? (
@@ -399,7 +399,7 @@ export default function AddItemModal({
               }}
               className={`px-3 py-1.5 rounded-card text-body font-medium flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
                 activeTab === t.id
-                  ? "bg-purple-600 text-white shadow-md shadow-purple-600/20"
+                  ? "ui-selected shadow-md shadow-[var(--module-accent-ring)]"
                   : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
               }`}
             >
@@ -433,7 +433,7 @@ export default function AddItemModal({
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder={t("additem.nameExample")}
-                className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-purple-500 select-text transition"
+                className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-[var(--module-accent)] select-text transition"
               />
             </div>
           </div>
@@ -465,7 +465,7 @@ export default function AddItemModal({
                   title={t("additem.uploadImageTitle")}
                   className="px-2.5 py-1.5 ui-btn text-slate-300 hover:text-white text-body rounded-ctl transition cursor-pointer flex items-center gap-1.5"
                 >
-                  <ImageIcon className="w-3.5 h-3.5 text-purple-400" />
+                  <ImageIcon className="w-3.5 h-3.5 text-[var(--module-accent)]" />
                   {t("additem.uploadImage")}
                 </button>
                 <button
@@ -545,7 +545,7 @@ export default function AddItemModal({
                     value={netIconUrl}
                     onChange={(e) => setNetIconUrl(e.target.value)}
                     placeholder={t("additem.netIconPlaceholder")}
-                    className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-1.5 text-body text-white focus:outline-none focus:border-purple-500 select-text"
+                    className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-1.5 text-body text-white focus:outline-none focus:border-[var(--module-accent)] select-text"
                   />
                   <button
                     type="button"
@@ -583,12 +583,12 @@ export default function AddItemModal({
                     value={target}
                     onChange={(e) => setTarget(e.target.value)}
                     placeholder={t("additem.fileTargetPlaceholder")}
-                    className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-purple-500 select-text"
+                    className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-[var(--module-accent)] select-text"
                   />
                   <button
                     type="button"
                     onClick={handleSelectFile}
-                    className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white text-body rounded-card transition cursor-pointer flex items-center gap-1.5"
+                    className="px-3.5 py-2 ui-btn ui-btn-primary text-white text-body rounded-card transition cursor-pointer flex items-center gap-1.5"
                   >
                     <Upload className="w-3.5 h-3.5" />
                     {t("additem.browseFile")}
@@ -606,7 +606,7 @@ export default function AddItemModal({
                     value={params}
                     onChange={(e) => setParams(e.target.value)}
                     placeholder={t("additem.paramsExample")}
-                    className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-purple-500 select-text"
+                    className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-[var(--module-accent)] select-text"
                   />
                 </div>
                 <div>
@@ -618,7 +618,7 @@ export default function AddItemModal({
                     value={startLocation}
                     onChange={(e) => setStartLocation(e.target.value)}
                     placeholder={t("additem.startDirPlaceholder")}
-                    className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-purple-500 select-text"
+                    className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-[var(--module-accent)] select-text"
                   />
                 </div>
               </div>
@@ -638,12 +638,12 @@ export default function AddItemModal({
                   value={target}
                   onChange={(e) => setTarget(e.target.value)}
                   placeholder={t("additem.folderPlaceholder")}
-                  className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-purple-500 select-text"
+                  className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-[var(--module-accent)] select-text"
                 />
                 <button
                   type="button"
                   onClick={handleSelectFolder}
-                  className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white text-body rounded-card transition cursor-pointer flex items-center gap-1.5"
+                  className="px-3.5 py-2 ui-btn ui-btn-primary text-white text-body rounded-card transition cursor-pointer flex items-center gap-1.5"
                 >
                   <Folder className="w-3.5 h-3.5" />
                   {t("additem.browseFolder")}
@@ -666,13 +666,13 @@ export default function AddItemModal({
                     value={target}
                     onChange={(e) => setTarget(e.target.value)}
                     placeholder={t("additem.urlExample")}
-                    className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-purple-500 select-text"
+                    className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-[var(--module-accent)] select-text"
                   />
                   <button
                     type="button"
                     onClick={handleFetchUrl}
                     disabled={urlFetching || !target.trim()}
-                    className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-body rounded-card transition cursor-pointer flex items-center gap-1.5"
+                    className="px-3.5 py-2 ui-btn ui-btn-primary disabled:opacity-50 text-white text-body rounded-card transition cursor-pointer flex items-center gap-1.5"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${urlFetching ? "animate-spin" : ""}`} />
                     {urlFetching ? t("additem.fetching") : t("additem.fetchInfo")}
@@ -702,7 +702,7 @@ export default function AddItemModal({
                     }}
                     className={`p-2 rounded-card text-left border transition cursor-pointer flex items-center gap-2 ${
                       target === sys.target
-                        ? "bg-purple-600/20 border-purple-500 text-white"
+                        ? "ui-selected border-[var(--module-accent-ring)]"
                         : "bg-white/[0.02] border-white/5 text-slate-300 hover:bg-white/[0.05]"
                     }`}
                   >
@@ -725,7 +725,7 @@ export default function AddItemModal({
                   type="button"
                   onClick={handleScanAppx}
                   disabled={appxScanning}
-                  className="text-body text-purple-400 hover:text-purple-300 flex items-center gap-1 cursor-pointer"
+                  className="text-body text-[var(--module-accent)] hover:text-white flex items-center gap-1 cursor-pointer"
                 >
                   <RefreshCw className={`w-3 h-3 ${appxScanning ? "animate-spin" : ""}`} />
                   {t("additem.rescan")}
@@ -741,7 +741,7 @@ export default function AddItemModal({
                   value={appxSearch}
                   onChange={(e) => setAppxSearch(e.target.value)}
                   placeholder={t("additem.searchAppx")}
-                  className="w-full bg-white/5 border border-white/10 rounded-card pl-9 pr-3 py-1.5 text-body text-white focus:outline-none focus:border-purple-500 select-text"
+                  className="w-full bg-white/5 border border-white/10 rounded-card pl-9 pr-3 py-1.5 text-body text-white focus:outline-none focus:border-[var(--module-accent)] select-text"
                 />
               </div>
 
@@ -764,7 +764,7 @@ export default function AddItemModal({
                       }}
                       className={`p-2 rounded-card text-left border transition cursor-pointer flex items-center gap-2.5 ${
                         target.includes(app.familyName)
-                          ? "bg-purple-600/20 border-purple-500 text-white"
+                          ? "ui-selected border-[var(--module-accent-ring)]"
                           : "bg-white/[0.02] border-white/5 text-slate-300 hover:bg-white/[0.05]"
                       }`}
                     >
@@ -792,7 +792,7 @@ export default function AddItemModal({
                   type="button"
                   onClick={handleScanStartMenu}
                   disabled={startMenuScanning}
-                  className="text-body text-purple-400 hover:text-purple-300 flex items-center gap-1 cursor-pointer"
+                  className="text-body text-[var(--module-accent)] hover:text-white flex items-center gap-1 cursor-pointer"
                 >
                   <RefreshCw className={`w-3 h-3 ${startMenuScanning ? "animate-spin" : ""}`} />
                   {t("additem.rescanMenu")}
@@ -808,7 +808,7 @@ export default function AddItemModal({
                   value={startMenuSearch}
                   onChange={(e) => setStartMenuSearch(e.target.value)}
                   placeholder={t("additem.searchStartMenu")}
-                  className="w-full bg-white/5 border border-white/10 rounded-card pl-9 pr-3 py-1.5 text-body text-white focus:outline-none focus:border-purple-500 select-text"
+                  className="w-full bg-white/5 border border-white/10 rounded-card pl-9 pr-3 py-1.5 text-body text-white focus:outline-none focus:border-[var(--module-accent)] select-text"
                 />
               </div>
 
@@ -831,7 +831,7 @@ export default function AddItemModal({
                       }}
                       className={`p-2 rounded-card text-left border transition cursor-pointer flex items-center gap-2.5 ${
                         target === prog.target
-                          ? "bg-purple-600/20 border-purple-500 text-white"
+                          ? "ui-selected border-[var(--module-accent-ring)]"
                           : "bg-white/[0.02] border-white/5 text-slate-300 hover:bg-white/[0.05]"
                       }`}
                     >
@@ -863,7 +863,7 @@ export default function AddItemModal({
                       { name: t("additem.subTaskName", { n: prev.length + 1 }), target: "", params: "", runAsAdmin: false, delayMs: 500 },
                     ])
                   }
-                  className="px-2.5 py-1 bg-purple-600/30 hover:bg-purple-600/50 text-purple-300 text-body rounded-ctl flex items-center gap-1 cursor-pointer"
+                  className="ui-btn px-2.5 py-1 flex items-center gap-1 cursor-pointer"
                 >
                   <Plus className="w-3 h-3" />
                   {t("additem.addSubItem")}
@@ -964,7 +964,7 @@ export default function AddItemModal({
                 value={remark}
                 onChange={(e) => setRemark(e.target.value)}
                 placeholder={t("additem.remarkPlaceholder")}
-                className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-1.5 text-body text-white focus:outline-none focus:border-purple-500 select-text"
+                className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-1.5 text-body text-white focus:outline-none focus:border-[var(--module-accent)] select-text"
               />
             </div>
           </div>
@@ -981,7 +981,7 @@ export default function AddItemModal({
             <button
               type="submit"
               disabled={saving}
-              className="px-5 py-2 rounded-card text-body font-semibold bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/30 transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+              className="px-5 py-2 rounded-card text-body font-semibold ui-btn ui-btn-primary text-white shadow-lg shadow-[var(--module-accent-ring)] transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
             >
               <Check className="w-3.5 h-3.5" />
               {saving ? t("additem.saving") : t("additem.saveItem")}

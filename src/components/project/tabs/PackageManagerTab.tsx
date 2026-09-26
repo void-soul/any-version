@@ -798,7 +798,7 @@ export function PackageManagerTab({
                 <input type="radio" name="wf_method" value="point" checked={workflowMethod === "point"}
                   onChange={() => setWorkflowMethod("point")} className="mt-0.5" />
                 <div>
-                  <span className="text-body font-semibold text-purple-300">{t("pkgmgr.pointTitle")}</span>
+                  <span className="text-body font-semibold text-[var(--module-accent)]">{t("pkgmgr.pointTitle")}</span>
                   <p className="text-title text-slate-500 mt-0.5">
                     {t("pkgmgr.pointDesc", { name: pm.display_name, kind: kindLabel })}
                   </p>
@@ -860,7 +860,7 @@ export function PackageManagerTab({
           ) : (
             <>
               <p className="text-caption text-slate-400">
-                <span className="font-semibold text-purple-300">{t("pkgmgr.pointMode")}</span> — {t("pkgmgr.pointModeDesc", { name: pm.display_name })}
+                <span className="font-semibold text-[var(--module-accent)]">{t("pkgmgr.pointMode")}</span> — {t("pkgmgr.pointModeDesc", { name: pm.display_name })}
               </p>
               <div>
                 <label className="text-title text-slate-500 block mb-0.5">{t("pkgmgr.pointPathLabel", { name: pm.display_name, kind: kindLabel })}</label>
@@ -944,7 +944,7 @@ export function PackageManagerTab({
             <p className="text-caption text-slate-400 font-semibold uppercase tracking-wider">{t("pkgmgr.opPreview")}</p>
             <div className="space-y-1.5">
               <div className="flex items-center gap-2 text-body">
-                <span className={`px-1.5 py-0.5 rounded text-title font-semibold ${workflowMethod === "junction" ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]" : "bg-purple-500/10 text-purple-400"
+                <span className={`px-1.5 py-0.5 rounded text-title font-semibold ${workflowMethod === "junction" ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]" : "bg-[var(--module-accent-soft)] text-[var(--module-accent)]"
                   }`}>
                   {workflowMethod === "junction" ? "Junction" : t("pkgmgr.point")}
                 </span>
@@ -1082,7 +1082,7 @@ export function PackageManagerTab({
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-bold text-white">{pm.display_name}</h3>
                 {pm.built_in && (
-                  <span className="px-1.5 py-0.5 rounded text-caption bg-purple-500/10 text-purple-400 border border-purple-500/20 font-semibold">{t("pkgmgr.builtIn")}</span>
+                  <span className="px-1.5 py-0.5 rounded text-caption bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] font-semibold">{t("pkgmgr.builtIn")}</span>
                 )}
               </div>
               {installed ? (

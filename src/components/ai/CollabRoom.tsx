@@ -85,7 +85,7 @@ function TaskBadge({ status }: { status: string }) {
     open: "bg-slate-600",
     claimed: "bg-amber-600",
     in_progress: "bg-blue-600",
-    in_review: "bg-violet-600",
+    in_review: "bg-[var(--module-accent)]",
     done: "bg-emerald-600",
   };
   const label: Record<string, string> = {

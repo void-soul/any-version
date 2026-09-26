@@ -537,7 +537,7 @@ export default function ModelConfig() {
                       <ExternalLink className="w-3 h-3" />
                     </a>
                   )}
-                  <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold flex-shrink-0 ${provider.category === "relay" ? "bg-cyan-500/15 text-cyan-400" : provider.category === "local" ? "bg-purple-500/15 text-purple-400" : "bg-emerald-500/15 text-emerald-400"}`}>
+                  <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold flex-shrink-0 ${provider.category === "relay" ? "bg-cyan-500/15 text-cyan-400" : provider.category === "local" ? "bg-[var(--module-accent)]/15 text-[var(--module-accent)]" : "bg-emerald-500/15 text-emerald-400"}`}>
                     {provider.category === "relay" ? t("modelcfg.relay") : provider.category === "local" ? t("modelcfg.local") : t("modelcfg.vendor")}
                   </span>
                   {provider.openai_url && <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-blue-500/15 text-blue-300/80 flex-shrink-0">OA</span>}
@@ -624,7 +624,7 @@ export default function ModelConfig() {
                       <button key={p.id} onClick={() => openAddModal(p)} disabled={added}
                         className="text-left p-2.5 rounded-card border border-white/5 bg-slate-900/40 hover:bg-white/5 hover:border-white/15 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-all group">
                         <div className="flex items-center gap-2 min-w-0">
-                          {isLocal ? <Laptop className="w-3.5 h-3.5 text-purple-400/70 flex-shrink-0" /> : isRelay ? <Server className="w-3.5 h-3.5 text-cyan-400/70 flex-shrink-0" /> : <Globe className="w-3.5 h-3.5 text-emerald-400/70 flex-shrink-0" />}
+                          {isLocal ? <Laptop className="w-3.5 h-3.5 text-[var(--module-accent)]/70 flex-shrink-0" /> : isRelay ? <Server className="w-3.5 h-3.5 text-cyan-400/70 flex-shrink-0" /> : <Globe className="w-3.5 h-3.5 text-emerald-400/70 flex-shrink-0" />}
                           <span className="text-caption font-bold text-slate-200 truncate">{p.name}</span>
                           {added && <span className="ml-auto text-[8px] text-slate-600 flex-shrink-0">{t("modelcfg.added")}</span>}
                           {!added && p.website && (
@@ -672,7 +672,7 @@ export default function ModelConfig() {
             <div className="p-4 border-b border-white/5 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 min-w-0">
                 <h3 className="text-body font-bold text-slate-200 truncate">{detailProvider.name}</h3>
-                <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold flex-shrink-0 ${detailProvider.category === "relay" ? "bg-cyan-500/15 text-cyan-400" : detailProvider.category === "local" ? "bg-purple-500/15 text-purple-400" : "bg-emerald-500/15 text-emerald-400"}`}>
+                <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold flex-shrink-0 ${detailProvider.category === "relay" ? "bg-cyan-500/15 text-cyan-400" : detailProvider.category === "local" ? "bg-[var(--module-accent)]/15 text-[var(--module-accent)]" : "bg-emerald-500/15 text-emerald-400"}`}>
                   {detailProvider.category === "relay" ? t("modelcfg.relay") : detailProvider.category === "local" ? t("modelcfg.local") : t("modelcfg.vendor")}
                 </span>
                 {detailProvider.website && (

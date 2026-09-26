@@ -168,7 +168,7 @@ interface SectionStyle {
 
 const SECTION_STYLES: Record<string, SectionStyle> = {
   recent: { iconClass: "text-sky-400", softClass: "bg-sky-500/10", barClass: "bg-sky-500/60" },
-  tool: { iconClass: "text-violet-400", softClass: "bg-violet-500/10", barClass: "bg-violet-500/60" },
+  tool: { iconClass: "text-[var(--module-accent)]", softClass: "bg-violet-500/10", barClass: "bg-violet-500/60" },
   model: { iconClass: "text-amber-400", softClass: "bg-amber-500/10", barClass: "bg-amber-500/60" },
   provider: { iconClass: "text-emerald-400", softClass: "bg-emerald-500/10", barClass: "bg-emerald-500/60" },
 };

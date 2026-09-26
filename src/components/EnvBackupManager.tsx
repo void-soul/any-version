@@ -389,7 +389,7 @@ export default function EnvBackupManager() {
                 {/* System Variables */}
                 <div className="space-y-2">
                   <div className="flex items-center gap-1.5">
-                    <ShieldCheck className="w-4 h-4 text-purple-400" />
+                    <ShieldCheck className="w-4 h-4 text-[var(--module-accent)]" />
                     <h4 className="text-body font-semibold text-slate-300">{t("envbackup.sysVarsTitle")}</h4>
                   </div>
 

@@ -23,7 +23,7 @@ export function EndpointRow({ ep, selected, onSelect, onDelete, onToggleFavorite
 }) {
   const { t } = useTranslation();
   const Icon = methodIcon(ep.method);
-  const color = ep.method === "GET" ? "text-emerald-400" : ep.method === "POST" ? "text-amber-400" : ep.method === "PUT" ? "text-sky-400" : ep.method === "DELETE" ? "text-rose-400" : ep.method === "PATCH" ? "text-violet-400" : "text-slate-400";
+  const color = ep.method === "GET" ? "text-emerald-400" : ep.method === "POST" ? "text-amber-400" : ep.method === "PUT" ? "text-sky-400" : ep.method === "DELETE" ? "text-rose-400" : ep.method === "PATCH" ? "text-[var(--module-accent)]" : "text-slate-400";
   // 继承自项目模板的参数总数（含 form-data）
   const tplCount =
     [ep.headers, ep.query_params, ep.path_params, ep.body_urlencoded, ep.cookies].reduce((n, a) => n + a.filter((x) => x.from_template).length, 0) +

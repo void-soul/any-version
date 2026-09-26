@@ -172,7 +172,7 @@ export default function CategoryModal({
                   }}
                   className={`p-2.5 rounded-card border text-left transition cursor-pointer flex flex-col ${
                     classificationType === opt.type
-                      ? "bg-purple-600/20 border-purple-500/50 text-white"
+                      ? "ui-selected border-[var(--module-accent-ring)]"
                       : "bg-white/[0.02] border-white/5 text-slate-400 hover:bg-white/[0.05]"
                   }`}
                 >
@@ -196,7 +196,7 @@ export default function CategoryModal({
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder={t("category.namePh")}
-                className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-purple-500 transition select-text"
+                className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-[var(--module-accent)] transition select-text"
               />
             </div>
             <div>
@@ -231,7 +231,7 @@ export default function CategoryModal({
                   if (e.target.value) setIcon(e.target.value);
                 }}
                 placeholder={t("category.iconPh")}
-                className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-1.5 text-body text-white focus:outline-none focus:border-purple-500 select-text"
+                className="flex-1 bg-white/5 border border-white/10 rounded-card px-3 py-1.5 text-body text-white focus:outline-none focus:border-[var(--module-accent)] select-text"
               />
               <button
                 type="button"
@@ -254,7 +254,7 @@ export default function CategoryModal({
                   key={em}
                   onClick={() => setIcon(em)}
                   className={`w-7 h-7 rounded-ctl flex items-center justify-center text-sm transition cursor-pointer ${
-                    icon === em ? "bg-purple-600 text-white scale-110" : "hover:bg-white/10"
+                    icon === em ? "ui-selected scale-110" : "hover:bg-white/10"
                   }`}
                 >
                   {em}
@@ -265,7 +265,7 @@ export default function CategoryModal({
 
           {/* Type 1: Associated Folder Options */}
           {classificationType === 1 && (
-            <div className="p-3.5 rounded-card bg-purple-500/5 border border-purple-500/20 space-y-3">
+            <div className="p-3.5 rounded-card bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] space-y-3">
               <div>
                 <label className="block text-body font-medium text-slate-300 mb-1">{t("category.folderPathLabel")}</label>
                 <div className="flex items-center gap-2">
@@ -282,7 +282,7 @@ export default function CategoryModal({
                   <button
                     type="button"
                     onClick={handleSelectFolder}
-                    className="px-3 py-2 bg-purple-600 hover:bg-purple-500 text-white text-body rounded-card transition cursor-pointer flex items-center gap-1.5"
+                    className="px-3 py-2 ui-btn ui-btn-primary text-white text-body rounded-card transition cursor-pointer flex items-center gap-1.5"
                   >
                     <Folder className="w-3.5 h-3.5" />
                     {t("category.browse")}
@@ -326,7 +326,7 @@ export default function CategoryModal({
                 type="checkbox"
                 checked={excludeSearch}
                 onChange={(e) => setExcludeSearch(e.target.checked)}
-                className="rounded border-white/10 bg-white/5 text-purple-600 focus:ring-0"
+                className="rounded border-white/10 bg-white/5 text-[var(--module-accent)] focus:ring-0"
               />
               <span>{t("category.excludeSearch")}</span>
             </label>
@@ -338,7 +338,7 @@ export default function CategoryModal({
                 type="checkbox"
                 checked={defaultCollapsed}
                 onChange={(e) => setDefaultCollapsed(e.target.checked)}
-                className="mt-0.5 rounded border-white/10 bg-white/5 text-purple-600 focus:ring-0"
+                className="mt-0.5 rounded border-white/10 bg-white/5 text-[var(--module-accent)] focus:ring-0"
               />
               <span>
                 {t("category.collapseLabel")}
@@ -361,7 +361,7 @@ export default function CategoryModal({
             <button
               type="submit"
               disabled={saving}
-              className="px-5 py-2 rounded-card text-body font-semibold bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/30 transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+              className="px-5 py-2 rounded-card text-body font-semibold ui-btn ui-btn-primary text-white shadow-lg shadow-[var(--module-accent-ring)] transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
             >
               <Check className="w-3.5 h-3.5" />
               {saving ? t("category.saving") : t("category.saveCategory")}

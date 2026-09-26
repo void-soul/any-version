@@ -240,7 +240,7 @@ export default function WsDebugger() {
               <div key={i} className={`flex ${system ? "justify-center" : outgoing ? "justify-end" : "justify-start"}`}>
                 <div className={`flex max-w-[86%] items-end gap-2 ${outgoing ? "flex-row-reverse" : ""}`}>
                   <span className="shrink-0 text-tiny text-slate-600">{entry.time}</span>
-                  <div className={`rounded-card px-3 py-2 ${system ? "bg-white/[0.06]" : outgoing ? "bg-indigo-500/15" : entry.dir === "event" ? "bg-violet-500/15" : "bg-emerald-500/10"} ${colorCls(entry.dir)}`}>
+                  <div className={`rounded-card px-3 py-2 ${system ? "bg-white/[0.06]" : outgoing ? "bg-indigo-500/15" : entry.dir === "event" ? "bg-[var(--module-accent-soft)]" : "bg-emerald-500/10"} ${colorCls(entry.dir)}`}>
                     <span className="mr-1.5 text-tiny opacity-70">{entry.dir === "rx" ? t("wsdebug.dirRx") : entry.dir === "tx" ? t("wsdebug.dirTx") : entry.dir === "event" ? t("wsdebug.dirEvent") : entry.dir === "open" ? t("wsdebug.dirOpen") : entry.dir === "close" ? t("wsdebug.dirClose") : t("wsdebug.dirSys")}</span>
                     <span className="break-all whitespace-pre-wrap">{entry.text}</span>
                   </div>

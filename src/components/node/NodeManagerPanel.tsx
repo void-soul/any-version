@@ -1268,7 +1268,7 @@ function ProjectCard({
             busy={false}
             onClick={() => onOpenWeb(project)}
             icon={ExternalLink}
-            color="bg-violet-600 hover:bg-violet-500"
+            color="bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)]"
             label={t("nodeproj.openHome")}
             title={
               consoleUrlMode

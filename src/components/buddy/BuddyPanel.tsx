@@ -2463,7 +2463,7 @@ export default function BuddyPanel() {
                               : planBadge === "TRIAL"
                                 ? "bg-sky-500/15 text-sky-300 border-sky-500/25"
                                 : planBadge === "ENTERPRISE"
-                                  ? "bg-violet-500/15 text-violet-300 border-violet-500/25"
+                                  ? "bg-[var(--module-accent-soft)] text-violet-300 border-violet-500/25"
                                   : "bg-slate-500/15 text-slate-400 border-slate-500/25"
                           }`}
                         >
@@ -2740,7 +2740,7 @@ export default function BuddyPanel() {
                                     {s.status}
                                   </span>
                                   {s.isPlayground && (
-                                    <span className="inline-flex items-center text-[8px] px-1 py-0.5 rounded bg-violet-500/15 text-violet-300 border border-violet-500/25 flex-shrink-0">
+                                    <span className="inline-flex items-center text-[8px] px-1 py-0.5 rounded bg-[var(--module-accent-soft)] text-violet-300 border border-violet-500/25 flex-shrink-0">
                                       Playground
                                     </span>
                                   )}

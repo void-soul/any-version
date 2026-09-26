@@ -141,7 +141,7 @@ export default function LocalNetworkPanel() {
       {/* Ping */}
       <div className="glass-panel flex min-h-0 flex-col rounded-panel border border-white/5 p-5">
         <div className="flex shrink-0 items-center gap-2 border-b border-white/5 pb-2">
-          <Signal className="w-4 h-4 text-violet-400" />
+          <Signal className="w-4 h-4 text-[var(--module-accent)]" />
           <h4 className="font-semibold text-white text-body">Ping</h4>
         </div>
         <div className="mt-3 flex shrink-0 gap-2">
@@ -157,7 +157,7 @@ export default function LocalNetworkPanel() {
             {[1, 2, 4, 6, 8, 10].map((n) => <option key={n} value={n}>{t("netpan.pingCount", { n })}</option>)}
           </select>
           <button onClick={runPing} disabled={pinging || !pingHost.trim()}
-            className="px-4 py-2 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white rounded-ctl text-body font-semibold cursor-pointer transition-all">
+            className="px-4 py-2 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-ctl text-body font-semibold cursor-pointer transition-all">
             {pinging ? t("netpan.pinging") : t("netpan.ping")}
           </button>
         </div>

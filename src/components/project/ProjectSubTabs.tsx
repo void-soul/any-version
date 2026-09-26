@@ -638,7 +638,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
               <input type="radio" name="wf_method" value="point" checked={workflowMethod === "point"}
                 onChange={() => setWorkflowMethod("point")} className="mt-0.5" />
               <div>
-                <span className="text-body font-semibold text-purple-300">{t("projsub.optBPoint")}</span>
+                <span className="text-body font-semibold text-[var(--module-accent)]">{t("projsub.optBPoint")}</span>
                 <p className="text-title text-slate-500 mt-0.5">
                   {t("projsub.optBDesc")}
                 </p>
@@ -699,7 +699,7 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
           ) : (
             <>
               <p className="text-caption text-slate-400">
-                <span className="font-semibold text-purple-300">{t("projsub.pointModeDesc")}</span> {t("projsub.pointModeHint")}
+                <span className="font-semibold text-[var(--module-accent)]">{t("projsub.pointModeDesc")}</span> {t("projsub.pointModeHint")}
               </p>
               <div>
                 <label className="text-title text-slate-500 block mb-0.5">{t("projsub.pointPathLabel")}</label>
@@ -1087,13 +1087,13 @@ export function EnvVarsTab({ project, def, onActiveSubTabChange, isOperating, re
           <div className="flex items-center gap-2">
             <button
               onClick={() => setAdvanced(!advanced)}
-              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${advanced ? "bg-purple-600" : "bg-white/10"}`}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${advanced ? "bg-[var(--module-accent)]" : "bg-white/10"}`}
             >
               <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${advanced ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
             </button>
             <span className="text-body font-semibold text-slate-300">{t("projsub.advModeTitle")}</span>
             {advanced && (
-              <span className="px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 text-caption font-semibold">{t("projsub.advBadge")}</span>
+              <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] border border-[var(--module-accent-ring)] text-caption font-semibold">{t("projsub.advBadge")}</span>
             )}
           </div>
           {advanced && (
@@ -2059,7 +2059,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                 <input type="radio" name="wf_method" value="point" checked={workflowMethod === "point"}
                   onChange={() => setWorkflowMethod("point")} className="mt-0.5" />
                 <div>
-                  <span className="text-body font-semibold text-purple-300">{t("projsub.optBStore")}</span>
+                  <span className="text-body font-semibold text-[var(--module-accent)]">{t("projsub.optBStore")}</span>
                   <p className="text-caption text-slate-500 mt-0.5">
                     {t("projsub.optBStoreDesc", { name: project.display_name })}
                   </p>
@@ -2126,7 +2126,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
           ) : (
             <>
               <p className="text-caption text-slate-400">
-                <span className="font-semibold text-purple-300">{t("projsub.storePointDesc")}</span> {t("projsub.storePointHint", { name: project.display_name })}
+                <span className="font-semibold text-[var(--module-accent)]">{t("projsub.storePointDesc")}</span> {t("projsub.storePointHint", { name: project.display_name })}
               </p>
               <div className="space-y-1.5">
                 <div>
@@ -2203,7 +2203,7 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
             <p className="text-tiny text-slate-400 font-semibold uppercase tracking-wider">{t("projsub.storePreviewOp")}</p>
             <div className="space-y-1.5">
               <div className="flex items-center gap-2 text-body">
-                <span className={`px-1.5 py-0.5 rounded text-caption font-semibold ${workflowMethod === "junction" ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]" : "bg-purple-500/10 text-purple-400"
+                <span className={`px-1.5 py-0.5 rounded text-caption font-semibold ${workflowMethod === "junction" ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]" : "bg-[var(--module-accent-soft)] text-[var(--module-accent)]"
                   }`}>
                   {workflowMethod === "junction" ? t("projsub.storeModeJunction") : t("projsub.storeModePoint")}
                 </span>
