@@ -1518,6 +1518,7 @@ pub const AGENT_TOOLS_SPEC: &str = r##"[
   { "type": "function", "function": { "name": "get_subtree", "description": "读取某个节点及其全部子孙的完整内容（名称、详情 Markdown、类型、颜色）。", "parameters": { "type": "object", "properties": { "root_id": { "type": "string", "description": "子树根节点 id" } }, "required": ["root_id"] } } },
   { "type": "function", "function": { "name": "search_nodes", "description": "按关键词搜索节点（匹配名称与详情），返回匹配节点的 id 与名称。", "parameters": { "type": "object", "properties": { "keyword": { "type": "string" } }, "required": ["keyword"] } } },
   { "type": "function", "function": { "name": "add_nodes", "description": "在指定父节点下新增一批兄弟节点。新节点不需要提供 id，系统会生成并在工具结果里返回。要建整棵子树时，按层级多次调用（先挂父，再以返回的 id 为父挂子）。分析某个文件后落地为导图时，用 sources 把来源文件锚到节点上。", "parameters": { "type": "object", "properties": { "parent_id": { "type": "string", "description": "父节点 id（必须是大纲中真实存在的 id）" }, "nodes": { "type": "array", "items": { "type": "object", "properties": { "name": { "type": "string", "description": "节点名称（必填）" }, "detail": { "type": "string", "description": "节点说明，Markdown" }, "kind": { "type": "string", "description": "节点类型" }, "color": { "type": "string", "description": "#RRGGBB" }, "sources": { "type": "array", "items": { "type": "string" }, "description": "该节点对应的真实源码文件（项目相对路径或绝对路径），用于证据锚定" } }, "required": ["name"] } } }, "required": ["parent_id", "nodes"] } } },
+  { "type": "function", "function": { "name": "add_subtree", "description": "一次调用在指定父节点下新增一棵完整的多层子树（children 里可继续嵌 children，系统按层级生成并逐层挂好）。把带层级编号的文本（一、（一）、1.、1.1）或任何树形结构落成导图时用它——一次提交整棵树，不要逐层 add_nodes。", "parameters": { "type": "object", "properties": { "parent_id": { "type": "string", "description": "父节点 id（必须是大纲中真实存在的 id）" }, "children": { "type": "array", "description": "要新增的顶层节点列表", "items": { "type": "object", "properties": { "name": { "type": "string", "description": "节点名称（必填）" }, "detail": { "type": "string", "description": "节点说明，Markdown（条目的解释性正文放这里，不要塞进 name）" }, "kind": { "type": "string", "description": "节点类型" }, "color": { "type": "string", "description": "#RRGGBB" }, "sources": { "type": "array", "items": { "type": "string" }, "description": "该节点对应的真实源码文件，用于证据锚定" }, "children": { "type": "array", "description": "子节点，结构与本对象完全相同（name 必填，可选 detail/kind/color/sources/children），可继续嵌套", "items": { "type": "object" } } }, "required": ["name"] } } }, "required": ["parent_id", "children"] } } },
   { "type": "function", "function": { "name": "update_nodes", "description": "批量修改已有节点字段（只传需要修改的字段）。", "parameters": { "type": "object", "properties": { "updates": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "detail": { "type": "string" }, "color": { "type": "string" } }, "required": ["id"] } } }, "required": ["updates"] } } },
   { "type": "function", "function": { "name": "delete_nodes", "description": "删除节点及其整棵子树。破坏性操作：用户会先看到确认清单，可能拒绝。", "parameters": { "type": "object", "properties": { "ids": { "type": "array", "items": { "type": "string" } } }, "required": ["ids"] } } },
   { "type": "function", "function": { "name": "move_nodes", "description": "把节点移动/重新挂到另一个父节点下。会改变导图结构：用户会先看到确认清单，可能拒绝。", "parameters": { "type": "object", "properties": { "ids": { "type": "array", "items": { "type": "string" } }, "new_parent_id": { "type": "string" } }, "required": ["ids", "new_parent_id"] } } }
@@ -1539,6 +1540,49 @@ fn agent_op_class(action: &str) -> AgentOpClass {
     }
 }
 
+/// 子树的最大嵌套深度（模型吐出病态结构时的兜底）。
+const AGENT_MAX_SUBTREE_DEPTH: usize = 8;
+
+/// 把 `add_subtree` 的嵌套 `children` 展开成扁平的 add ops。
+///
+/// **前序遍历**是硬要求：子节点的 `parentId` 指向刚生成的父节点 id，ops 按数组顺序
+/// 由前端逐条应用，父必须先于子出现，否则子节点会挂到一个还不存在的 id 上。
+fn agent_flatten_subtree(
+    children: &[serde_json::Value],
+    parent: &str,
+    depth: usize,
+    ops: &mut Vec<serde_json::Value>,
+) {
+    if depth >= AGENT_MAX_SUBTREE_DEPTH || ops.len() >= AGENT_MAX_OPS {
+        return;
+    }
+    for n in children {
+        if ops.len() >= AGENT_MAX_OPS {
+            return;
+        }
+        let name = n.get("name").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let id = super::db::new_id("agent");
+        ops.push(serde_json::json!({
+            "action": "add",
+            "id": id.clone(),
+            "parentId": parent,
+            "name": name,
+            "detail": n.get("detail").and_then(|v| v.as_str()).unwrap_or(""),
+            "kind": n.get("kind").and_then(|v| v.as_str()).unwrap_or("other"),
+            "color": agent_valid_color(n.get("color").and_then(|v| v.as_str())),
+            "sources": n.get("sources").and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|s| s.as_str()).filter(|s| !s.trim().is_empty()).take(3).map(|s| s.trim().to_string()).collect::<Vec<_>>())
+                .unwrap_or_default(),
+        }));
+        if let Some(sub) = n.get("children").and_then(|v| v.as_array()) {
+            agent_flatten_subtree(sub, &id, depth + 1, ops);
+        }
+    }
+}
+
 /// 校验 AI 给的颜色为 #RRGGBB；不合法返回 None（调用方省略该字段，画布用默认色）。
 fn agent_valid_color(color: Option<&str>) -> Option<String> {
     let hex = color?.trim().strip_prefix('#')?;
@@ -1556,12 +1600,14 @@ fn agent_prompt(doc_name: &str) -> String {
 
 规则：
 1. 涉及导图内容时优先使用工具；修改前先用 get_document_overview 了解结构，必要时 get_subtree / search_nodes 确认细节。引用的 id 必须来自工具返回结果，不要臆造。
-2. add_nodes 的新节点不要提供 id，系统会生成并在工具结果里返回；一次调用挂同一父节点下的一批兄弟节点，建子树时按层级多次调用。
+2. 新增节点有两种方式：**多层结构一律用 add_subtree**（一次调用提交整棵嵌套树，children 里可继续嵌 children，系统按层级生成并挂好）；只有「同一父节点下加一批平级兄弟」才用 add_nodes。两者都不要提供 id，系统会生成并在工具结果里返回。
 3. kind 取值：root|module|component|service|route|config|file|task|requirement|constraint|risk|other。color 是 #RRGGBB。
 4. delete_nodes / move_nodes 需要用户在界面上确认；如果被拒绝，不要原样重复提交，先询问顾虑或给出替代方案。
 5. 不改图的分析（总结、找重复与缺口、回答问题）直接回答，引用节点名称。
 6. 用户用 @ 引用的文件会以「用户引用的文件内容」附在消息里。要求分析某个文件的业务逻辑时：先通读给出的内容，再按「入口/流程/分支/关键数据/边界与异常」组织成节点落到图上，并用 add_nodes 的 sources 把被分析的文件锚到相关节点（项目相对路径或绝对路径均可）。
-7. 全程用中文，简洁，可用 Markdown。"#
+7. 把一份**带层级编号的文本**（「一、」「（一）」「1.」「1.1」「①」等）转成导图时：严格按原文层级**展开到最深一层**，不要合并、不要省略任何一级；`name` 只放标题，条目下的说明性正文放进 `detail`（不要把整段说明塞进 name，名称过长会毁掉画布可读性）。
+8. 目标节点有歧义时（get_document_overview 里出现多个同名节点，例如有好几个「扩展」）：优先用**用户当前选中的节点**；没有选中节点就先问用户是哪一个，不要猜。
+9. 全程用中文，简洁，可用 Markdown。"#
         , name = doc_name)
 }
 
@@ -1611,14 +1657,47 @@ fn agent_node_brief(n: &MindmapNode, with_detail: bool) -> serde_json::Value {
     v
 }
 
+/// 节点在导图里的可读路径（`根 > … > 自身`）。
+///
+/// 拿它去分辨**同名节点**：图里常有 N 个都叫「扩展」的节点，只给 id 与 parent_id
+/// 的话模型没法判断该挂到哪一个（parent_id 是不透明的 id）。
+fn agent_node_path(nodes: &[crate::commands::mindmap::models::MindmapNode], id: &str) -> String {
+    let mut chain = vec![id.to_string()];
+    let mut cursor = id.to_string();
+    // 防环兜底：父指针异常时最多回溯 32 层
+    for _ in 0..32 {
+        let parent = nodes
+            .iter()
+            .find(|n| n.id == cursor)
+            .and_then(|n| n.parent_id.clone());
+        match parent {
+            Some(p) if !p.is_empty() => {
+                chain.push(p.clone());
+                cursor = p;
+            }
+            _ => break,
+        }
+    }
+    chain.reverse();
+    chain
+        .iter()
+        .filter_map(|i| nodes.iter().find(|n| n.id == *i).map(|n| n.name.as_str()))
+        .collect::<Vec<_>>()
+        .join(" > ")
+}
+
 /// 读工具：文档大纲（压缩表示，一行一个节点）。
+///
+/// 输出带 `path` 列（`根 > … > 节点名`）：同名节点很常见（比如多个「扩展」），
+/// 没有路径模型只能瞎猜一个 id。
 fn agent_tool_overview(full: &DocumentFull) -> serde_json::Value {
-    let mut outline = String::from("id | parent_id | name\n");
+    let mut outline = String::from("id | parent_id | path | name\n");
     for n in &full.nodes {
         outline.push_str(&format!(
-            "{} | {} | {}\n",
+            "{} | {} | {} | {}\n",
             n.id,
             n.parent_id.as_deref().unwrap_or("-"),
+            agent_node_path(&full.nodes, &n.id),
             n.name
         ));
     }
@@ -1684,6 +1763,17 @@ fn agent_build_ops(action: &str, args: &serde_json::Value) -> Result<Vec<serde_j
             }
             if ops.is_empty() {
                 return Err("add_nodes 没有有效节点（name 不能为空）".into());
+            }
+        }
+        "add_subtree" => {
+            let parent = args.get("parentId").and_then(|v| v.as_str()).unwrap_or_default().trim().to_string();
+            let children = args
+                .get("children")
+                .and_then(|v| v.as_array())
+                .ok_or("add_subtree 缺少 children")?;
+            agent_flatten_subtree(children, &parent, 0, &mut ops);
+            if ops.is_empty() {
+                return Err("add_subtree 没有有效节点（name 不能为空）".into());
             }
         }
         "update_nodes" => {
@@ -1868,7 +1958,7 @@ async fn agent_run(
                 "get_document_overview" => agent_tool_overview(full),
                 "get_subtree" => agent_tool_subtree(full, args.get("rootId").and_then(|v| v.as_str()).unwrap_or_else(|| args.get("root_id").and_then(|v| v.as_str()).unwrap_or(""))),
                 "search_nodes" => agent_tool_search(full, args.get("keyword").and_then(|v| v.as_str()).unwrap_or("")),
-                "add_nodes" | "update_nodes" | "delete_nodes" | "move_nodes" => {
+                "add_nodes" | "add_subtree" | "update_nodes" | "delete_nodes" | "move_nodes" => {
                     match agent_handle_write(app, cancel, full, run_id, &name, &args).await {
                         Ok((ops, ack)) => {
                             all_ops.extend(ops.iter().cloned());
@@ -1924,14 +2014,23 @@ pub async fn mm_agent_chat(app: tauri::AppHandle, input: AgentChatInput) -> Resu
         } else {
             let mut parts = Vec::new();
             for id in input.selected_node_ids.iter().take(3) {
-                if full.nodes.iter().any(|n| n.id == *id) {
-                    parts.push(agent_tool_subtree(&full, id).to_string());
-                }
+                let Some(node) = full.nodes.iter().find(|n| n.id == *id) else {
+                    continue;
+                };
+                // 明确给出「选中节点的 id」而不只是子树 JSON：图里同名节点很多，
+                // 模型要能一眼知道「用户选中的那个『扩展』的 id 是 X」
+                parts.push(format!(
+                    "选中节点：id = {}，名称 = {}，路径 = {}\n完整子树：{}",
+                    node.id,
+                    node.name,
+                    agent_node_path(&full.nodes, &node.id),
+                    agent_tool_subtree(&full, id)
+                ));
             }
             if parts.is_empty() {
                 String::from("当前没有选中节点。")
             } else {
-                format!("用户当前选中的节点（完整子树）：\n{}", parts.join("\n"))
+                format!("用户当前选中的节点：\n{}", parts.join("\n"))
             }
         };
         let user_content = if user_text.is_empty() {
@@ -2066,9 +2165,88 @@ mod agent_tests {
         assert!(op["id"].as_str().is_some_and(|s| s.starts_with("agent_")));
     }
 
+    /// `add_subtree` 的核心价值：一次调用产出整棵树的 ops，层级由**结构**保证。
+    /// 前序是硬要求——前端按数组顺序逐条应用，子节点的父必须先出现。
+    #[test]
+    fn add_subtree_expands_nested_children_in_preorder() {
+        let args = serde_json::json!({
+            "parentId": "扩展-id",
+            "children": [{
+                "name": "体育数字化",
+                "children": [{
+                    "name": "智能训练与数据分析",
+                    "children": [
+                        { "name": "高速运动场景AI动作捕捉", "detail": "解决实时性不足…" },
+                        { "name": "可穿戴设备生理信号采集" }
+                    ]
+                }]
+            }]
+        });
+        let ops = agent_build_ops("add_subtree", &args).expect("展开应成功");
+        assert_eq!(ops.len(), 4, "三层树应产出 4 条 add op");
+
+        // 前序：父在子之前
+        assert_eq!(ops[0]["name"], "体育数字化");
+        assert_eq!(ops[0]["parentId"], "扩展-id");
+        assert_eq!(ops[1]["name"], "智能训练与数据分析");
+        assert_eq!(ops[1]["parentId"], ops[0]["id"], "二级要挂在一级新生成的 id 下");
+        assert_eq!(ops[2]["name"], "高速运动场景AI动作捕捉");
+        assert_eq!(ops[2]["parentId"], ops[1]["id"]);
+        assert_eq!(ops[3]["name"], "可穿戴设备生理信号采集");
+        assert_eq!(ops[3]["parentId"], ops[1]["id"]);
+
+        // 说明性正文进 detail，name 保持短标题
+        assert_eq!(ops[2]["detail"], "解决实时性不足…");
+        // id 必须各不相同（否则层级会塌成一片）
+        let ids: std::collections::HashSet<&str> =
+            ops.iter().filter_map(|o| o["id"].as_str()).collect();
+        assert_eq!(ids.len(), 4);
+    }
+
+    /// 病态输入要被拦住：过深、过大、空名，都只是「少写」而不是崩或写脏数据。
+    #[test]
+    fn add_subtree_caps_depth_and_drops_empty_names() {
+        // 深度超过上限：只写到上限为止，不 panic、不死循环
+        fn nest(depth: usize) -> serde_json::Value {
+            let mut node = serde_json::json!({ "name": format!("n{depth}") });
+            if depth > 0 {
+                node["children"] = serde_json::json!([nest(depth - 1)]);
+            }
+            node
+        }
+        let ops = agent_build_ops(
+            "add_subtree",
+            &serde_json::json!({ "parentId": "p", "children": [nest(15)] }),
+        )
+        .unwrap();
+        assert!(
+            ops.len() <= AGENT_MAX_SUBTREE_DEPTH,
+            "深度必须被截断: {}",
+            ops.len()
+        );
+
+        // 空名节点跳过（模型偶尔会吐 {"children": [...]}）
+        let ops = agent_build_ops(
+            "add_subtree",
+            &serde_json::json!({
+                "parentId": "p",
+                "children": [{ "name": "  " }, { "name": "有效" }]
+            }),
+        )
+        .unwrap();
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0]["name"], "有效");
+    }
+
     #[test]
     fn agent_build_ops_rejects_invalid_input() {
         assert!(agent_build_ops("add_nodes", &serde_json::json!({ "nodes": [] })).is_err());
+        assert!(agent_build_ops("add_subtree", &serde_json::json!({ "parentId": "p" })).is_err());
+        assert!(agent_build_ops(
+            "add_subtree",
+            &serde_json::json!({ "parentId": "p", "children": [{ "detail": "没有名字" }] })
+        )
+        .is_err());
         assert!(agent_build_ops("delete_nodes", &serde_json::json!({ "ids": ["  "] })).is_err());
         assert!(agent_build_ops("move_nodes", &serde_json::json!({ "ids": ["a"] })).is_err());
         assert!(agent_build_ops("unknown", &serde_json::json!({})).is_err());
@@ -2356,6 +2534,43 @@ pub fn mm_move_document(input: MoveDocumentInput) -> Result<(), String> { super:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 大纲里的 `path` 列用来分辨同名节点：图里多个「扩展」时，
+    /// 没有路径模型没法判断用户指的是哪一个（parent_id 是不透明 id）。
+    #[test]
+    fn node_path_disambiguates_same_name_nodes() {
+        fn mk(
+            id: &str,
+            name: &str,
+            parent: Option<&str>,
+        ) -> crate::commands::mindmap::models::MindmapNode {
+            crate::commands::mindmap::models::MindmapNode {
+                id: id.into(),
+                document_id: "doc".into(),
+                parent_id: parent.map(|p| p.into()),
+                name: name.into(),
+                detail: String::new(),
+                kind: "other".into(),
+                color: "#f59e0b".into(),
+                sources: vec![],
+                position_x: 0.0,
+                position_y: 0.0,
+            }
+        }
+        let nodes = vec![
+            mk("root", "根", None),
+            mk("a", "体育", Some("root")),
+            mk("b", "扩展", Some("a")),
+            mk("c", "扩展", Some("root")),
+        ];
+        // 同名「扩展」靠路径区分：一个在 根 > 体育 下，一个直接在根下
+        assert_eq!(agent_node_path(&nodes, "b"), "根 > 体育 > 扩展");
+        assert_eq!(agent_node_path(&nodes, "c"), "根 > 扩展");
+        assert_eq!(agent_node_path(&nodes, "root"), "根");
+        // 父指针成环时要能停下来（不能无限回溯）
+        let cyclic = vec![mk("x", "X", Some("y")), mk("y", "Y", Some("x"))];
+        assert!(!agent_node_path(&cyclic, "x").is_empty());
+    }
 
     #[test]
     fn is_absolute_path_covers_unix_windows_and_unc() {
