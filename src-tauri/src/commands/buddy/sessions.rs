@@ -803,9 +803,601 @@ fn delete_session_files_in_extension(
     }
 }
 
+// ─── 会话分叉 ───
+
+/// 分叉结果：新会话 + 正文复制情况（正文没拷到要如实告诉前端，避免开出个空会话还以为成功了）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuddySessionForkReport {
+    pub conversation_id: String,
+    pub title: String,
+    /// 成功复制的正文文件数（WorkBuddy 为 jsonl / artifact-index）
+    pub files_copied: usize,
+    /// 正文一个都没拷到：新会话只有库记录
+    pub content_missing: bool,
+    /// 非致命问题（个别文件被占用等），不中断分叉
+    pub errors: Vec<String>,
+}
+
+/// 分叉会话：复制会话正文 + 用新 id 在会话库里注册一条记录，原会话原样保留。
+///
+/// - WorkBuddy：`~/.workbuddy/projects/<hash>/<id>.jsonl` 是对话正文（复制时把文件里出现的
+///   旧会话 id 全部换成新 id，否则库里两条记录指向同一份 sessionId，打开/续聊会串台）；
+///   `artifact-index/<id>.json` 一并复制。**不复制** `workspace/sessions`、`tasks`、
+///   `file-history`——那是工作区快照与文件历史，实测单个会话可达 700MB，分叉不该背这个体积。
+/// - CodeBuddy CN：会话索引在 vscdb 的 `session:<id>` 键，正文在扩展目录的
+///   `<workspace>/<id>/`，两边都要复制一份。
+pub fn fork_session(
+    platform: &str,
+    conversation_id: &str,
+    title: Option<String>,
+) -> Result<BuddySessionForkReport, String> {
+    let src = conversation_id.trim();
+    super::session_transfer::codebuddy::validate_conversation_id(src)?;
+    let new_id = new_uuid_v4()?;
+    match platform {
+        "workbuddy" => fork_workbuddy_session(src, &new_id, title.as_deref()),
+        "codebuddy-cn" | "codebuddy_cn" => fork_codebuddy_cn_session(src, &new_id, title.as_deref()),
+        other => Err(format!("未知平台: {}", other)),
+    }
+}
+
+/// 分叉后的默认标题：沿用原标题并加标记（原标题为空时只有标记）。
+fn fork_title(src_title: &str, title: Option<&str>) -> String {
+    let custom = title.map(|t| t.trim()).unwrap_or("");
+    if !custom.is_empty() {
+        return custom.to_string();
+    }
+    if src_title.trim().is_empty() {
+        "（分叉）".to_string()
+    } else {
+        format!("{}（分叉）", src_title.trim())
+    }
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// UUID v4（本仓库没有 uuid crate，用 getrandom 自己拼）。
+fn new_uuid_v4() -> Result<String, String> {
+    let mut b = [0u8; 16];
+    getrandom::getrandom(&mut b).map_err(|e| format!("生成会话 id 失败: {}", e))?;
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    Ok(format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]
+    ))
+}
+
+/// 表的列顺序（`SELECT *` 与 `PRAGMA table_info` 同序；写死列名会随版本炸）。
+fn table_columns(conn: &Connection, table: &str) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({})", table))
+        .map_err(|e| format!("读取表结构失败: {}", e))?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| format!("读取表结构失败: {}", e))?;
+    let mut out = Vec::new();
+    for r in rows.flatten() {
+        out.push(r);
+    }
+    if out.is_empty() {
+        return Err(format!("表 {} 不存在", table));
+    }
+    Ok(out)
+}
+
+fn value_as_text(v: &rusqlite::types::Value) -> String {
+    match v {
+        rusqlite::types::Value::Text(t) => t.clone(),
+        rusqlite::types::Value::Integer(n) => n.to_string(),
+        rusqlite::types::Value::Real(f) => f.to_string(),
+        _ => String::new(),
+    }
+}
+
+/// WorkBuddy 分叉：复制 sessions 行（换 id/标题/时间）+ 复制正文文件。
+fn fork_workbuddy_session(
+    src_id: &str,
+    new_id: &str,
+    title: Option<&str>,
+) -> Result<BuddySessionForkReport, String> {
+    let home = dirs::home_dir().ok_or("无法获取用户主目录")?;
+    fork_workbuddy_session_at(&home.join(".workbuddy"), src_id, new_id, title)
+}
+
+/// 分叉核心（数据根目录参数化，便于用临时目录做端到端测试）。
+fn fork_workbuddy_session_at(
+    data_root: &Path,
+    src_id: &str,
+    new_id: &str,
+    title: Option<&str>,
+) -> Result<BuddySessionForkReport, String> {
+    let db_path = data_root.join("workbuddy.db");
+    if !db_path.is_file() {
+        return Err("未找到 WorkBuddy 会话库（~/.workbuddy/workbuddy.db）".to_string());
+    }
+    super::session_transfer::workbuddy::reject_symlink_if_exists(&db_path)?;
+
+    let mut conn = Connection::open(&db_path).map_err(|e| format!("打开 WorkBuddy 数据库失败: {}", e))?;
+    conn.busy_timeout(Duration::from_secs(5))
+        .map_err(|e| format!("设置数据库超时失败: {}", e))?;
+
+    // 1) 复制库记录：按列名动态取值（列集合随版本增减，写死 SQL 会炸）
+    let columns = table_columns(&conn, "sessions")?;
+    let mut values: Vec<rusqlite::types::Value> = Vec::with_capacity(columns.len());
+    {
+        let mut stmt = conn
+            .prepare("SELECT * FROM sessions WHERE id = ?1")
+            .map_err(|e| format!("读取源会话失败: {}", e))?;
+        let mut rows = stmt
+            .query(rusqlite::params![src_id])
+            .map_err(|e| format!("查询源会话失败: {}", e))?;
+        let row = rows
+            .next()
+            .map_err(|e| format!("读取源会话失败: {}", e))?
+            .ok_or_else(|| format!("会话不存在: {}", src_id))?;
+        for i in 0..columns.len() {
+            values.push(match row.get_ref(i).map_err(|e| format!("读取会话字段失败: {}", e))? {
+                rusqlite::types::ValueRef::Null => rusqlite::types::Value::Null,
+                rusqlite::types::ValueRef::Integer(n) => rusqlite::types::Value::Integer(n),
+                rusqlite::types::ValueRef::Real(f) => rusqlite::types::Value::Real(f),
+                rusqlite::types::ValueRef::Text(t) => {
+                    rusqlite::types::Value::Text(String::from_utf8_lossy(t).to_string())
+                }
+                rusqlite::types::ValueRef::Blob(b) => rusqlite::types::Value::Blob(b.to_vec()),
+            });
+        }
+    }
+
+    let src_title = columns
+        .iter()
+        .position(|c| c == "title")
+        .map(|i| value_as_text(&values[i]))
+        .unwrap_or_default();
+    let new_title = fork_title(&src_title, title);
+    let now = now_ms();
+    for (i, c) in columns.iter().enumerate() {
+        match c.as_str() {
+            "id" => values[i] = rusqlite::types::Value::Text(new_id.to_string()),
+            "title" => values[i] = rusqlite::types::Value::Text(new_title.clone()),
+            "custom_title" => values[i] = rusqlite::types::Value::Text(new_title.clone()),
+            // 时间戳刷新，保证新会话排在列表最前
+            "created_at" | "updated_at" | "last_activity_at" => {
+                values[i] = rusqlite::types::Value::Integer(now)
+            }
+            // 源会话若被软删，分叉出来的应当是干净的
+            "deleted_at" => values[i] = rusqlite::types::Value::Null,
+            _ => {}
+        }
+    }
+
+    let cols_sql = columns
+        .iter()
+        .map(|c| format!("\"{}\"", c))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let placeholders = (1..=columns.len())
+        .map(|i| format!("?{}", i))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!("INSERT INTO sessions ({}) VALUES ({})", cols_sql, placeholders);
+    {
+        let tx = conn.transaction().map_err(|e| format!("开启数据库事务失败: {}", e))?;
+        tx.execute(&sql, rusqlite::params_from_iter(values))
+            .map_err(|e| format!("写入新会话记录失败: {}", e))?;
+        tx.commit().map_err(|e| format!("提交新会话记录失败: {}", e))?;
+    }
+
+    // 2) 复制正文
+    let mut files_copied = 0usize;
+    let mut errors: Vec<String> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(data_root.join("projects")) {
+        for entry in entries.flatten() {
+            let project_dir = entry.path();
+            if !project_dir.is_dir() {
+                continue;
+            }
+            let src_file = project_dir.join(format!("{}.jsonl", src_id));
+            if !src_file.is_file() {
+                continue;
+            }
+            match copy_text_replacing(&src_file, &project_dir.join(format!("{}.jsonl", new_id)), src_id, new_id) {
+                Ok(()) => files_copied += 1,
+                Err(e) => errors.push(e),
+            }
+        }
+    }
+    let artifact = data_root.join("artifact-index").join(format!("{}.json", src_id));
+    if artifact.is_file() {
+        match copy_text_replacing(
+            &artifact,
+            &data_root.join("artifact-index").join(format!("{}.json", new_id)),
+            src_id,
+            new_id,
+        ) {
+            Ok(()) => files_copied += 1,
+            Err(e) => errors.push(e),
+        }
+    }
+
+    Ok(BuddySessionForkReport {
+        conversation_id: new_id.to_string(),
+        title: new_title,
+        files_copied,
+        content_missing: files_copied == 0,
+        errors,
+    })
+}
+
+/// 复制文本文件，并把内容里出现的旧会话 id 换成新 id（正文里每条记录都带 sessionId）。
+/// 非 UTF-8 时退化为原样复制——宁可少改一个 id，也不要把二进制正文写坏。
+fn copy_text_replacing(src: &Path, dst: &Path, old_id: &str, new_id: &str) -> Result<(), String> {
+    if let Err(e) = super::session_transfer::codebuddy::reject_symlink_if_exists(src) {
+        return Err(e);
+    }
+    let bytes = std::fs::read(src).map_err(|e| format!("读取正文失败 {}: {}", src.display(), e))?;
+    let out = match String::from_utf8(bytes.clone()) {
+        Ok(text) => text.replace(old_id, new_id).into_bytes(),
+        // 非 UTF-8：原样复制（宁可少改一个 id，也不要把二进制正文写坏）
+        Err(e) => {
+            eprintln!("[BuddySession] 正文非 UTF-8，原样复制: {}", src.display());
+            let _ = e;
+            bytes
+        }
+    };
+    std::fs::write(dst, out).map_err(|e| format!("写入正文失败 {}: {}", dst.display(), e))?;
+    Ok(())
+}
+
+/// CodeBuddy CN 分叉：复制 vscdb 的会话索引 + 扩展目录里的会话正文。
+fn fork_codebuddy_cn_session(
+    src_id: &str,
+    new_id: &str,
+    title: Option<&str>,
+) -> Result<BuddySessionForkReport, String> {
+    let data_dir = super::codebuddy_cn::default_data_dir()
+        .ok_or_else(|| "无法定位 CodeBuddy CN 数据目录".to_string())?;
+    let db_path = data_dir.join("codebuddy-sessions.vscdb");
+    if !db_path.is_file() {
+        return Err("未找到 CodeBuddy CN 会话库（codebuddy-sessions.vscdb）".to_string());
+    }
+    super::session_transfer::codebuddy::reject_symlink_if_exists(&db_path)?;
+    let mut conn = Connection::open(&db_path).map_err(|e| format!("打开 CodeBuddy CN 会话库失败: {}", e))?;
+    conn.busy_timeout(Duration::from_secs(5))
+        .map_err(|e| format!("设置数据库超时失败: {}", e))?;
+
+    let key = format!("session:{}", src_id);
+    let raw: String = conn
+        .query_row(
+            "SELECT value FROM ItemTable WHERE key = ?1",
+            rusqlite::params![key],
+            |row| row.get(0),
+        )
+        .map_err(|_| format!("会话不存在: {}", src_id))?;
+    let mut session: Value =
+        serde_json::from_str(&raw).map_err(|e| format!("解析会话失败: {}", e))?;
+    let obj = session
+        .as_object_mut()
+        .ok_or_else(|| "会话格式异常（不是对象）".to_string())?;
+    let src_title = obj
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let new_title = fork_title(&src_title, title);
+    let now = now_ms();
+    obj.insert("conversationId".to_string(), Value::String(new_id.to_string()));
+    if obj.contains_key("id") {
+        obj.insert("id".to_string(), Value::String(new_id.to_string()));
+    }
+    obj.insert("title".to_string(), Value::String(new_title.clone()));
+    obj.remove("deletedAt");
+    for k in ["createdAt", "updatedAt", "lastActivityAt"] {
+        if obj.contains_key(k) {
+            obj.insert(k.to_string(), Value::from(now));
+        }
+    }
+    let serialized = serde_json::to_string(&session).map_err(|e| format!("序列化会话失败: {}", e))?;
+    {
+        let tx = conn.transaction().map_err(|e| format!("开启数据库事务失败: {}", e))?;
+        tx.execute(
+            "INSERT OR REPLACE INTO ItemTable(key, value) VALUES(?1, ?2)",
+            rusqlite::params![format!("session:{}", new_id), serialized],
+        )
+        .map_err(|e| format!("写入新会话记录失败: {}", e))?;
+        tx.commit().map_err(|e| format!("提交新会话记录失败: {}", e))?;
+    }
+
+    // 正文：扩展目录 `<uid>/<IDE>/<uid>/history/<workspace>/<id>/`
+    let mut files_copied = 0usize;
+    let mut errors: Vec<String> = Vec::new();
+    let uid = current_platform_uid(super::models::BuddyPlatform::CodebuddyCn);
+    let extension_dir = super::session_transfer::codebuddy::codebuddy_extension_data_dir().ok();
+    if let (Some(uid), Some(extension_dir)) = (uid.as_deref(), extension_dir.as_deref()) {
+        copy_session_files_in_extension(extension_dir, uid, src_id, new_id, &mut files_copied, &mut errors);
+    } else {
+        errors.push("未定位到扩展数据目录，只复制了会话索引".to_string());
+    }
+
+    Ok(BuddySessionForkReport {
+        conversation_id: new_id.to_string(),
+        title: new_title,
+        files_copied,
+        content_missing: files_copied == 0,
+        errors,
+    })
+}
+
+/// 在扩展目录里复制会话正文：会话目录 + 5 类辅助目录，并向工作区 index.json 登记新会话。
+/// 结构与 `delete_session_files_in_extension` 对称（同一套遍历规则）。
+fn copy_session_files_in_extension(
+    extension_data_dir: &Path,
+    uid: &str,
+    src_id: &str,
+    new_id: &str,
+    files_copied: &mut usize,
+    errors: &mut Vec<String>,
+) {
+    use super::session_transfer::codebuddy as transfer;
+    if transfer::validate_uid(uid).is_err() {
+        errors.push(format!("uid 不安全，跳过正文复制: {}", uid));
+        return;
+    }
+    let account_outer = extension_data_dir.join(uid);
+    if !account_outer.is_dir() {
+        return;
+    }
+    let Ok(ide_entries) = std::fs::read_dir(&account_outer) else {
+        return;
+    };
+    for ide_entry in ide_entries.flatten() {
+        let Ok(metadata) = std::fs::symlink_metadata(ide_entry.path()) else {
+            continue;
+        };
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            continue;
+        }
+        let account_root = ide_entry.path().join(uid);
+        let history_root = account_root.join("history");
+        if !history_root.is_dir() {
+            continue;
+        }
+        let Ok(workspace_entries) = std::fs::read_dir(&history_root) else {
+            continue;
+        };
+        for workspace_entry in workspace_entries.flatten() {
+            let Ok(metadata) = std::fs::symlink_metadata(workspace_entry.path()) else {
+                continue;
+            };
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                continue;
+            }
+            let workspace_path = workspace_entry.path();
+            let index_path = workspace_path.join("index.json");
+            let Ok(index) = transfer::read_workspace_index(&index_path) else {
+                continue;
+            };
+            let Some(conversations) = index.get("conversations").and_then(Value::as_array) else {
+                continue;
+            };
+            let Some(src_entry) = conversations
+                .iter()
+                .find(|c| c.get("id").and_then(Value::as_str) == Some(src_id))
+            else {
+                continue;
+            };
+
+            // 目录本体 + 辅助目录
+            let conv_dir = workspace_path.join(src_id);
+            if conv_dir.is_dir() {
+                match copy_dir_recursive(&conv_dir, &workspace_path.join(new_id)) {
+                    Ok(n) => *files_copied += n,
+                    Err(e) => errors.push(format!("复制会话目录失败: {}", e)),
+                }
+            }
+            for kind in transfer::AUXILIARY_KINDS {
+                let aux_src = account_root
+                    .join(kind)
+                    .join(workspace_entry.file_name())
+                    .join(src_id);
+                if aux_src.is_dir() {
+                    let aux_dst = account_root
+                        .join(kind)
+                        .join(workspace_entry.file_name())
+                        .join(new_id);
+                    if let Err(e) = copy_dir_recursive(&aux_src, &aux_dst) {
+                        errors.push(format!("复制辅助目录失败 {}: {}", kind, e));
+                    }
+                }
+            }
+
+            // index.json：登记新会话（沿用源条目属性，只换 id 与标题），current 不动
+            let mut new_entry = src_entry.clone();
+            if let Some(obj) = new_entry.as_object_mut() {
+                obj.insert("id".to_string(), Value::String(new_id.to_string()));
+                if obj.contains_key("title") {
+                    obj.insert(
+                        "title".to_string(),
+                        Value::String(fork_title(
+                            obj.get("title").and_then(Value::as_str).unwrap_or_default(),
+                            None,
+                        )),
+                    );
+                }
+            }
+            let mut new_index = index.clone();
+            if let Some(array) = new_index
+                .get_mut("conversations")
+                .and_then(Value::as_array_mut)
+            {
+                array.push(new_entry);
+            }
+            match serde_json::to_string_pretty(&new_index)
+                .map_err(|e| format!("序列化工作区索引失败: {}", e))
+                .and_then(|s| super::store::write_atomic(&index_path, &s))
+            {
+                Ok(()) => {}
+                Err(e) => errors.push(e),
+            }
+        }
+    }
+}
+
+/// 递归复制目录（跳过符号链接，返回复制的文件数）。
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<usize, String> {
+    std::fs::create_dir_all(dst).map_err(|e| format!("创建目录失败 {}: {}", dst.display(), e))?;
+    let mut count = 0usize;
+    for entry in std::fs::read_dir(src)
+        .map_err(|e| format!("读取目录失败 {}: {}", src.display(), e))?
+        .flatten()
+    {
+        let Ok(metadata) = std::fs::symlink_metadata(entry.path()) else {
+            continue;
+        };
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        let target = dst.join(entry.file_name());
+        if metadata.is_dir() {
+            count += copy_dir_recursive(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(&entry.path(), &target)
+                .map_err(|e| format!("复制文件失败 {}: {}", entry.path().display(), e))?;
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 造一个最小 workbuddy.db（列比真机少，验证「按列名动态取」不是写死 SQL）。
+    fn make_workbuddy_db(dir: &Path, id: &str, title: &str) {
+        let conn = Connection::open(dir.join("workbuddy.db")).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE sessions (
+                id TEXT PRIMARY KEY, cwd TEXT NOT NULL, user_id TEXT NOT NULL,
+                title TEXT, custom_title TEXT, status TEXT NOT NULL DEFAULT 'Pending',
+                created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+                deleted_at INTEGER, is_playground INTEGER NOT NULL DEFAULT 0,
+                last_activity_at INTEGER
+            );",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO sessions (id,cwd,user_id,title,custom_title,status,created_at,updated_at,deleted_at,is_playground,last_activity_at)
+             VALUES (?1,'/work/app','u1',?2,NULL,'Completed',1000,2000,NULL,0,2500)",
+            rusqlite::params![id, title],
+        )
+        .unwrap();
+    }
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("buddy-fork-{}-{}", tag, now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// 端到端：库记录复制 + 正文复制且正文里的旧 id 全部换成新 id，原会话纹丝不动。
+    #[test]
+    fn fork_workbuddy_copies_row_and_transcript() {
+        let root = temp_dir("wb");
+        let src_id = "11111111-2222-4333-8444-555555555555";
+        let new_id = new_uuid_v4().unwrap();
+        make_workbuddy_db(&root, src_id, "重构 API");
+
+        let project = root.join("projects").join("c-work-app");
+        std::fs::create_dir_all(&project).unwrap();
+        let transcript = format!(
+            "{{\"id\":\"m1\",\"sessionId\":\"{}\",\"role\":\"user\"}}\n{{\"id\":\"m2\",\"sessionId\":\"{}\",\"role\":\"assistant\"}}\n",
+            src_id, src_id
+        );
+        std::fs::write(project.join(format!("{}.jsonl", src_id)), &transcript).unwrap();
+
+        let report = fork_workbuddy_session_at(&root, src_id, &new_id, None).unwrap();
+        assert_eq!(report.conversation_id, new_id);
+        assert_eq!(report.title, "重构 API（分叉）");
+        assert_eq!(report.files_copied, 1);
+        assert!(!report.content_missing);
+        assert!(report.errors.is_empty());
+
+        // 新行：id/标题/时间都换了，cwd/user_id/status 沿用
+        let conn = Connection::open(root.join("workbuddy.db")).unwrap();
+        let (cwd, user_id, title, status, created, deleted): (String, String, String, String, i64, Option<i64>) = conn
+            .query_row(
+                "SELECT cwd, user_id, title, status, created_at, deleted_at FROM sessions WHERE id = ?1",
+                rusqlite::params![new_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+            )
+            .unwrap();
+        assert_eq!(cwd, "/work/app");
+        assert_eq!(user_id, "u1");
+        assert_eq!(title, "重构 API（分叉）");
+        assert_eq!(status, "Completed");
+        assert!(created > 2000);
+        assert!(deleted.is_none());
+
+        // 正文：新文件里的 sessionId 全换成新 id，旧文件一个字节都没动
+        let copied = std::fs::read_to_string(project.join(format!("{}.jsonl", new_id))).unwrap();
+        assert!(!copied.contains(src_id));
+        assert_eq!(copied.matches(&format!("\"sessionId\":\"{}\"", new_id)).count(), 2);
+        assert_eq!(
+            std::fs::read_to_string(project.join(format!("{}.jsonl", src_id))).unwrap(),
+            transcript
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 库里有记录但正文已丢：仍要建出新会话，并如实回报 contentMissing。
+    #[test]
+    fn fork_workbuddy_reports_missing_content() {
+        let root = temp_dir("wb-missing");
+        let src_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+        make_workbuddy_db(&root, src_id, "孤儿会话");
+        let report = fork_workbuddy_session_at(&root, src_id, &new_uuid_v4().unwrap(), None).unwrap();
+        assert_eq!(report.files_copied, 0);
+        assert!(report.content_missing);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 源会话不存在 → 报错，且不留下半条记录。
+    #[test]
+    fn fork_workbuddy_rejects_unknown_session() {
+        let root = temp_dir("wb-unknown");
+        make_workbuddy_db(&root, "known-id", "x");
+        let err = fork_workbuddy_session_at(&root, "missing-id", &new_uuid_v4().unwrap(), None).unwrap_err();
+        assert!(err.contains("会话不存在"), "实际错误: {}", err);
+        let conn = Connection::open(root.join("workbuddy.db")).unwrap();
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fork_title_falls_back_to_source_title() {
+        assert_eq!(fork_title("重构 API", None), "重构 API（分叉）");
+        assert_eq!(fork_title("重构 API", Some("  ")), "重构 API（分叉）");
+        assert_eq!(fork_title("重构 API", Some("新方案 A")), "新方案 A");
+        assert_eq!(fork_title("", None), "（分叉）");
+    }
+
+    #[test]
+    fn new_uuid_v4_is_unique_and_versioned() {
+        let a = new_uuid_v4().unwrap();
+        let b = new_uuid_v4().unwrap();
+        assert_ne!(a, b);
+        assert_eq!(a.len(), 36);
+        assert_eq!(&a[14..15], "4", "版本号位应为 v4: {}", a);
+    }
 
     #[test]
     fn parse_session_json() {

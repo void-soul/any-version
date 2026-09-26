@@ -838,6 +838,16 @@ pub fn buddy_list_sessions(
     sessions::list_sessions(&platform, &filter)
 }
 
+/// 分叉会话：复制正文并用新 id 注册一条会话记录，原会话保持不动。
+#[tauri::command]
+pub fn buddy_fork_session(
+    platform: String,
+    conversation_id: String,
+    title: Option<String>,
+) -> Result<sessions::BuddySessionForkReport, String> {
+    sessions::fork_session(&platform, &conversation_id, title)
+}
+
 /// 列出**当前登录账号**（作为合并目标）的待处理会话冲突。
 ///
 /// 冲突文件按目标账号分文件落盘，来回切换会留下多份旧快照；只按当前账号

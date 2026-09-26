@@ -54,6 +54,7 @@ import {
   Cat,
   Star,
   Package,
+  GitFork,
 } from "lucide-react";
 
 export interface BuddyAccount {
@@ -276,6 +277,16 @@ export interface BuddySessionRecord {
 }
 
 /** 后端 buddy_delete_sessions 的删除结果 */
+/** 会话分叉结果：新会话 id + 正文复制情况 */
+export interface BuddySessionForkReport {
+  conversationId: string;
+  title: string;
+  filesCopied: number;
+  /** 正文一个都没拷到（只有库记录被复制） */
+  contentMissing: boolean;
+  errors: string[];
+}
+
 export interface BuddySessionDeleteReport {
   dbDeleted: number;
   historyDirsRemoved: number;
@@ -1857,6 +1868,29 @@ export default function BuddyPanel() {
     }
   };
 
+  // 分叉会话：复制正文 + 用新 id 注册一条记录（原会话保持不动）
+  const forkSessionById = async (id: string) => {
+    setSessionsBusy(true);
+    try {
+      const report = await invoke<BuddySessionForkReport>("buddy_fork_session", {
+        platform,
+        conversationId: id,
+      });
+      if (report.contentMissing) {
+        showMsg(false, t("buddy.sessions.forkNoContent"));
+      } else if (report.errors.length > 0) {
+        showMsg(false, `${t("buddy.sessions.forkPartial")}: ${report.errors.join("；")}`);
+      } else {
+        showMsg(true, t("buddy.sessions.forkDone", { title: report.title }));
+      }
+      await loadSessions();
+    } catch (e) {
+      showMsg(false, String(e));
+    } finally {
+      setSessionsBusy(false);
+    }
+  };
+
   const toggleSessionSelect = (id: string) => {
     setSelectedSessionIds((prev) => {
       const next = new Set(prev);
@@ -2636,6 +2670,14 @@ export default function BuddyPanel() {
                                 ) : (
                                   <ClipboardCopy className="w-3 h-3" />
                                 )}
+                              </button>
+                              <button
+                                onClick={() => void forkSessionById(s.conversationId)}
+                                disabled={sessionsBusy}
+                                className="p-1.5 rounded-md bg-white/5 hover:bg-cyan-500/15 text-slate-300 hover:text-cyan-300 border border-white/10 cursor-pointer transition flex-shrink-0 disabled:opacity-40"
+                                title={t("buddy.sessions.forkTitle")}
+                              >
+                                <GitFork className="w-3 h-3" />
                               </button>
                               <button
                                 onClick={() => setSessionDelete({ ids: [s.conversationId], label: s.title || s.conversationId })}
