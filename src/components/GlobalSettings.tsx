@@ -359,6 +359,7 @@ export default function GlobalSettings() {
     disabledModules: string[];
     backgroundTexture: string;
     language: string;
+    motionPreference: string;
   }>({
     moduleThemeColors: {},
     globalFont: "",
@@ -368,6 +369,7 @@ export default function GlobalSettings() {
     disabledModules: [],
     backgroundTexture: "",
     language: "",
+    motionPreference: "",
   });
   const [importingFont, setImportingFont] = useState(false);
   const [systemFonts, setSystemFonts] = useState<string[]>([]);
@@ -412,6 +414,7 @@ export default function GlobalSettings() {
         disabledModules: string[];
         backgroundTexture: string;
         language: string;
+        motionPreference: string;
       }>("get_appearance_config");
       setAppearance(ap);
     } catch (e) {
@@ -526,6 +529,19 @@ export default function GlobalSettings() {
       emit("appearance-updated");
     } catch (e) {
       console.error("保存背景纹理失败", e);
+    }
+  };
+
+  // 动效偏好：「跟随系统」（尊重系统的「减少动效」）/「始终开启」（无视系统设置）。
+  // 系统被切成「最佳性能」时 prefers-reduced-motion 会变 reduce，头像辉光闪烁等
+  // 自家动效会全部停掉 —— 这里给用户一个不听系统的出口。
+  const handleSetMotionPreference = async (pref: string) => {
+    setAppearance({ ...appearance, motionPreference: pref });
+    try {
+      await invoke("set_motion_preference", { preference: pref });
+      emit("appearance-updated");
+    } catch (e) {
+      console.error("保存动效偏好失败", e);
     }
   };
 
@@ -1516,6 +1532,33 @@ export default function GlobalSettings() {
                 <button
                   key={opt.value}
                   onClick={() => handleSetLanguage(opt.value)}
+                  className={`px-4 py-1.5 rounded-ctl text-caption font-semibold transition cursor-pointer ${
+                    active
+                      ? "bg-[var(--module-accent)] text-white"
+                      : "bg-white/5 text-slate-300 hover:bg-white/10 border border-white/10"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 1.7 动效 */}
+        <div className="pt-3 border-t border-white/5 space-y-2.5">
+          <p className="text-caption font-medium text-slate-200">{t("settings.motion")}</p>
+          <p className="text-micro text-slate-500">{t("settings.motionHint")}</p>
+          <div className="flex items-center gap-2">
+            {[
+              { value: "", label: t("settings.motionSystem") },
+              { value: "always", label: t("settings.motionAlways") },
+            ].map((opt) => {
+              const active = (appearance.motionPreference || "") === opt.value;
+              return (
+                <button
+                  key={opt.value || "system"}
+                  onClick={() => handleSetMotionPreference(opt.value)}
                   className={`px-4 py-1.5 rounded-ctl text-caption font-semibold transition cursor-pointer ${
                     active
                       ? "bg-[var(--module-accent)] text-white"

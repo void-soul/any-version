@@ -159,6 +159,11 @@ pub struct Config {
     /// 界面语言（"zh" / "en"），空 = 跟随系统。
     #[serde(default)]
     pub language: String,
+    /// 动效偏好：`"system"`（跟随系统「减少动效」设置，默认） / `"always"`（无论系统怎么设都动）。
+    /// 系统被切成「最佳性能」时 `prefers-reduced-motion` 会变成 reduce，
+    /// 头像辉光闪烁等自家动效就全停了 —— 这里给一个不听系统的出口。
+    #[serde(default)]
+    pub motion_preference: String,
 }
 
 // ─── 落盘形态：config.json 只存数据路径，其余选项存数据目录下的 settings.json ───
@@ -212,6 +217,8 @@ struct SettingsFile {
     pub disabled_modules: Vec<String>,
     pub background_texture: String,
     pub language: String,
+    #[serde(default)]
+    pub motion_preference: String,
 }
 
 /// 业务选项文件：**跟随数据目录**（它是数据，不是入口配置；config.json 才是入口）。
@@ -263,6 +270,7 @@ fn split_config(config: &Config) -> (ConfigPathsFile, SettingsFile) {
             disabled_modules: config.disabled_modules.clone(),
             background_texture: config.background_texture.clone(),
             language: config.language.clone(),
+            motion_preference: config.motion_preference.clone(),
         },
     )
 }
@@ -299,6 +307,7 @@ fn merge_config(paths: ConfigPathsFile, settings: SettingsFile) -> Config {
         disabled_modules: settings.disabled_modules,
         background_texture: settings.background_texture,
         language: settings.language,
+        motion_preference: settings.motion_preference,
     }
 }
 
@@ -496,6 +505,8 @@ fn default_config() -> Config {
         disabled_modules: Vec::new(),
         background_texture: String::new(),
         language: String::new(),
+        // 空 / 非 "always" 都按「跟随系统」处理
+        motion_preference: String::new(),
     }
 }
 
@@ -1433,6 +1444,7 @@ pub fn get_appearance_config() -> AppearanceConfig {
         disabled_modules: config.disabled_modules,
         background_texture: config.background_texture,
         language: config.language,
+        motion_preference: config.motion_preference,
     }
 }
 
@@ -1620,6 +1632,18 @@ mod tests {
         assert_eq!(config.node_projects_dir, "E:/node-projects");
     }
 
+    /// 动效偏好只有 `always` 一个「开」值，其余一律按「跟随系统」，
+    /// 避免后端存进奇怪的值后前端判断不出来。
+    #[test]
+    fn motion_preference_only_always_enables() {
+        assert_eq!(normalize_motion_preference("always"), "always");
+        assert_eq!(normalize_motion_preference("Always"), "always");
+        assert_eq!(normalize_motion_preference("  always  "), "always");
+        assert_eq!(normalize_motion_preference(""), "");
+        assert_eq!(normalize_motion_preference("system"), "");
+        assert_eq!(normalize_motion_preference("always-on"), "");
+    }
+
     /// 缺省字段的旧 settings.json 也要能读（全 default，不能因为缺字段整份解析失败）。
     #[test]
     fn settings_file_tolerates_missing_fields() {
@@ -1736,5 +1760,28 @@ pub struct AppearanceConfig {
     pub background_texture: String,
     /// 界面语言（"zh" / "en"）。
     pub language: String,
+    /// 动效偏好：`"always"` = 无视系统「减少动效」；其余（含空）= 跟随系统。
+    pub motion_preference: String,
+}
+
+/// 设置动效偏好（`always` = 始终开启动效；其它值 = 跟随系统）。
+///
+/// 存在意义：Windows 被切成「最佳性能」（或开了「减少动效」）时，
+/// `prefers-reduced-motion` 会变成 reduce，CSS 里那条无障碍兜底会把头像辉光闪烁、
+/// 弹窗淡入这类自家动效全部关掉 —— 而用户往往并不知道系统被切过。
+#[tauri::command]
+pub fn set_motion_preference(preference: String) -> Result<(), String> {
+    let mut config = load_config();
+    config.motion_preference = normalize_motion_preference(&preference);
+    save_config(&config)
+}
+
+/// 归一化动效偏好：只有 `always` 表示「无视系统设置」，其余（空 / `system` / 未知值）都为「跟随系统」。
+fn normalize_motion_preference(preference: &str) -> String {
+    if preference.trim().eq_ignore_ascii_case("always") {
+        "always".to_string()
+    } else {
+        String::new()
+    }
 }
 

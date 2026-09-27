@@ -514,6 +514,7 @@ pub fn run() {
             commands::config::set_global_font,
             commands::config::set_background_texture,
             commands::config::set_language,
+            commands::config::set_motion_preference,
             commands::config::set_module_order,
             commands::config::set_module_layout,
             commands::config::import_custom_font,

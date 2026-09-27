@@ -132,6 +132,7 @@ export default function App() {
     toolbarModules: string[];
     disabledModules: string[];
     backgroundTexture: string;
+    motionPreference: string;
   }>({
     moduleThemeColors: {},
     globalFont: "",
@@ -140,6 +141,7 @@ export default function App() {
     toolbarModules: [],
     disabledModules: [],
     backgroundTexture: "",
+    motionPreference: "",
   });
 
   // 懒挂载：仅渲染至少被访问过一次的页面，避免启动时全部组件同时初始化
@@ -182,6 +184,7 @@ export default function App() {
           toolbarModules: string[];
           disabledModules: string[];
           backgroundTexture: string;
+          motionPreference: string;
         }>("get_appearance_config");
         setAppearance(ap);
       } catch (e) {
@@ -222,6 +225,7 @@ export default function App() {
             toolbarModules: string[];
             disabledModules: string[];
             backgroundTexture: string;
+            motionPreference: string;
           }>("get_appearance_config");
           setAppearance(ap);
         } catch (e) {
@@ -329,6 +333,18 @@ export default function App() {
   useEffect(() => {
     cacheThemeAccent(activeModuleColor);
   }, [activeModuleColor]);
+
+  // 动效偏好：选了「始终开启」就在 <html> 上打标记，让 App.css 里
+  // `@media (prefers-reduced-motion: reduce)` 的退回规则被覆盖
+  // （挂在 documentElement 而不是根 div：弹窗 / Toast 是 portal 到 body 的，继承不到根 div）。
+  useEffect(() => {
+    const root = document.documentElement;
+    if (appearance.motionPreference === "always") {
+      root.classList.add("motion-always");
+    } else {
+      root.classList.remove("motion-always");
+    }
+  }, [appearance.motionPreference]);
 
   // 计算模块布局：顶栏模块 / 更多模块 / 全部启用模块。
   const { toolbarModules, moreModules, allEnabled } = useMemo(

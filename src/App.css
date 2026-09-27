@@ -358,6 +358,21 @@
   }
 }
 
+/* 「外观设置 → 动效 = 始终开启」时的覆盖：Windows 被切成「最佳性能」
+   （VisualFXSetting=2）或用户开了「减少动效」时，`prefers-reduced-motion` 会变 reduce，
+   上面那条兜底就会把头像辉光闪烁、弹窗淡入全部关掉 —— 而系统这一刀往往是
+   远程会话 / 优化软件 / 系统自动降级切的，用户并不知情。
+   选了「始终开启」时 App.tsx 会在 <html> 上加 .motion-always，覆盖上面两条退回规则。
+   默认仍是尊重系统设置。 */
+@media (prefers-reduced-motion: reduce) {
+  .motion-always .vex-flicker {
+    animation: vex-flicker 3s steps(1, end) infinite;
+  }
+  .motion-always .animate-fadeIn {
+    animation: ui-fade-in 0.16s ease-out both;
+  }
+}
+
 /* vex 头像悬停「俏皮眨一下」：轻微放大 + 歪头 */
 .vex-hover:hover {
   transform: scale(1.12) rotate(-4deg);
