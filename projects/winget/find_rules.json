@@ -1,0 +1,32 @@
+[
+  {
+    "pattern": {
+      "type": "fixed_path",
+      "path": "{local_appdata}\\Microsoft\\WindowsApps",
+      "exe_name": "winget.exe"
+    },
+    "source_label": "Windows 应用执行别名（App Installer）",
+    "priority": 5,
+    "root_offset": 0
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "WindowsApps",
+      "exe_name": "winget.exe"
+    },
+    "source_label": "WindowsApps 目录",
+    "priority": 20,
+    "root_offset": 0
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "",
+      "exe_name": "winget.exe"
+    },
+    "source_label": "系统 PATH",
+    "priority": 90,
+    "root_offset": 0
+  }
+]

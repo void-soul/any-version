@@ -1,0 +1,14 @@
+[
+  {
+    "name": "SCOOP",
+    "desc": "Scoop 根目录：apps / buckets / shims / cache 都挂在这里，改到别的盘可直接省出 C 盘空间",
+    "check_type": "path",
+    "tier": "core"
+  },
+  {
+    "name": "SCOOP_GLOBAL",
+    "desc": "全局安装目录（scoop install -g 的软件落在这里），留空则用 %ProgramData%\\scoop",
+    "check_type": "path",
+    "tier": "core"
+  }
+]

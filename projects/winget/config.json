@@ -1,0 +1,63 @@
+{
+  "id": "winget",
+  "display_name": "WinGet",
+  "category": "tool",
+  "official_website": "https://github.com/microsoft/winget-cli",
+  "bin_dirs": [
+    ""
+  ],
+  "has_cache": true,
+  "has_mirror": false,
+  "mirror_options": null,
+  "has_pkg": false,
+  "pkg_manager": null,
+  "pkg_homepage_template": null,
+  "is_service": false,
+  "default_port": null,
+  "config_file": null,
+  "start_cmd": null,
+  "stop_cmd": null,
+  "version_cmd": "winget --version",
+  "version_exe": "winget",
+  "version_parse_regex": "v?(\\d+\\.\\d+(?:\\.\\d+)*)",
+  "install_mode": "msix",
+  "download_url_template": "https://github.com/microsoft/winget-cli/releases/download/v{version}/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle",
+  "download_file_ext": "msixbundle",
+  "dependency_url_template": "https://github.com/microsoft/winget-cli/releases/download/v{version}/DesktopAppInstaller_Dependencies.zip",
+  "msix_package_name": "Microsoft.DesktopAppInstaller",
+  "remote_versions_url": "https://api.github.com/repos/microsoft/winget-cli/releases",
+  "remote_versions_config": {
+    "type": "json_api",
+    "response_type": "array",
+    "version_field": "tag_name",
+    "version_transform": "trim_prefix:v",
+    "filter_contains_not": "preview"
+  },
+  "data_dirs": [
+    {
+      "id": "download-cache",
+      "display_name": "下载缓存（安装包暂存）",
+      "kind": "cache",
+      "possible_paths": [
+        "{local_appdata}\\Temp\\WinGet",
+        "{home}\\AppData\\Local\\Temp\\WinGet"
+      ],
+      "default_path": "{local_appdata}\\Temp\\WinGet",
+      "supports_direct": true,
+      "auto_create": true,
+      "required_for_start": false
+    },
+    {
+      "id": "state",
+      "display_name": "配置与状态目录（settings.json 所在）",
+      "kind": "config",
+      "possible_paths": [
+        "{local_appdata}\\Packages\\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\\LocalState"
+      ],
+      "default_path": "{local_appdata}\\Packages\\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\\LocalState",
+      "supports_direct": false,
+      "auto_create": false,
+      "required_for_start": false
+    }
+  ]
+}

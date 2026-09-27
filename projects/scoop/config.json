@@ -1,0 +1,73 @@
+{
+  "id": "scoop",
+  "display_name": "Scoop",
+  "category": "tool",
+  "official_website": "https://scoop.sh",
+  "bin_dirs": [
+    "bin"
+  ],
+  "requires_system_path": false,
+  "has_cache": true,
+  "has_mirror": false,
+  "mirror_options": null,
+  "has_pkg": false,
+  "pkg_manager": null,
+  "pkg_homepage_template": null,
+  "is_service": false,
+  "default_port": null,
+  "config_file": null,
+  "start_cmd": null,
+  "stop_cmd": null,
+  "version_cmd": "scoop --version",
+  "version_exe": "scoop",
+  "version_parse_regex": "v?(\\d+\\.\\d+(?:\\.\\d+)*)",
+  "download_url_template": "https://github.com/ScoopInstaller/Scoop/zipball/v{version}",
+  "download_file_ext": "zip",
+  "remote_versions_url": "https://api.github.com/repos/ScoopInstaller/Scoop/releases",
+  "remote_versions_config": {
+    "type": "json_api",
+    "response_type": "array",
+    "version_field": "tag_name",
+    "version_transform": "trim_prefix:v"
+  },
+  "data_dirs": [
+    {
+      "id": "root",
+      "display_name": "Scoop 根目录（apps / buckets / shims）",
+      "kind": "data",
+      "possible_paths": [
+        "{home}\\scoop"
+      ],
+      "default_path": "{home}\\scoop",
+      "env_var": "SCOOP",
+      "supports_direct": true,
+      "auto_create": true,
+      "required_for_start": false
+    },
+    {
+      "id": "cache",
+      "display_name": "下载缓存（安装包暂存）",
+      "kind": "cache",
+      "possible_paths": [
+        "{home}\\scoop\\cache"
+      ],
+      "default_path": "{home}\\scoop\\cache",
+      "supports_direct": true,
+      "auto_create": true,
+      "required_for_start": false
+    },
+    {
+      "id": "global",
+      "display_name": "全局安装目录（-g 安装的软件）",
+      "kind": "data",
+      "possible_paths": [
+        "{program_data}\\scoop"
+      ],
+      "default_path": "{program_data}\\scoop",
+      "env_var": "SCOOP_GLOBAL",
+      "supports_direct": false,
+      "auto_create": false,
+      "required_for_start": false
+    }
+  ]
+}

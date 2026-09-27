@@ -1,0 +1,42 @@
+[
+  {
+    "pattern": {
+      "type": "fixed_path",
+      "path": "{home}\\scoop\\shims",
+      "exe_name": "scoop.cmd"
+    },
+    "source_label": "用户目录 scoop\\shims",
+    "priority": 10,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "scoop\\bin",
+      "exe_name": "scoop.cmd"
+    },
+    "source_label": "Scoop 程序目录（本应用安装 / 自定义根）",
+    "priority": 25,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "scoop\\shims",
+      "exe_name": "scoop.cmd"
+    },
+    "source_label": "Scoop shims（自定义根目录）",
+    "priority": 30,
+    "root_offset": 1
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "",
+      "exe_name": "scoop.cmd"
+    },
+    "source_label": "系统 PATH",
+    "priority": 90,
+    "root_offset": 1
+  }
+]
