@@ -3,8 +3,10 @@
 //! 负责遍历注册表定义，实时检测每个项目在本机的安装状态、
 //! 环境变量状态、缓存状态、服务状态等信息。
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use super::types::{
     ProjectDef, ProjectStatus, ProjectDetail,
@@ -267,8 +269,8 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
     let versions_dir = Path::new(&config.versions_dir).join(id);
     let links_dir = Path::new(&config.links_dir);
 
-    // 扫描已安装版本
-    let installed_versions = scan_installed_versions(&versions_dir);
+    // 扫描已安装版本（MSIX 型项目后面会整体覆盖：它不落在 versions_dir）
+    let mut installed_versions = scan_installed_versions(&versions_dir);
 
     // 检测激活版本（通过 junction link 解析，或从配置中的 active_versions 中获取作为 fallback）
     let junction_path = links_dir.join(id);
@@ -301,9 +303,33 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
         }
     }
 
-    // 二次验证：未托管且不是手动指定路径的项目，通过 version_exe 在 PATH 中确认可执行文件真实存在
-    // 防止残留的版本目录/junction 或无效 Graves 规则匹配导致误判为"已安装"
-    if installed && !managed && install_source.as_deref() != Some("手动指定") {
+    // MSIX 安装方式（如 winget）：包是**系统级注册**的，同名包只存在一份 ——
+    // 它既不会出现在 versions_dir（`scan_installed_versions` 恒为空，装完也显示不出
+    // 「已安装版本」），命令行入口又是「应用执行别名」
+    // （`%LOCALAPPDATA%\Microsoft\WindowsApps\winget.exe`，用户可以在系统设置里关掉，
+    // 关掉时 `winget` 就不在 PATH 里）。所以既不能靠版本目录、也不能靠 PATH 判断，
+    // 直接问系统注册了没有：查到的版本就是唯一那个版本。
+    if def.install_mode.as_deref() == Some("msix") {
+        let pkg = def.msix_package_name.as_deref().unwrap_or(id.as_str());
+        match msix_package_version(pkg) {
+            Ok(Some(v)) => {
+                installed = true;
+                active_version = Some(v.clone());
+                installed_versions = vec![v];
+            }
+            Ok(None) => {
+                installed = false;
+                active_version = None;
+                installed_versions.clear();
+            }
+            Err(e) => {
+                // 查询本身失败（PowerShell 被限制等）：保持 Kira 记下的版本，别把装好的显示成未装
+                eprintln!("[scanner] {} MSIX 包查询失败: {}", id, e);
+            }
+        }
+    } else if installed && !managed && install_source.as_deref() != Some("手动指定") {
+        // 二次验证：未托管且不是手动指定路径的项目，通过 version_exe 在 PATH 中确认可执行文件真实存在
+        // 防止残留的版本目录/junction 或无效 Graves 规则匹配导致误判为"已安装"
         if let Some(ref exe) = def.version_exe {
             let found = which_in_path(exe);
             if !found {
@@ -658,6 +684,76 @@ fn which_in_path(name: &str) -> bool {
         }
     }
     false
+}
+
+/// MSIX 版本查询结果缓存：起一次 PowerShell 进程约 1~2 秒，而 SDK 列表每 4 秒
+/// 刷新一次全部项目状态，不能每次都查。安装 / 卸载成功后由 `invalidate_msix_version_cache`
+/// 立即失效，避免装完还显示旧的「未安装」。
+const MSIX_VERSION_TTL: std::time::Duration = std::time::Duration::from_secs(15);
+
+fn msix_version_cache() -> &'static std::sync::Mutex<HashMap<String, (Instant, Option<String>)>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<String, (Instant, Option<String>)>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+/// 让某个 MSIX 包的版本缓存立即失效（安装 / 卸载完成后调用）。
+pub(crate) fn invalidate_msix_version_cache(package_name: &str) {
+    if let Ok(mut cache) = msix_version_cache().lock() {
+        cache.remove(package_name);
+    }
+}
+
+/// 查询系统里已注册的 MSIX 包版本。`Ok(None)` = 确实没装，`Err` = 查询失败（无法判定）。
+fn msix_package_version(package_name: &str) -> Result<Option<String>, String> {
+    {
+        let cache = msix_version_cache().lock().map_err(|e| format!("MSIX 缓存锁失败: {}", e))?;
+        if let Some((at, value)) = cache.get(package_name) {
+            if at.elapsed() < MSIX_VERSION_TTL {
+                return Ok(value.clone());
+            }
+        }
+    }
+
+    let script = format!(
+        "(Get-AppxPackage -Name '{}' | Select-Object -First 1).Version",
+        package_name.replace('\'', "''")
+    );
+    let out = crate::commands::hidden_cmd::hidden_cmd("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .map_err(|e| format!("查询 MSIX 包 {} 失败: {}", package_name, e))?;
+    let value = parse_msix_version(&String::from_utf8_lossy(&out.stdout));
+
+    if let Ok(mut cache) = msix_version_cache().lock() {
+        cache.insert(package_name.to_string(), (Instant::now(), value.clone()));
+    }
+    Ok(value)
+}
+
+/// 从 `(Get-AppxPackage …).Version` 的输出里取版本号（可能带 BOM / 空行 / 多行）。
+fn parse_msix_version(stdout: &str) -> Option<String> {
+    stdout
+        .lines()
+        .map(|l| l.trim().trim_matches('\u{feff}'))
+        .find(|l| !l.is_empty())
+        .map(|s| s.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_msix_version;
+
+    /// PowerShell 的输出形态：CRLF、前导空行、可能有 BOM；没装时只有空行。
+    #[test]
+    fn msix_version_parses_first_non_empty_line() {
+        assert_eq!(parse_msix_version("1.29.380.0\r\n").as_deref(), Some("1.29.380.0"));
+        assert_eq!(parse_msix_version("\r\n\r\n").as_deref(), None, "没装时输出为空");
+        assert_eq!(parse_msix_version("").as_deref(), None);
+        assert_eq!(parse_msix_version("\u{feff}1.29.380.0\r\n").as_deref(), Some("1.29.380.0"), "BOM 要剥掉");
+        // 多个包命中时（同名多版本 / 多用户）只取第一行
+        assert_eq!(parse_msix_version("2.0.0.0\r\n1.29.380.0\r\n").as_deref(), Some("2.0.0.0"));
+    }
 }
 
 /// 扫描数据目录状态
