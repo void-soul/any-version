@@ -365,14 +365,25 @@ export function PackageManagerTab({
     steps.push({
       label: t("pkgmgr.detectVersion", { name: pm.display_name }),
       run: async () => {
-        if (pm.version_cmd) {
-          try {
-            const out = await invoke<string>("run_cmd_capture", { cmd: pm.version_cmd, projectId });
+        if (!pm.version_cmd) return;
+        try {
+          const out = await invoke<string>("run_cmd_capture", { cmd: pm.version_cmd, projectId });
+          setInstalled(true);
+          setVersion(out.trim());
+          cachedData.installed = true;
+          cachedData.version = out.trim();
+        } catch {
+          // 「工具自身」的内置条目（built_in 且 id 与项目 id 相同，如 go 的 Go Modules）：
+          // 它的 version_exe 就是工具本身，命令能否跑通取决于 PATH 注入 / 安装位置，
+          // 未必在本进程里解析得到。这时回退到应用自己的安装记录（与标题栏、版本管理页同源），
+          // 否则会出现「版本管理页说装了、包管理页却说未安装」的矛盾。
+          const fallbackVersion = projectStatus?.active_version ?? null;
+          if (pm.built_in && pm.id === projectDef?.id && projectStatus?.installed) {
             setInstalled(true);
-            setVersion(out.trim());
+            setVersion(fallbackVersion);
             cachedData.installed = true;
-            cachedData.version = out.trim();
-          } catch {
+            cachedData.version = fallbackVersion;
+          } else {
             setInstalled(false);
             setVersion(null);
             cachedData.installed = false;
