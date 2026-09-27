@@ -32,32 +32,5 @@
     "version_field": "tag_name",
     "version_transform": "trim_prefix:v",
     "filter_contains_not": "preview"
-  },
-  "data_dirs": [
-    {
-      "id": "download-cache",
-      "display_name": "下载缓存（安装包暂存）",
-      "kind": "cache",
-      "possible_paths": [
-        "{local_appdata}\\Temp\\WinGet",
-        "{home}\\AppData\\Local\\Temp\\WinGet"
-      ],
-      "default_path": "{local_appdata}\\Temp\\WinGet",
-      "supports_direct": true,
-      "auto_create": true,
-      "required_for_start": false
-    },
-    {
-      "id": "state",
-      "display_name": "配置与状态目录（settings.json 所在）",
-      "kind": "config",
-      "possible_paths": [
-        "{local_appdata}\\Packages\\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\\LocalState"
-      ],
-      "default_path": "{local_appdata}\\Packages\\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\\LocalState",
-      "supports_direct": false,
-      "auto_create": false,
-      "required_for_start": false
-    }
-  ]
+  }
 }

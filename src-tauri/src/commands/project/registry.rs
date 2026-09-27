@@ -374,11 +374,41 @@ mod tests {
                 var.name
             );
         }
-        // 安装根 / 缓存 / 全局目录都必须由 data_dirs 声明，才能被「数据目录」页管理
-        for id in ["root", "cache", "global"] {
+    }
+
+    /// 与全站惯例一致：只有**服务类**项目才声明 `data_dirs`（数据/日志/配置目录）。
+    /// 普通 SDK（nodejs / python / nuget / ffmpeg…）一个都不声明——SDK 自己的
+    /// 程序目录 ↔ 版本目录映射是 Kira 的底层行为，不该出现在界面上让用户改。
+    /// 这类工具的「缓存」由 package_managers.json 的 cache_* 字段承担。
+    #[test]
+    fn only_services_declare_data_dirs() {
+        for def in load_all() {
+            let is_service = def.is_service
+                || def.category == super::super::types::ProjectCategory::Service;
             assert!(
-                scoop.data_dirs.iter().any(|d| d.id == id),
-                "scoop 缺少数据目录 {}",
+                is_service || def.data_dirs.is_empty(),
+                "{} 不是服务类却声明了 data_dirs（SDK 自身的目录不该在界面上管理）",
+                def.id
+            );
+        }
+    }
+
+    /// winget / scoop 的缓存要走包管理器机制（与其它 SDK 一致），
+    /// 否则「数据目录」页会出现软件自身的目录映射。
+    #[test]
+    fn tool_caches_are_declared_on_package_managers() {
+        let list = load_all();
+        for id in ["winget", "scoop"] {
+            let def = list.iter().find(|d| d.id == id).unwrap_or_else(|| panic!("缺少 {}", id));
+            assert!(def.data_dirs.is_empty(), "{} 不该声明 data_dirs", id);
+            let pm = def
+                .package_managers
+                .iter()
+                .find(|p| p.id == id)
+                .unwrap_or_else(|| panic!("{} 缺少内置包管理器条目", id));
+            assert!(
+                pm.cache_default_path.is_some() || pm.cache_detect_cmd.is_some(),
+                "{} 的包管理器没有声明缓存路径",
                 id
             );
         }
