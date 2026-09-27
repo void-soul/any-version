@@ -396,12 +396,56 @@ mod tests {
             "C:/t/Microsoft.VCLibs.140.00.UWPDesktop_14.0.30704.0_arm64__8wekyb3d8bbwe.appx".to_string(),
             "C:/t/Microsoft.UI.Xaml.2.8_8.2310.30001.0_x64__8wekyb3d8bbwe.appx".to_string(),
         ];
-        let kept = filter_deps_for_arch(deps, "_x64__");
+        let kept = filter_deps_for_arch(deps, "x64");
         assert_eq!(kept.len(), 2, "只应保留两个 x64 包: {:?}", kept);
         assert!(kept.iter().all(|p| p.contains("_x64__")));
-        // ARM64 机器上换成 arm64 那套
-        let kept_arm = filter_deps_for_arch(kept.clone(), "_arm64__");
-        assert_eq!(kept_arm, kept, "一个都不匹配时应原样返回，交给部署引擎判断");
+        assert!(!kept.iter().any(|p| p.contains("_arm64__") || p.contains("_x86__")));
+    }
+
+    /// WinGet 依赖归档的真实布局（实测 v1.29.380）：**架构在目录名里、文件名只有
+    /// `_<arch>.appx`**，没有 Store 那套 `_x64__8wekyb3d8bbwe` 后缀。
+    /// 上一版按 `_x64__` 精确匹配 → 0 命中 → 兜底全量返回 → ARM64 被装 → 0x80073D10。
+    #[test]
+    fn test_filter_deps_matches_winget_dependency_zip_layout() {
+        let deps = vec![
+            "D:/any-versions/.tmp/winget_1/deps/robe/arm64/Microsoft.VCLibs.140.00.UWPDesktop_14.0.33728.0_arm64.appx".to_string(),
+            "D:/any-versions/.tmp/winget_1/deps/robe/arm64/Microsoft.WindowsAppRuntime.1.8_8000.616.304.0_arm64.appx".to_string(),
+            "D:/any-versions/.tmp/winget_1/deps/robe/x64/Microsoft.VCLibs.140.00.UWPDesktop_14.0.33728.0_x64.appx".to_string(),
+            "D:/any-versions/.tmp/winget_1/deps/robe/x64/Microsoft.WindowsAppRuntime.1.8_8000.616.304.0_x64.appx".to_string(),
+            "D:/any-versions/.tmp/winget_1/deps/robe/x86/Microsoft.VCLibs.140.00.UWPDesktop_14.0.33728.0_x86.appx".to_string(),
+            "D:/any-versions/.tmp/winget_1/deps/robe/x86/Microsoft.WindowsAppRuntime.1.8_8000.616.304.0_x86.appx".to_string(),
+        ];
+        let kept = filter_deps_for_arch(deps, "x64");
+        assert_eq!(kept.len(), 2, "x64 机器只该留下 x64 那两个: {:?}", kept);
+        assert!(kept.iter().all(|p| p.contains("/x64/")));
+
+        // x86 机器换 x86 那套；arm64 机器换 arm64 那套（且不能因为文件名里含 "arm" 被误判）
+        let kept_x86 = filter_deps_for_arch(kept.clone(), "x86");
+        assert!(kept_x86.is_empty(), "x64 包不能留给 x86 机器");
+        let arm_deps = filter_deps_for_arch(deps_of_all_archs(), "arm64");
+        assert_eq!(arm_deps.len(), 2, "arm64 机器该留下 arm64 那两个: {:?}", arm_deps);
+        assert!(arm_deps.iter().all(|p| p.contains("/arm64/")));
+    }
+
+    /// 架构无关的包（名字/目录里都没有架构段）必须保留 —— 排除规则只针对异架构。
+    #[test]
+    fn test_filter_deps_keeps_arch_neutral_packages() {
+        let deps = vec![
+            "C:/t/Microsoft.UI.Xaml.2.8_8.2310.30001.0_neutral__8wekyb3d8bbwe.appx".to_string(),
+            "C:/t/deps/Microsoft.WindowsAppRuntime.1.8.appx".to_string(),
+        ];
+        assert_eq!(filter_deps_for_arch(deps, "x64").len(), 2);
+    }
+
+    fn deps_of_all_archs() -> Vec<String> {
+        vec![
+            "C:/t/deps/robe/arm64/Microsoft.VCLibs_14.0_arm64.appx".to_string(),
+            "C:/t/deps/robe/arm64/Microsoft.WindowsAppRuntime.1.8_arm64.appx".to_string(),
+            "C:/t/deps/robe/x64/Microsoft.VCLibs_14.0_x64.appx".to_string(),
+            "C:/t/deps/robe/x64/Microsoft.WindowsAppRuntime.1.8_x64.appx".to_string(),
+            "C:/t/deps/robe/x86/Microsoft.VCLibs_14.0_x86.appx".to_string(),
+            "C:/t/deps/robe/x86/Microsoft.WindowsAppRuntime.1.8_x86.appx".to_string(),
+        ]
     }
 
     #[test]
@@ -909,11 +953,23 @@ async fn do_msix_install(
         // 全传会让部署引擎挑到不匹配的那份，报 HRESULT 0x80073D10。
         let before = dep_paths.len();
         dep_paths = filter_deps_for_arch(dep_paths, system_arch_token());
+        // 写入实际保留的包名：下次再失败时不用重新下载归档就能看出筛掉了什么
+        let kept_names: Vec<String> = dep_paths
+            .iter()
+            .map(|p| {
+                std::path::Path::new(p)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("?")
+                    .to_string()
+            })
+            .collect();
         crate::exit_log!(
-            "[MSIX 依赖] 共 {} 个，按架构 {} 筛选后 {}",
+            "[MSIX 依赖] 共 {} 个，按架构 {} 筛选后 {} 个: {}",
             before,
             system_arch_token(),
-            dep_paths.len()
+            dep_paths.len(),
+            kept_names.join(", ")
         );
     }
 
@@ -947,56 +1003,79 @@ async fn do_msix_install(
         ));
     }
 
-    // 记录「已装版本」，便于前端展示当前版本（即便它不由 versions_dir 承载）
+    // 记录「已装版本」（即便它不由 versions_dir 承载），
+    // 并让扫描器的 MSIX 版本缓存立即失效 —— 否则下一次扫描会读到缓存里旧的「未安装」，
+    // 装完界面上还是空的。
     {
         use crate::commands::config::{load_config, save_config};
         let mut config = load_config();
         config.active_versions.insert(id.clone(), version);
         let _ = save_config(&config);
+        if let Some(ref pkg) = def.msix_package_name {
+            super::scanner::invalidate_msix_version_cache(pkg);
+        }
     }
 
     sync_install_step(&app, &id, "完成");
     Ok(())
 }
 
-/// 本机 MSIX 架构标记。包名第 3 段是架构：`Name_Version_Arch_ResourceId_PublisherId`，
-/// 因此用带前后下划线的 `_x64__` 之类来精确匹配，避免误命中名字里带 "x64" 的包。
+/// MSIX 依赖包里可能出现的架构写法（顺序有意义：`arm64` 必须排在 `arm` 之前）。
+const MSIX_ARCHS: [&str; 4] = ["x86", "x64", "arm64", "arm"];
+
+/// 本机架构（取值与 MSIX 包里的写法一致）。
 fn system_arch_token() -> &'static str {
     match std::env::var("PROCESSOR_ARCHITECTURE")
         .unwrap_or_default()
         .to_ascii_lowercase()
         .as_str()
     {
-        "arm64" => "_arm64__",
-        "x86" => "_x86__",
-        _ => "_x64__", // AMD64 及其它默认按 x64
+        "arm64" => "arm64",
+        "x86" => "x86",
+        _ => "x64", // AMD64 及其它默认按 x64
     }
 }
 
-/// 只保留与指定架构匹配的依赖包。
+/// 一条依赖包路径里携带的架构标记。
 ///
-/// WinGet 的依赖归档同时提供 x86/x64/arm64 三套框架包；不加筛选地把它们全塞进
-/// `-DependencyPath`，部署引擎会挑到与本机不符的那一份并失败（实测 x64 机器上被
-/// ARM64 的 VCLibs 卡住，报 0x80073D10）。一个都匹配不上时原样返回，让
-/// Add-AppxPackage 自己判断，总比空列表好。
-fn filter_deps_for_arch(deps: Vec<String>, arch_token: &str) -> Vec<String> {
-    let matched: Vec<String> = deps
-        .iter()
-        .filter(|p| {
-            std::path::Path::new(p)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("")
-                .to_ascii_lowercase()
-                .contains(arch_token)
-        })
-        .cloned()
-        .collect();
-    if matched.is_empty() {
-        deps
-    } else {
-        matched
+/// 实测 WinGet 的依赖归档（`DesktopAppInstaller_Dependencies.zip`）长这样：
+/// ```text
+/// robe\arm64\Microsoft.VCLibs.140.00.UWPDesktop_14.0.33728.0_arm64.appx
+/// robe\x64\Microsoft.VCLibs.140.00.UWPDesktop_14.0.33728.0_x64.appx
+/// robe\x86\Microsoft.VCLibs.140.00.UWPDesktop_14.0.33728.0_x86.appx
+/// ```
+/// 架构既出现在**目录名**也出现在**文件名后缀**（`_x64.appx`）里，而且不是
+/// Store 下载那套 `_x64__8wekyb3d8bbwe`。所以两个位置都要认，且**每个路径段只认一个架构**
+/// （`arm64` 先于 `arm`，否则 arm64 包会同时被标记成 arm + arm64 两种而被误排除）。
+fn dep_arch_markers(path: &str) -> Vec<&'static str> {
+    let mut found: Vec<&'static str> = Vec::new();
+    for comp in path.split(|c| c == '/' || c == '\\') {
+        let lower = comp.to_ascii_lowercase();
+        let hit = MSIX_ARCHS
+            .iter()
+            .find(|arch| lower == **arch || lower.contains(&format!("_{}", arch)));
+        if let Some(arch) = hit {
+            if !found.contains(arch) {
+                found.push(*arch);
+            }
+        }
     }
+    found
+}
+
+/// 只保留与本机架构一致的依赖包：带任何「非本机」架构标记的一律排除。
+///
+/// WinGet 的依赖归档同时提供 x86/x64/arm64 三套框架包，不加筛选地全塞进
+/// `-DependencyPath`，部署引擎会挑到与本机不符的那份并失败 —— 实测 x64 机器上被
+/// ARM64 的 VCLibs 卡住，报 HRESULT 0x80073D10。
+///
+/// 注意这里**没有**「一个都不匹配就原样返回」的兜底：那正是上一版把 arm64 漏过去的
+/// 原因（按 `_x64__` 精确匹配 → 0 个命中 → 全量返回）。没有架构标记的包（架构无关）
+/// 本来就会保留，认不出架构时宁可空列表，也不要把异架构的包交给部署引擎。
+fn filter_deps_for_arch(deps: Vec<String>, native: &str) -> Vec<String> {
+    deps.into_iter()
+        .filter(|p| dep_arch_markers(p).iter().all(|a| *a == native))
+        .collect()
 }
 
 /// 递归收集目录下的 MSIX 系包文件（.appx / .msix / .appxbundle / .msixbundle）。
@@ -1224,6 +1303,8 @@ pub fn project_uninstall_version(app: AppHandle, id: String, version: String) ->
         if cfg.active_versions.remove(&id).is_some() || cfg.auto_start_services.remove(&id) {
             let _ = crate::commands::config::save_config(&cfg);
         }
+        // 同步失效扫描器的 MSIX 缓存，否则列表里还留着已卸载的版本
+        super::scanner::invalidate_msix_version_cache(&pkg);
         let _ = crate::tray::rebuild_tray_menu(&app);
         return Ok(());
     }
