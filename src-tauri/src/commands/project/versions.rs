@@ -334,6 +334,7 @@ fn parse_channel_manifest_version(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::collect_msix_files;
+    use super::filter_deps_for_arch;
     use super::parse_channel_manifest_version;
 
     /// 与真实 channel-rust-stable.toml 结构一致的样例（含提交信息后缀与嵌套 target 段）
@@ -384,6 +385,23 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 依赖归档里三套架构混在一起，只留下与本机匹配的那套（x64 机器筛掉 arm64 / x86）。
+    #[test]
+    fn test_filter_deps_for_arch_keeps_matching_arch_only() {
+        let deps = vec![
+            "C:/t/Microsoft.VCLibs.140.00.UWPDesktop_14.0.30704.0_x64__8wekyb3d8bbwe.appx".to_string(),
+            "C:/t/Microsoft.VCLibs.140.00.UWPDesktop_14.0.30704.0_x86__8wekyb3d8bbwe.appx".to_string(),
+            "C:/t/Microsoft.VCLibs.140.00.UWPDesktop_14.0.30704.0_arm64__8wekyb3d8bbwe.appx".to_string(),
+            "C:/t/Microsoft.UI.Xaml.2.8_8.2310.30001.0_x64__8wekyb3d8bbwe.appx".to_string(),
+        ];
+        let kept = filter_deps_for_arch(deps, "_x64__");
+        assert_eq!(kept.len(), 2, "只应保留两个 x64 包: {:?}", kept);
+        assert!(kept.iter().all(|p| p.contains("_x64__")));
+        // ARM64 机器上换成 arm64 那套
+        let kept_arm = filter_deps_for_arch(kept.clone(), "_arm64__");
+        assert_eq!(kept_arm, kept, "一个都不匹配时应原样返回，交给部署引擎判断");
     }
 
     #[test]
@@ -887,6 +905,16 @@ async fn do_msix_install(
         let dep_dir = temp_dir.join("deps");
         unzip_file(&dep_archive, &dep_dir).map_err(|e| format!("依赖包解压失败: {}", e))?;
         collect_msix_files(&dep_dir, &mut dep_paths);
+        // 依赖 zip 里同时含 x86 / x64 / arm64 三份，必须按本机架构筛选：
+        // 全传会让部署引擎挑到不匹配的那份，报 HRESULT 0x80073D10。
+        let before = dep_paths.len();
+        dep_paths = filter_deps_for_arch(dep_paths, system_arch_token());
+        crate::exit_log!(
+            "[MSIX 依赖] 共 {} 个，按架构 {} 筛选后 {}",
+            before,
+            system_arch_token(),
+            dep_paths.len()
+        );
     }
 
     // 3. Add-AppxPackage（覆盖安装：-ForceApplicationShutdown 让占用中的旧版也能被替换）
@@ -929,6 +957,46 @@ async fn do_msix_install(
 
     sync_install_step(&app, &id, "完成");
     Ok(())
+}
+
+/// 本机 MSIX 架构标记。包名第 3 段是架构：`Name_Version_Arch_ResourceId_PublisherId`，
+/// 因此用带前后下划线的 `_x64__` 之类来精确匹配，避免误命中名字里带 "x64" 的包。
+fn system_arch_token() -> &'static str {
+    match std::env::var("PROCESSOR_ARCHITECTURE")
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "arm64" => "_arm64__",
+        "x86" => "_x86__",
+        _ => "_x64__", // AMD64 及其它默认按 x64
+    }
+}
+
+/// 只保留与指定架构匹配的依赖包。
+///
+/// WinGet 的依赖归档同时提供 x86/x64/arm64 三套框架包；不加筛选地把它们全塞进
+/// `-DependencyPath`，部署引擎会挑到与本机不符的那一份并失败（实测 x64 机器上被
+/// ARM64 的 VCLibs 卡住，报 0x80073D10）。一个都匹配不上时原样返回，让
+/// Add-AppxPackage 自己判断，总比空列表好。
+fn filter_deps_for_arch(deps: Vec<String>, arch_token: &str) -> Vec<String> {
+    let matched: Vec<String> = deps
+        .iter()
+        .filter(|p| {
+            std::path::Path::new(p)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase()
+                .contains(arch_token)
+        })
+        .cloned()
+        .collect();
+    if matched.is_empty() {
+        deps
+    } else {
+        matched
+    }
 }
 
 /// 递归收集目录下的 MSIX 系包文件（.appx / .msix / .appxbundle / .msixbundle）。
