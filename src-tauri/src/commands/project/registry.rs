@@ -359,13 +359,15 @@ mod tests {
     /// 不带 sub_dir 的 path 型变量会被写成 SDK 的版本链接目录（`env.rs::sdk_env_var_value`），
     /// 于是「根目录」与「全局目录」两个数据目录会被解析成同一个 junction（实测截图），
     /// 而 scoop 自己的 apps/buckets 会被引到版本目录里，切版本即丢。
-    /// 它们必须保持 Clear 层（托管时清除变量），搬迁交给「数据目录」的 junction。
+    /// 它们必须保持 Clear 层（托管时清除变量），位置移动交给「数据管理」页签里
+    /// 对应 data_dir 条目的「开始变更」（复制 + Junction）——与 mysql 等服务的做法一致。
     #[test]
     fn scoop_env_vars_must_not_be_path_managed() {
         let scoop = load_all()
             .into_iter()
             .find(|d| d.id == "scoop")
             .expect("projects/ 里缺少 scoop");
+        assert!(!scoop.env_vars.is_empty(), "scoop 应声明 SCOOP / SCOOP_GLOBAL");
         for var in &scoop.env_vars {
             assert_eq!(
                 var.tier,
@@ -376,39 +378,51 @@ mod tests {
         }
     }
 
-    /// 与全站惯例一致：只有**服务类**项目才声明 `data_dirs`（数据/日志/配置目录）。
-    /// 普通 SDK（nodejs / python / nuget / ffmpeg…）一个都不声明——SDK 自己的
-    /// 程序目录 ↔ 版本目录映射是 Kira 的底层行为，不该出现在界面上让用户改。
-    /// 这类工具的「缓存」由 package_managers.json 的 cache_* 字段承担。
+    /// 谁会声明 `data_dirs`（数据 / 日志 / 缓存 / 配置目录，界面上就是「数据管理」页）：
+    /// 1) 服务类项目（mysql / redis / nginx…）：必须声明；
+    /// 2) 自带「安装根」语义的工具（scoop / winget）：必须声明——它们的 app / 缓存 / 状态目录
+    ///    跟服务的数据目录是同一类东西，就该走同一套机制（声明 → 卡片 → 开始变更做 junction），
+    ///    而不是被塞进 package_managers 或让用户手工改环境变量；
+    /// 3) 普通 SDK（nodejs / python / nuget / ffmpeg…）一个都不声明——SDK 自己的
+    ///    程序目录 ↔ 版本目录映射是 Kira 的底层行为，不该出现在界面上让用户改。
     #[test]
-    fn only_services_declare_data_dirs() {
-        for def in load_all() {
+    fn data_dirs_are_declared_where_they_belong() {
+        let list = load_all();
+        let by_id = |id: &str| {
+            list.iter()
+                .find(|d| d.id == id)
+                .unwrap_or_else(|| panic!("projects/ 里缺少 {}", id))
+        };
+
+        for def in &list {
             let is_service = def.is_service
                 || def.category == super::super::types::ProjectCategory::Service;
+            if is_service {
+                assert!(!def.data_dirs.is_empty(), "服务 {} 未声明任何 data_dirs", def.id);
+            }
+        }
+
+        for id in ["scoop", "winget"] {
+            let def = by_id(id);
             assert!(
-                is_service || def.data_dirs.is_empty(),
-                "{} 不是服务类却声明了 data_dirs（SDK 自身的目录不该在界面上管理）",
-                def.id
+                !def.data_dirs.is_empty(),
+                "{} 的安装根 / 缓存 / 状态目录要由「数据管理」页签托管，不能没有 data_dirs",
+                id
+            );
+            // 同一份目录不允许两套机制并存：数据管理才是唯一入口
+            assert!(
+                def.package_managers.iter().all(|p| p.id != id),
+                "{} 不该再声明同名内置包管理器条目（缓存已归 data_dirs）",
+                id
             );
         }
-    }
 
-    /// winget / scoop 的缓存要走包管理器机制（与其它 SDK 一致），
-    /// 否则「数据目录」页会出现软件自身的目录映射。
-    #[test]
-    fn tool_caches_are_declared_on_package_managers() {
-        let list = load_all();
-        for id in ["winget", "scoop"] {
-            let def = list.iter().find(|d| d.id == id).unwrap_or_else(|| panic!("缺少 {}", id));
-            assert!(def.data_dirs.is_empty(), "{} 不该声明 data_dirs", id);
-            let pm = def
-                .package_managers
-                .iter()
-                .find(|p| p.id == id)
-                .unwrap_or_else(|| panic!("{} 缺少内置包管理器条目", id));
+        // 普通 SDK 仍然不该出现 data_dirs
+        for id in ["nodejs", "python", "go", "ffmpeg"] {
+            let def = by_id(id);
             assert!(
-                pm.cache_default_path.is_some() || pm.cache_detect_cmd.is_some(),
-                "{} 的包管理器没有声明缓存路径",
+                def.data_dirs.is_empty(),
+                "{} 是普通 SDK，不该声明 data_dirs（自身的目录映射不该在界面上管理）",
                 id
             );
         }

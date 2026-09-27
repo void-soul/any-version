@@ -1,13 +1,13 @@
 [
   {
     "name": "SCOOP",
-    "desc": "Scoop 安装根（apps/buckets/shims 所在）。**由「数据目录」机制管理**：托管时本变量会被清除，改用 Junction 把默认位置 {home}\\scoop 指到你选的盘，避免它被写成 SDK 的版本链接目录",
+    "desc": "Scoop 安装根（apps / buckets / shims / persist 所在）。**归「数据管理」页签的「Scoop 根目录」条目托管**：托管时清除本变量，让 scoop 回落到默认位置 {home}\\scoop —— 位置移动交给那里的「开始变更」（复制 + Junction），与 mysql 等服务的做法一致。变量留着会被写成 SDK 的版本链接目录、并绕过 junction（路径解析里 env 优先于默认路径）",
     "check_type": "path",
     "tier": "clear"
   },
   {
     "name": "SCOOP_GLOBAL",
-    "desc": "全局安装目录（scoop install -g 的软件）。同上：由「数据目录」里的「全局安装目录」管理，托管时清除该变量，避免指向 SDK 版本目录",
+    "desc": "全局安装目录（scoop install -g 的软件）。同上：由「数据管理」里的「全局安装目录」条目托管，托管时清除本变量，避免它被写成 SDK 的版本链接目录",
     "check_type": "path",
     "tier": "clear"
   }
