@@ -1,14 +1,14 @@
 [
   {
     "name": "SCOOP",
-    "desc": "Scoop 根目录：apps / buckets / shims / cache 都挂在这里，改到别的盘可直接省出 C 盘空间",
+    "desc": "Scoop 安装根（apps/buckets/shims 所在）。**由「数据目录」机制管理**：托管时本变量会被清除，改用 Junction 把默认位置 {home}\\scoop 指到你选的盘，避免它被写成 SDK 的版本链接目录",
     "check_type": "path",
-    "tier": "core"
+    "tier": "clear"
   },
   {
     "name": "SCOOP_GLOBAL",
-    "desc": "全局安装目录（scoop install -g 的软件落在这里），留空则用 %ProgramData%\\scoop",
+    "desc": "全局安装目录（scoop install -g 的软件）。同上：由「数据目录」里的「全局安装目录」管理，托管时清除该变量，避免指向 SDK 版本目录",
     "check_type": "path",
-    "tier": "core"
+    "tier": "clear"
   }
 ]

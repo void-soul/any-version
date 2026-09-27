@@ -355,6 +355,35 @@ mod tests {
         assert!(scoop.remote_versions_url.is_some(), "scoop 缺版本列表地址");
     }
 
+    /// SCOOP / SCOOP_GLOBAL 是「安装根」语义，**不能**交给通用环境变量托管：
+    /// 不带 sub_dir 的 path 型变量会被写成 SDK 的版本链接目录（`env.rs::sdk_env_var_value`），
+    /// 于是「根目录」与「全局目录」两个数据目录会被解析成同一个 junction（实测截图），
+    /// 而 scoop 自己的 apps/buckets 会被引到版本目录里，切版本即丢。
+    /// 它们必须保持 Clear 层（托管时清除变量），搬迁交给「数据目录」的 junction。
+    #[test]
+    fn scoop_env_vars_must_not_be_path_managed() {
+        let scoop = load_all()
+            .into_iter()
+            .find(|d| d.id == "scoop")
+            .expect("projects/ 里缺少 scoop");
+        for var in &scoop.env_vars {
+            assert_eq!(
+                var.tier,
+                Some(super::super::types::EnvVarTier::Clear),
+                "{} 不能是托管型路径变量（会被写成版本链接目录）",
+                var.name
+            );
+        }
+        // 安装根 / 缓存 / 全局目录都必须由 data_dirs 声明，才能被「数据目录」页管理
+        for id in ["root", "cache", "global"] {
+            assert!(
+                scoop.data_dirs.iter().any(|d| d.id == id),
+                "scoop 缺少数据目录 {}",
+                id
+            );
+        }
+    }
+
     /// 目录名必须等于 config.json 里的 id，且 id 全局唯一（id 是配置索引键）。
     #[test]
     fn project_ids_unique_and_match_dir_name() {
