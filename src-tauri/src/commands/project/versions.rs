@@ -333,6 +333,7 @@ fn parse_channel_manifest_version(text: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::collect_msix_files;
     use super::parse_channel_manifest_version;
 
     /// 与真实 channel-rust-stable.toml 结构一致的样例（含提交信息后缀与嵌套 target 段）
@@ -356,6 +357,40 @@ mod tests {
     #[test]
     fn test_parse_channel_manifest_version_missing_section() {
         assert_eq!(parse_channel_manifest_version("[pkg.cargo]\nversion = \"0.99.0\"\n"), None);
+    }
+
+    /// 依赖包归档里混着各架构的 .appx/.msix，只挑包文件，且要递归进子目录。
+    #[test]
+    fn test_collect_msix_files_recurses_and_filters() {
+        let root = std::env::temp_dir().join(format!("msix-collect-{}", std::process::id()));
+        let nested = root.join("x64").join("release");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(root.join("keep.txt"), b"x").unwrap();
+        for name in ["dep.appx", "dep.msix", "dep.msixbundle"] {
+            std::fs::write(root.join(name), b"x").unwrap();
+        }
+        std::fs::write(nested.join("deep.appxbundle"), b"x").unwrap();
+
+        let mut found = Vec::new();
+        collect_msix_files(&root, &mut found);
+        let mut names: Vec<String> = found
+            .iter()
+            .map(|p| std::path::Path::new(p).file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec!["deep.appxbundle", "dep.appx", "dep.msix", "dep.msixbundle"]
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_collect_msix_files_on_missing_dir_is_noop() {
+        let mut found = Vec::new();
+        collect_msix_files(std::path::Path::new("C:/definitely/not/here"), &mut found);
+        assert!(found.is_empty());
     }
 }
 
@@ -779,6 +814,141 @@ async fn do_npm_install(
     Ok(())
 }
 
+/// MSIX 安装（WinGet 这类「系统级包」专用）：下载 MSIX 包 + 依赖包归档，
+/// 再用 `Add-AppxPackage` 覆盖安装。
+///
+/// 与归档型安装的差别：**不落 versions_dir、不做 junction**。MSIX 由 Windows 统一管理，
+/// 同名包只能有一份，所以「装新版本」就是覆盖旧的 —— 前端的版本列表用于选择装哪个版本，
+/// 「切换版本」对这类 SDK 无意义（见 project_use_version_impl 里的显式报错）。
+async fn do_msix_install(
+    app: AppHandle,
+    id: String,
+    version: String,
+    dl_info: DownloadInfo,
+    def: &super::types::ProjectDef,
+) -> Result<(), String> {
+    let (temp_dir, _) = setup_temp_dir(&id)?;
+    let _guard = TempDirGuard { path: temp_dir.clone() };
+
+    // 1. 主包
+    let main_path = temp_dir.join(format!("package.{}", dl_info.file_ext));
+    let id_cap = id.clone();
+    let app_handle = app.clone();
+    download_with_progress(&dl_info.url, &main_path, move |downloaded, total, speed| {
+        let pct = if total > 0 { (downloaded * 100 / total) as u8 } else { 0 };
+        let speed_str = format!("{}/s", crate::commands::cache::format_bytes(speed as u64));
+        let _ = app_handle.emit("download-progress", DownloadProgress {
+            sdk: id_cap.clone(),
+            downloaded,
+            total,
+            pct,
+            speed_str: speed_str.clone(),
+        });
+        if let Some(entry) = get_active_downloads().lock().unwrap().get_mut(&id_cap) {
+            entry.active.downloaded = downloaded;
+            entry.active.total = total;
+            entry.active.pct = pct;
+            entry.active.speed_str = speed_str;
+        }
+    })
+    .await
+    .map_err(|e| format!("下载失败: {}", e))?;
+
+    // 2. 依赖包（可选）：解压后收集其中的 .msix / .appx / .msixbundle
+    let mut dep_paths: Vec<String> = Vec::new();
+    if let Some(tpl) = def.dependency_url_template.as_deref() {
+        let dep_url = tpl
+            .replace("{version}", &version)
+            .replace("{ver}", version.trim_start_matches('v'));
+        let dep_archive = temp_dir.join("dependencies.zip");
+        sync_install_step(&app, &id, "下载依赖包");
+        let id_cap = id.clone();
+        let app_handle = app.clone();
+        download_with_progress(&dep_url, &dep_archive, move |downloaded, total, speed| {
+            let pct = if total > 0 { (downloaded * 100 / total) as u8 } else { 0 };
+            let speed_str = format!("{}/s", crate::commands::cache::format_bytes(speed as u64));
+            let _ = app_handle.emit("download-progress", DownloadProgress {
+                sdk: id_cap.clone(),
+                downloaded,
+                total,
+                pct,
+                speed_str: speed_str.clone(),
+            });
+            if let Some(entry) = get_active_downloads().lock().unwrap().get_mut(&id_cap) {
+                entry.active.downloaded = downloaded;
+                entry.active.total = total;
+                entry.active.pct = pct;
+                entry.active.speed_str = speed_str;
+            }
+        })
+        .await
+        .map_err(|e| format!("依赖包下载失败: {}", e))?;
+
+        let dep_dir = temp_dir.join("deps");
+        unzip_file(&dep_archive, &dep_dir).map_err(|e| format!("依赖包解压失败: {}", e))?;
+        collect_msix_files(&dep_dir, &mut dep_paths);
+    }
+
+    // 3. Add-AppxPackage（覆盖安装：-ForceApplicationShutdown 让占用中的旧版也能被替换）
+    sync_install_step(&app, &id, "安装中");
+    let main_str = main_path.to_string_lossy().to_string();
+    let mut script = format!(
+        "Add-AppxPackage -Path '{}' -ForceApplicationShutdown",
+        main_str.replace('\'', "''")
+    );
+    if !dep_paths.is_empty() {
+        let list = dep_paths
+            .iter()
+            .map(|p| format!("'{}'", p.replace('\'', "''")))
+            .collect::<Vec<_>>()
+            .join(",");
+        script.push_str(&format!(" -DependencyPath {}", list));
+    }
+
+    let out = crate::commands::hidden_cmd::hidden_cmd("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .map_err(|e| format!("执行 Add-AppxPackage 失败: {}", e))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        crate::exit_log!("[MSIX 安装失败] stdout: {} stderr: {}", stdout, stderr);
+        return Err(format!(
+            "MSIX 安装失败: {}",
+            if stderr.trim().is_empty() { stdout.trim() } else { stderr.trim() }
+        ));
+    }
+
+    // 记录「已装版本」，便于前端展示当前版本（即便它不由 versions_dir 承载）
+    {
+        use crate::commands::config::{load_config, save_config};
+        let mut config = load_config();
+        config.active_versions.insert(id.clone(), version);
+        let _ = save_config(&config);
+    }
+
+    sync_install_step(&app, &id, "完成");
+    Ok(())
+}
+
+/// 递归收集目录下的 MSIX 系包文件（.appx / .msix / .appxbundle / .msixbundle）。
+fn collect_msix_files(dir: &Path, out: &mut Vec<String>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_msix_files(&path, out);
+        } else {
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+            if matches!(ext.as_str(), "appx" | "msix" | "appxbundle" | "msixbundle") {
+                out.push(path.to_string_lossy().to_string());
+            }
+        }
+    }
+}
+
 /// 实际安装逻辑（在可取消的 Tokio 任务中运行）
 async fn do_install(
     app: AppHandle,
@@ -793,6 +963,12 @@ async fn do_install(
     // 0. npm 包类型：通过 `npm install --prefix` 安装到 versions_dir，而非下载归档。
     if let Some(ref pkg) = def.npm_pkg_name {
         return do_npm_install(app, id, version, pkg.clone()).await;
+    }
+
+    // 0'. MSIX 包类型（如 WinGet）：下载后用 Add-AppxPackage 覆盖安装，
+    //     不进 versions_dir / 不做 junction —— 系统级只存在一份。
+    if def.install_mode.as_deref() == Some("msix") {
+        return do_msix_install(app, id, version, dl_info, &def).await;
     }
 
     let file_ext = dl_info.file_ext.clone();
@@ -953,6 +1129,37 @@ pub fn project_uninstall_version(app: AppHandle, id: String, version: String) ->
     if !delegation.version_control {
         return Err("项目尚未开启“版本控制与下载”功能，无法卸载版本".to_string());
     }
+
+    // MSIX 型（如 WinGet）：卸载走 Remove-AppxPackage，它没有 versions_dir 里的版本目录
+    if def.install_mode.as_deref() == Some("msix") {
+        let pkg = def
+            .msix_package_name
+            .clone()
+            .ok_or_else(|| "该项目的 msix_package_name 未配置，无法卸载".to_string())?;
+        let script = format!(
+            "Get-AppxPackage -Name '{}' | Remove-AppxPackage",
+            pkg.replace('\'', "''")
+        );
+        let out = crate::commands::hidden_cmd::hidden_cmd("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()
+            .map_err(|e| format!("执行 Remove-AppxPackage 失败: {}", e))?;
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            return Err(format!(
+                "卸载失败: {}",
+                if stderr.trim().is_empty() { stdout.trim() } else { stderr.trim() }
+            ));
+        }
+        let mut cfg = load_config();
+        if cfg.active_versions.remove(&id).is_some() || cfg.auto_start_services.remove(&id) {
+            let _ = crate::commands::config::save_config(&cfg);
+        }
+        let _ = crate::tray::rebuild_tray_menu(&app);
+        return Ok(());
+    }
+
     let dest_dir = Path::new(&config.versions_dir).join(&id).join(&version);
     if !dest_dir.exists() {
         return Err(format!("版本 {} 的 {} 未安装", version, id));
@@ -998,6 +1205,10 @@ fn project_use_version_impl(id: String, version: String) -> Result<(), String> {
     let delegation = super::scanner::get_project_delegation(&config, &id, &def);
     if !delegation.version_control {
         return Err("项目尚未开启“版本控制与下载”功能，无法切换版本".to_string());
+    }
+    // MSIX 型是系统级覆盖安装（同名包只能有一份），不存在「多个版本目录可切换」
+    if def.install_mode.as_deref() == Some("msix") {
+        return Err("该 SDK 为系统级覆盖安装（装新版即替换旧版），不支持多版本切换".to_string());
     }
     let dest_dir = Path::new(&config.versions_dir).join(&id).join(&version);
     if !dest_dir.exists() {

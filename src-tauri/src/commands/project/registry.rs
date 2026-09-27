@@ -331,6 +331,30 @@ mod tests {
         assert!(checked >= 60, "扫描到的拆分配置文件数量异常偏少: {}", checked);
     }
 
+    /// winget / scoop 是两类特殊安装方式，字段漏了会让「安装 / 卸载」静默失效：
+    /// winget 是 MSIX 系统包（覆盖安装、无多版本），scoop 是源码归档（可多版本）。
+    #[test]
+    fn winget_and_scoop_install_modes_are_declared() {
+        let list = load_all();
+        let by_id = |id: &str| {
+            list.iter()
+                .find(|d| d.id == id)
+                .unwrap_or_else(|| panic!("projects/ 里缺少 {}", id))
+                .clone()
+        };
+
+        let winget = by_id("winget");
+        assert_eq!(winget.install_mode.as_deref(), Some("msix"));
+        assert_eq!(winget.msix_package_name.as_deref(), Some("Microsoft.DesktopAppInstaller"));
+        assert!(winget.dependency_url_template.is_some(), "winget 缺依赖包模板");
+        assert!(winget.remote_versions_url.is_some(), "winget 缺版本列表地址");
+
+        let scoop = by_id("scoop");
+        assert_ne!(scoop.install_mode.as_deref(), Some("msix"), "scoop 走归档安装");
+        assert!(scoop.download_url_template.is_some(), "scoop 缺下载地址模板");
+        assert!(scoop.remote_versions_url.is_some(), "scoop 缺版本列表地址");
+    }
+
     /// 目录名必须等于 config.json 里的 id，且 id 全局唯一（id 是配置索引键）。
     #[test]
     fn project_ids_unique_and_match_dir_name() {

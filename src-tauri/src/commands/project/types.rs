@@ -464,6 +464,19 @@ pub struct ProjectDef {
     #[serde(default)]
     pub remote_versions_config: Option<serde_json::Value>,
 
+    /// 安装方式：
+    /// - `"archive"`（默认）：下载归档 → 解压到 versions_dir → junction 切换（支持多版本）
+    /// - `"msix"`：下载 MSIX/AppX 包 → `Add-AppxPackage` **覆盖安装**（系统级只存在一份，
+    ///   因此这类 SDK 没有多版本切换，安装新版即覆盖旧版）
+    #[serde(default)]
+    pub install_mode: Option<String>,
+    /// `install_mode="msix"` 时的依赖包归档（如 WinGet 的 DesktopAppInstaller_Dependencies.zip），
+    /// 解压后的依赖包会以 `-DependencyPath` 传给 Add-AppxPackage
+    #[serde(default)]
+    pub dependency_url_template: Option<String>,
+    /// `install_mode="msix"` 时的包名（卸载用 `Get-AppxPackage -Name <name>` 定位）
+    #[serde(default)]
+    pub msix_package_name: Option<String>,
     /// 安装后置配置
     #[serde(default)]
     pub post_install: Option<serde_json::Value>,
