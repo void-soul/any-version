@@ -28,6 +28,7 @@ import {
   Info,
   Save,
   FileText,
+  RotateCcw,
 } from "lucide-react";
 import type { ProjectStatus, ProjectDef, EnvVarStatus, ServiceStatus, PackageManagerDef, ManagedPathEntry } from "./types";
 import { PackageManagerTab as PackageManagerTabModular } from "./tabs/PackageManagerTab";
@@ -1971,6 +1972,22 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
     }
   };
 
+  /**
+   * 清除记录的自定义路径，回到默认位置。
+   * 后端 `project_set_data_dir` 传空路径 = 删除 config.custom_data_paths 里的这条记录；
+   * 目录内容一个字节都不动，只是不再被 Kira 当作「自定义路径」展示 ——
+   * 用于纠正「指向」模式下记录的、工具其实不会去读的路径（如 scoop 这类没有启动器的工具）。
+   */
+  const handleResetCustomPath = async (dir: { id: string }) => {
+    try {
+      await invoke("project_set_data_dir", { projectId: project.id, dirId: dir.id, newPath: "" });
+      theamedAlert(t("projsub.resetCustomPathDone"));
+      await onRefresh();
+    } catch (e: any) {
+      alertError(t("projsub.opFail", { err: String(e) }));
+    }
+  };
+
   /** 真正删除数据目录（由确认弹窗回调触发） */
   const doDelete = async (path: string) => {
     try {
@@ -2236,7 +2253,11 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                 <div className="flex items-center gap-2 text-body">
                   <span className="text-slate-500">{t("projsub.storeMigrate")}</span>
                   <span className="text-[var(--module-accent)] font-semibold">
-                    {pathsSame ? t("projsub.storeDirectLink") : t("projsub.storeMoveLink")}
+                    {!dir.exists
+                      ? t("projsub.storeCreateLink")
+                      : pathsSame
+                        ? t("projsub.storeDirectLink")
+                        : t("projsub.storeMoveLink")}
                   </span>
                 </div>
               )}
@@ -2407,21 +2428,36 @@ export function DataDirsTab({ project, def, onRefresh }: { project: ProjectStatu
                     </div>
                   </div>
 
-                  {/* 操作按钮区 */}
-                  {dir.exists && !isWorkflowActive && (
+                  {/* 操作按钮区：目录还不存在时也要能设置位置（如 scoop 的全局安装目录，
+                      没装过 -g 软件就一直不存在）——「设置位置」会建出空目录再挂 Junction；
+                      没有内容可删，所以「删除数据」只在目录存在时出现。 */}
+                  {!isWorkflowActive && (
                     <div className="flex items-center gap-2 pt-1 border-t border-white/5">
                       <button
                         onClick={() => openWorkflow(dir)}
                         className="px-3 py-1.5 bg-[color-mix(in_srgb,var(--module-accent)_80%,transparent)] hover:bg-[var(--module-accent)] text-white rounded-ctl text-body font-semibold cursor-pointer flex items-center gap-1 transition-all"
                       >
-                        <FolderSync className="w-3.5 h-3.5" /> {t("projsub.startChangeBtn")}
+                        <FolderSync className="w-3.5 h-3.5" /> {dir.exists ? t("projsub.startChangeBtn") : t("projsub.setLocationBtn")}
                       </button>
-                      <button
-                        onClick={() => handleDelete(dir.path)}
-                        className="px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-400 rounded-ctl text-body font-semibold cursor-pointer flex items-center gap-1 transition-all"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" /> {t("projsub.deleteData")}
-                      </button>
+                      {dir.exists && (
+                        <button
+                          onClick={() => handleDelete(dir.path)}
+                          className="px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-400 rounded-ctl text-body font-semibold cursor-pointer flex items-center gap-1 transition-all"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> {t("projsub.deleteData")}
+                        </button>
+                      )}
+                      {/* 「指向」模式给没有启动器的工具（scoop / winget）记录过路径时，
+                          那个路径工具其实不会读；给一个出口回到默认位置 + Junction 流程 */}
+                      {dir.source === "custom" && (
+                        <button
+                          onClick={() => handleResetCustomPath(dir)}
+                          title={t("projsub.resetCustomPathHint")}
+                          className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 rounded-ctl text-body font-semibold cursor-pointer flex items-center gap-1 transition-all"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" /> {t("projsub.resetCustomPath")}
+                        </button>
+                      )}
                     </div>
                   )}
 

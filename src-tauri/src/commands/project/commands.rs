@@ -1792,30 +1792,36 @@ pub fn migrate_data_dir(
     if orig == target {
         return Err("原路径与目标路径相同，无需迁移".to_string());
     }
-    if !orig.exists() {
-        return Err("源路径不存在".to_string());
-    }
+
+    // 源目录可能还没生成（如 scoop 的全局安装目录 %ProgramData%\scoop，
+    // 只要没装过 -g 软件就一直不存在）：这时没有内容可搬，
+    // 把它和目标目录都建出来再挂 Junction —— 否则这类「还没用到的目录」在界面上没有入口可设置。
+    let source_existed = crate::commands::cache::ensure_migration_source_dir(orig)?;
 
     // Ensure target parent folder exists
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("无法创建目标父目录: {}", e))?;
     }
 
-    let is_symlink = fs::symlink_metadata(orig).map(|m| m.file_type().is_symlink()).unwrap_or(false);
-
-    if is_symlink {
-        // Just remove old junction link
-        fs::remove_dir(orig).map_err(|e| format!("无法移除已有的旧链接: {}", e))?;
+    if !source_existed {
+        fs::create_dir_all(target).map_err(|e| format!("无法创建目标目录: {}", e))?;
     } else {
-        // Copy directory safely (database data files: delete_old_first = false)
-        // We use migrate_pkg_storage_impl with delete_old_first=false, storage_kind="data"
-        crate::commands::cache::migrate_pkg_storage_impl(
-            &app_handle,
-            &orig_path,
-            &new_path,
-            "data",
-            false,
-        )?;
+        let is_symlink = fs::symlink_metadata(orig).map(|m| m.file_type().is_symlink()).unwrap_or(false);
+
+        if is_symlink {
+            // Just remove old junction link
+            fs::remove_dir(orig).map_err(|e| format!("无法移除已有的旧链接: {}", e))?;
+        } else {
+            // Copy directory safely (database data files: delete_old_first = false)
+            // We use migrate_pkg_storage_impl with delete_old_first=false, storage_kind="data"
+            crate::commands::cache::migrate_pkg_storage_impl(
+                &app_handle,
+                &orig_path,
+                &new_path,
+                "data",
+                false,
+            )?;
+        }
     }
 
     // Create Junction

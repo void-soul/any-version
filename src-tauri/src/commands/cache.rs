@@ -414,6 +414,43 @@ fn resolve_extra_cache_path(
     }
 }
 
+/// 「工具自身」的内置条目：`built_in` 且 id 与项目 id 相同（如 go 项目里的
+/// `Go Modules` / `Go Build Cache` 两条）。这类条目的可执行文件不一定能在进程 PATH 里解析到
+/// （`version_exe` 就是工具本身；PATH 注入没生效、或工具装在别处时就查不到），
+/// 而它们描述的缓存又是「工具装了就有」的东西。因此额外允许用「项目本体已安装」判定，
+/// 免得出现「版本管理页说装了、缓存页说没装」的矛盾。
+fn is_self_builtin_entry(project_id: &str, pm: &crate::commands::project::types::PackageManagerDef) -> bool {
+    pm.built_in && pm.id == project_id
+}
+
+/// 项目本体是否已安装：links_dir 下的同名目录 / junction 存在（托管或已激活版本目录）。
+fn project_dir_exists(project_id: &str) -> bool {
+    let config = super::config::load_config();
+    Path::new(&config.links_dir).join(project_id).exists()
+}
+
+/// 迁移数据目录前的源目录准备：
+/// - 已存在：原样返回 `true`（内容怎么处理交给调用方）；
+/// - 不存在：建出空目录并返回 `false`（没有内容可搬，调用方只需再建好目标目录即可挂链接）。
+///
+/// 为什么允许「源目录不存在」：像 scoop 的全局安装目录（`%ProgramData%\scoop`），
+/// 只要没装过 `-g` 软件就一直不存在 —— 以前这种卡片在「数据管理」里没有按钮、
+/// 又没有别的入口，用户就没法把它定到别的盘。建一个空目录再 Junction 出去即可。
+pub(crate) fn ensure_migration_source_dir(orig: &Path) -> Result<bool, String> {
+    if orig.exists() {
+        return Ok(true);
+    }
+    fs::create_dir_all(orig).map_err(|e| format!("无法创建源目录 {}: {}", orig.display(), e))?;
+    Ok(false)
+}
+
+/// 该包管理器是否可用：命令能在 PATH 里解析到，或者是「工具自身」条目且本体已安装。
+fn pm_available(project_id: &str, pm: &crate::commands::project::types::PackageManagerDef) -> bool {
+    let exe_name = pm.version_exe.as_deref().unwrap_or(&pm.id);
+    super::utils::is_exe_in_path(exe_name)
+        || (is_self_builtin_entry(project_id, pm) && project_dir_exists(project_id))
+}
+
 #[tauri::command]
 pub fn get_caches_list() -> Result<Vec<CacheInfo>, String> {
     use super::project::registry;
@@ -427,8 +464,7 @@ pub fn get_caches_list() -> Result<Vec<CacheInfo>, String> {
             // Check if this package manager configures cache detection/path
             if pm.cache_detect_cmd.is_some() || pm.cache_default_path.is_some() || pm.cache_config_source.is_some() {
                 // Determine if installed by checking if version_exe or id is in PATH
-                let exe_name = pm.version_exe.as_deref().unwrap_or(&pm.id);
-                let installed = is_exe_in_path(exe_name);
+                let installed = pm_available(&project.id, pm);
                 
                 // Resolve path: try custom config resolver first, then cmd, then default_path
                 let mut resolved_path = super::utils::resolve_custom_cache_path(pm).unwrap_or_default();
@@ -473,8 +509,7 @@ pub fn get_caches_list() -> Result<Vec<CacheInfo>, String> {
 
             // 附加缓存目录（一个包管理器可有多个缓存，如 pnpm 的 store + 元数据 cache-dir）
             if !pm.extra_caches.is_empty() {
-                let exe_name = pm.version_exe.as_deref().unwrap_or(&pm.id);
-                let installed = is_exe_in_path(exe_name);
+                let installed = pm_available(&project.id, pm);
 
                 for extra in &pm.extra_caches {
                     if let Some((extra_path, extra_source, extra_content)) = resolve_extra_cache_path(
@@ -777,7 +812,53 @@ pub fn move_cache_path_raw(orig_path_str: &str, new_path_str: &str) -> Result<()
 
 #[cfg(test)]
 mod format_tests {
-    use super::format_bytes;
+    use super::{ensure_migration_source_dir, format_bytes, is_self_builtin_entry};
+    use crate::commands::project::types::PackageManagerDef;
+    use std::fs;
+
+    fn pm_from_json(json: &str) -> PackageManagerDef {
+        serde_json::from_str(json).expect("包管理器定义应能解析")
+    }
+
+    /// 迁移前的源目录准备：不存在就建空目录（返回 false），已存在则原样保留内容（返回 true）。
+    #[test]
+    fn ensure_migration_source_dir_creates_missing_only() {
+        let base = std::env::temp_dir().join(format!("kira-migrate-src-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+
+        let missing = base.join("not-yet-used");
+        assert!(!ensure_migration_source_dir(&missing).unwrap(), "新建的空目录应返回 false");
+        assert!(missing.is_dir(), "空目录必须真的建出来，否则 junction 无处可挂");
+        assert!(ensure_migration_source_dir(&missing).unwrap(), "已存在应返回 true");
+
+        let existing = base.join("has-content");
+        fs::create_dir_all(&existing).unwrap();
+        fs::write(existing.join("keep.txt"), b"x").unwrap();
+        assert!(ensure_migration_source_dir(&existing).unwrap());
+        assert!(existing.join("keep.txt").exists(), "已有内容不能被清掉");
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// 只有「id 与项目相同 + built_in」的条目才算工具自身（如 go 的 Go Modules / Go Build Cache），
+    /// 这类条目允许用「本体已安装」兜底；nodejs 的 npm 等不算，避免把随语言的工具误判成已装。
+    #[test]
+    fn self_builtin_entry_detection() {
+        let go = pm_from_json(r#"{"id":"go","display_name":"Go Modules","built_in":true}"#);
+        assert!(is_self_builtin_entry("go", &go));
+
+        // 随语言安装的内置工具（npm）不属于「工具自身」
+        let npm = pm_from_json(r#"{"id":"npm","display_name":"npm","built_in":true}"#);
+        assert!(!is_self_builtin_entry("nodejs", &npm));
+
+        // 非内置（uv 这类可单独安装的）也不走该兜底
+        let uv = pm_from_json(r#"{"id":"uv","display_name":"uv","built_in":false}"#);
+        assert!(!is_self_builtin_entry("python", &uv));
+
+        // id 同名但非内置（假想）：同样不兜底
+        let odd = pm_from_json(r#"{"id":"go","display_name":"Go Modules","built_in":false}"#);
+        assert!(!is_self_builtin_entry("go", &odd));
+    }
 
     #[test]
     fn format_bytes_units() {
