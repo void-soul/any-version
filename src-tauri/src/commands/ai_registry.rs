@@ -58,6 +58,15 @@ pub struct ToolConfig {
     /// 该工具是否支持抹平协议差异（整流器，启动页可开关）
     #[serde(default)]
     pub supports_rectifier: bool,
+    /// 该工具是否使用官方**插件市场**（Codex 系是 `~/.codex/config.toml` 的
+    /// `[marketplaces.*]`，Claude Code 是 `~/.claude/settings.json` 的 `extraKnownMarketplaces`）。
+    #[serde(default)]
+    pub supports_plugin_marketplace: bool,
+    /// 插件市场走哪套后端：`"codex"`（`codex plugin`）或 `"claude"`（`claude plugin`）。
+    ///
+    /// 未声明时按 `"codex"` 处理 —— 向后兼容：Claude 接入之前，这个开关只有 Codex 系在用。
+    #[serde(default)]
+    pub plugin_marketplace_kind: Option<String>,
     pub resume_cmd: Option<String>,
     pub continue_cmd: Option<String>,
     /// 分叉命令模板（带 `{session_id}` 占位）：从指定会话复制一份新会话再进入，原会话不动。
@@ -156,6 +165,15 @@ pub struct ConfigFileDef {
     /// 同 stem 的其它扩展名文件已存在时优先沿用它（如 OpenCode v2 的 `opencode.jsonc`）。
     #[serde(default, alias = "preferExistingExtensions")]
     pub prefer_existing_extensions: Vec<String>,
+    /// 写入前**先删掉**的键（点分路径，支持 `文件#子路径`）。
+    ///
+    /// 用途：声明改过时，旧键会**留在用户文件里**——写入侧是语义合并，只替换受管键、
+    /// 其余原样保留，旧键于是继续生效。典型例子：Codex 早期用
+    /// `model_providers.X.env_key` 指向环境变量，现在改走 `auth.json` + 
+    /// `requires_openai_auth`；不删掉残留的 `env_key`，Codex 仍会去环境变量找 key 并报错。
+    /// （CodexPlusPlus 同样维护了一份待清理键列表，`relay_config.rs` 的 `remove_root_key`。）
+    #[serde(default, alias = "removeKeys")]
+    pub remove_keys: Vec<String>,
 }
 
 /// `configFile.custom` 的两种写法（untagged：`true` 或 `"workbuddy"`）。
@@ -408,6 +426,12 @@ pub struct AiToolDefDto {
     /// 是否支持请求优化 / 整流器（启动页可开关）
     pub supports_optimizer: bool,
     pub supports_rectifier: bool,
+    /// 是否使用官方插件市场（前端据此显示「插件市场」区块）
+    #[serde(default)]
+    pub supports_plugin_marketplace: bool,
+    /// 插件市场后端：`"codex"` / `"claude"`（前端据此调不同的命令）
+    #[serde(default)]
+    pub plugin_marketplace_kind: Option<String>,
     /// MSIX/Store 启动 URI（无普通 exe 时使用）
     pub launch_uri: Option<String>,
     /// 检测到的可执行文件路径（GUI/桌面应用启动用）
@@ -744,6 +768,8 @@ impl AiToolRegistry {
             builtin_models: config.builtin_models.clone(),
             supports_optimizer: config.supports_optimizer,
             supports_rectifier: config.supports_rectifier,
+            supports_plugin_marketplace: config.supports_plugin_marketplace,
+            plugin_marketplace_kind: config.plugin_marketplace_kind.clone(),
             launch_uri: paths.launch_uri.clone(),
             detected_path: None,
             custom_path: None,

@@ -46,6 +46,9 @@ chrono = "0.4"
 trash = "5.1"
 sysinfo = "0.31"
 futures-util = "0.3"
+# TOML 语义合并（Codex 的 config.toml）：保留注释/未托管表（mcp_servers、[[hooks]]），
+# 只原地改写受管键。文本级替换在「嵌套表 + 数组表头」上会写出非法/错位的结果。
+toml_edit = "0.22"
 md5 = "0.7"
 rusqlite = { version = "0.32", features = ["bundled"] }
 hmac = "0.12"
