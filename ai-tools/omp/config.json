@@ -32,8 +32,7 @@
       "providers.echobird.api": "ompApiProtocol",
       "providers.echobird.models": "piModels",
       "providers.echobird.apiKey": "apiKey",
-      "providers.echobird.auth": "ompAuthNone",
-      "config.yml#modelRoles.default": "ompModelRole"
+      "providers.echobird.auth": "ompAuthNone"
     }
   },
   "sessions": {

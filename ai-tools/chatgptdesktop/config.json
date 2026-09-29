@@ -3,6 +3,8 @@
   "builtinModels": [],
   "supportsOptimizer": true,
   "supportsRectifier": true,
+  "supportsPluginMarketplace": true,
+  "pluginMarketplaceKind": "codex",
   "resumeCmd": null,
   "continueCmd": null,
   "dispatchCmd": null,
@@ -37,10 +39,19 @@
       "model_provider": "anyversion",
       "model_providers.anyversion.name": "AnyVersion",
       "model_providers.anyversion.base_url": "baseUrl",
-      "model_providers.anyversion.env_key": "OPENAI_API_KEY",
-      "env.OPENAI_MODEL": "model",
-      "web_search": "webSearchLive",
+      "model_providers.anyversion.wire_api": "responses",
+      "model_providers.anyversion.requires_openai_auth": "boolTrue",
       "auth.json#OPENAI_API_KEY": "apiKey"
-    }
+    },
+    "removeKeys": [
+      "model_providers.anyversion.env_key",
+      "web_search",
+      "model_reasoning_effort",
+      "model_context_window",
+      "model_auto_compact_token_limit",
+      "model_catalog_json",
+      "model_supports_reasoning_summaries",
+      "model_reasoning_summary"
+    ]
   }
 }

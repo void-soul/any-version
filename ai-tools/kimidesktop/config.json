@@ -33,7 +33,10 @@
       "providers.anyversion.base_url": "baseUrl",
       "providers.anyversion.api_key": "apiKey",
       "models.anyversion.provider": "anyversion",
-      "models.anyversion.model": "model"
+      "models.anyversion.model": "model",
+      "models.anyversion.max_context_size": "json:1000000",
+      "models.anyversion.capabilities": "json:[\"tool_use\",\"thinking\"]",
+      "models.anyversion.adaptive_thinking": "boolTrue"
     }
   }
 }

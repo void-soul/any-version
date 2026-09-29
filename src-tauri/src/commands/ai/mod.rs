@@ -22,10 +22,14 @@ pub mod tools;
 pub mod tool_paths;
 pub mod tool_config_path;
 pub mod tool_config_custom;
+pub mod tool_config_extras;
 pub mod tool_config_restore;
+pub mod codex_catalog;
 pub mod install_agent;
 pub mod collab;
 pub mod translate;
+pub mod claude_plugins;
+pub mod codex_plugins;
 
 pub use models::*;
 pub use config::*;

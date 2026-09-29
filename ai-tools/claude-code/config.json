@@ -25,6 +25,8 @@
   ],
   "supportsOptimizer": true,
   "supportsRectifier": true,
+  "supportsPluginMarketplace": true,
+  "pluginMarketplaceKind": "claude",
   "supportOneMContext": true,
   "resumeCmd": "claude --resume {session_id}",
   "forkCmd": "claude --resume {session_id} --fork-session",
@@ -59,7 +61,10 @@
       "fileEnv.CLAUDE_CODE_SUBAGENT_MODEL": "model",
       "fileEnv.API_TIMEOUT_MS": "3000000",
       "fileEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
-    }
+    },
+    "removeKeys": [
+      "env.ANTHROPIC_API_KEY"
+    ]
   },
   "sessions": {
     "type": "claude_projects",
