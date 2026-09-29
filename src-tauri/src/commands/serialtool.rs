@@ -194,14 +194,8 @@ pub fn serial_write(
     append_newline: bool,
 ) -> Result<usize, String> {
     let bytes: Vec<u8> = if hex_mode {
-        let clean: String = data.chars().filter(|c| !c.is_whitespace() && *c != ',' && *c != ':' && *c != '-').collect();
-        if clean.len() % 2 != 0 {
-            return Err("HEX 数据长度必须为偶数位".to_string());
-        }
-        (0..clean.len() / 2)
-            .map(|i| u8::from_str_radix(&clean[i * 2..i * 2 + 2], 16))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("HEX 解析失败: {}", e))?
+        // 走公共解析：校验（偶数位 + 只认 ASCII 十六进制）只该有一处实现
+        hex_to_bytes(&data)?
     } else {
         let mut b = data.into_bytes();
         if append_newline {
@@ -254,6 +248,11 @@ fn hex_to_bytes(data: &str) -> Result<Vec<u8>, String> {
         .chars()
         .filter(|c| !c.is_whitespace() && *c != ',' && *c != ':' && *c != '-')
         .collect();
+    // 非 ASCII 必须先挡掉：下面按**字节**下标两两切片，混进多字节字符会切在字符边界
+    // 中间，`&s[a..b]` 直接 panic（只查偶数位挡不住它 —— 一个中文字占 3 字节）。
+    if !clean.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("HEX 只能包含 0-9 / A-F（可夹杂空格、逗号、冒号或短横作分隔）".into());
+    }
     if clean.len() % 2 != 0 {
         return Err("HEX 数据长度必须为偶数位".into());
     }

@@ -85,6 +85,13 @@ export default function SerialMonitor() {
   const [intervalMs, setIntervalMs] = useState(1000);
   const [cycling, setCycling] = useState(false);
   const cycleTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 卸载清理要用**最新**的端口名与连接态：只挂载一次的 effect 的清理闭包只会捕获首帧的值
+  const portNameRef = useRef(portName);
+  const openRef = useRef(open);
+  useEffect(() => {
+    portNameRef.current = portName;
+    openRef.current = open;
+  }, [portName, open]);
 
   // 规则快照供定时器/异步回调读取
   const rulesRef = useRef(rules);
@@ -106,8 +113,15 @@ export default function SerialMonitor() {
   useEffect(() => {
     refreshPorts();
     let unlisteners: Array<() => void> = [];
+    let cancelled = false;
     (async () => {
-      unlisteners.push(
+      // 卸载可能发生在 `await listen(...)` 返回**之前** —— 那时 unlisteners 还是空的，
+      // 监听器就永久泄漏，之后还会对已卸载组件 setState。所以 resolve 时若已卸载，就地注销。
+      const add = (fn: () => void) => {
+        if (cancelled) fn();
+        else unlisteners.push(fn);
+      };
+      add(
         await listen<{ port: string; hex: string; text: string; len: number }>("serial://data", (e) => {
           setLogs((l) =>
             [...l, { dir: "rx" as const, text: e.payload.text, hex: e.payload.hex, time: now() }].slice(-2000)
@@ -115,7 +129,7 @@ export default function SerialMonitor() {
         })
       );
       // 模拟设备事件：dir 是设备视角 —— rx=设备收到（用户发出），tx=设备应答
-      unlisteners.push(
+      add(
         await listen<{ port: string; dir: string; hex: string; text: string; len: number }>("serial://sim-data", (e) => {
           const dir: LogEntry["dir"] = e.payload.dir === "tx" ? "dev" : "tx";
           setLogs((l) =>
@@ -123,7 +137,7 @@ export default function SerialMonitor() {
           );
         })
       );
-      unlisteners.push(
+      add(
         await listen<{ port: string }>("serial://closed", () => {
           setOpen(false);
           stopCycle();
@@ -132,8 +146,16 @@ export default function SerialMonitor() {
       );
     })();
     return () => {
+      cancelled = true;
       unlisteners.forEach((u) => u());
       if (cycleTimerRef.current) clearInterval(cycleTimerRef.current);
+      // **卸载时主动关串口**：只注销事件的话，后端的读线程与句柄会一直活着（端口保持被占用、
+      // 持续 emit），而重进本页时按钮显示「未连接」—— 状态与后端真实情况完全不符。
+      if (openRef.current) {
+        void invoke("serial_close", { portName: portNameRef.current }).catch(() => {
+          /* 卸载路径，失败无可上报 */
+        });
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshPorts]);
