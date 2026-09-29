@@ -23,6 +23,168 @@ use super::library;
 use super::queue::{PlayMode, PlayQueue};
 use super::settings::{self, MusicSettings};
 
+/// 让「无法解码该音频文件」这句话变得**能定位问题**。
+///
+/// 真机案例：`D:\files\Music\Yungblud - Abyss (from Kaiju No. 8).flac` 其实是
+/// **MP4 容器 + E-AC-3（杜比数字+）音轨**（`stsd` 里的 fourcc 是 `ec-3`），只是扩展名
+/// 被写成了 `.flac`。symphonia 没有 AC-3 系解码器，于是只抛一句
+/// `An IO error occurred while reading, writing, or seeking the stream.` ——
+/// 用户既看不出「文件不对劲」也看不出「播放器不支持」，只能来问。
+///
+/// 所以这里补四件事：真实容器、是否命中所知不支持的编码、扩展名有没有在骗人、
+/// 以及完整错误链（含底层 `io::Error`）。
+fn decode_failure_message(path: &str, err: &rodio::decoder::DecoderError) -> String {
+    let path_ref = std::path::Path::new(path);
+    let (container, unsupported_codec) = sniff_audio_header(path_ref);
+
+    let mut msg = format!("无法解码该音频文件（实际容器：{container}");
+    if let Some(codec) = unsupported_codec {
+        msg.push_str(&format!("，音轨编码：{codec} —— 本播放器不支持这种编码"));
+    }
+    msg.push(')');
+
+    if let Some(ext) = path_ref.extension().and_then(|e| e.to_str()) {
+        let declared = declared_container(ext);
+        if !declared.is_empty() && declared != container {
+            msg.push_str(&format!(
+                "；扩展名是 .{ext}，与真实容器不符（多半是下载/转换时改错了名）"
+            ));
+        }
+    }
+
+    msg.push_str(&format!("：{err}"));
+    let mut source = std::error::Error::source(err);
+    while let Some(e) = source {
+        msg.push_str(&format!("（{e}）"));
+        source = e.source();
+    }
+    msg
+}
+
+/// 从**文件头**判断真实容器，并在有限窗口里找已知**不被支持**的音频编码 fourcc。
+///
+/// 只看开头 64KB（`moov`/`stsd` 通常紧随 `ftyp`）。找不到就当「不认识」——
+/// 绝不因为没找到就断言文件没问题。**按内容判断，不看扩展名**（扩展名是本案的误导源）。
+fn sniff_audio_header(path: &std::path::Path) -> (String, Option<&'static str>) {
+    use std::io::Read;
+    const WINDOW: usize = 64 * 1024;
+
+    let Ok(mut file) = File::open(path) else {
+        return ("无法读取".to_string(), None);
+    };
+    let mut head = vec![0u8; WINDOW];
+    let Ok(read) = file.read(&mut head) else {
+        return ("无法读取".to_string(), None);
+    };
+    head.truncate(read);
+    if head.len() < 12 {
+        return ("文件过短（可能没下载完）".to_string(), None);
+    }
+
+    let container = if &head[0..4] == b"fLaC" {
+        "FLAC"
+    } else if &head[4..8] == b"ftyp" {
+        "MP4/M4A"
+    } else if &head[0..3] == b"ID3" || (head[0] == 0xFF && (head[1] & 0xE0) == 0xE0) {
+        "MP3"
+    } else if &head[0..4] == b"RIFF" {
+        "WAV"
+    } else if &head[0..4] == b"OggS" {
+        "Ogg"
+    } else {
+        "未知"
+    };
+
+    // symphonia 不提供这些解码器；命中就直接点名，别让用户对着 IoError 猜
+    let codec = [
+        ("ec-3", "E-AC-3（杜比数字+）"),
+        ("ac-3", "AC-3（杜比数字）"),
+        ("dtsc", "DTS"),
+    ]
+    .into_iter()
+    .find(|(fourcc, _)| head.windows(4).any(|w| w == fourcc.as_bytes()))
+    .map(|(_, name)| name);
+
+    (container.to_string(), codec)
+}
+
+/// 扩展名**声称**的容器名（用于判断文件是不是被改了名）。返回空串 = 不判断。
+fn declared_container(ext: &str) -> &'static str {
+    match ext.to_ascii_lowercase().as_str() {
+        "flac" => "FLAC",
+        "mp3" => "MP3",
+        "wav" => "WAV",
+        "ogg" | "oga" => "Ogg",
+        "m4a" | "mp4" => "MP4/M4A",
+        // aac 既可能是裸流也可能装在 MP4 里，光看扩展名无法判定，不参与比对
+        _ => "",
+    }
+}
+
+#[cfg(test)]
+mod decode_probe_tests {
+    use super::*;
+    use std::io::Write;
+
+    fn probe_file(name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!("anyver-decode-{name}-{}", std::process::id()));
+        let mut f = File::create(&p).unwrap();
+        f.write_all(bytes).unwrap();
+        p
+    }
+
+    /// 容器按**内容**判断，不看扩展名 —— 扩展名正是本案的误导源。
+    #[test]
+    fn sniffs_container_by_content() {
+        let mut mp4 = vec![0u8, 0, 0, 0x18];
+        mp4.extend_from_slice(b"ftypmp42");
+        mp4.extend_from_slice(&[0u8; 64]);
+        let p = probe_file("mp4", &mp4);
+        assert_eq!(sniff_audio_header(&p).0, "MP4/M4A");
+        let _ = std::fs::remove_file(&p);
+
+        let mut flac = b"fLaC".to_vec();
+        flac.extend_from_slice(&[0u8, 0, 0, 0x22, 0, 0, 0, 0]);
+        let p = probe_file("flac", &flac);
+        assert_eq!(sniff_audio_header(&p).0, "FLAC");
+        let _ = std::fs::remove_file(&p);
+
+        let p = probe_file("riff", b"RIFF\x00\x00\x00\x00WAVEfmt ");
+        assert_eq!(sniff_audio_header(&p).0, "WAV");
+        let _ = std::fs::remove_file(&p);
+    }
+
+    /// 命中所知不支持的编码要**点名**，而不是让用户对着 IoError 发呆。
+    #[test]
+    fn flags_known_unsupported_codecs() {
+        let mut mp4 = vec![0u8, 0, 0, 0x18];
+        mp4.extend_from_slice(b"ftypmp42");
+        mp4.extend_from_slice(b"....stsd....ec-3....dec3");
+        let p = probe_file("ec3", &mp4);
+        let (container, codec) = sniff_audio_header(&p);
+        assert_eq!(container, "MP4/M4A");
+        assert_eq!(codec, Some("E-AC-3（杜比数字+）"));
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn declared_container_skips_ambiguous_extension() {
+        assert_eq!(declared_container("flac"), "FLAC");
+        assert_eq!(declared_container("M4A"), "MP4/M4A");
+        // aac 可能是裸流也可能是 MP4，光看扩展名判不了 → 不参与比对
+        assert_eq!(declared_container("aac"), "");
+        assert_eq!(declared_container("xyz"), "");
+    }
+
+    #[test]
+    fn truncated_file_is_called_out() {
+        let p = probe_file("short", b"\x00\x01");
+        assert!(sniff_audio_header(&p).0.contains("过短"));
+        let _ = std::fs::remove_file(&p);
+    }
+}
+
 /// 播放状态
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -428,7 +590,7 @@ impl MusicPlayerState {
         }
         let decoder = builder
             .build()
-            .map_err(|e| format!("无法解码该音频文件: {}", e))?;
+            .map_err(|e| decode_failure_message(path, &e))?;
         let decoder_duration_ms = decoder
             .total_duration()
             .map(|d| d.as_millis() as u64)
