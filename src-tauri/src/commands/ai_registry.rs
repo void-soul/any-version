@@ -145,13 +145,13 @@ pub struct ConfigFileDef {
     #[serde(default)]
     pub schema: Option<String>,
     pub write: Option<HashMap<String, String>>,
-    /// 自定义写入器：schema 复杂到「路径 → 值」表达不了的（WorkBuddy 的 models.json 就是
-    /// `{models:[{id,name,vendor,url,apiKey,…}], availableModels:[…]}`），交给 Rust 侧整份生成。
+    /// 自定义写入器：schema 复杂到「路径 → 值」表达不了的（Claude Desktop 的 3P 网关要
+    /// 跨 `Claude-3p/configLibrary/<id>.json` 与 `_meta.json` 互相引用），交给 Rust 侧整份生成。
     ///
     /// 抄 EchoBird：它的 `tools/*/config.json` 用 `"custom": true` 标记，实际写入在
     /// `src-tauri/src/services/tool_config_manager/<tool>.rs`（我们对应
     /// `commands/ai/tool_config_custom.rs`）。`true` = 用工具 id 当写入器名；也可以写字符串
-    /// 显式指定（如 workbuddyai 复用 `"workbuddy"` 写入器，只是路径不同）。
+    /// 显式指定（多个工具复用同一个写入器时用，只是路径不同）。
     #[serde(default, alias = "customWriter")]
     pub custom: Option<CustomWriter>,
     /// 目录级环境变量覆盖（按顺序取第一个非空值作为配置目录）：如 OpenCode v2 的
@@ -971,8 +971,6 @@ mod tests {
             "opencodedesktop",
             "openscience",
             "zcode",
-            "workbuddy",
-            "workbuddyai",
             "dsh",
         ] {
             let Some((config, paths)) = reg.get_tool(id) else {

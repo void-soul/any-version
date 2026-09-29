@@ -37,7 +37,7 @@ pub fn restore_tool_config(tool_config: &ToolConfig) -> Result<RestoreOutcome, S
 
     // 自定义写入器整份接管，还原也整份处理
     if let Some(writer) = cfg.custom_writer(&tool_config.id) {
-        return restore_custom_writer(&writer, cfg, &tool_config.id);
+        return restore_custom_writer(&writer, &tool_config.id);
     }
 
     let main = super::launch::resolve_declared_config_path(cfg);
@@ -157,32 +157,8 @@ fn declared_write_paths(cfg: &ConfigFileDef) -> Vec<String> {
 
 // ─── 自定义写入器的还原 ───
 
-fn restore_custom_writer(
-    writer: &str,
-    cfg: &ConfigFileDef,
-    tool_id: &str,
-) -> Result<RestoreOutcome, String> {
+fn restore_custom_writer(writer: &str, tool_id: &str) -> Result<RestoreOutcome, String> {
     match writer {
-        // WorkBuddy 的 models.json 整份是我们生成的，直接删掉让工具重建默认
-        // （EchoBird 对没有专属 restore 的工具就是这个兜底语义）。
-        "workbuddy" => {
-            let path = super::launch::resolve_declared_config_path(cfg);
-            let mut outcome = RestoreOutcome::default();
-            if path.exists() {
-                std::fs::remove_file(&path)
-                    .map_err(|e| format!("删除 {} 失败: {e}", path.display()))?;
-                eprintln!("[restore] 已删除 {}", path.display());
-                outcome.files.push(path.display().to_string());
-                outcome
-                    .notes
-                    .push("已删除模型的 models.json（工具下次启动会重建默认配置）".to_string());
-            } else {
-                outcome
-                    .notes
-                    .push("没有发现 models.json，无需还原".to_string());
-            }
-            Ok(outcome)
-        }
         // Claude Desktop 是「模式开关 + profile 文件」，还原 = 切回官方模式并删掉 profile
         "claudedesktop" => super::tool_config_custom::restore_claudedesktop(),
         other => Err(format!(
