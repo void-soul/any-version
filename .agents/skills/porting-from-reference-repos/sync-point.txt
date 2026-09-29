@@ -8,17 +8,18 @@
 # 注意：学习记录里形如「- <hash> ...」的行不参与解析（正则要求第 1 段以字母数字开头、
 #       第 3 段是日期），所以下面两个区块可以放心混排。
 #
-# 记录时间：2026-09-24
+# 记录时间：2026-09-28
+#
+# 跟踪范围已按用户要求收窄为 5 个仓（只服务学习目标 1~4）：EchoBird（安装/模型/启动）、
+# cc-switch（Claude Code 协议对齐）、CodexPlusPlus（Codex / ChatGPT Desktop 协议对齐）、
+# open-tag + orca（多 agent 协同）。ai-toolbox / headroom / farming / claude-code-cli
+# **已移出跟踪范围**，下次不要再把它们纳入 diff。
 
-ai-toolbox      e558b6f2  2026-09-24  同架构同定位，最高优先
-cc-switch       da193d4f  2026-09-23  协议对齐 / 代理
-EchoBird        0e2250bb  2026-09-23  各工具的模型管理（声明 + 写配置 + 官方还原）
-CodexPlusPlus   693c8486  2026-09-24  原生浏览器注入为主，多数不适用
-headroom        a6a9cef9  2026-09-24  已作为托管服务集成，只跟版本
-farming         a93dbecf  2026-09-24  多 agent 会话监督
-orca            f2ac9f29  2026-09-23  mobile OTA / 终端 / diff UI 为主
-open-tag        35d8eee6  2026-08-23  约一个月无新提交；authz 权限域
-claude-code-cli 290fdc94  2026-03-31  2026-03 起停更
+EchoBird        2f2ce490  2026-09-28  安装知识表 + 装错包拦截 + 后置校验 + 启动前置 PATH
+cc-switch       846de29c  2026-09-28  AppProxyConfig（首字/空闲超时）、换家判定、模型能力三态
+CodexPlusPlus   27cdd21f  2026-09-28  TOML 语义合并（toml_edit DocumentMut）
+open-tag        35d8eee6  2026-09-28  无新提交；已抄 sealed 输入域 + 回复授权语义
+orca            1bfbc155  2026-09-28  Task/Dispatch 状态机、mutation_receipts、并发上限
 
 # ─── 学习记录 ───
 
@@ -163,3 +164,309 @@ claude-code-cli 290fdc94  2026-03-31  2026-03 起停更
 
 明确不抄：EchoBird 的「本地 anthropic 常驻代理 bridge 模式」——我们没有常驻代理，只走「直写本次
           base_url/api_key」的 relay 语义；协议转换能力是 any-version 自己的代理（参考 cc-switch）。
+
+2026-09-28 学习目标 1~4 专项（技能重写后第一轮，改动待用户确认后提交）：
+
+落地：
+- A+ 聚合服务接入统一协议整流层（来源 cc-switch `forwarder.rs`）：
+  `aggregate.rs` 新增 `candidate_proxy_config()` —— 出站前跑 `apply_optimizers` +
+  `apply_preventive_rectifiers`，失败后 `try_reactive_rectify`（同一候选只认领一次）。
+  **这是本轮最重要的修复**：此前整流器只在 `proxy/server.rs` 被调用，聚合一条都没调，
+  同一份 AI 配置在「单工具代理」与「本地聚合」两条路径上协议行为不一致。
+- B+ 首字 / 空闲超时 + 换家判定（来源 cc-switch `AppProxyConfig`）：
+  `AggregateConfig` 新增 `first_byte_timeout_secs`(60) / `idle_timeout_secs`(120)，
+  每次请求实时读取；`try_candidate` 用 `tokio::time::timeout` 包 `send()`（send 返回即首字节），
+  新增 `idle_timeout_stream`（async-stream + Box::pin）与跨协议流的空闲超时。
+  新增 `should_switch_candidate`：400/422 不换家（请求体层面的问题换家也修不好），
+  Fatal 不换家；5xx / 超时 / 401 / 402 / 404 / 429 换家。
+  **刻意偏离 cc-switch**：它把整个 4xx 都归为不换家，但我们的候选链里 401/402/404/429
+  是**按候选**变化的（每家 key、额度、上架模型都不同），全不换会让故障转移失效。
+- C+ 模型能力三态（来源 cc-switch `model_capabilities.rs`）：
+  `optimizers.rs` 新增 `ImageInputCapability` 三态 + `resolve_image_input_capability`
+  （**声明 > 注册表**，Unknown ≠ Supported，fail-open）；声明来源打通两条路径 ——
+  `RouteCandidate.supports_image`（聚合链，前端三态下拉）→ `ModelRoute.supports_image`
+  （单工具代理，launch.rs 构建时带上）。`is_text_only_model` 保留为注册表判定入口。
+- D+ TOML 语义合并（来源 CodexPlusPlus `relay_config.rs`）：
+  `write_toml_config` 改用 `toml_edit 0.22` 的 `DocumentMut` 递归合并，容忍重复表头
+  （切块解析再合并），**保留注释**（替换值时保留 decor —— 直接 `insert` 会把键上方的
+  注释一起换掉，这是实测踩到的）、保留未托管 `mcp_servers` / `[[hooks]]`，写回前自校验，
+  首次接管前备份。`remove_toml_keys` 同步改成语义删除（解析失败才退回升本删除）。
+- E+ 安装后置校验（来源 EchoBird `auto_fix.rs` / `validate_install_intent`）：
+  `detect.rs::verify_installed` —— 命令成功 ≠ 装对了；版本探测或声明路径命中才算过，
+  否则报错（装成别的包 / 装完不在 PATH 都会被拦）。**「启动时把 bin 目录前置 PATH」
+  此前已由 EchoBird f86fe961 那轮落地**（launch.rs:774），本轮未重复做。
+- F1+ 任务认领 CAS（来源 open-tag `core.ts:840`）：`claim_task` 改锁内条件更新，
+  被别人占着就拒绝并说明持有者；自己重复认领幂等。`finish_task` 强制带 outcome
+  （done/failed/abandoned），`handoff_task` 收口到持有者/创建者，状态机
+  `allowed_task_transitions` 不允许跳步，done 只留「重开」一条出路。
+- F2+ 并发上限 + 幂等（来源 orca）：`MAX_PARALLEL_AGENTS = 4` 信号量放在
+  `dispatch_to_tool` 入口（它有两个调用方，只堵一处等于没堵）—— **orca 恰恰缺这个上限，
+  我们本地跑必须补**；`MUTATION_RECEIPTS`（TTL 5min + 条数上限）为
+  `collab_send_message` / `collab_task_action` 去重，前端已带 `requestId`。
+- F3+ 输入域 + 归档（来源 open-tag `authorization.md` / orca `worker_terminal_archives`）：
+  `CollabRoom.input_policy`（open/sealed）+ `allowed_sources`，`filter_references_by_policy`
+  在派发前过滤引用卡（引用卡是最容易旁路的入口）；新增命令
+  `collab_set_input_policy` / `collab_list_archives`。`finalize_message` 在 error 收尾前
+  把已产出的半截输出归档（进程一结束就没了）。
+
+明确不抄（本轮，附理由）：
+- CodexPlusPlus 全部 Responses 双向转换与 SSE 重组：我们不代理 `/responses`，抄了就是死代码。
+- ChatGPT Desktop 的流量接入：仓内无独立协议适配（只是宿主发现 + CDP 选页面）。
+- cc-switch 的 `OptimizerConfig`：**仅 Bedrock 生效**（`is_bedrock_provider` 判定）。
+- cc-switch 的熔断 6 参数：依赖其 `provider_router` 按 app 读库与 HalfOpen permit，成本高收益低，
+  先只做「重试次数 + 首字/空闲超时」。
+- EchoBird 的 hermes / translator（`configFile` 指向它自家 relay，不是真改工具配置）、
+  opencode v1/v2 与 kimi/mimo CLI-Desktop 身份区分（版本一变即失效）、
+  **桌面端「启动即杀进程」**（会误杀用户自己开的实例）。
+- orca 的 WSL / federation / legacy 迁移层、Postgres 行锁语义假设、三平面 token 体系；
+  open-tag 的 `better_fit` 语义仲裁（依赖 prompt 服从度，噪点多）。
+
+下次候选（未落地，按价值排序）：
+1. EchoBird `docs/api/tools/install/*.json` 内置安装知识表（31 个工具，含国内镜像与
+   identity_guard），我们目前只有 Agent 驱动的安装。
+2. 补齐 EchoBird 有、我们没有的可改模型工具：aider / grok / openclaw / vibe-trading / kimicode。
+3. CodexPlusPlus 的 15 家供应商模型元数据 catalog（`model_suffix.rs`）—— 需先定用途。
+4. orca 的 worktree 预热池（limit=3 / TTL=5min / 同步 claim）与 git 准入调度器 ——
+   仅在「并行开 3+ 个 worktree」成为瓶颈时才需要做。
+5. orca 的 fleet 投影（attention + nextAction）—— 前端为主，给每个 agent 卡出下一步动作。
+
+验证：`cargo check --all-targets` 0 error；`cargo test --lib` 749 passed / 0 failed；
+`npx tsc --noEmit` 退出码 0；`npm test` 20 files / 126 tests 全绿。
+
+2026-09-28 补录（同日续做，用户指出「抄了半天还不如人家」—— 我方独立踩了 EchoBird 早解决的坑）：
+
+- **桌面端启动补到对齐 EchoBird**（这是本轮的教训：先把参考仓读全，再自己实现）。
+  1. `scanner.rs` 新增 `msix_package_family_name(&[候选])` —— 抄 EchoBird
+     `codex_binary.rs::find_codex_store_family_via_appx`：一次 PowerShell（if/elseif 串起
+     stable + beta）拿真实 PackageFamilyName，与 publisher hash 无关；
+     `invalidate_msix_version_cache` 里一并失效族名缓存（装/卸后不能还用旧 AUMID）。
+  2. `launch.rs::resolve_store_launch_uri` —— 先问系统包注册、再回退 paths.json 硬编码值；
+     重组 AUMID 时**保留声明里的应用 Id**（`!App` / `!Claude`），只换族名。
+     只在「磁盘上没有 exe」这条分支上调用，装了 exe 的工具不会去起 PowerShell。
+  3. 拉起方式由 `cmd /c start "" <uri>` 改为 **`explorer.exe <uri>`**（EchoBird
+     `process_manager.rs::start_shell_uri` 实测过的方式）。
+- 关键认知（已写进 SKILL.md「启动优先级」小节）：**磁盘 exe 必须优先于 Store AUMID** ——
+  winget 装的 Squirrel 版 Claude Desktop 的 AUMID 并不解析，explorer 会弹出文件夹窗口；
+  **AUMID 不能硬编码 publisher hash**（beta 渠道 `OpenAI.CodexBeta` 拉不起来）。
+- 暂不抄（用户否决）：启动前杀桌面端实例 + 800ms。备注 EchoBird 在这条上反复过
+  （曾移除、又加回），若将来出现「应用开着时改模型不生效」先复查它。
+
+验证：`cargo check --all-targets` 0 error；`cargo test --lib` 752 passed / 0 failed；
+`npx tsc --noEmit` 退出码 0；`npm test` 20 files / 126 tests 全绿。
+
+2026-09-29 Codex 桌面端打通 + 插件市场（用户报 ChatGPT Desktop 报错链：缺 key → 非法 TOML → 404）：
+
+落地：
+- **ChatGPT Desktop 接入三连修**（详见 SKILL.md「Codex / ChatGPT Desktop 接入的必知约定」）：
+  1. 删 `env_key` 改走 `requires_openai_auth=true` + `auth.json`（`env_key` 是 legacy 路径，
+     去进程环境找 key → 报「缺少 openai apikey」）；顺带删掉 `env.OPENAI_MODEL`
+     （EchoBird/CodexPlusPlus 都视 `OPENAI_*` 为冲突）。
+  2. **TOML 写入链保留值类型**：`toml_scalar` → `toml_value`。此前所有值统一降级成字符串，
+     布尔写成 `"true"` → Codex 报 `invalid type: string "true", expected a boolean` 拒绝启动。
+  3. **新增 Responses 入站**（`proxy/responses.rs`）：Codex 26.901+ 只打 `/responses`。
+     设计要点：Responses 仅作「入口/出口方言」，请求转 Chat 后复用现有 `process_request`
+     管线（伪装/协议转换/整流器/SSE 全复用）。含完整事件序列、`resp_/msg_/rs_/fc_` id 前缀
+     规则（message item 必须是 `msg_`+去掉 `resp_` 的 body，否则 Codex 拒收）、
+     `output_tokens_details.reasoning_tokens` 必填。
+- **声明驱动的遗留键清理**：`ConfigFileDef.removeKeys`（写入前先删声明点名的键）。
+  写入侧是语义合并、只替换受管键，声明改过后旧键会留在用户文件里继续生效 —— 不清理等于没修。
+- **Codex 插件市场**（`commands/ai/codex_plugins.rs`，抄 CodexPlusPlus `plugin_marketplace.rs`）：
+  下载官方 `openai/plugins` zip → 落 `~/.codex/.tmp/plugins-remote`（剥掉 `plugins-main/`
+  顶层）→ 写 `[marketplaces.anyversion-curated]` 注册。**市场名不能用 `openai-*`**（保留名，
+  会被静默忽略，插件一个都不显示）；~~**单个插件由客户端自己装**~~（**2026-09-29 修正**：
+  改为我们调官方 CLI 逐个装，见文末）；先解到 staging、校验通过再换上去（旧目录改名备份）。
+- **技能侧补两点**：预置源清单（抄它的 4 个默认源）+ 更新检测
+  （我们走 `git ls-remote HEAD` 比对安装时记下的 sha —— 不 clone、不需要 API token，
+  比它的 GitHub trees API 更省）。`Skill` 新增 `source`/`commit` 字段。
+  内置快照 zip **没抄**（它随仓 6.65MB，我们不做离线兜底，联网下载失败就明确报错）。
+
+验证：`cargo check --all-targets` 0 error；`cargo test --lib` 766 passed / 0 failed；
+`npx tsc --noEmit` 退出码 0；`npm test` 20 files / 126 tests 全绿。
+
+---
+
+2026-09-29（下半场）**Codex 插件市场：推翻「必须注入」，改为官方 CLI 驱动**
+
+起因：用户实测反馈「ChatGPT 插件页只有一个 LaTeX，这对吗」。逐层查下来发现**三处我先前的判断是错的**，
+以及一个真 bug。
+
+先纠正三条我自己的错误结论（避免以后重犯）：
+- ❌「官方仓库有 12 个插件」→ 那 12 个是 CodexPlusPlus 自己抓的 `openai-curated-remote` 快照；
+  真正的 `openai/plugins` 有 **120 个**（marketplace `name = openai-curated`、displayName `Codex official`）。
+- ❌「config.toml 有重复表头导致注册必然失败」→ **我误读了自己的 `Select-String -Context` 输出**
+  （匹配行 + PostContext 重叠打印，看着像重复）。逐行核对：没有重复。为此做的容错解析修改**保留**
+  （无副作用，且未来 Codex 写出重复表头时仍需要），但**它当时不是一个真 bug**。
+- ❌「必须在 renderer 注入，UI 才显示」→ 真因是我用了**保留名**。见下。
+
+真 bug（已修）：`codex_plugins.rs` 模块注释写了「改名要连磁盘上的 `marketplace.json` 一起改」，
+但**代码里只有注释、没有实现** —— 官方 zip 解压出来的清单 `name` 是保留名 `openai-curated`，
+与写进 config.toml 的表名 `anyversion-curated` 不一致 → 整个市场被客户端**静默忽略**。
+新增 `rewrite_marketplace_name()` 补上这一步（含单测）。
+
+实机全链路验证（`OpenAI.Codex 26.924.2738.0`）：
+- **ChatGPT Desktop 是 MSIX 包**（`OpenAI.Codex_2p2nqsd0c76g0`，exe = `app/ChatGPT.exe`，Chromium 154）。
+- **必须用 COM `IApplicationActivationManager::ActivateApplication` 带参激活**才能拿到 CDP：
+  直接 spawn `WindowsApps\…\ChatGPT.exe --remote-debugging-port=N` → 端口起来了但
+  `/json` 与 `Target.getTargets` **全空**（无包身份）；COM 激活后正常出现
+  `type=page url=app://-/index.html`。
+- **官方 CLI 就是正道**：`codex plugin marketplace add|list|remove|upgrade` +
+  `codex plugin add|remove|list --json`。手写 `[marketplaces.<非保留名>]` 与 CLI `add` **等效**
+  （`marketplace list` 认、`plugin list --available` 列出 120 个、`plugin add` 装成功）。
+- **保留名会明确报错**：`Error: marketplace \`openai-curated\` is reserved and cannot be added from this source`；
+  手写同名的则被**静默忽略**。
+- **装完官方 UI 直接可见**：注册市场 + `plugin add figma@anyversion-curated` → 重启客户端后
+  侧栏 `Installed` 出现 Figma、「插件 → 公开」按 `category` 列出全部可装插件
+  （Coding / Design / Education & Research / Lifestyle …）。**全程零注入。**
+- 注入为什么不可行（逐条实测）：`window.electronBridge` **深度冻结**（`writable:false, configurable:false`）→
+  包不了；主 UI 是**单 bundle**、`import()` 导出数 **0** → 拿不到 app-server client；
+  `bundled-marketplaces` **每次启动重建**（CreationTime == 启动时刻）→ 塞插件会被抹掉；
+  响应侧 `Array.prototype.filter` 可 patch，但**放行只能显示已有数据、造不出数据**。
+  CodexPlusPlus 本体是 505KB / 11193 行靠压缩代码特征匹配的脚本，本版本三条路全断。
+
+落地：
+- `codex_plugins.rs`：新增 `rewrite_marketplace_name`（**修掉静默失效的真 bug**）、
+  `resolve_codex_cli`（注册表声明 → config.toml 的 `CODEX_CLI_PATH` → `~/.codex/plugins/.plugin-appserver/codex.exe`）、
+  `run_codex_cli`（复用 `detect::run_command_with_timeout`，后者改 `pub(crate)`）、
+  `parse_plugin_list_json` / `plugin_states` / `config_plugin_states`（CLI 不可用时回退读 config.toml）。
+- 新增命令 `codex_install_plugin` / `codex_uninstall_plugin`（`spawn_blocking`，走 CLI）；
+  `codex_list_marketplace_plugins` 改返回 `Vec<CodexPluginInfo>`（清单声明 + 安装状态）；
+  `CodexPluginMarketplaceStatus` 新增 `cliAvailable`。
+- **修正 `enabled_plugin_count` 口径**：只统计 `<插件>@<本市场>` —— 原来把别的市场
+  （openai-bundled 等）的启用项也算进来，「已启用 N 个」跟本市场毫无关系。
+- `read_marketplace_plugins`：路径读 `source.path`（**顶层没有 `path`**，原来一律空串），并读出 `category`。
+- 前端 `ToolLauncher.tsx`：插件清单（按 `category` 分组 + 搜索 + 逐个装/卸 + 逐个 busy 态 +
+  CLI 缺失时置灰提示）；`types.ts` 加 `CodexPluginInfo` 与 `cliAvailable`；i18n zh+en 各加 8 条。
+- 技能侧：`SKILL.md` 学习目标 3 新增两节 —— 「Codex 插件市场：不要抄注入，用官方 CLI」（含完整命令、
+  7 条实测事实、「为什么注入不可行」对照表）与「测试桌面端功能的必知约定」（MSIX COM 激活 + 选对 target）。
+
+明确不抄（本轮新增）：
+- CodexPlusPlus 全套插件市场注入（`installPluginMarketplaceRequestPatch` /
+  `patchPluginMarketplaceRequestParams` / `mergeLocalPluginMarketplaces` /
+  `installPluginBuildFlavorFilterPatch`）—— 官方 CLI 已覆盖，注入在本版本且不可行。
+  只有「要接 ChatGPT 账号维度的远程市场（`created-by-me-remote` / `shared-with-me`）」时才值得再评估。
+
+验证：`cargo test --lib` 770 passed / 0 failed；`npx tsc --noEmit` 退出码 0；
+`npm test` 20 files / 126 tests 全绿。清理由此产生的测试残留（测试市场 / 插件 / 缓存 / config 条目）
+并确认 junction 只删链接、源目录 120 个插件完好。
+
+---
+
+2026-09-29（第三场）**桌面端「装一遍再卸」真机验证 —— 抓到一个必现的功能报废级 bug**
+
+用户问「你不能调用我们的工具安装吗，测试完了再删除」。于是用我们**自己声明的安装命令**
+（`ai-tools/claudedesktop/paths.json` 的 `winget install --id Anthropic.Claude`）真装了 Claude Desktop，
+测完卸掉。结论：**这是唯一能验出下面这个 bug 的方式**。
+
+### 抓到的真 bug：断链的重解析点让「设置模型」必然失败
+
+真机复现（本机）：
+- 用户把 `%LOCALAPPDATA%\Claude-3p` 用 **junction** 重定向到 `D:\sim-tool\Claude-3p`
+  （把应用数据挪到 D 盘），后来 D 盘那份被删 → junction **断链**。
+- 于是 `write_json` 里的 `std::fs::create_dir_all` 失败，报
+  `os error 183「当文件已存在时，无法创建该文件」` —— 用户完全看不懂，也想不到是链接问题。
+- **后果**：Claude Desktop 的 3P 落点正好是这个目录 → 在界面点「设置模型」100% 失败。
+
+机理：`mkdir` 返回 `ERROR_ALREADY_EXISTS`，紧接着 std 用**跟随链接**的 `is_dir()` 判断，
+链接断了得到 false，于是把 183 当硬错误抛出（不是 std 的 bug，是我们没预料这种形态）。
+
+修法：新增 `ensure_dir()`（`commands/ai/tool_config_custom.rs`，`pub(crate)`）——
+正常目录直接放行；失败时 `read_link` 取目标（**Windows 上要剥掉 `\??\` 前缀**，
+`normalize_link_target`），把目标目录补出来，补不动才报错并说明是链接问题。
+替换了三处裸 `create_dir_all`：`write_json` 的父目录、WorkBuddy 配置目录、Claude Desktop 的 `lib_dir`。
+回归测试 `ensure_dir_repairs_dangling_junction`（用 `mklink /J` 造断链 junction 验证修复）。
+
+### Claude Desktop 全链路真机验证结果（写入器 / 还原都跑通）
+
+用**临时集成测试**（`tests/zz_tmp_claude_desktop_e2e.rs`，跑完即删、不留在仓库）
+在真机路径上跑我们真实的 `write_claudedesktop_with` / `restore_claudedesktop`：
+
+| 落点 | 结果 |
+|---|---|
+| `%LOCALAPPDATA%\Claude\claude_desktop_config.json` | `deploymentMode` → `"3p"` ✅ |
+| `%LOCALAPPDATA%\Claude-3p\claude_desktop_config.json` | `"3p"` ✅（**穿过断链 junction 写成功**） |
+| `Claude-3p\configLibrary\9f2c…json` | gateway 地址 / key / `inferenceModels`（`name` 伪装 + `labelOverride` 真名）✅ |
+| `Claude-3p\configLibrary\_meta.json` | `appliedId` + `entries[{name:"Kira"}]` ✅ |
+| 还原 | `deploymentMode` 回 `1p`、`configLibrary` 清空 ✅ |
+
+**安装形态核对**（这条也值得记）：
+- winget 装的 Claude Desktop 是 **Squirrel**（`%LOCALAPPDATA%\AnthropicClaude\` 下有
+  `app-1.44121.2` / `Update.exe` / `Squirrel-Shortcut.log`），**不是 MSIX**（`Get-AppxPackage` 无 Claude）。
+- 我们声明的第一条路径 `%LOCALAPPDATA%\AnthropicClaude\Claude.exe` **正好命中** ✅；
+  声明的 `launchUri`（硬编码 publisher hash `Claude_pzs8sxrjxfjjc!Claude`）在这种形态下**不解析**，
+  但启动链是「exe 优先 → 找不到才用 launchUri」，所以轮不到它，**顺序是对的**。
+- 另一台已装的 OpenCode Desktop（普通 exe）验证：Subsystem=2（GUI）、直接 spawn 正常出窗口。
+
+### 剩下的诚实结论
+
+- 本机 19 个工具**只有 3 个真装了**（chatgptdesktop / openencodedesktop / opencode CLI）；
+  **Claude Code（CLI）没装**，所以「claude code 也测一遍」做不到。
+- 能无人值守安装的桌面端只有 winget 那两个（claudedesktop / workbuddy）；
+  其余 6 个（kimidesktop / mimodesktop / opencodedesktop / openscience / workbuddyai / zcode）
+  声明的安装命令是 `start <官网地址>`，只能手动下载。
+- 卸载用同一条包 id（`winget uninstall --id Anthropic.Claude`）。
+  **清残留前先看 CreationTime 分清归属**：这次发现 `%LOCALAPPDATA%\Claude`（5/30）与
+  `Claude-3p` junction（8/12）都是用户原有，只删了本次产生的 `AnthropicClaude` 与 `logs`。
+
+验证：`cargo test --lib` 771 passed / 0 failed（含新增的 junction 回归测试）；
+临时集成测试文件已删除（它会写用户真实配置，不留在仓库）；Claude Desktop 已卸载、
+残留已清、用户原有目录与 junction 保持可用。
+
+---
+
+2026-09-29（第四场）**把工具真装一遍来测 —— 补上 Claude Code 插件市场，另发现两类声明缺口**
+
+用户：「每个工具都要安装才能测试」。于是用**各自声明的安装命令**装了 9 个工具（8 个 npm CLI + winget），
+测完全部卸载；过程中实现了 Claude Code 的插件市场支持。
+
+### 落地：Claude Code 插件市场（新模块 `claude_plugins.rs`）
+
+`claude plugin` 与 `codex plugin` **同构**，所以照 codex 那套写了一份，差异只有三处（CLI 是 `.cmd` 必须经
+`cmd /c`、市场声明在 `settings.json` 的 `extraKnownMarketplaces`、`list --json` 两段字段名不同）。
+
+- 新增命令：`claude_plugin_status` / `claude_list_plugins` / `claude_plugin_marketplace_add|remove` /
+  `claude_install_plugin` / `claude_uninstall_plugin`。
+- **`resolve_claude_cli` 动态查 `npm prefix -g`**（本机 npm 前缀在 `D:\any-versions\sdk\nodejs`，
+  声明里的 `%APPDATA%\npm` 全落空；这条顺带成了 npm 系工具检测兜底的复用件）。
+- **安全取舍**：`claude plugin install` 的 `--accept-command <sha256>` 是「替用户批准市场声明的命令」，
+  **我们绝不自动传** —— 命令源插件宁可装失败，让用户去官方 CLI 自己确认。
+- 注册表新增 `pluginMarketplaceKind`（`"codex"` / `"claude"`，未声明按 codex 兼容旧声明），
+  前端 `ToolLauncher` 用**同一块 UI**按 kind 分派到两套命令（插件行结构抹平成 `PluginRow`）。
+- 声明：`claude-code/config.json` 打开 `supportsPluginMarketplace` + `kind: "claude"`；
+  codex 两个补 `kind: "codex"`；`skills-scan.json` 补 `chatgptdesktop: ["~/.codex/skills"]`
+  （原来只在 config.json 声明了 `skillsDir`，而解析函数只读 skills-scan → 两处真相源不一致，
+  界面上根本给不了 ChatGPT Desktop 装技能）。
+
+真机 E2E（临时集成测试，跑完即删）：
+```
+cliAvailable=true | marketplaces=["anthropic-agent-skills"] | installed=1, available=4
+document-skills@… installed=true enabled=true version="8a1541c4a3ff"
+装后 installed=true → 卸后 installed=false   ✅
+```
+
+### 新发现的两类「检测缺口」（未修，已记入 SKILL.md）
+
+1. **`codex-cli` 检测不到**：`command: codex` 不在 PATH，声明的 `%APPDATA%/npm/codex.cmd` 也不存在
+   （ChatGPT Desktop 的 codex 在 `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\`，**路径带 hash 无法硬编码**）。
+2. **`workbuddy` 检测必然失败**：声明 `%LOCALAPPDATA%\Programs\WorkBuddy\WorkBuddy.exe`，
+   实机在 **`D:\sim-tool\WorkBuddy\WorkBuddy.exe`**，且 `command`/`detectCmd` 都是空 → 没有兜底。
+3. **所有 npm 系 CLI 的声明路径 0 命中**（npm 前缀被改到 `D:\any-versions\sdk\nodejs`），目前只靠 PATH 兜住。
+
+建议的通用兜底（按可靠性）：`npm prefix -g` → PATH → 注册表卸载项 `InstallLocation` / winget 记录 → 开始菜单 `.lnk` 的 Target。
+
+### 工具安装/卸载实测记录（都按各自声明的命令）
+
+| 工具 | 结果 |
+|---|---|
+| claude-code | ✅ 装上 `claude plugin` 全流程验证通过 |
+| gemini-cli / kilocode / mimocode / omp / pi / qwencode / dsh | ✅ 装上，`detectCmd` 全部有效（0.61.0 / 7.8.1 / 0.1.15 / omp-18.4.3 / 0.24.6 / 0.1.7-rc.2） |
+| codex-cli | ⚠️ `codex` 不在 PATH（见缺口 1） |
+| claudedesktop | ✅ 上一场已验证（Squirrel 形态、3P 写入+还原） |
+| workbuddy | ⚠️ **用户本来就装着**（`D:\sim-tool\WorkBuddy`），winget 走了次升级；配置落点 `~/.workbuddy/models.json` 存在 |
+| kimidesktop / mimodesktop / opencodedesktop / openscience / workbuddyai / zcode | ❌ 声明的安装命令是 `start <官网地址>`，只能手动下载，无法无人值守 |
+
+清理：npm 全局卸载 8 个包（回到原有 10 个，`opencode-ai` 是用户原有的，保留）；
+`~/.claude/plugins` 与 `settings.json`（本次创建）删除，**用户原有的 `~/.claude/skills`(22 个 junction) 与
+`backups` 原样保留**；WorkBuddy / ChatGPT Desktop / OpenCode Desktop 均为用户原有，未卸载。
+
+验证：`cargo test --lib` 774 passed / 0 failed；`npx tsc --noEmit` 退出码 0；`npm test` 20 files / 126 tests 全绿；
+临时集成测试文件全部删除（`src-tauri/tests` 只剩原有 4 个）。
