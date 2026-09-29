@@ -7,6 +7,7 @@
 //! 窗口最小化到托盘后 WebView2 会节流前端定时器，前端无法及时感知「播完」，
 //! 若把切歌交给前端就会出现「托盘模式下不自动切下一首」。
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,8 +21,31 @@ use tauri::Manager;
 
 use super::dsp::{EqParams, EqSource};
 use super::library;
-use super::queue::{PlayMode, PlayQueue};
+use super::queue::{PlayMode, PlayQueue, QueueItem};
 use super::settings::{self, MusicSettings};
+
+/// 推进结果：本地条目已经播起来了；在线条目要调用方**在 async 上下文里**先取流落盘。
+///
+/// 为什么把在线曲目抛回调用方：取流要跑插件（Node 桥）+ 下载整个文件，是秒级 async 操作，
+/// 而播放器这把锁不能横跨 await 持有（会把所有状态查询卡死）。
+#[derive(Debug)]
+pub enum AdvanceOutcome {
+    Playing(PlayerState),
+    /// 轮到的是在线曲目：先取流落盘，再用拿到的路径调 [`MusicPlayerState::play_online_resolved`]
+    Online(PendingOnline),
+}
+
+/// 待落盘的在线曲目。
+#[derive(Clone, Debug)]
+pub struct PendingOnline {
+    /// 来源插件的脚本文件名
+    pub file: String,
+    /// 插件返回的曲目对象（`getMediaSource` 需要它，原样带回）
+    pub item: serde_json::Value,
+    pub quality: String,
+    /// 本次请求的序号：回来时对不上说明用户已经切走，结果作废
+    pub seq: u64,
+}
 
 /// 让「无法解码该音频文件」这句话变得**能定位问题**。
 ///
@@ -35,28 +59,58 @@ use super::settings::{self, MusicSettings};
 /// 以及完整错误链（含底层 `io::Error`）。
 fn decode_failure_message(path: &str, err: &rodio::decoder::DecoderError) -> String {
     let path_ref = std::path::Path::new(path);
-    let (container, unsupported_codec) = sniff_audio_header(path_ref);
+    let (container, codec) = sniff_audio_header(path_ref);
 
+    let mut raw = format!("{err}");
+    let mut source = std::error::Error::source(err);
+    while let Some(e) = source {
+        raw.push_str(&format!("（{e}）"));
+        source = e.source();
+    }
+
+    compose_decode_message(
+        &container,
+        codec,
+        path_ref.extension().and_then(|e| e.to_str()),
+        Some(&raw),
+    )
+}
+
+/// 组装「无法解码」的说明（从错误里拆出来以便单测）。
+///
+/// **已给出具体诊断时故意不附底层错误**：真机案例里那句
+/// `An IO error occurred while reading, writing, or seeking the stream.`
+/// 既说不出「文件不对劲」也说不出「播放器不支持」，挂在已经点明原因的结论后面
+/// 只会把结论冲淡（用户要的是「为什么播不了」，不是 symphonia 的内部错误）。
+/// 反过来，**没有诊断出原因时**底层错误是唯一线索，必须保留。
+fn compose_decode_message(
+    container: &str,
+    codec: Option<&str>,
+    ext: Option<&str>,
+    raw: Option<&str>,
+) -> String {
     let mut msg = format!("无法解码该音频文件（实际容器：{container}");
-    if let Some(codec) = unsupported_codec {
+    let mut diagnosed = false;
+    if let Some(codec) = codec {
         msg.push_str(&format!("，音轨编码：{codec} —— 本播放器不支持这种编码"));
+        diagnosed = true;
     }
     msg.push(')');
 
-    if let Some(ext) = path_ref.extension().and_then(|e| e.to_str()) {
+    if let Some(ext) = ext {
         let declared = declared_container(ext);
         if !declared.is_empty() && declared != container {
             msg.push_str(&format!(
                 "；扩展名是 .{ext}，与真实容器不符（多半是下载/转换时改错了名）"
             ));
+            diagnosed = true;
         }
     }
 
-    msg.push_str(&format!("：{err}"));
-    let mut source = std::error::Error::source(err);
-    while let Some(e) = source {
-        msg.push_str(&format!("（{e}）"));
-        source = e.source();
+    if !diagnosed {
+        if let Some(raw) = raw {
+            msg.push_str(&format!("：{raw}"));
+        }
     }
     msg
 }
@@ -177,6 +231,27 @@ mod decode_probe_tests {
         assert_eq!(declared_container("xyz"), "");
     }
 
+    /// 原因已点名（不支持的编码 / 扩展名在骗人）→ 不再附底层 IoError，那句只会冲淡结论。
+    #[test]
+    fn drops_raw_error_once_the_cause_is_named() {
+        let msg = compose_decode_message(
+            "MP4/M4A",
+            Some("E-AC-3（杜比数字+）"),
+            Some("flac"),
+            Some("An IO error occurred while reading"),
+        );
+        assert!(msg.contains("E-AC-3"), "得点名编码: {msg}");
+        assert!(msg.contains("与真实容器不符"), "得点破扩展名在骗人: {msg}");
+        assert!(!msg.contains("IO error"), "已诊断时不该再挂原始错误: {msg}");
+    }
+
+    /// 没诊断出原因时，底层错误是唯一线索，必须保留。
+    #[test]
+    fn keeps_raw_error_when_there_is_no_diagnosis() {
+        let msg = compose_decode_message("MP4/M4A", None, Some("m4a"), Some("Unsupported codec"));
+        assert!(msg.contains("Unsupported codec"), "原因不明时不能丢线索: {msg}");
+    }
+
     #[test]
     fn truncated_file_is_called_out() {
         let p = probe_file("short", b"\x00\x01");
@@ -216,6 +291,43 @@ struct CurrentTrack {
     duration_ms: u64,
 }
 
+/// 非曲库文件（在线缓存文件）的显示名。
+///
+/// 为什么需要它：在线播放会把音频落到缓存目录，文件名是内容哈希（`a3f9…m4a`），
+/// 曲库里查不到，`play_locked` 就退化成「显示文件名」—— 底部播放条于是显示一串哈希。
+/// 这类文件的真实名字只能由调用方（`music_plugin_play`）显式登记。
+#[derive(Clone)]
+struct TrackName {
+    title: String,
+    artist: String,
+}
+
+/// 曲目的显示名（标题 / 歌手）。
+///
+/// 优先级：**登记名 → 曲库标签 → 文件名**。
+/// 登记名优先是因为缓存文件既不在曲库里，文件名也没有可读性。
+fn track_labels(
+    path: &str,
+    named: Option<&TrackName>,
+    library_track: Option<&library::MusicTrack>,
+) -> (String, String) {
+    let fallback_title = std::path::Path::new(path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string());
+    let title = named
+        .map(|n| n.title.clone())
+        // 插件偶尔不给标题：登记了空串也等于没名字，继续往下回退
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| library_track.map(|t| t.title.clone()))
+        .unwrap_or(fallback_title);
+    let artist = named
+        .map(|n| n.artist.clone())
+        .or_else(|| library_track.map(|t| t.artist.clone()))
+        .unwrap_or_default();
+    (title, artist)
+}
+
 struct Inner {
     /// 音频输出设备（drop 即停止播放，必须与 player 同生命周期）
     device: Option<MixerDeviceSink>,
@@ -225,6 +337,12 @@ struct Inner {
     volume: f32,
     /// 播放队列（顺序 / 随机 / 单曲），自动切歌由后端驱动
     queue: PlayQueue,
+    /// 不在曲库里的文件（在线缓存）的显示名：路径 → 标题/歌手
+    names: HashMap<String, TrackName>,
+    /// 正在后台取流的在线曲目（非空 = 有曲目在下载，巡查线程不再推进）
+    pending: Option<PendingOnline>,
+    /// 取流请求序号：每次发起自增，回来时对不上说明用户已经切走
+    seq: u64,
     /// 看门狗：上次观测到的播放位置（毫秒）
     last_pos_ms: u64,
     /// 看门狗：上次观测到位置发生变化的时间
@@ -285,6 +403,9 @@ impl Default for MusicPlayerState {
                 status: PlayStatus::Idle,
                 volume: settings.volume,
                 queue: PlayQueue::default(),
+                names: HashMap::new(),
+                pending: None,
+                seq: 0,
                 last_pos_ms: 0,
                 last_progress_at: Instant::now(),
             }),
@@ -410,13 +531,57 @@ impl MusicPlayerState {
         Some(inner.last_progress_at.elapsed())
     }
 
-    /// 播放指定文件（替换当前曲目）
+    /// 播放指定文件（替换当前曲目）。
+    ///
+    /// symphonia 解不了的编码（E-AC-3 / AC-3 / DTS，常见于「扩展名被改错」的音源）
+    /// 会**退回 ffmpeg 转码**：转成 AAC 落在转码缓存里，之后的播放直接命中缓存。
     pub fn play(&self, path: &str) -> Result<PlayerState, String> {
         let mut inner = self.inner.lock();
         // 输出已失效：本调用马上就会 append 新曲目，直接丢坏流即可（不必先续播旧曲）
         if self.output_lost.load(Ordering::SeqCst) {
             self.discard_output(&mut inner);
         }
+        match Self::play_locked(&mut inner, &self.eq, &self.output_lost, path) {
+            Ok(state) => Ok(state),
+            Err(err) => {
+                if !super::transcode::worth_retrying(&err) {
+                    return Err(err);
+                }
+                // 转码要跑外部进程（秒级），**必须先把锁放掉**：
+                // 占着锁的话前端每 500ms 的状态轮询会被一起卡住，界面像死了一样。
+                drop(inner);
+                let cached = super::transcode::ensure(path)?;
+                crate::exit_log!("[音乐] 原编码无法解码，已转码后播放: {cached}");
+                // 传**原路径**：play_locked 会自己找到转码副本，
+                // 于是曲库标签、队列对齐、改名/删除都仍以用户的原文件为准。
+                let (title, artist) = super::transcode::labels_for(path);
+                self.play_named(path, &title, &artist)
+            }
+        }
+    }
+
+    /// 播放并**指定显示名**（在线曲目专用）。
+    ///
+    /// 在线播放落在缓存目录里的文件名是内容哈希，既不在曲库里也没有可读性，
+    /// 名字只能由调用方给；登记后连播下一首（走 `play_locked`）也能取到正确名字。
+    pub fn play_named(
+        &self,
+        path: &str,
+        title: &str,
+        artist: &str,
+    ) -> Result<PlayerState, String> {
+        let mut inner = self.inner.lock();
+        // 输出已失效：本调用马上就会 append 新曲目，直接丢坏流即可
+        if self.output_lost.load(Ordering::SeqCst) {
+            self.discard_output(&mut inner);
+        }
+        inner.names.insert(
+            path.to_string(),
+            TrackName {
+                title: title.to_string(),
+                artist: artist.to_string(),
+            },
+        );
         Self::play_locked(&mut inner, &self.eq, &self.output_lost, path)
     }
 
@@ -425,10 +590,25 @@ impl MusicPlayerState {
     /// `current` 传当前正在播放的曲目路径：随机模式下会保证它仍在队列中且被选中，
     /// 避免重排后把正在播的那首「挤掉」。
     pub fn set_queue(&self, paths: Vec<String>, mode: &str) -> Result<(), String> {
+        let items = paths.into_iter().map(QueueItem::Path).collect();
         let mut inner = self.inner.lock();
         let current = inner.current.as_ref().map(|c| c.path.clone());
         let mode = PlayMode::from_str(mode);
-        inner.queue.set(paths, mode, current.as_deref());
+        inner.queue.set(items, mode, current.as_deref());
+        Ok(())
+    }
+
+    /// 用**队列条目**重置队列（在线搜索结果替换播放列表时用）；播放模式沿用当前设置。
+    ///
+    /// 与 [`Self::set_queue`] 的区别是条目可以是**还没落盘的在线曲目**。
+    pub fn set_queue_items(&self, items: Vec<QueueItem>, current: Option<&str>) -> Result<(), String> {
+        let mode = PlayMode::from_str(&settings::load_settings().play_mode);
+        let mut inner = self.inner.lock();
+        // 没指定就以「正在播的那首」为当前曲：随机模式下它必须留在队列里
+        let current = current
+            .map(str::to_string)
+            .or_else(|| inner.current.as_ref().map(|c| c.path.clone()));
+        inner.queue.set(items, mode, current.as_deref());
         Ok(())
     }
 
@@ -439,6 +619,10 @@ impl MusicPlayerState {
             if current.path == old {
                 current.path = new.to_string();
             }
+        }
+        // 登记名跟着换 key，否则改名后在线曲目的名字会丢失
+        if let Some(name) = inner.names.remove(old) {
+            inner.names.insert(new.to_string(), name);
         }
         inner.queue.rename_path(old, new);
     }
@@ -468,20 +652,85 @@ impl MusicPlayerState {
     }
 
     /// 下一首（用户点「下一首」）
-    pub fn next(&self) -> Result<PlayerState, String> {
+    pub fn next(&self) -> Result<AdvanceOutcome, String> {
         let mut inner = self.inner.lock();
-        match inner.queue.advance() {
-            Some(path) => Self::play_locked(&mut inner, &self.eq, &self.output_lost, &path),
-            None => Ok(Self::snapshot(&mut inner)),
-        }
+        let item = inner.queue.advance();
+        self.step(&mut inner, item)
     }
 
     /// 上一首
-    pub fn prev(&self) -> Result<PlayerState, String> {
+    pub fn prev(&self) -> Result<AdvanceOutcome, String> {
         let mut inner = self.inner.lock();
-        match inner.queue.back() {
-            Some(path) => Self::play_locked(&mut inner, &self.eq, &self.output_lost, &path),
-            None => Ok(Self::snapshot(&mut inner)),
+        let item = inner.queue.back();
+        self.step(&mut inner, item)
+    }
+
+    /// 推进到指定条目并播放；条是在线曲目时把取流任务交回调用方。
+    fn step(&self, inner: &mut Inner, item: Option<QueueItem>) -> Result<AdvanceOutcome, String> {
+        let Some(item) = item else {
+            return Ok(AdvanceOutcome::Playing(Self::snapshot(inner)));
+        };
+        match item {
+            QueueItem::Path(path) => {
+                Self::play_locked(inner, &self.eq, &self.output_lost, &path).map(AdvanceOutcome::Playing)
+            }
+            QueueItem::Online {
+                file,
+                item,
+                quality,
+            } => {
+                // 记下「正在取流」：巡查线程据此停止推进，否则每 250ms 推进一次会连跳好几首
+                inner.seq += 1;
+                let pending = PendingOnline {
+                    file,
+                    item,
+                    quality,
+                    seq: inner.seq,
+                };
+                inner.pending = Some(pending.clone());
+                // 挪出 Playing：输出队列已经空了，留着会让巡查判定「又播完一首」而立即再推进
+                inner.status = PlayStatus::Idle;
+                Ok(AdvanceOutcome::Online(pending))
+            }
+        }
+    }
+
+    /// 在线曲目已落盘：接上播放（由取流任务在拿到本地文件后调用）。
+    ///
+    /// `seq` 对不上说明用户已经切到别的曲目 —— 这次结果作废，不打断当前播放。
+    pub fn play_online_resolved(
+        &self,
+        path: &str,
+        title: &str,
+        artist: &str,
+        seq: u64,
+    ) -> Result<PlayerState, String> {
+        let mut inner = self.inner.lock();
+        let matches = inner.pending.as_ref().map(|p| p.seq == seq).unwrap_or(false);
+        inner.pending = None;
+        if !matches {
+            return Ok(Self::snapshot(&mut inner));
+        }
+        // 落盘后换成本地路径：回退 / 切模式时不必再取一次流
+        inner.queue.materialize_current(path);
+        if self.output_lost.load(Ordering::SeqCst) {
+            self.discard_output(&mut inner);
+        }
+        inner.names.insert(
+            path.to_string(),
+            TrackName {
+                title: title.to_string(),
+                artist: artist.to_string(),
+            },
+        );
+        Self::play_locked(&mut inner, &self.eq, &self.output_lost, path)
+    }
+
+    /// 在线曲目取流失败：清掉「正在取流」标记（不清的话巡查线程会一直等下去）。
+    pub fn abandon_online(&self, seq: u64) {
+        let mut inner = self.inner.lock();
+        if inner.pending.as_ref().map(|p| p.seq == seq).unwrap_or(false) {
+            inner.pending = None;
         }
     }
 
@@ -509,12 +758,25 @@ impl MusicPlayerState {
                 Ok(Self::snapshot(&mut inner))
             }
             _ => {
+                // 队列里可能是还没落盘的在线曲目：那种情况这里起不来（没有本地文件），
+                // 交给巡查线程或用户的下一次操作去取流
                 let path = inner
                     .current
                     .as_ref()
                     .map(|c| c.path.clone())
-                    .or_else(|| inner.queue.current().map(|p| p.to_string()))
-                    .or_else(|| inner.queue.first());
+                    .or_else(|| {
+                        inner
+                            .queue
+                            .current()
+                            .and_then(QueueItem::path)
+                            .map(str::to_string)
+                    })
+                    .or_else(|| {
+                        inner
+                            .queue
+                            .first()
+                            .and_then(|item| item.path().map(str::to_string))
+                    });
                 match path {
                     Some(path) => {
                         Self::play_locked(&mut inner, &self.eq, &self.output_lost, &path)
@@ -531,8 +793,16 @@ impl MusicPlayerState {
     /// 判定**不限于 `Playing`**：`Ended` 同样继续推进（自愈）—— 无论谁读过状态、
     /// 或历史状态被置为 Ended，续播都不会被卡死。
     /// 失败（如文件已被删除）时继续尝试后续曲目，最多绕队列一圈。
-    pub fn tick(&self) {
+    /// `app` 为 None 时（单测）在线曲目直接放弃推进 —— 没有句柄就无法取流，
+    /// 卡在「等待取流」上更糟。
+    pub fn tick(&self, app: Option<&tauri::AppHandle>) {
         let mut inner = self.inner.lock();
+
+        // ⓪ 有在线曲目正在取流：**不推进**。等它落盘后由 `play_online_resolved` 接上；
+        //    否则巡查每 250ms 推进一次，一首没下载完就跳过了好几首。
+        if inner.pending.is_some() {
+            return;
+        }
 
         // ① 输出自愈：设备报错（拔耳机/换默认设备）或位置停摆 → 重建并从原位置续播。
         //    这一段必须在「播完判定」之前：输出死了以后位置不会再前进，
@@ -556,18 +826,27 @@ impl MusicPlayerState {
 
         let attempts = inner.queue.len().max(1);
         for _ in 0..attempts {
-            match inner.queue.advance() {
-                Some(path) => {
-                    if Self::play_locked(&mut inner, &self.eq, &self.output_lost, &path).is_ok() {
-                        crate::exit_log!("[音乐] 播完自动切下一首: {}", path);
-                        return;
+            let item = inner.queue.advance();
+            match self.step(&mut inner, item) {
+                Ok(AdvanceOutcome::Playing(_)) => {
+                    if let Some(current) = inner.current.as_ref() {
+                        crate::exit_log!("[音乐] 播完自动切下一首: {}", current.path);
                     }
-                    // 解码失败（文件损坏/被删除）：跳过，继续下一首
-                }
-                None => {
-                    inner.status = PlayStatus::Ended;
                     return;
                 }
+                // 在线曲目：交给异步任务取流落盘（巡查线程是普通线程，不能 await）
+                Ok(AdvanceOutcome::Online(pending)) => {
+                    match app {
+                        Some(app) => {
+                            crate::exit_log!("[音乐] 播完自动切下一首（在线曲目，取流中）");
+                            spawn_online_resolve(app.clone(), pending);
+                        }
+                        None => inner.pending = None,
+                    }
+                    return;
+                }
+                // 解码失败（文件损坏/被删除）：跳过，继续下一首
+                Err(_) => {}
             }
         }
         inner.status = PlayStatus::Ended;
@@ -580,7 +859,11 @@ impl MusicPlayerState {
         output_lost: &Arc<AtomicBool>,
         path: &str,
     ) -> Result<PlayerState, String> {
-        let file = File::open(path).map_err(|e| format!("打开文件失败: {}", e))?;
+        // 之前转过码的文件（symphonia 解不了的编码）：播转码后的副本。
+        // 报错信息仍指向**原文件** —— 容器、扩展名那些线索都在原文件上。
+        let transcoded = super::transcode::cached(path);
+        let target = transcoded.as_deref().unwrap_or(path);
+        let file = File::open(target).map_err(|e| format!("打开文件失败: {}", e))?;
         // 必须显式告知字节长度：symphonia 只有在已知流长度时才允许随机访问，
         // 否则 try_seek 会返回 RandomAccessNotSupported（进度条拖动失效）。
         let byte_len = file.metadata().map(|m| m.len()).unwrap_or(0);
@@ -596,24 +879,18 @@ impl MusicPlayerState {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
 
-        // 曲库里的标签信息（标题/歌手/时长）优先，缺失则回退文件名
-        let library_track = library::load_library()
-            .tracks
-            .into_iter()
-            .find(|t| library::same_path(&t.path, path));
-        let title = library_track
-            .as_ref()
-            .map(|t| t.title.clone())
-            .unwrap_or_else(|| {
-                std::path::Path::new(path)
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| path.to_string())
-            });
-        let artist = library_track
-            .as_ref()
-            .map(|t| t.artist.clone())
-            .unwrap_or_default();
+        // 显示名：登记名（在线缓存）→ 曲库标签 → 文件名
+        let named = inner.names.get(path).cloned();
+        // 已有登记名时不必再读曲库：缓存文件本来就不在曲库里
+        let library_track = if named.is_some() {
+            None
+        } else {
+            library::load_library()
+                .tracks
+                .into_iter()
+                .find(|t| library::same_path(&t.path, path))
+        };
+        let (title, artist) = track_labels(path, named.as_ref(), library_track.as_ref());
         let duration_ms = library_track
             .as_ref()
             .map(|t| t.duration_ms)
@@ -727,6 +1004,12 @@ impl MusicPlayerState {
         Self::snapshot(&mut inner)
     }
 
+    /// 当前曲目的本地路径（在线曲目落盘后才有）
+    pub fn current_path(&self) -> Option<String> {
+        let inner = self.inner.lock();
+        inner.current.as_ref().map(|c| c.path.clone())
+    }
+
     /// 组装状态快照。
     ///
     /// **这是只读路径**（前端每 500ms 轮询 `music_get_state` 都会走到这里），
@@ -767,6 +1050,38 @@ pub fn persist_settings(state: &MusicPlayerState, settings: &MusicSettings) -> R
     Ok(settings)
 }
 
+/// 把在线曲目交给异步运行时：取流 → 落缓存 → 接上播放。
+///
+/// 为什么不在巡查线程里等：巡查线程是**普通线程**（不能 await），而取流是秒级操作；
+/// 真要等就得阻塞 250ms 的巡检循环。等待期间由 `Inner.pending` 挡住推进，
+/// 任务完成后自己调 `play_online_resolved` 接上 —— 巡查线程不需要知道结果。
+pub fn spawn_online_resolve(app: tauri::AppHandle, pending: PendingOnline) {
+    tauri::async_runtime::spawn(async move {
+        let seq = pending.seq;
+        let outcome =
+            super::plugin_playback::materialize(&app, &pending.file, &pending.item, &pending.quality)
+                .await;
+        let Some(state) = app.try_state::<MusicPlayerState>() else {
+            return;
+        };
+        match outcome {
+            Ok(materialized) => {
+                let path = materialized.path.to_string_lossy().to_string();
+                if let Err(err) =
+                    state.play_online_resolved(&path, &materialized.title, &materialized.artist, seq)
+                {
+                    crate::exit_log!("[音乐] 在线曲目落盘后播放失败: {err}");
+                    state.abandon_online(seq);
+                }
+            }
+            Err(err) => {
+                crate::exit_log!("[音乐] 在线曲目取流失败: {err}");
+                state.abandon_online(seq);
+            }
+        }
+    });
+}
+
 /// 启动后台巡查线程：每 250ms 检查一次「本曲是否播完」，播完则由后端自动切下一首。
 ///
 /// 必须由后端驱动（而不是前端轮询后切换）：窗口隐藏 / 最小化到托盘后，
@@ -777,7 +1092,7 @@ pub fn start_queue_watcher(app: tauri::AppHandle) {
         loop {
             std::thread::sleep(Duration::from_millis(250));
             match app.try_state::<MusicPlayerState>() {
-                Some(state) => state.tick(),
+                Some(state) => state.tick(Some(&app)),
                 // 应用已退出（State 已回收）：结束线程
                 None => break,
             }
@@ -840,6 +1155,33 @@ mod tests {
         assert!(snapshot.volume >= 0.0 && snapshot.volume <= 1.0);
     }
 
+    /// 在线缓存文件的名字是哈希，必须显示登记的歌名；没有登记时才回退文件名。
+    #[test]
+    fn registered_name_beats_the_cache_file_name() {
+        let named = TrackName {
+            title: "Abyss".to_string(),
+            artist: "Yungblud".to_string(),
+        };
+        let (title, artist) = track_labels("D:/cache/a3f9e1c0.m4a", Some(&named), None);
+        assert_eq!(title, "Abyss");
+        assert_eq!(artist, "Yungblud");
+
+        // 没登记 → 回退文件名（曲库外的本地文件）
+        let (title, _) = track_labels("D:/music/周杰伦 - 稻香.mp3", None, None);
+        assert_eq!(title, "周杰伦 - 稻香");
+
+        // 插件给了空标题 → 视同没登记，继续回退
+        let (title, _) = track_labels(
+            "D:/cache/x.m4a",
+            Some(&TrackName {
+                title: "  ".to_string(),
+                artist: String::new(),
+            }),
+            None,
+        );
+        assert_eq!(title, "x");
+    }
+
     #[test]
     fn test_play_missing_file_reports_error() {
         let state = MusicPlayerState::default();
@@ -892,7 +1234,7 @@ mod tests {
         // 未在播放时巡查不应改变状态（也不会误触发切歌）
         let state = MusicPlayerState::default();
         state.set_queue(vec!["D:/missing/a.mp3".to_string()], "sequence").unwrap();
-        state.tick();
+        state.tick(None);
         assert_eq!(state.state().status, PlayStatus::Idle);
     }
 
@@ -968,7 +1310,7 @@ mod tests {
             // 后台巡查线程（真实实现 250ms 一次）
             if last_tick.elapsed() >= Duration::from_millis(250) {
                 last_tick = Instant::now();
-                state.tick();
+                state.tick(None);
             }
             // 前端轮询 music_get_state（隐藏窗口下会被节流，可见时 500ms 一次）
             if last_poll.elapsed() >= Duration::from_millis(25) {
@@ -1002,7 +1344,7 @@ mod tests {
                 "sequence",
             )
             .unwrap();
-        state.tick();
+        state.tick(None);
         assert_eq!(state.state().status, PlayStatus::Idle, "未在播放时不应被巡查改变");
     }
 }

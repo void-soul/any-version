@@ -44,6 +44,56 @@ impl PlayMode {
     }
 }
 
+/// 队列条目。
+///
+/// 绝大多数是本地文件。在线曲目只有「插件 + 曲目对象」，**要轮到它时才取流落盘**
+/// （取流要跑插件、下载要几秒，还可能失败），所以放进队列时它**还没有路径** ——
+/// 早先队列只存路径，于是「用整份搜索结果替换播放列表」只能先把几十首全下载一遍。
+/// 落盘后由 [`PlayQueue::materialize_current`] 换成 `Path`。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueueItem {
+    /// 本地文件（曲库 / 下载目录 / 在线缓存）
+    Path(String),
+    /// 在线曲目：轮到时才取流落缓存
+    Online {
+        /// 来源插件的脚本文件名
+        file: String,
+        /// 插件返回的曲目对象（原样保存，`getMediaSource` 需要它）
+        item: serde_json::Value,
+        quality: String,
+    },
+}
+
+impl QueueItem {
+    /// 本地路径（在线曲目在落盘前没有路径）
+    pub fn path(&self) -> Option<&str> {
+        match self {
+            Self::Path(path) => Some(path.as_str()),
+            Self::Online { .. } => None,
+        }
+    }
+
+    /// 稳定标识：本地=路径；在线=插件 + 音质 + 曲目 id。
+    ///
+    /// 队列里的比对（定位当前曲、去重、剔除）都用它 —— 在线曲目没有路径可比。
+    pub fn key(&self) -> String {
+        match self {
+            Self::Path(path) => path.clone(),
+            Self::Online {
+                file, item, quality, ..
+            } => {
+                let id = item
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .or_else(|| item.get("title").and_then(serde_json::Value::as_str))
+                    .unwrap_or("");
+                format!("online:{file}:{quality}:{id}")
+            }
+        }
+    }
+}
+
 /// 极简 xorshift64 —— 只为洗牌，不额外引入 rand 依赖（可注入种子便于单测）
 struct Rng(u64);
 
@@ -81,9 +131,9 @@ impl Rng {
 /// 播放队列（曲库顺序进、按模式出）
 pub struct PlayQueue {
     /// 曲库顺序（原始顺序）：从随机模式切回顺序模式时用它恢复播放顺序
-    source: Vec<String>,
+    source: Vec<QueueItem>,
     /// 实际播放顺序：顺序/单曲 = 曲库顺序；随机 = 洗牌后的顺序
-    order: Vec<String>,
+    order: Vec<QueueItem>,
     /// 当前曲目在 order 中的下标
     index: Option<usize>,
     mode: PlayMode,
@@ -120,17 +170,37 @@ impl PlayQueue {
         self.mode
     }
 
-    pub fn current(&self) -> Option<&str> {
-        self.index
-            .and_then(|i| self.order.get(i))
-            .map(|s| s.as_str())
+    pub fn current(&self) -> Option<&QueueItem> {
+        self.index.and_then(|i| self.order.get(i))
     }
 
-    /// 重置队列：`paths` 为曲库顺序，`current` 为当前正在播放的曲目
+    /// 当前曲目的本地路径（在线曲目落盘前为 None）
+    pub fn current_path(&self) -> Option<&str> {
+        self.current().and_then(QueueItem::path)
+    }
+
+    /// 重置队列：`items` 为曲库顺序，`current` 为当前正在播放的曲目
     /// （随机模式下会被放到首位，保证正在播的那首不被打乱）
-    pub fn set(&mut self, paths: Vec<String>, mode: PlayMode, current: Option<&str>) {
-        self.source = paths;
+    pub fn set(&mut self, items: Vec<QueueItem>, mode: PlayMode, current: Option<&str>) {
+        self.source = items;
         self.rebuild_order(mode, current);
+    }
+
+    /// 当前条目（在线曲目）已落盘：换成它的本地路径。
+    ///
+    /// `source` 里同一条也要一起换 —— 只换 `order` 的话，切回顺序模式时它会变回
+    /// 「未落盘」，于是同一首歌又会被重新下载一遍。
+    pub fn materialize_current(&mut self, path: &str) {
+        let Some(index) = self.index else {
+            return;
+        };
+        let Some(old) = self.order.get(index).cloned() else {
+            return;
+        };
+        self.order[index] = QueueItem::Path(path.to_string());
+        if let Some(pos) = self.source.iter().position(|item| *item == old) {
+            self.source[pos] = QueueItem::Path(path.to_string());
+        }
     }
 
     /// 仅切换模式（保持当前曲目继续播放）：
@@ -146,12 +216,13 @@ impl PlayQueue {
         if mode == PlayMode::Shuffle {
             self.shuffle();
         }
-        self.index = current.and_then(|path| self.order.iter().position(|p| p == path));
+        // 用 key 比对：在线条目的 key 不是路径，走进来的 `current` 也可能是 key
+        self.index = current.and_then(|key| self.order.iter().position(|item| item.key() == key));
     }
 
-    /// 把当前曲目对准到指定路径（用户双击某首时调用）；找到返回 true
-    pub fn focus(&mut self, path: &str) -> bool {
-        if let Some(pos) = self.order.iter().position(|p| p == path) {
+    /// 把当前曲目对准到指定条目（用户双击某首时调用）；找到返回 true
+    pub fn focus(&mut self, key: &str) -> bool {
+        if let Some(pos) = self.order.iter().position(|item| item.key() == key) {
             self.index = Some(pos);
             true
         } else {
@@ -160,7 +231,7 @@ impl PlayQueue {
     }
 
     /// 下一首；队列为空返回 None
-    pub fn advance(&mut self) -> Option<String> {
+    pub fn advance(&mut self) -> Option<QueueItem> {
         let total = self.order.len();
         if total == 0 {
             return None;
@@ -191,7 +262,7 @@ impl PlayQueue {
     }
 
     /// 上一首（随机模式按实际播放顺序回退）
-    pub fn back(&mut self) -> Option<String> {
+    pub fn back(&mut self) -> Option<QueueItem> {
         let total = self.order.len();
         if total == 0 {
             return None;
@@ -207,7 +278,7 @@ impl PlayQueue {
     }
 
     /// 首曲（前端「开始播放」时用）
-    pub fn first(&mut self) -> Option<String> {
+    pub fn first(&mut self) -> Option<QueueItem> {
         if self.order.is_empty() {
             return None;
         }
@@ -217,9 +288,11 @@ impl PlayQueue {
 
     /// 曲目被重命名（磁盘文件改名）后同步队列里的路径。
     pub fn rename_path(&mut self, old: &str, new: &str) {
-        for path in self.source.iter_mut().chain(self.order.iter_mut()) {
-            if path == old {
-                *path = new.to_string();
+        for item in self.source.iter_mut().chain(self.order.iter_mut()) {
+            if let QueueItem::Path(path) = item {
+                if path == old {
+                    *path = new.to_string();
+                }
             }
         }
     }
@@ -235,7 +308,11 @@ impl PlayQueue {
         if paths.is_empty() {
             return false;
         }
-        let hit = |p: &str| paths.iter().any(|x| x.as_str() == p);
+        // 只按路径剔除：在线条目没有路径，不会被误删
+        let hit = |item: &QueueItem| match item {
+            QueueItem::Path(p) => paths.iter().any(|x| x.as_str() == p),
+            QueueItem::Online { .. } => false,
+        };
         let current_removed = self.current().map(hit).unwrap_or(false);
         if self.order.is_empty() {
             return current_removed;
@@ -282,27 +359,34 @@ impl PlayQueue {
 mod tests {
     use super::*;
 
-    fn queue_of(n: usize) -> Vec<String> {
-        (0..n).map(|i| format!("track-{}.mp3", i)).collect()
+    fn queue_of(n: usize) -> Vec<QueueItem> {
+        (0..n)
+            .map(|i| QueueItem::Path(format!("track-{}.mp3", i)))
+            .collect()
+    }
+
+    /// 断言里要的是字符串：本地条目取路径，在线条目取 key。
+    fn path(item: Option<QueueItem>) -> Option<String> {
+        item.map(|item| item.path().map(str::to_string).unwrap_or_else(|| item.key()))
     }
 
     #[test]
     fn test_sequence_wraps_around() {
         let mut q = PlayQueue::default();
         q.set(queue_of(3), PlayMode::Sequence, Some("track-0.mp3"));
-        assert_eq!(q.advance().as_deref(), Some("track-1.mp3"));
-        assert_eq!(q.advance().as_deref(), Some("track-2.mp3"));
+        assert_eq!(path(q.advance()).as_deref(), Some("track-1.mp3"));
+        assert_eq!(path(q.advance()).as_deref(), Some("track-2.mp3"));
         // 末尾回到开头
-        assert_eq!(q.advance().as_deref(), Some("track-0.mp3"));
+        assert_eq!(path(q.advance()).as_deref(), Some("track-0.mp3"));
     }
 
     #[test]
     fn test_single_repeats_current() {
         let mut q = PlayQueue::default();
         q.set(queue_of(4), PlayMode::Single, Some("track-2.mp3"));
-        assert_eq!(q.advance().as_deref(), Some("track-2.mp3"));
-        assert_eq!(q.advance().as_deref(), Some("track-2.mp3"));
-        assert_eq!(q.back().as_deref(), Some("track-2.mp3"));
+        assert_eq!(path(q.advance()).as_deref(), Some("track-2.mp3"));
+        assert_eq!(path(q.advance()).as_deref(), Some("track-2.mp3"));
+        assert_eq!(path(q.back()).as_deref(), Some("track-2.mp3"));
     }
 
     #[test]
@@ -321,7 +405,7 @@ mod tests {
         q.set(queue_of(6), PlayMode::Shuffle, None);
         let mut played: Vec<String> = Vec::new();
         for _ in 0..6 {
-            played.push(q.advance().expect("有曲目"));
+            played.push(path(q.advance()).expect("有曲目"));
         }
         played.sort();
         played.dedup();
@@ -334,10 +418,10 @@ mod tests {
         q.set(queue_of(4), PlayMode::Shuffle, None);
         let mut last = String::new();
         for _ in 0..4 {
-            last = q.advance().expect("有曲目");
+            last = path(q.advance()).expect("有曲目");
         }
         // 袋已用尽：下一首触发重洗，且不应紧接着重复刚播过的那首
-        let next = q.advance().expect("有曲目");
+        let next = path(q.advance()).expect("有曲目");
         assert_ne!(next, last, "重洗后不应立刻重复上一首");
     }
 
@@ -347,15 +431,15 @@ mod tests {
         q.set(queue_of(5), PlayMode::Shuffle, Some("track-3.mp3"));
         // 当前曲目必须仍在队列中（且能被 focus 定位）
         assert!(q.focus("track-3.mp3"));
-        assert_eq!(q.current().as_deref(), Some("track-3.mp3"));
+        assert_eq!(q.current_path(), Some("track-3.mp3"));
     }
 
     #[test]
     fn test_back_wraps_to_last() {
         let mut q = PlayQueue::default();
         q.set(queue_of(3), PlayMode::Sequence, Some("track-0.mp3"));
-        assert_eq!(q.back().as_deref(), Some("track-2.mp3"));
-        assert_eq!(q.back().as_deref(), Some("track-1.mp3"));
+        assert_eq!(path(q.back()).as_deref(), Some("track-2.mp3"));
+        assert_eq!(path(q.back()).as_deref(), Some("track-1.mp3"));
     }
 
     #[test]
@@ -364,15 +448,15 @@ mod tests {
         q.set(queue_of(2), PlayMode::Sequence, None);
         assert!(!q.focus("missing.mp3"));
         assert!(q.focus("track-1.mp3"));
-        assert_eq!(q.current().as_deref(), Some("track-1.mp3"));
+        assert_eq!(q.current_path(), Some("track-1.mp3"));
     }
 
     #[test]
     fn test_sequence_advance_without_current_starts_from_first() {
         let mut q = PlayQueue::default();
         q.set(queue_of(3), PlayMode::Sequence, None);
-        assert_eq!(q.advance().as_deref(), Some("track-0.mp3"));
-        assert_eq!(q.first().as_deref(), Some("track-0.mp3"));
+        assert_eq!(path(q.advance()).as_deref(), Some("track-0.mp3"));
+        assert_eq!(path(q.first()).as_deref(), Some("track-0.mp3"));
     }
 
     #[test]
@@ -380,13 +464,13 @@ mod tests {
         let mut q = PlayQueue::default();
         q.set(queue_of(5), PlayMode::Sequence, Some("track-2.mp3"));
         q.set_mode(PlayMode::Shuffle, Some("track-2.mp3"));
-        assert_eq!(q.current().as_deref(), Some("track-2.mp3"));
+        assert_eq!(q.current_path(), Some("track-2.mp3"));
         assert_eq!(q.mode(), PlayMode::Shuffle);
         // 切回顺序模式：顺序恢复为曲库顺序（而不是保留洗牌后的顺序），
         // 因此下一首应恰好是曲库里的后一首
         q.set_mode(PlayMode::Sequence, Some("track-2.mp3"));
-        assert_eq!(q.current().as_deref(), Some("track-2.mp3"));
-        assert_eq!(q.advance().as_deref(), Some("track-3.mp3"));
+        assert_eq!(q.current_path(), Some("track-2.mp3"));
+        assert_eq!(path(q.advance()).as_deref(), Some("track-3.mp3"));
     }
 
     #[test]
@@ -396,9 +480,9 @@ mod tests {
         q.set(queue_of(6), PlayMode::Shuffle, None);
         q.advance();
         q.set_mode(PlayMode::Sequence, Some("track-0.mp3"));
-        let mut played = vec![q.advance().expect("有曲目")];
+        let mut played = vec![path(q.advance()).expect("有曲目")];
         for _ in 0..4 {
-            played.push(q.advance().expect("有曲目"));
+            played.push(path(q.advance()).expect("有曲目"));
         }
         assert_eq!(
             played,
@@ -427,8 +511,8 @@ mod tests {
         let mut q = PlayQueue::default();
         q.set(queue_of(3), PlayMode::Sequence, Some("track-1.mp3"));
         q.rename_path("track-1.mp3", "renamed.mp3");
-        assert_eq!(q.current().as_deref(), Some("renamed.mp3"));
-        assert_eq!(q.advance().as_deref(), Some("track-2.mp3"));
+        assert_eq!(q.current_path(), Some("renamed.mp3"));
+        assert_eq!(path(q.advance()).as_deref(), Some("track-2.mp3"));
     }
 
     /// 删除当前曲目后，`advance()` 必须落到「被删那首的后一首」而不是跳曲。
@@ -438,7 +522,7 @@ mod tests {
         q.set(queue_of(4), PlayMode::Sequence, Some("track-1.mp3"));
         assert!(q.remove_paths(&["track-1.mp3".to_string()]));
         assert_eq!(q.len(), 3);
-        assert_eq!(q.advance().as_deref(), Some("track-2.mp3"), "顺序模式不能跳曲");
+        assert_eq!(path(q.advance()).as_deref(), Some("track-2.mp3"), "顺序模式不能跳曲");
     }
 
     /// 删除的是首曲时，下一次从「新的第一首」开始（不能回到被删位置）。
@@ -447,7 +531,7 @@ mod tests {
         let mut q = PlayQueue::default();
         q.set(queue_of(3), PlayMode::Sequence, Some("track-0.mp3"));
         assert!(q.remove_paths(&["track-0.mp3".to_string()]));
-        assert_eq!(q.advance().as_deref(), Some("track-1.mp3"));
+        assert_eq!(path(q.advance()).as_deref(), Some("track-1.mp3"));
     }
 
     /// 单曲循环：`advance()` 取 `index` 本身，删除当前曲目后应落到原位置的新占用者。
@@ -456,7 +540,7 @@ mod tests {
         let mut q = PlayQueue::default();
         q.set(queue_of(3), PlayMode::Single, Some("track-1.mp3"));
         assert!(q.remove_paths(&["track-1.mp3".to_string()]));
-        assert_eq!(q.advance().as_deref(), Some("track-2.mp3"));
+        assert_eq!(path(q.advance()).as_deref(), Some("track-2.mp3"));
     }
 
     /// 删除非当前曲目：当前曲目不变，下标平移不能导致错位。
@@ -466,14 +550,14 @@ mod tests {
         let mut q = PlayQueue::default();
         q.set(queue_of(4), PlayMode::Sequence, Some("track-2.mp3"));
         assert!(!q.remove_paths(&["track-0.mp3".to_string()]));
-        assert_eq!(q.current().as_deref(), Some("track-2.mp3"));
-        assert_eq!(q.advance().as_deref(), Some("track-3.mp3"));
+        assert_eq!(q.current_path(), Some("track-2.mp3"));
+        assert_eq!(path(q.advance()).as_deref(), Some("track-3.mp3"));
 
         // 删掉当前曲目**之后**的一首
         let mut q2 = PlayQueue::default();
         q2.set(queue_of(4), PlayMode::Sequence, Some("track-1.mp3"));
         assert!(!q2.remove_paths(&["track-3.mp3".to_string()]));
-        assert_eq!(q2.advance().as_deref(), Some("track-2.mp3"));
+        assert_eq!(path(q2.advance()).as_deref(), Some("track-2.mp3"));
     }
 
     /// 批量删除（含当前曲目及其前后项）后队列不越界，且能继续推进。
@@ -488,12 +572,79 @@ mod tests {
         ];
         assert!(q.remove_paths(&removed));
         assert_eq!(q.len(), 2);
-        assert_eq!(q.advance().as_deref(), Some("track-3.mp3"));
+        assert_eq!(path(q.advance()).as_deref(), Some("track-3.mp3"));
 
         // 全部删空后不再返回曲目
         assert!(q.remove_paths(&["track-1.mp3".to_string(), "track-3.mp3".to_string()]));
         assert!(q.len() == 0);
         assert_eq!(q.advance(), None);
         assert_eq!(q.current(), None);
+    }
+
+    fn online(id: &str) -> QueueItem {
+        QueueItem::Online {
+            file: "demo.js".to_string(),
+            item: serde_json::json!({ "id": id, "title": id }),
+            quality: "standard".to_string(),
+        }
+    }
+
+    /// 在线曲目落盘前**没有路径**；落盘后 `order` 与 `source` 都要换成路径 ——
+    /// 只换 order 的话，切回顺序模式它会变回「未落盘」，同一首歌又被下载一遍。
+    #[test]
+    fn online_item_becomes_a_path_once_materialized() {
+        let mut q = PlayQueue::default();
+        q.set(
+            vec![
+                QueueItem::Path("a.mp3".to_string()),
+                online("s1"),
+                QueueItem::Path("b.mp3".to_string()),
+            ],
+            PlayMode::Sequence,
+            Some("a.mp3"),
+        );
+
+        let next = q.advance().expect("有曲目");
+        assert!(next.path().is_none(), "在线曲目不该有路径");
+        assert!(next.key().starts_with("online:"), "key 要能标出它是在线的");
+
+        q.materialize_current("cache/s1.m4a");
+        assert_eq!(q.current_path(), Some("cache/s1.m4a"));
+
+        // 切回顺序模式后仍是路径（说明 source 里那条也换了）
+        q.set_mode(PlayMode::Sequence, Some("cache/s1.m4a"));
+        assert_eq!(q.current_path(), Some("cache/s1.m4a"));
+
+        let mut rest: Vec<String> = Vec::new();
+        for _ in 0..3 {
+            if let Some(item) = q.advance() {
+                rest.push(item.path().map(str::to_string).unwrap_or_else(|| item.key()));
+            }
+        }
+        assert!(
+            !rest.iter().any(|item| item.starts_with("online:")),
+            "落盘后队列里不该再有未落盘条目: {rest:?}"
+        );
+    }
+
+    /// 删除本地文件不能顺手把在线曲目也删掉（它们没有路径可比）。
+    #[test]
+    fn removing_paths_leaves_online_items_alone() {
+        let mut q = PlayQueue::default();
+        q.set(
+            vec![
+                QueueItem::Path("a.mp3".to_string()),
+                online("s1"),
+                QueueItem::Path("b.mp3".to_string()),
+            ],
+            PlayMode::Sequence,
+            None,
+        );
+        assert!(!q.remove_paths(&["a.mp3".to_string(), "b.mp3".to_string()]));
+        assert_eq!(q.len(), 1);
+        assert!(
+            q.current().map(|item| item.path().is_none()).unwrap_or(false),
+            "剩下的应是在线曲目"
+        );
     }
 }

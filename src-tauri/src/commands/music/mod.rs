@@ -24,8 +24,9 @@ mod plugin_playback;
 mod plugin_registry;
 mod queue;
 mod settings;
+mod transcode;
 
 pub use commands::*;
 pub use plugin_commands::*;
 pub use plugin_playback::*;
-pub use player::{start_queue_watcher, MusicPlayerState};
+pub use player::{start_queue_watcher, AdvanceOutcome, MusicPlayerState, spawn_online_resolve};

@@ -1473,21 +1473,37 @@ fn spawn_hotkey_worker(
 ///   2) 窗口已激活但处于其它模块 -> 切到本模块；
 ///   3) 窗口可见但未激活        -> 激活并切到本模块；
 ///   4) 窗口隐藏                -> 显示、激活并切到本模块。
+/// 热键推进的结果落到一行日志：本地曲目直接给状态；
+/// **在线曲目**要取流（几秒），而这里在主线程上不能 await，交给后台任务接手。
+fn settle_hotkey(
+    app: &AppHandle,
+    outcome: Result<crate::commands::music::AdvanceOutcome, String>,
+) -> String {
+    use crate::commands::music::{spawn_online_resolve, AdvanceOutcome};
+    match outcome {
+        Ok(AdvanceOutcome::Playing(player)) => format!("{:?}", player.status),
+        Ok(AdvanceOutcome::Online(pending)) => {
+            spawn_online_resolve(app.clone(), pending);
+            "在线曲目取流中".to_string()
+        }
+        Err(err) => format!("失败: {err}"),
+    }
+}
+
 fn handle_hotkey_action(app: &AppHandle, module: &str) {
     // 音乐播放器控制热键：播放/暂停、上一首、下一首。
     // 直接驱动后端播放器（不依赖前端），因此主窗口隐藏到托盘时依然可用。
     if matches!(module, "music-play-pause" | "music-prev" | "music-next") {
         let state = app.state::<crate::commands::music::MusicPlayerState>();
-        let result = match module {
-            "music-play-pause" => state.toggle(),
-            "music-prev" => state.prev(),
-            _ => state.next(),
+        let log = match module {
+            "music-play-pause" => match state.toggle() {
+                Ok(player) => format!("{:?}", player.status),
+                Err(err) => format!("失败: {err}"),
+            },
+            "music-prev" => settle_hotkey(app, state.prev()),
+            _ => settle_hotkey(app, state.next()),
         };
-        crate::exit_log!(
-            "[音乐热键] {} -> {:?}",
-            module,
-            result.as_ref().map(|s| s.status)
-        );
+        crate::exit_log!("[音乐热键] {} -> {}", module, log);
         return;
     }
     // 独立「划词翻译」热键：读取前台选中文本 → 翻译 → 悬浮窗显示，

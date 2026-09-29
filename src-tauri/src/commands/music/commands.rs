@@ -1,11 +1,11 @@
 //! 音乐播放器对前端暴露的命令。
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use super::dsp::{self, EqParams};
 use super::library::{self, MusicLibrary};
-use super::player::{MusicPlayerState, PlayerState};
+use super::player::{AdvanceOutcome, MusicPlayerState, PlayerState};
 use super::settings::{self as music_settings, MusicSettings};
 
 /// 导入文件夹的结果（含最新曲库，前端一次调用即可刷新界面）
@@ -160,6 +160,7 @@ pub struct DeleteTracksResult {
 /// 删除单曲（支持批量）：移入系统回收站 + 同步曲库；删到正在播放的那首时自动切下一首。
 #[tauri::command]
 pub async fn music_delete_tracks(
+    app: AppHandle,
     state: State<'_, MusicPlayerState>,
     paths: Vec<String>,
 ) -> Result<DeleteTracksResult, String> {
@@ -180,7 +181,10 @@ pub async fn music_delete_tracks(
     // 注意 `forget_paths` 不能自己调 `next()`：同一把锁不可重入（会死锁）。
     let current_removed = state.forget_paths(&paths);
     let player = if current_removed {
-        state.next().unwrap_or_else(|_| state.state())
+        match state.next() {
+            Ok(outcome) => settled(&app, &state, outcome).await.unwrap_or_else(|_| state.state()),
+            Err(_) => state.state(),
+        }
     } else {
         state.state()
     };
@@ -204,16 +208,35 @@ pub async fn music_set_queue(
     state.set_queue(paths, &mode)
 }
 
+/// 推进结果落到前端能用的播放状态：本地曲目已直接播了；
+/// 轮到在线曲目时在这里（async 上下文）取流落盘后接上。
+async fn settled(
+    app: &AppHandle,
+    state: &MusicPlayerState,
+    outcome: AdvanceOutcome,
+) -> Result<PlayerState, String> {
+    match outcome {
+        AdvanceOutcome::Playing(player) => Ok(player),
+        AdvanceOutcome::Online(pending) => super::plugin_playback::play_pending(app, state, &pending).await,
+    }
+}
+
 /// 下一首（用户操作；播完自动切歌由后端巡查线程负责）
 #[tauri::command]
-pub async fn music_next(state: State<'_, MusicPlayerState>) -> Result<PlayerState, String> {
-    state.next()
+pub async fn music_next(
+    app: AppHandle,
+    state: State<'_, MusicPlayerState>,
+) -> Result<PlayerState, String> {
+    settled(&app, &state, state.next()?).await
 }
 
 /// 上一首
 #[tauri::command]
-pub async fn music_prev(state: State<'_, MusicPlayerState>) -> Result<PlayerState, String> {
-    state.prev()
+pub async fn music_prev(
+    app: AppHandle,
+    state: State<'_, MusicPlayerState>,
+) -> Result<PlayerState, String> {
+    settled(&app, &state, state.prev()?).await
 }
 
 /// 播放/暂停切换（播放器热键用；空闲时从队列起播）

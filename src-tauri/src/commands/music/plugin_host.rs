@@ -629,7 +629,8 @@ impl Bridge {
             if remaining.is_zero() {
                 self.kill();
                 return Err(format!(
-                    "插件 {method} 超时（{} 秒），已重启宿主",
+                    "{}超时（{} 秒），已重启插件进程",
+                    method_label(method),
                     timeout.as_secs()
                 ));
             }
@@ -650,7 +651,12 @@ impl Bridge {
                         .get("error")
                         .and_then(Value::as_str)
                         .unwrap_or("插件返回了未知错误");
-                    return Err(format!("插件 {method} 失败: {reason}"));
+                    // 用动作名 + 人话说明：原始英文（axios 那类）对用户没有意义
+                    return Err(format!(
+                        "{}失败: {}",
+                        method_label(method),
+                        friendly_reason(reason)
+                    ));
                 }
                 Err(RecvTimeoutError::Timeout) => continue, // 下一轮走 deadline 判定
                 Err(RecvTimeoutError::Disconnected) => {
@@ -732,6 +738,66 @@ fn capability_gap(meta: &Value, method: &str) -> Option<String> {
         .and_then(Value::as_str)
         .unwrap_or("该插件");
     Some(format!("{platform} 不支持{label}"))
+}
+
+/// 方法名 → 用户看得懂的动作名（错误信息里用）。
+fn method_label(method: &str) -> &'static str {
+    match method {
+        "search" => "搜索",
+        "mediaSource" => "获取播放地址",
+        "load" => "加载插件",
+        _ => "调用插件",
+    }
+}
+
+/// 从 `Request failed with status code 522` 这类消息里取出状态码。
+fn status_code(raw: &str) -> Option<u32> {
+    const MARKER: &str = "status code ";
+    let start = raw.find(MARKER)? + MARKER.len();
+    let digits: String = raw[start..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    digits.parse().ok()
+}
+
+/// 把插件抛出的原始错误翻成「**是什么 + 怎么办**」。
+///
+/// 插件里抛的多是 axios 的英文原文（如 `Request failed with status code 522`）——
+/// 用户既看不懂，也不知道下一步该做什么。这里按常见模式给出中文说明。
+///
+/// **认不出来的原样返回**：宁可保留原文，也不要编一句可能不准确的话。
+/// 这条对 522 尤其重要：它是 Cloudflare 的「源站连接超时」，属于**插件上游**的问题，
+/// 我们能做的只有「稍后重试 / 换个音源」，不该让用户以为是我们的播放器坏了。
+fn friendly_reason(raw: &str) -> String {
+    if let Some(code) = status_code(raw) {
+        return match code {
+            401 | 403 => format!("音源拒绝了这个请求（HTTP {code}），可能需要登录，或该音质不可用"),
+            404 => format!("音源接口不存在（HTTP {code}），插件可能已失效或需要更新"),
+            429 => format!("请求过于频繁（HTTP {code}），稍等一会儿再试"),
+            500..=599 => {
+                format!("音源服务器暂时不可用（HTTP {code}），可稍后重试或换一个音源")
+            }
+            _ => raw.to_string(),
+        };
+    }
+    let lower = raw.to_ascii_lowercase();
+    for (pattern, message) in [
+        ("timeout of", "音源响应超时，可稍后重试或换一个音源"),
+        ("etimedout", "音源响应超时，可稍后重试或换一个音源"),
+        ("enotfound", "连不上音源服务器（域名解析失败），请检查网络或代理"),
+        ("eai_again", "连不上音源服务器（域名解析失败），请检查网络或代理"),
+        ("getaddrinfo", "连不上音源服务器（域名解析失败），请检查网络或代理"),
+        ("econnrefused", "连接音源服务器被拒绝，请检查网络或代理"),
+        ("econnreset", "音源服务器中断了连接，可稍后重试"),
+        ("socket hang up", "音源服务器中断了连接，可稍后重试"),
+        ("network error", "网络请求失败，请检查网络或代理"),
+    ] {
+        if lower.contains(pattern) {
+            return message.to_string();
+        }
+    }
+    raw.to_string()
 }
 
 /// 调用某插件的方法（自动载入 / 复用宿主进程）。
@@ -1094,6 +1160,82 @@ module.exports = {
         let _ = std::fs::remove_file(plugins_root().join("_sandbox_probe.txt"));
         // 宿主里还缓存着这个测试插件，清掉免得影响后面的用例
         *HOST.lock().unwrap() = None;
+    }
+
+    /// 插件抛出的原始错误必须被翻成「是什么 + 怎么办」，否则用户看到的
+    /// 就是 `Request failed with status code 522` 这种既看不懂又无从下手的英文。
+    #[test]
+    fn plugin_errors_are_translated_into_actionable_chinese() {
+        // 522：Cloudflare「源站连接超时」——是插件上游的问题，要明确告知可重试/换音源
+        let e = friendly_reason("Request failed with status code 522");
+        assert!(e.contains("522") && e.contains("暂时不可用"), "{e}");
+        assert!(e.contains("换一个音源"), "要给出下一步动作: {e}");
+
+        assert!(friendly_reason("Request failed with status code 403").contains("可能需要登录"));
+        assert!(friendly_reason("Request failed with status code 404").contains("插件可能已失效"));
+        assert!(friendly_reason("Request failed with status code 429").contains("过于频繁"));
+        assert!(friendly_reason("timeout of 10000ms exceeded").contains("响应超时"));
+        assert!(friendly_reason("getaddrinfo ENOTFOUND music.example.com").contains("域名解析"));
+        assert!(friendly_reason("connect ECONNREFUSED 127.0.0.1:1").contains("被拒绝"));
+        assert!(friendly_reason("Network Error").contains("网络请求失败"));
+
+        // 认不出来的原样保留 —— 宁可给原文，也不要编一句可能不准确的话
+        assert_eq!(friendly_reason("插件内部逻辑炸了: x is not a function"),
+            "插件内部逻辑炸了: x is not a function");
+        // 4xx 里的其它码没有对应解释，也保留原文（不硬套 5xx 的说法）
+        assert_eq!(friendly_reason("Request failed with status code 418"),
+            "Request failed with status code 418");
+    }
+
+    /// 映射要真的在**桥的边界**生效，而不只是那个纯函数对。
+    ///
+    /// 用假插件抛一个与截图一字不差的原始错误，验证端到端产出的是人话。
+    #[test]
+    fn bridge_errors_come_out_translated() {
+        let _guard = serialize_test();
+        shared_test_root();
+        if resolve_toolchain().is_err() {
+            return;
+        }
+        ensure_layout().unwrap();
+        let path = scripts_dir().join("probe-error.js");
+        std::fs::write(
+            &path,
+            r#"
+module.exports = {
+  platform: "ErrProbe",
+  search: async () => ({ data: [] }),
+  getMediaSource: async () => {
+    throw new Error("Request failed with status code 522");
+  },
+};
+"#,
+        )
+        .unwrap();
+
+        let error = call_plugin(
+            &path,
+            "mediaSource",
+            json!({ "item": { "id": "1" }, "quality": "standard" }),
+            Duration::from_secs(30),
+        )
+        .unwrap_err();
+        println!("[error] {error}");
+        assert!(error.starts_with("获取播放地址失败"), "要用动作名: {error}");
+        assert!(error.contains("音源服务器暂时不可用"), "要翻成人话: {error}");
+        assert!(error.contains("换一个音源"), "要给出下一步: {error}");
+
+        let _ = std::fs::remove_file(&path);
+        *HOST.lock().unwrap() = None;
+    }
+
+    /// 错误信息里要用**动作名**而不是方法名：用户看不懂 `mediaSource`。
+    #[test]
+    fn error_messages_use_action_labels_not_method_names() {
+        assert_eq!(method_label("mediaSource"), "获取播放地址");
+        assert_eq!(method_label("search"), "搜索");
+        assert_eq!(method_label("load"), "加载插件");
+        assert_eq!(method_label("whatever"), "调用插件");
     }
 
     /// 插件不支持某方法时，要给出人话而不是等 JS 抛异常。

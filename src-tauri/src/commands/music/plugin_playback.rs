@@ -11,11 +11,12 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, State};
 
-use super::player::{MusicPlayerState, PlayerState};
+use super::player::{MusicPlayerState, PendingOnline, PlayerState};
+use super::queue::QueueItem;
 use super::{library, plugin_host, plugin_registry, settings as music_settings};
 
 /// 取流超时（插件内部可能要先请求一次接口才拿到直链）
@@ -350,7 +351,85 @@ pub async fn music_plugin_media_source(
     resolve_source(file, item, quality.unwrap_or_else(|| "standard".to_string())).await
 }
 
-/// 在线播放：命中缓存就直接播（不联网），否则取流 → 落缓存 → 交给播放器。
+/// 在线曲目「落盘」的结果
+pub struct Materialized {
+    /// 缓存文件（可直接交给播放器）
+    pub path: PathBuf,
+    pub title: String,
+    pub artist: String,
+    /// 是否命中缓存（命中则没走网络）
+    pub from_cache: bool,
+    /// 未命中时的直链信息
+    pub source: Option<ResolvedSource>,
+}
+
+/// 取流 + 落缓存（命中缓存则不联网）。
+///
+/// 队列里轮到的在线曲目走的也是这里：先落盘，再由播放器接上。
+pub async fn materialize(
+    app: &AppHandle,
+    file: &str,
+    item: &Value,
+    quality: &str,
+) -> Result<Materialized, String> {
+    let (title, artist, label) = describe(item);
+    let stem = cache_stem(file, item, quality);
+
+    if let Some(cached) = find_cached(&stem) {
+        return Ok(Materialized {
+            path: cached,
+            title,
+            artist,
+            from_cache: true,
+            source: None,
+        });
+    }
+
+    let source = resolve_source(file.to_string(), item.clone(), quality.to_string()).await?;
+    let dest = cache_dir().join(format!("{stem}.{}", extension_for(&source.url)));
+    download_to(app, &source, &dest, &label).await?;
+    Ok(Materialized {
+        path: dest,
+        title,
+        artist,
+        from_cache: false,
+        source: Some(source),
+    })
+}
+
+/// 队列里轮到的在线曲目：取流落盘后接上播放（命令层用，调用方有 async 上下文）。
+pub async fn play_pending(
+    app: &AppHandle,
+    state: &MusicPlayerState,
+    pending: &PendingOnline,
+) -> Result<PlayerState, String> {
+    let seq = pending.seq;
+    match materialize(app, &pending.file, &pending.item, &pending.quality).await {
+        Ok(m) => {
+            let path = m.path.to_string_lossy().to_string();
+            state.play_online_resolved(&path, &m.title, &m.artist, seq)
+        }
+        Err(err) => {
+            // 失败也要清标记：不清的话巡查线程会一直以为「有曲目在下载」
+            state.abandon_online(seq);
+            Err(err)
+        }
+    }
+}
+
+/// 搜索结果里的一首（前端把整份结果传回来建队列）
+#[derive(Deserialize)]
+pub struct OnlineTrackRef {
+    /// 来源插件的脚本文件名
+    pub file: String,
+    /// 插件返回的曲目对象（原样回传给 `getMediaSource`）
+    pub item: Value,
+}
+
+/// 在线播放：命中缓存直接播，否则取流 → 落缓存 → 交给播放器。
+///
+/// 给了 `hits` 时用**整份搜索结果替换播放队列**，并从 `index` 那首开始播 ——
+/// 其余曲目在队列里保持「在线」身份，**轮到时才取流**（不会一次性下载几十首）。
 #[tauri::command]
 pub async fn music_plugin_play(
     app: AppHandle,
@@ -358,36 +437,38 @@ pub async fn music_plugin_play(
     file: String,
     item: Value,
     quality: Option<String>,
+    hits: Option<Vec<OnlineTrackRef>>,
+    index: Option<usize>,
 ) -> Result<PluginPlayOutcome, String> {
     let quality = quality.unwrap_or_else(|| "standard".to_string());
-    let (title, artist, label) = describe(&item);
-    let stem = cache_stem(&file, &item, &quality);
+    let materialized = materialize(&app, &file, &item, &quality).await?;
+    let path = materialized.path.to_string_lossy().to_string();
+    // 缓存文件名是内容哈希，必须把真实歌名交给播放器（否则播放条显示一串哈希）
+    let player = state.play_named(&path, &materialized.title, &materialized.artist)?;
 
-    if let Some(cached) = find_cached(&stem) {
-        let path = cached.to_string_lossy().to_string();
-        let player = state.play(&path)?;
-        eprintln!("[plugin] 命中缓存直接播放 {path}");
-        return Ok(PluginPlayOutcome {
-            path,
-            from_cache: true,
-            title,
-            artist,
-            source: None,
-            player,
-        });
+    if let Some(hits) = hits {
+        let mut items: Vec<QueueItem> = hits
+            .into_iter()
+            .map(|hit| QueueItem::Online {
+                file: hit.file,
+                item: hit.item,
+                quality: quality.clone(),
+            })
+            .collect();
+        if !items.is_empty() {
+            let index = index.unwrap_or(0).min(items.len() - 1);
+            // 正在播的这首已经落盘 → 换成路径：回退 / 切模式时不必再取一次流
+            items[index] = QueueItem::Path(path.clone());
+        }
+        state.set_queue_items(items, Some(&path))?;
     }
 
-    let source = resolve_source(file, item, quality).await?;
-    let dest = cache_dir().join(format!("{stem}.{}", extension_for(&source.url)));
-    download_to(&app, &source, &dest, &label).await?;
-    let path = dest.to_string_lossy().to_string();
-    let player = state.play(&path)?;
     Ok(PluginPlayOutcome {
         path,
-        from_cache: false,
-        title,
-        artist,
-        source: Some(source),
+        from_cache: materialized.from_cache,
+        title: materialized.title,
+        artist: materialized.artist,
+        source: materialized.source,
         player,
     })
 }
