@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::Command;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
-use crate::commands::ai_registry::{registry, ToolConfig};
+use crate::commands::ai_registry::{registry, ConfigFileDef, ToolConfig};
 use crate::commands::hidden_cmd;
 use crate::proxy::types::ModelRoute;
 use super::models::*;
@@ -12,13 +12,23 @@ use super::models::*;
 use super::config::{load_ai_config, load_last_launch_configs, save_last_launch_configs, load_sessions, save_sessions_to_file};
 use super::terminal::{get_terminal_exe_cfg, is_ext_terminal};
 
+/// Windows 应用执行别名（Store / MSIX）的 URI 前缀。
+///
+/// 这类应用在系统里**只有包注册，没有常规 exe 路径**：`%LOCALAPPDATA%\Programs\…`
+/// 根本不存在，唯一能拉起它的是这个由 shell 解析的虚拟路径。
+pub(crate) const APPS_FOLDER_URI_PREFIX: &str = "shell:AppsFolder\\";
+
 /// 解析真正要执行的启动命令。
 ///
 /// 1. 工具声明了 `startCommand` → 用它（如 `mimo .`，命令名交给方言解析）；
 /// 2. 没声明（桌面应用的 paths.json 就是空串）→ 用**检测到的 exe 绝对路径**
 ///    （默认路径或用户在界面上手填的那条）；
 /// 3. 还没有 → 退回 `detect_cmd` 的命令名（CLI 工具装在 PATH 里时的老行为）；
-/// 4. 全都没有 → None，由调用方报错，而不是拿空命令去启动。
+/// 4. 桌面端再退一步 → `shell:AppsFolder\…` 包 URI（Store 安装版唯一可启动的东西）；
+/// 5. 全都没有 → None，由调用方报错，而不是拿空命令去启动。
+///
+/// 第 4 步是补上的：此前 Store 版 Claude / ChatGPT 桌面端走到这里直接返回 None，
+/// 表现为「明明检测到了已安装，点启动却报『没有可用的启动命令』」，只能让用户手填路径。
 pub(crate) fn resolve_start_command(
     tool_id: &str,
     paths: &crate::commands::ai_registry::PathConfig,
@@ -28,15 +38,69 @@ pub(crate) fn resolve_start_command(
     if !declared.is_empty() {
         return Some(declared.to_string());
     }
-    if let Some(exe) = super::tool_paths::find_declared_exe(tool_id, &paths.paths, "") {
+    // 声明路径 → 兜底（npm 实际前缀 / 注册表卸载项）。两者都不接的话会出现
+    //「检测到了（策略 3 用兜底命中）但启动找不到命令」，等于白检测。
+    if let Some(exe) = super::tool_paths::find_declared_exe(tool_id, &paths.paths, "")
+        .or_else(|| super::tool_paths::find_fallback_exe(tool_id, &paths.command, &paths.paths))
+    {
         return Some(exe.to_string_lossy().to_string());
     }
     let fallback = paths.detect_cmd.split_whitespace().next().unwrap_or("").trim();
-    if fallback.is_empty() {
-        None
-    } else {
-        Some(fallback.to_string())
+    if !fallback.is_empty() {
+        return Some(fallback.to_string());
     }
+    #[cfg(windows)]
+    {
+        if crate::commands::ai_registry::tool_kind_of(Some(&paths.category)) == "desktop" {
+            if let Some(uri) = resolve_store_launch_uri(paths) {
+                eprintln!("[cli] 磁盘上没有 exe，回退到包 URI 启动: {}", uri);
+                return Some(uri);
+            }
+        }
+    }
+    None
+}
+
+/// 解析 Store（MSIX）应用的启动 URI：**先问系统包注册，再回退声明里的硬编码值**。
+///
+/// 为什么不能直接用声明的 `launchUri`：它把 publisher hash 写死了
+/// （`shell:AppsFolder\OpenAI.Codex_2p2nqsd0c76g0!App`）。装的是 beta 渠道
+/// （`OpenAI.CodexBeta`）或别的 publisher 时，这个 AUMID 不存在 —— 点启动要么没反应，
+/// 要么 explorer 弹一个文件夹窗口。抄 EchoBird `codex_binary.rs::
+/// resolve_desktop_launch_uri_scanned`：用 `Get-AppxPackage` 拿真实的
+/// PackageFamilyName，与 publisher hash 无关。
+///
+/// 只在「磁盘上没有 exe」这条回退分支上调用，装了 exe 的工具不会去起 PowerShell。
+#[cfg(windows)]
+fn resolve_store_launch_uri(paths: &crate::commands::ai_registry::PathConfig) -> Option<String> {
+    let declared = paths.launch_uri.as_deref().map(|s| s.trim()).unwrap_or("");
+    if !declared.starts_with(APPS_FOLDER_URI_PREFIX) {
+        return None;
+    }
+    // `shell:AppsFolder\<族名>!<应用 Id>`：族名换掉，应用 Id 沿用声明里的
+    let package = super::detect::package_name_from_launch_uri(declared)?;
+    // stable 优先、beta 兜底（EchoBird 实测 beta 渠道此前完全拉不起来）
+    let candidates = [package.as_str(), &format!("{}Beta", package)];
+    match crate::commands::project::scanner::msix_package_family_name(&candidates) {
+        Ok(Some(pfn)) if pfn != package => {
+            eprintln!("[cli] 已解析真实包族名: {}（声明里是 {}）", pfn, package);
+            return Some(compose_apps_folder_uri(&pfn, declared));
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("[cli] 包族名查询失败，回退声明的 URI: {}", e),
+    }
+    Some(declared.to_string())
+}
+
+/// 用真实包族名重组 AUMID：`shell:AppsFolder\<族名>!<应用 Id>`。
+/// 应用 Id 沿用声明里的（`Claude` / `App` …），只有族名会被换掉。
+#[cfg(windows)]
+fn compose_apps_folder_uri(package_family_name: &str, declared_uri: &str) -> String {
+    let app_id = declared_uri.split('!').nth(1).unwrap_or("App");
+    format!(
+        "{}{}!{}",
+        APPS_FOLDER_URI_PREFIX, package_family_name, app_id
+    )
 }
 
 /// 启动时的工作目录：用户没填项目目录时，用启动命令所在目录（桌面应用按 exe 启动，
@@ -229,6 +293,12 @@ pub(crate) async fn start_tool_proxy_with_collab(
             let main_headers = crate::proxy::headers::normalize(&p.custom_headers);
             let main_include_v1 = provider_include_v1(p, &chosen_outbound);
             let mut model_routes: HashMap<String, ModelRoute> = HashMap::new();
+            // 用户在聚合链上对该「供应商 + 模型」显式声明的图片能力（None = 交给注册表）。
+            // 声明同时供单工具代理与聚合服务使用，两条路径的判定必须一致。
+            let chain = super::route::normalize_route_chain(&config.route_chain, &config.providers);
+            let declared_main = req.model_id.as_deref()
+                .map(|mid| super::route::declared_image_support(&chain, &p.id, mid))
+                .unwrap_or(None);
             if let Some(ref mid) = req.model_id {
                 if !mid.is_empty() {
                     model_routes.insert(mid.clone(), ModelRoute {
@@ -236,6 +306,7 @@ pub(crate) async fn start_tool_proxy_with_collab(
                         api_key: p.api_key.clone(),
                         headers: main_headers.clone(),
                         include_v1: main_include_v1,
+                        supports_image: declared_main,
                     });
                 }
             }
@@ -248,6 +319,7 @@ pub(crate) async fn start_tool_proxy_with_collab(
                             api_key: fp.api_key.clone(),
                             headers: crate::proxy::headers::normalize(&fp.custom_headers),
                             include_v1: provider_include_v1(fp, &chosen_outbound),
+                            supports_image: super::route::declared_image_support(&chain, &fp.id, fb),
                         });
                     }
                 }
@@ -261,6 +333,8 @@ pub(crate) async fn start_tool_proxy_with_collab(
                     api_key: p.api_key.clone(),
                     headers: main_headers.clone(),
                     include_v1: main_include_v1,
+                    // 带前缀的名字就是实际模型名的别名，声明跟着模型走
+                    supports_image: declared_main,
                 });
             }
 
@@ -380,63 +454,6 @@ pub fn restore_ai_tool_config(tool_id: String) -> Result<String, String> {
     Ok(msg)
 }
 
-/// 读取工具配置文件里**当前写定**的模型（回显用，读不到返回 None）。
-///
-/// 只认 `configFile.write` 映射里值模板为 `model` / `modelName` 的那些路径
-/// （与写入同一套声明），`env.*` 前缀的跳过——它们不落盘。
-#[tauri::command]
-pub fn get_ai_tool_model(tool_id: String) -> Result<Option<String>, String> {
-    let tool_config = registry()
-        .get_tool_config(&tool_id)
-        .ok_or("未知工具")?
-        .clone();
-    let cfg = match &tool_config.config_file {
-        Some(c) => c,
-        None => return Ok(None),
-    };
-
-    let resolved = resolve_declared_config_path(cfg);
-    // 自定义写入器：读法也自成一套（WorkBuddy 的 models[0].id），不走 write 映射
-    if let Some(writer) = cfg.custom_writer(&tool_id) {
-        return Ok(crate::commands::ai::tool_config_custom::read_model(&writer, &resolved));
-    }
-
-    let write_map = match &cfg.write {
-        Some(w) => w,
-        None => return Ok(None),
-    };
-    let Ok(text) = fs::read_to_string(&resolved) else {
-        return Ok(None);
-    };
-
-    let value = match cfg.format.as_str() {
-        "json" | "jsonc" => serde_json::from_str::<serde_json::Value>(&strip_jsonc(&text)).ok(),
-        _ => None,
-    };
-    for (path, template) in write_map {
-        if template != "model" && template != "modelName" {
-            continue;
-        }
-        if path.starts_with("env.") {
-            continue;
-        }
-        // 只取主文件路径（"文件#子路径" 这种兄弟文件写法跳过）
-        if path.contains('#') {
-            continue;
-        }
-        if let Some(doc) = &value {
-            if let Some(found) = get_json_path(doc, path) {
-                return Ok(Some(found));
-            }
-        }
-        // toml / yaml：退化为按顶层键做一次文本扫描，够回显用
-        if let Some(found) = scan_text_key(&text, path.rsplit('.').next().unwrap_or(path)) {
-            return Ok(Some(found));
-        }
-    }
-    Ok(None)
-}
-
 /// 按点号路径取值（模型名里的 "." 已被转义为占位符，取值时还原）。
 fn get_json_path(doc: &serde_json::Value, path: &str) -> Option<String> {
     let mut cur = doc;
@@ -520,6 +537,112 @@ fn scan_text_key(text: &str, key: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// 工具配置文件里**当前写定**的模型（回显用）。
+///
+/// 为什么必须从**工具配置文件**读，而不是只看我们自己记录的「上次启动配置」：
+/// 工具真正读的是它自己的配置文件，用户也可能在别处改过它。只信自己的记录会出现
+/// 「界面显示没选模型（看着像在用官方配置），实际工具还在用我们上次写进去的自定义模型」——
+/// 用户看到的与生效的完全是两回事。
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct AppliedModelsDto {
+    /// 主模型（写入侧 `model` / `modelName` 模板对应的键）
+    pub model: Option<String>,
+    /// 小模型 / fallback（`fallbackModel` 模板对应的键）
+    pub fallback_model: Option<String>,
+}
+
+/// 按声明回读「当前写定」的模型。
+///
+/// 只认 `configFile.write` 里值模板为 `model` / `modelName` / `fallbackModel` 的路径，
+/// 并跳过三类不是「当前选的是哪个模型」的键：
+/// - `env.*`：只注入进程环境，不落盘；
+/// - 含 `#` 的兄弟文件路径（`auth.json#…`）；
+/// - 含 `{…}` 占位符的路径（如 opencode 的 `provider.X.models.{model_name}.name`）——
+///   那是「为每个模型建一条定义」，谁先被遍历到就返回谁，纯属碰运气。
+///
+/// `model` 模板优先于 `modelName`：前者是顶层「当前模型」，后者常见于模型定义块。
+fn read_applied_models(cfg: &ConfigFileDef, resolved: &std::path::Path, tool_id: &str) -> AppliedModelsDto {
+    // 自定义写入器读法自成一套（WorkBuddy 的 models[0].id、Claude Desktop 的 3P profile），
+    // 且都只有一个「主模型」概念，没有 fallback。
+    if let Some(writer) = cfg.custom_writer(tool_id) {
+        return AppliedModelsDto {
+            model: crate::commands::ai::tool_config_custom::read_model(&writer, resolved),
+            fallback_model: None,
+        };
+    }
+    let Some(write_map) = cfg.write.as_ref() else {
+        return AppliedModelsDto::default();
+    };
+    let Ok(text) = fs::read_to_string(resolved) else {
+        return AppliedModelsDto::default();
+    };
+    let doc = match cfg.format.as_str() {
+        "json" | "jsonc" => serde_json::from_str::<serde_json::Value>(&strip_jsonc(&text)).ok(),
+        _ => None,
+    };
+
+    let mut out = AppliedModelsDto::default();
+    // 两趟：先按 `model` 模板定位（权威），没有再看 `modelName`。HashMap 迭代无序，
+    // 单趟会让 opencode 的模型定义块抢在顶层 `model` 之前命中。
+    for wanted in ["model", "modelName"] {
+        if out.model.is_some() {
+            break;
+        }
+        for (path, template) in write_map {
+            if template != wanted || is_non_selection_path(path) {
+                continue;
+            }
+            let found = doc
+                .as_ref()
+                .and_then(|d| get_json_path(d, path))
+                .or_else(|| scan_text_key(&text, path.rsplit('.').next().unwrap_or(path)));
+            if found.is_some() {
+                out.model = found;
+                break;
+            }
+        }
+    }
+    for (path, template) in write_map {
+        if template != "fallbackModel" || is_non_selection_path(path) {
+            continue;
+        }
+        let found = doc
+            .as_ref()
+            .and_then(|d| get_json_path(d, path))
+            .or_else(|| scan_text_key(&text, path.rsplit('.').next().unwrap_or(path)));
+        if found.is_some() {
+            out.fallback_model = found;
+            break;
+        }
+    }
+    out
+}
+
+/// 该键是否「不是当前选择的模型」（env 注入 / 兄弟文件 / 模型定义占位符）。
+fn is_non_selection_path(path: &str) -> bool {
+    path.starts_with("env.")
+        || path.contains('#')
+        || path.contains('{')
+        || path.starts_with("fileEnv.")
+}
+
+/// 读取工具配置文件里当前写定的模型（主模型 + 小模型）。
+///
+/// 前端用它把「上次选了哪个模型」回显出来 —— 不回显的话，界面看着像用官方配置，
+/// 而工具实际还在用我们写进去的模型。
+#[tauri::command]
+pub fn get_ai_tool_models(tool_id: String) -> Result<AppliedModelsDto, String> {
+    let tool_config = registry()
+        .get_tool_config(&tool_id)
+        .ok_or("未知工具")?
+        .clone();
+    let Some(cfg) = tool_config.config_file.as_ref() else {
+        return Ok(AppliedModelsDto::default());
+    };
+    let resolved = resolve_declared_config_path(cfg);
+    Ok(read_applied_models(cfg, &resolved, &tool_id))
 }
 
 // ─── 启动 AI 工具 ───
@@ -746,7 +869,20 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
     // 因为它们会再 spawn 出可见子窗口，隐藏父进程无影响。
     let is_powershell = terminal_exe.to_lowercase().contains("powershell")
         || terminal_exe.to_lowercase().contains("pwsh");
-    let mut cmd = if is_powershell {
+    // Store / MSIX 应用没有 exe 可跑，也不该为它开一个终端窗口 ——
+    // 用 explorer.exe 打开 `shell:AppsFolder\…` 虚拟路径（抄 EchoBird
+    // `process_manager.rs::start_shell_uri`，它实测过这条路径）。
+    let is_launch_uri = start_cmd.starts_with(APPS_FOLDER_URI_PREFIX);
+    // 桌面应用（非 Store）同样不该套终端包装：`cmd /k <exe>` 会留一个黑色控制台窗口，
+    // GUI 应用也用不上它 —— EchoBird 的 GUI exe 是直接 spawn 的（Priority 3）。
+    let is_desktop_tool =
+        crate::commands::ai_registry::tool_kind_of(Some(&tool_paths.category)) == "desktop";
+    let mut cmd = if is_launch_uri {
+        hidden_cmd::hidden_cmd("explorer.exe")
+    } else if is_desktop_tool {
+        // 程序路径可能带空格：Command::new 直接吃整条路径（不经 shell），不能拆词
+        Command::new(&start_cmd)
+    } else if is_powershell {
         let mut c = Command::new(&terminal_exe);
         // CREATE_NEW_CONSOLE：强制为新控制台子进程分配独立窗口，
         // 避免 GUI 父进程下的 powershell 不弹出可见窗口（表现为"启动成功但没反应"）。
@@ -783,7 +919,12 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
     // start_command 拆分为多个参数（如 "mimo ." → ["mimo", "."]）
     let start_cmd_parts: Vec<&str> = start_cmd.split_whitespace().collect();
 
-    if terminal_exe.to_lowercase().contains("cmd") {
+    if is_launch_uri {
+        // explorer.exe 直接吃这个虚拟路径，无需 `start`、也无需空标题参数
+        cmd.arg(&start_cmd);
+    } else if is_desktop_tool {
+        // 直接 spawn：不附加任何终端参数（GUI 进程自己有窗口）
+    } else if terminal_exe.to_lowercase().contains("cmd") {
         cmd.arg("/c").arg("start").arg("/d").arg(&work_dir)
            .arg("cmd").arg("/k");
         for p in &start_cmd_parts { cmd.arg(p); }
@@ -1199,16 +1340,8 @@ fn write_tool_config_generic(
             // 布尔字面量（如 pi 的 compat.supportsDeveloperRole=false）
             "boolFalse" => serde_json::json!(false),
             "boolTrue" => serde_json::json!(true),
-            // Codex 的 web_search 开关：开启 → "live"（真实实时检索）；关闭 → 不写该键，
-            // 保留 Codex 默认 "cached"（OpenAI 维护索引，对第三方上游无实际 web 访问）。
-            // 默认关，用户开启才写 live。
-            "webSearchLive" => {
-                if !web_search {
-                    eprintln!("[config_file] skip {} (web_search 未开启)", resolved_path);
-                    continue;
-                }
-                serde_json::json!("live")
-            },
+            // `web_search` 曾经由 `webSearchLive` 模板写，现在归 tool_config_extras 管
+            // （要按**上游域名**判断，模板表达不了「按域名决定值」）。
             // omp (Oh My Pi)：providers.<p>.api 协议标识（openai-completions / anthropic-messages）
             "ompApiProtocol" => serde_json::json!(
                 if chosen_protocol == "anthropic" { "anthropic-messages" } else { "openai-completions" }
@@ -1221,14 +1354,9 @@ fn write_tool_config_generic(
                 }
                 serde_json::json!("none")
             },
-            // omp：modelRoles.default = echobird/<model>，指向 models.yml 中受管 provider
-            "ompModelRole" => {
-                if !has_model {
-                    eprintln!("[config_file] skip {} (no model)", resolved_path);
-                    continue;
-                }
-                serde_json::json!(format!("echobird/{}", model.clone()))
-            },
+            // `modelRoles` 曾经由 `ompModelRole` 模板写 default，现在整张表归
+            // tool_config_extras 管：既要逐个角色改写、又要保留各角色的 `:档位` 后缀，
+            // 通用映射先跑会把用户设的后缀冲掉（见 tool_config_extras/omp.rs）。
             "apiKey" => {
                 // API Key 为空时不写入配置文件，避免写入空字符串被解析器判定为非法凭证
                 if api_key.is_empty() {
@@ -1301,6 +1429,12 @@ fn write_tool_config_generic(
         // 一律按主文件的 format 写会把 auth.json 写成 TOML。
         let format = write_format_for(&p, &cfg.format);
         eprintln!("[config_file] 目标路径: {} (format={:?})", p.display(), format);
+        // 先清掉声明里点名的遗留键（声明改过后旧键会留在文件里继续生效），再写新值。
+        let stale = stale_keys_for_file(cfg, &main_config_path, &p);
+        let existing = super::tool_config_restore::strip_stale_keys(&existing, format, &stale)?;
+        if !stale.is_empty() {
+            eprintln!("[config_file] 已清理遗留键: {:?}", stale);
+        }
         // 兄弟文件（如 codex 的 auth.json、dsh 的 .credentials.yaml）里本来就可能有用户自己的
         // 官方凭据，第一次接管前先存一份：勾「使用官方模型」还原时把它放回去，
         // 否则「用 Kira 跑一次」就把用户的官方 Key 冲掉了（EchoBird 同样做法：codex-auth.bak.json）。
@@ -1310,7 +1444,7 @@ fn write_tool_config_generic(
             }
         }
         match format {
-            WriteFormat::Toml => write_toml_config(&p, &existing, &ws)?,
+            WriteFormat::Toml => write_toml_config(&p, &existing, &ws, &tool_config.id)?,
             WriteFormat::Yaml => write_yaml_config(&p, &existing, &ws)?,
             // $schema 只往主配置文件里补，兄弟文件（auth.json 之类）不该被塞 schema
             WriteFormat::Json if p == main_config_path => {
@@ -1320,7 +1454,58 @@ fn write_tool_config_generic(
         }
         eprintln!("[config_file] ✓ 已写入配置到 {}", p.display());
     }
+
+    // 通用映射写完之后，再跑「平铺路径说不清」的附加结构化写入：数组内按 id 查找合并、
+    // 按上游域名决定写哪个值、逐角色重定向、顺手生成被引用的附属文件（见 tool_config_extras）。
+    // 没选模型时不跑：这些语义全都以「当前选的是哪个模型」为前提，空模型名会写出坏值。
+    if has_model {
+        let extras_ctx = crate::commands::ai::tool_config_extras::ExtrasCtx {
+            tool_id: &tool_config.id,
+            main_path: &main_config_path,
+            base_url,
+            // 域名判断必须用真上游：代理模式下 base_url 是 127.0.0.1，拿它做域名匹配必然落空
+            upstream_url,
+            api_key,
+            model: &model,
+            model_name: &model_name,
+            provider: crate::commands::ai::tool_config_extras::provider_for(&tool_config.id),
+            chosen_protocol,
+            web_search,
+        };
+        for file in crate::commands::ai::tool_config_extras::apply_extras(&extras_ctx)? {
+            eprintln!("[config_file] ✓ 附加写入: {file}");
+        }
+    }
+
     Ok(())
+}
+
+/// 取声明里属于**该文件**的遗留键（`removeKeys`）：`文件#子路径` 与主文件两种写法。
+///
+/// 与 `write` 的 `file#sub` 写法保持同一套解析，否则「声明要删 env_key」会因为
+/// 目标文件对不上而静默失效。
+fn stale_keys_for_file(
+    cfg: &crate::commands::ai_registry::ConfigFileDef,
+    main: &std::path::Path,
+    target: &std::path::Path,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for raw in &cfg.remove_keys {
+        match raw.split_once('#') {
+            Some((file, sub)) => {
+                let resolved = resolve_write_target_file(main, file);
+                if resolved == target {
+                    out.push(sub.to_string());
+                }
+            }
+            None => {
+                if main == target {
+                    out.push(raw.clone());
+                }
+            }
+        }
+    }
+    out
 }
 
 /// 解析工具配置文件的实际落盘路径：`~` → HOME（Windows 用 USERPROFILE），
@@ -1589,11 +1774,26 @@ fn cleanup_broken_model_entries(doc: &mut serde_json::Value, writes: &[(String, 
     }
 }
 
-/// 把 JSON 值降级为 TOML 标量字符串（数组/对象退回 JSON 文本；codex 不会用到后者）
-fn toml_scalar(v: &serde_json::Value) -> String {
+/// JSON 值 → TOML 值（**保留类型**）。
+///
+/// 布尔 / 数字绝不能降级成字符串：codex 的 `requires_openai_auth` 要布尔，
+/// 写成 `requires_openai_auth = "true"` 会让整份 config.toml 加载失败 ——
+/// 报 `invalid type: string "true", expected a boolean`，工具直接起不来。
+/// 数组 / 对象退回 JSON 文本（codex 等 TOML 工具的写入值均为标量，不会用到后者）。
+fn toml_value(v: &serde_json::Value) -> toml_edit::Value {
     match v {
-        serde_json::Value::String(s) => s.clone(),
-        other => other.to_string(),
+        serde_json::Value::String(s) => toml_edit::Value::from(s.clone()),
+        serde_json::Value::Bool(b) => toml_edit::Value::from(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                toml_edit::Value::from(i)
+            } else if let Some(f) = n.as_f64() {
+                toml_edit::Value::from(f)
+            } else {
+                toml_edit::Value::from(n.to_string())
+            }
+        }
+        other => toml_edit::Value::from(other.to_string()),
     }
 }
 
@@ -1684,155 +1884,153 @@ fn set_yaml_path(doc: &mut serde_yaml::Value, path: &str, value: serde_yaml::Val
 
 /// 写入 TOML 配置文件（支持顶层 key 和 dotted keys 如 `model_providers.x.base_url`）。
 ///
-/// 关键修复：codex 等严格 TOML 解析器在 `[model_providers.anyversion]` 表头内已有
-/// `env_key`/`name`/`base_url`，旧逻辑只剥离顶层 dotted key、却保留表内同键，末位再追加
-/// `model_providers.anyversion.*` dotted key 会与表内键冲突 → duplicate key 报错。
-/// 新版逐行跟踪当前 `[table]` 上下文，算出每行完整点分 key 再做去重/原地替换。
+/// **语义合并**（抄 CodexPlusPlus `relay_config.rs`，用 `toml_edit::DocumentMut`）：
+/// 把现有文件解析成文档树，只改写受管的键，其余内容（注释、未托管的 `mcp_servers`、
+/// `[[hooks]]` 数组表、用户自己的 `[profiles.*]`）原样保留。
+///
+/// 为什么不用文本级替换：文本替换要自己重建 `[table]` 上下文，遇到「嵌套表 + 数组表头
+/// （`[[hooks.X]]`）+ 跨文件重复表头」这三类输入必然错位 —— 轻则把键写进别的表作用域
+/// （`[model_providers.custom]` 下多出 `model_providers.anyversion.*`，codex 报
+/// "provider anyversion not found"），重则写出非法 TOML。
 fn write_toml_config(
     path: &PathBuf,
     existing: &str,
     writes: &[(String, serde_json::Value)],
+    tool_id: &str,
 ) -> Result<(), String> {
-    // 仅处理非 env.* 的键（env.* 走环境变量注入）；JSON 值统一降级为标量字符串
-    // （codex 等 TOML 工具的写入值均为标量，不会传入数组/对象）
-    let toml_writes: Vec<(String, String)> = writes
+    // 仅处理非 env.* 的键（env.* 走环境变量注入）；布尔 / 数字保留原类型
+    //（数组/对象退回 JSON 文本，codex 等工具的写入值均为标量，不会传入）
+    let toml_writes: Vec<(String, toml_edit::Value)> = writes
         .iter()
         .filter(|(p, _)| !p.starts_with("env."))
-        .map(|(p, v)| (p.clone(), toml_scalar(v)))
+        .map(|(p, v)| (p.clone(), toml_value(v)))
         .collect();
-    let mut pending: std::collections::HashMap<String, String> = toml_writes.into_iter().collect();
-
-    let lines: Vec<String> = existing.lines().map(|l| l.to_string()).collect();
-
-    // 第一遍：找出文件中已存在的目标键（含 [table] 上下文），这些键原地替换；
-    // 其余(新增)键插入对应 [table] 头之后或追加到末尾。
-    let mut current_table: Vec<String> = Vec::new();
-    let mut existing_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for line in &lines {
-        let trimmed = line.trim_start();
-        if let Some(stripped) = trimmed.strip_prefix('[') {
-            if !trimmed.starts_with("[[") {
-                if let Some(close) = stripped.find(']') {
-                    let header = &stripped[..close];
-                    current_table = header.split('.').map(|s| s.to_string()).collect();
-                }
-            }
-            continue;
-        }
-        if let Some(k) = leading_toml_key(line) {
-            // TOML 语义：[table] 内的键（含 dotted key）都相对于当前表，必须拼表前缀；
-            // 只有表外（文件头部）的键才是顶层全限定键
-            let full = if current_table.is_empty() {
-                k.clone()
-            } else {
-                format!("{}.{}", current_table.join("."), k)
-            };
-            if pending.contains_key(&full) {
-                existing_keys.insert(full);
-            }
-        }
+    if toml_writes.is_empty() {
+        return Ok(());
     }
 
-    // 第二遍：生成输出，原地替换已存在的键
-    current_table.clear();
-    let mut out: Vec<String> = Vec::new();
-    for line in &lines {
-        let trimmed = line.trim_start();
-        if let Some(stripped) = trimmed.strip_prefix('[') {
-            if !trimmed.starts_with("[[") {
-                if let Some(close) = stripped.find(']') {
-                    let header = &stripped[..close];
-                    current_table = header.split('.').map(|s| s.to_string()).collect();
-                    out.push(line.clone());
-                    // 把"新增"的、属于该表的直接子键插入表头之后
-                    let prefix = current_table.join(".");
-                    let mut inserted: Vec<String> = Vec::new();
-                    for (k, v) in pending.iter() {
-                        if let Some(rest) = k.strip_prefix(&format!("{}.", prefix)) {
-                            if !rest.contains('.') && !existing_keys.contains(k) {
-                                out.push(format!("{} = \"{}\"", rest, v));
-                                inserted.push(k.clone());
-                            }
-                        }
-                    }
-                    for k in &inserted {
-                        pending.remove(k);
-                    }
-                    continue;
-                }
-            }
-            out.push(line.clone());
-            continue;
-        }
-        if let Some(k) = leading_toml_key(line) {
-            // TOML 语义：[table] 内的键（含 dotted key）都相对于当前表，必须拼表前缀
-            let full = if current_table.is_empty() {
-                k.clone()
-            } else {
-                format!("{}.{}", current_table.join("."), k)
-            };
-            if let Some(v) = pending.remove(&full) {
-                let indent = line.len() - line.trim_start().len();
-                out.push(format!("{}{} = \"{}\"", " ".repeat(indent), k, v));
-            } else {
-                out.push(line.clone());
-            }
-        } else {
-            out.push(line.clone());
-        }
+    let mut doc = parse_toml_lenient(existing);
+    for (key_path, value) in &toml_writes {
+        set_toml_path(&mut doc, key_path, value);
     }
 
-    // 仍未处理的键（文件里没有对应表头）：
-    // - 无点顶层键必须插到首个 [table] 之前（追加到末尾会落进最后一个表的作用域）
-    // - 带点键按父路径分组，生成 `[parent]` 表头 + 短键。旧逻辑直接把
-    //   `model_providers.anyversion.*` dotted key 追加到末尾，落进 [model_providers.custom]
-    //   作用域变成 custom.model_providers.anyversion.* → codex 报 "provider anyversion not found"
-    let mut rest: Vec<(String, String)> = pending.into_iter().collect();
-    rest.sort();
-    let mut top_level: Vec<String> = Vec::new();
-    let mut grouped: std::collections::BTreeMap<String, Vec<(String, String)>> =
-        std::collections::BTreeMap::new();
-    for (k, v) in rest {
-        match k.rsplit_once('.') {
-            None => top_level.push(format!("{} = \"{}\"", k, v)),
-            Some((parent, leaf)) => grouped
-                .entry(parent.to_string())
-                .or_default()
-                .push((leaf.to_string(), v)),
-        }
-    }
-    if !top_level.is_empty() {
-        let insert_at = out
-            .iter()
-            .position(|l| l.trim_start().starts_with('['))
-            .unwrap_or(out.len());
-        for (i, line) in top_level.into_iter().enumerate() {
-            out.insert(insert_at + i, line);
-        }
-    }
-    for (parent, kvs) in grouped {
-        out.push(String::new());
-        out.push(format!("[{}]", parent));
-        for (leaf, v) in kvs {
-            out.push(format!("{} = \"{}\"", leaf, v));
-        }
-    }
+    let content = doc.to_string();
+    // 写回前先自校验：解析不通过说明我们改坏了，宁可报错也不能把用户的配置文件写成废纸
+    content
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| format!("合并后的 TOML 无法通过解析，已放弃写入 {}: {}", path.display(), e))?;
 
-    let content = out.join("\n");
+    // Codex 的 config.toml 里常有用户自己的 mcp_servers / [[hooks]] / profiles，
+    // 第一次接管前先存一份（只存一次，保留最原始那份）
+    if let Err(e) =
+        super::tool_config_restore::backup_before_overwrite(tool_id, path)
+    {
+        eprintln!("[config_file] ⚠ 备份 {} 失败（继续写入）: {}", path.display(), e);
+    }
     crate::commands::config::atomic_write_file(path, content.as_bytes())
         .map_err(|e| format!("写入 {} 失败: {}", path.display(), e))
 }
 
-/// 提取 TOML 赋值行的完整键名（支持 dotted key，如 model_providers.anyversion.env_key）。
-/// 非赋值行（注释 / [table] 头 / 空行）返回 None。
-fn leading_toml_key(line: &str) -> Option<String> {
-    let re = regex::Regex::new(r"^\s*[A-Za-z_][\w.]*(?:\.[\w.]+)*\s*=").expect("valid regex");
-    re.captures(line)
-        .and_then(|c| c.get(0))
-        .map(|m| {
-            let s = m.as_str();
-            s[..s.len() - 1].trim().to_string() // 去掉末尾的 '='
-        })
+/// 解析 TOML，容忍「重复表头」这类非法输入。
+///
+/// 抄 CodexPlusPlus `relay_config.rs:1716`：真实用户的 config.toml 里确实存在重复的
+/// `[mcp_servers]` 表头（手工编辑或旧版本工具留下的），整体解析会直接失败。
+/// 这里退化为「按根表头切块 → 逐块解析 → 再合并」：标量后写覆盖，数组表（`[[x]]`）累加，
+/// 从而在不丢内容的前提下得到一个合法的文档树。
+pub(crate) fn parse_toml_lenient(existing: &str) -> toml_edit::DocumentMut {
+    if let Ok(doc) = existing.parse::<toml_edit::DocumentMut>() {
+        return doc;
+    }
+    let mut merged = toml_edit::DocumentMut::new();
+    for block in split_toml_blocks(existing) {
+        let Ok(block_doc) = block.parse::<toml_edit::DocumentMut>() else {
+            continue;
+        };
+        merge_toml_table(merged.as_table_mut(), block_doc.as_table());
+    }
+    merged
+}
+
+/// 按根表头（`[a]` / `[[a]]`）把文本切成块，文件头部（表外键）作为第一块。
+fn split_toml_blocks(existing: &str) -> Vec<String> {
+    let mut blocks: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for line in existing.lines() {
+        let trimmed = line.trim_start();
+        // 只按**根级**表头切（行首就是 `[`），缩进的表头属于当前块
+        if line.starts_with('[') && (trimmed.starts_with('[') || trimmed.starts_with("[[")) {
+            if !current.trim().is_empty() {
+                blocks.push(std::mem::take(&mut current));
+            }
+        }
+        current.push_str(line);
+        current.push('\n');
+    }
+    if !current.trim().is_empty() {
+        blocks.push(current);
+    }
+    blocks
+}
+
+/// 递归合并 TOML 表：`target` 被 `source` 覆盖（标量直接换，表递归，数组表累加）。
+fn merge_toml_table(target: &mut toml_edit::Table, source: &toml_edit::Table) {
+    // 数组表（`[[hooks.x]]`）在 DocumentMut 里表现为 Table 内 Item::ArrayOfTables
+    for (key, value) in source.iter() {
+        match value {
+            toml_edit::Item::Table(src_table) => match target.get_mut(key) {
+                Some(toml_edit::Item::Table(dst_table)) => {
+                    merge_toml_table(dst_table, src_table);
+                }
+                _ => {
+                    target.insert(key, toml_edit::Item::Table(src_table.clone()));
+                }
+            },
+            toml_edit::Item::ArrayOfTables(src_arr) => match target.get_mut(key) {
+                Some(toml_edit::Item::ArrayOfTables(dst_arr)) => {
+                    for t in src_arr.iter() {
+                        dst_arr.push(t.clone());
+                    }
+                }
+                _ => {
+                    target.insert(key, toml_edit::Item::ArrayOfTables(src_arr.clone()));
+                }
+            },
+            other => {
+                target.insert(key, other.clone());
+            }
+        }
+    }
+}
+
+/// 按点分路径写入标量，自动创建中间表（已存在则原地覆盖）。
+fn set_toml_path(doc: &mut toml_edit::DocumentMut, path: &str, value: &toml_edit::Value) {
+    // 还原模型名中被转义的 "."（如 LongCat-2__DOT__0 → LongCat-2.0）
+    let parts: Vec<String> = path
+        .split('.')
+        .map(|p| p.replace(MODEL_NAME_DOT_ESCAPE, "."))
+        .collect();
+    let Some((leaf, parents)) = parts.split_last() else {
+        return;
+    };
+    let mut table = doc.as_table_mut();
+    for parent in parents {
+        let entry = table.entry(parent.as_str());
+        let item = entry.or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
+        // 已存在但不是表（比如同名标量）→ 换成空表，保证后续路径能建起来
+        if !item.is_table() {
+            *item = toml_edit::Item::Table(toml_edit::Table::new());
+        }
+        table = item.as_table_mut().expect("just ensured it is a table");
+    }
+    // 已存在的键只换值、保留 decor：TOML 里「键上方的注释」是挂在该键值对的
+    // prefix decor 上的，`insert` 会把整对（含注释）一起换掉 —— 用户写的注释就没了。
+    if let Some(toml_edit::Item::Value(existing)) = table.get_mut(leaf.as_str()) {
+        let decor = existing.decor().clone();
+        *existing = value.clone();
+        *existing.decor_mut() = decor;
+        return;
+    }
+    table.insert(leaf.as_str(), toml_edit::value(value.clone()));
 }
 
 /// 根据点分路径设置 JSON 文档中的值（自动创建中间对象）
@@ -1897,14 +2095,179 @@ async fn wait_for_proxy_ready(listen_address: &str, port: u16) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::commands::ai_registry::ConfigFileDef;
     use super::{
-        default_work_dir, get_json_path, json_value_to_yaml, registry, render_json_template,
-        is_aggregate_upstream, resolve_start_command, resolve_write_target_file, scan_text_key,
+        default_work_dir, json_value_to_yaml, read_applied_models, registry, render_json_template,
+        is_aggregate_upstream, resolve_start_command, resolve_write_target_file,
         set_yaml_path, strip_jsonc, write_format_for, write_json_config, write_tool_config_from_spec,
-        write_yaml_config, WriteFormat,
+        write_toml_config, write_yaml_config, WriteFormat,
     };
+    #[cfg(windows)]
+    use super::compose_apps_folder_uri;
     use std::collections::HashMap;
     use std::path::PathBuf;
+
+    /// TOML 语义合并：只改受管键，未托管的 `mcp_servers` / `[[hooks]]` / 注释必须原样留下。
+    ///
+    /// 这正是文本级替换会写坏的三类输入：嵌套表、数组表头、以及被注释隔开的表。
+    #[test]
+    fn toml_merge_keeps_unmanaged_tables_and_comments() {
+        let dir = std::env::temp_dir().join(format!("av-toml-merge-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("config.toml");
+
+        let existing = r#"# 用户自己的注释
+model = "old-model"
+
+[mcp_servers]
+[mcp_servers.fs]
+command = "npx"
+args = ["-y", "server-fs"]
+
+[[hooks.PreToolUse]]
+matcher = "Bash"
+command = "echo hi"
+
+[model_providers.personal]
+name = "personal"
+"#;
+        let writes = vec![
+            ("model".to_string(), serde_json::json!("anyversion/gpt-5")),
+            (
+                "model_providers.anyversion.base_url".to_string(),
+                serde_json::json!("http://127.0.0.1:15721"),
+            ),
+        ];
+        write_toml_config(&path, existing, &writes, "codex").unwrap();
+
+        let out = std::fs::read_to_string(&path).unwrap();
+        // 受管键被改写 / 新建
+        assert!(out.contains(r#"model = "anyversion/gpt-5""#), "{out}");
+        assert!(out.contains("http://127.0.0.1:15721"), "{out}");
+        // 未托管内容原样保留
+        assert!(out.contains("# 用户自己的注释"), "注释被冲掉了: {out}");
+        assert!(out.contains(r#"command = "npx""#), "mcp_servers 丢了: {out}");
+        assert!(out.contains("[[hooks.PreToolUse]]"), "数组表头丢了: {out}");
+        assert!(out.contains(r#"name = "personal""#), "别人的表丢了: {out}");
+        // 结果必须是合法 TOML
+        out.parse::<toml_edit::DocumentMut>().expect("合并结果应可解析");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 重复表头（非法 TOML）：整体解析会失败，必须退化成切块合并而不是放弃写入。
+    #[test]
+    fn toml_merge_survives_duplicate_table_headers() {
+        let dir = std::env::temp_dir().join(format!("av-toml-dup-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("config.toml");
+
+        let existing = "[mcp_servers]\nenable = true\n\n[mcp_servers]\nenable = false\nhidden = \"keep\"\n";
+        let writes = vec![("model".to_string(), serde_json::json!("anyversion/gpt-5"))];
+        write_toml_config(&path, existing, &writes, "codex").unwrap();
+
+        let out = std::fs::read_to_string(&path).unwrap();
+        assert!(out.contains(r#"model = "anyversion/gpt-5""#), "{out}");
+        // 后写的块覆盖先写的同键，未冲突的键保留
+        assert!(out.contains("enable = false"), "{out}");
+        assert!(out.contains(r#"hidden = "keep""#), "{out}");
+        out.parse::<toml_edit::DocumentMut>().expect("合并结果应可解析");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 回显「工具配置文件里当前写定的模型」：只认 `model` / `fallbackModel` 模板，
+    /// 并且**跳过模型定义占位符路径** —— 否则 opencode 的
+    /// `provider.X.models.{model_name}.name` 会抢先命中，回显成某个模型定义的名字
+    /// （谁先被遍历到纯属碰运气），界面于是显示成一个用户根本没选过的模型。
+    #[test]
+    fn applied_models_reads_selection_and_skips_placeholder_paths() {
+        let dir = std::env::temp_dir().join(format!("av-applied-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("opencode.jsonc");
+
+        let cfg: ConfigFileDef = serde_json::from_value(serde_json::json!({
+            "path": path.display().to_string(),
+            "format": "jsonc",
+            "write": {
+                "provider.anyversion.models.{model_name}.name": "modelName",
+                "model": "model",
+                "small_model": "fallbackModel"
+            }
+        }))
+        .unwrap();
+        std::fs::write(
+            &path,
+            r#"{
+              // 用户的注释不该影响回显
+              "model": "anyversion/gpt-5",
+              "small_model": "anyversion/gpt-5-mini",
+              "provider": { "anyversion": { "models": { "other": { "name": "other" } } } }
+            }"#,
+        )
+        .unwrap();
+
+        let out = read_applied_models(&cfg, &path, "opencode");
+        assert_eq!(out.model.as_deref(), Some("anyversion/gpt-5"));
+        assert_eq!(out.fallback_model.as_deref(), Some("anyversion/gpt-5-mini"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// TOML 工具（codex）走文本扫描兜底：`model = "x"` 要能读回来，
+    /// 否则重启软件后就看不到上次选的模型了。
+    #[test]
+    fn applied_models_reads_toml_via_text_scan() {
+        let dir = std::env::temp_dir().join(format!("av-applied-toml-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("config.toml");
+
+        let cfg: ConfigFileDef = serde_json::from_value(serde_json::json!({
+            "path": path.display().to_string(),
+            "format": "toml",
+            "write": { "model": "model" }
+        }))
+        .unwrap();
+        std::fs::write(&path, "model = \"anyversion/gpt-5.4\"\nmodel_provider = \"anyversion\"\n").unwrap();
+
+        let out = read_applied_models(&cfg, &path, "chatgptdesktop");
+        assert_eq!(out.model.as_deref(), Some("anyversion/gpt-5.4"));
+        assert_eq!(out.fallback_model, None, "Codex 没有 fallback 概念");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// TOML 写入必须**保留值类型**：布尔写成 `"true"` 会让 codex 报
+    /// `invalid type: string "true", expected a boolean`，整份 config 加载失败、工具起不来。
+    #[test]
+    fn toml_write_preserves_bool_and_number_types() {
+        let dir = std::env::temp_dir().join(format!("av-toml-bool-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("config.toml");
+
+        let existing = "[model_providers.anyversion]\nname = \"AnyVersion\"\n";
+        let writes = vec![
+            (
+                "model_providers.anyversion.requires_openai_auth".to_string(),
+                serde_json::json!(true),
+            ),
+            ("model_context_window".to_string(), serde_json::json!(1_000_000)),
+        ];
+        write_toml_config(&path, existing, &writes, "codex").unwrap();
+
+        let out = std::fs::read_to_string(&path).unwrap();
+        // 裸布尔 / 数字，不能带引号
+        assert!(out.contains("requires_openai_auth = true"), "{out}");
+        assert!(!out.contains("requires_openai_auth = \"true\""), "{out}");
+        assert!(out.contains("model_context_window = 1000000"), "{out}");
+        let doc: toml_edit::DocumentMut = out.parse().unwrap();
+        assert_eq!(
+            doc["model_providers"]["anyversion"]["requires_openai_auth"].as_bool(),
+            Some(true)
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// 兄弟文件（`文件#子路径`）的格式按**目标文件**判定：codex 的 config.toml 边上还有个
     /// auth.json，一律用主文件的 toml 去写会把 auth.json 写成 TOML。
@@ -2060,6 +2423,213 @@ mod tests {
         assert_eq!(doc["OPENAI_API_KEY"], "kira-token");
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// Codex 的附加写入（B4/B7）：上下文窗口、压缩阈值、reasoning 档位、按域名禁用联网搜索、
+    /// 以及模型目录 —— 而且目录必须落在**声明的配置目录旁边**。
+    ///
+    /// 这条同时锁住一个真实事故：早先 catalog 路径用 `get_home_dir()` 取，结果一次
+    /// `cargo test` 就往真实用户的 `~/.codex/models.json` 写了 38KB。现在路径跟着声明的
+    /// 配置目录走，测试天然隔离。
+    #[test]
+    fn codex_extras_write_window_websearch_and_catalog_next_to_config() {
+        let dir = temp_dir("codex-extras");
+        let file = dir.join("config.toml");
+        let cfg = tool_cfg_at("codex-cli", &file);
+        // 上游固定是 api.deepseek.com；web_search 传 true，验证「域名判断优先于开关」
+        write_for(&cfg, None, "openai", true).expect("写入应成功");
+
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(text.contains("model_reasoning_effort = \"high\""), "{text}");
+        assert!(text.contains("model_context_window = 1000000"), "{text}");
+        assert!(
+            text.contains("model_auto_compact_token_limit = 900000"),
+            "{text}"
+        );
+        assert!(
+            text.contains("web_search = \"disabled\""),
+            "deepseek 没有可用的联网检索，必须 disabled（开关打开也一样）: {text}"
+        );
+
+        let catalog = dir.join("models.json");
+        assert!(catalog.is_file(), "catalog 应写在配置同目录: {catalog:?}");
+        let doc: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&catalog).unwrap()).unwrap();
+        // 目录里的身份是**声明模型名 C**（工具以为自己调用的那个）—— Codex 按它查表
+        assert_eq!(doc["models"][0]["slug"], "claude-opus-4");
+        assert_eq!(doc["models"][0]["context_window"].as_u64(), Some(1_000_000));
+        let catalog_ref = catalog.to_string_lossy().replace('\\', "/");
+        assert!(text.contains(&catalog_ref), "配置应引用该目录: {text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 还原必须把附加写入的内容一起清掉：配置里的窗口 / 档位 / 联网搜索键，以及我们生成的
+    /// catalog 文件。否则「选了官方模型」之后 Codex 仍带着我们的设置，磁盘上还留一份目录。
+    #[test]
+    fn codex_restore_removes_extras_and_generated_catalog() {
+        let dir = temp_dir("codex-restore");
+        let file = dir.join("config.toml");
+        let cfg = tool_cfg_at("codex-cli", &file);
+        write_for(&cfg, None, "openai", false).expect("写入应成功");
+        let catalog = dir.join("models.json");
+        assert!(catalog.is_file(), "前提：catalog 已被生成");
+
+        crate::commands::ai::tool_config_restore::restore_tool_config(&cfg).expect("还原应成功");
+
+        let text = std::fs::read_to_string(&file).unwrap();
+        for key in [
+            "model_context_window",
+            "model_auto_compact_token_limit",
+            "model_reasoning_effort",
+            "web_search",
+            "model_catalog_json",
+        ] {
+            assert!(!text.contains(key), "还原后不该留下 {key}: {text}");
+        }
+        assert!(!catalog.exists(), "我们生成的 catalog 应被删除");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Kimi 桌面端（B5）：上下文窗口 / 能力声明 / 自适应思考是**常量**。
+    /// 缺了它，界面只按最基础的能力展示，用户会以为模型不支持工具调用或思考。
+    #[test]
+    fn kimidesktop_declaration_writes_capability_constants() {
+        let dir = temp_dir("kimidesktop");
+        let file = dir.join("config.toml");
+        let cfg = tool_cfg_at("kimidesktop", &file);
+        write_for(&cfg, None, "openai", false).expect("写入应成功");
+
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(text.contains("max_context_size = 1000000"), "{text}");
+        assert!(text.contains("capabilities"), "{text}");
+        assert!(text.contains("\"tool_use\""), "{text}");
+        assert!(text.contains("\"thinking\""), "{text}");
+        assert!(text.contains("adaptive_thinking = true"), "{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// OMP（C8）：`modelRoles` 是**一整套**角色。换模型时所有指向我们的角色都要重新指向，
+    /// 并各自保留 thinking 档位后缀；用户自己的角色一个都不动。
+    #[test]
+    fn omp_retargets_all_managed_roles_keeping_thinking_suffix() {
+        let dir = temp_dir("omp");
+        let file = dir.join("models.yml");
+        let cfg = tool_cfg_at("omp", &file);
+        // 预置上一次写入留下的角色（旧模型），外加一个用户自己的角色
+        std::fs::write(
+            dir.join("config.yml"),
+            "modelRoles:\n  default: echobird/old-model:high\n  smol: echobird/old-smol\n  plan: echobird/old-plan:xhigh\n  custom: personal/other:max\n",
+        )
+        .unwrap();
+
+        write_for(&cfg, None, "openai", false).expect("写入应成功");
+
+        let doc: serde_yaml::Value =
+            serde_yaml::from_str(&std::fs::read_to_string(dir.join("config.yml")).unwrap()).unwrap();
+        let roles = doc.get("modelRoles").unwrap();
+        assert_eq!(roles["default"], "echobird/claude-opus-4:high");
+        assert_eq!(roles["smol"], "echobird/claude-opus-4");
+        assert_eq!(roles["plan"], "echobird/claude-opus-4:xhigh");
+        assert_eq!(
+            roles["custom"], "personal/other:max",
+            "用户自己的角色一个都不能改"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ZCode（A3）：默认模型选择与 provider 规则在**另一个文件** `provider_config.json` 里。
+    /// 只写 `config.json` 的话，界面里的默认模型还是旧的 —— 这正是「设置成功却没生效」。
+    #[test]
+    fn zcode_writes_default_selection_into_provider_config() {
+        let dir = temp_dir("zcode");
+        let file = dir.join("config.json");
+        let cfg = tool_cfg_at("zcode", &file);
+        // 预置 ZCode 自己会生成的那份结构，并放一个别人的 provider
+        std::fs::write(
+            dir.join("provider_config.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "schemaVersion": 1,
+                "config": {
+                    "providerConfigRules": { "providerRules": [
+                        { "providerId": "other", "providerName": "Other" }
+                    ] },
+                    "modelConfigRules": { "providerModelRules": [], "manualProviderModelRules": [] },
+                    "defaultModelSelection": { "providerId": "other", "modelId": "old" },
+                    "providerOrder": ["other"]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        write_for(&cfg, None, "openai", false).expect("写入应成功");
+
+        let doc: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.join("provider_config.json")).unwrap(),
+        )
+        .unwrap();
+        let cfgv = &doc["config"];
+        assert_eq!(cfgv["defaultModelSelection"]["providerId"], "anyversion");
+        assert_eq!(cfgv["defaultModelSelection"]["modelId"], "claude-opus-4");
+        let rules = cfgv["providerConfigRules"]["providerRules"].as_array().unwrap();
+        assert_eq!(rules.len(), 2, "别人的 provider 规则不能丢: {rules:?}");
+        let ours = rules
+            .iter()
+            .find(|r| r["providerId"] == "anyversion")
+            .expect("应写入我们的规则");
+        assert_eq!(ours["config"]["api"]["baseUrl"], "http://127.0.0.1:15721");
+        assert_eq!(ours["config"]["access"]["apiKey"], "kira-token");
+        assert_eq!(cfgv["providerOrder"], serde_json::json!(["other", "anyversion"]));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// dsh（A1/A2）：权威配置是 `profiles/<profile>/cordis.patch.yml`（YAML 序列），
+    /// 凭据在 `.credentials.yaml` 的 **`refs` 层级**，且 `profile` 名**随实例而变**
+    /// （真机上是 `web`，不是参考实现写死的 `desktop`）。
+    #[test]
+    fn dsh_writes_authoritative_profile_and_credential_refs() {
+        let dir = temp_dir("dsh");
+        let file = dir.join("settings.yaml");
+        let cfg = tool_cfg_at("dsh", &file);
+        // dsh 自己会建好的 profile 骨架：这里刻意只建 web，验证不会写死 desktop
+        std::fs::create_dir_all(dir.join("profiles").join("web")).unwrap();
+        std::fs::write(dir.join("profiles").join("web").join("cordis.patch.yml"), "[]\n").unwrap();
+        // 用户已有的 v1 凭据库（含别人的 ref）
+        std::fs::write(
+            dir.join(".credentials.yaml"),
+            "version: 1\nrefs:\n  SOMEONE_ELSE_KEY: sk-theirs\nrecords: {}\n",
+        )
+        .unwrap();
+
+        write_for(&cfg, None, "openai", false).expect("写入应成功");
+
+        // 权威 profile：序列里应有我们那两个 section
+        let profile: serde_yaml::Value = serde_yaml::from_str(
+            &std::fs::read_to_string(dir.join("profiles").join("web").join("cordis.patch.yml"))
+                .unwrap(),
+        )
+        .unwrap();
+        let entries = profile.as_sequence().expect("必须是 YAML 序列");
+        assert_eq!(entries.len(), 2, "{entries:?}");
+        let selector = entries
+            .iter()
+            .find(|e| e["id"] == serde_yaml::Value::String("agent-default-model".into()))
+            .expect("应有 agent-default-model section");
+        assert_eq!(selector["config"]["model"], "claude-opus-4");
+        assert!(
+            !dir.join("profiles").join("desktop").exists(),
+            "不能凭空造 dsh 不读的 desktop profile"
+        );
+
+        // 凭据：在 refs 层级，且用户的其它 ref 不丢
+        let creds: serde_yaml::Value =
+            serde_yaml::from_str(&std::fs::read_to_string(dir.join(".credentials.yaml")).unwrap())
+                .unwrap();
+        assert_eq!(creds["refs"]["ANYVERSION_API_KEY"], "kira-token");
+        assert_eq!(creds["refs"]["SOMEONE_ELSE_KEY"], "sk-theirs");
+        assert_eq!(creds["version"].as_u64(), Some(1));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
 
     /// Qwen Code：缺 `modelProviders[]` 时它找不到自定义端点，必须写成数组，
     /// 且数组里的 envKey 与配置文件 env 块里的键对得上。
@@ -2240,7 +2810,43 @@ mod tests {
         let mut nothing = no_exe.clone();
         nothing.detect_cmd = String::new();
         assert!(resolve_start_command("anyverprobe", &nothing, "").is_none());
+
+        // 桌面端（Store / MSIX 安装）：磁盘上没有 exe、也没有 detect_cmd →
+        // 回退 `shell:AppsFolder\…` 包 URI。此前这里直接 None，用户看到的是
+        //「明明检测到已安装，点启动却报『没有可用的启动命令』」。
+        #[cfg(windows)]
+        {
+            let mut store_app = nothing.clone();
+            store_app.category = "Desktop".to_string();
+            store_app.launch_uri = Some("shell:AppsFolder\\Anyver.Probe_abc123!App".to_string());
+            assert_eq!(
+                resolve_start_command("anyverprobe", &store_app, "").as_deref(),
+                Some("shell:AppsFolder\\Anyver.Probe_abc123!App")
+            );
+            // CLI 工具没有 Store 形态：即使声明了 launch_uri 也不走这条回退
+            let mut cli_app = store_app.clone();
+            cli_app.category = "CLI".to_string();
+            assert!(resolve_start_command("anyverprobe", &cli_app, "").is_none());
+        }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 真实包族名重组 AUMID：只换族名，应用 Id 沿用声明里的。
+    ///
+    /// beta 渠道（`OpenAI.CodexBeta_xxx`）装出来的族名与声明里写死的
+    /// `OpenAI.Codex_2p2nqsd0c76g0` 不同，组装时必须保留 `!App` 后缀，
+    /// 否则 explorer 打开的就不是应用。
+    #[cfg(windows)]
+    #[test]
+    fn compose_apps_folder_uri_keeps_app_id() {
+        assert_eq!(
+            compose_apps_folder_uri("OpenAI.Codex_abc", "shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App"),
+            "shell:AppsFolder\\OpenAI.Codex_abc!App"
+        );
+        assert_eq!(
+            compose_apps_folder_uri("Claude_new", "shell:AppsFolder\\Claude_pzs8sxrjxfjjc!Claude"),
+            "shell:AppsFolder\\Claude_new!Claude"
+        );
     }
 
     /// 工作目录：exe 存在时用它所在目录，否则退到主目录（空目录会让 start /d 失败）。
@@ -2323,30 +2929,4 @@ mod tests {
         assert_eq!(value["x"].as_str(), Some("a/*b*/c"));
     }
 
-    #[test]
-    fn get_json_path_reads_nested_and_escaped_model_names() {
-        let doc = serde_json::json!({
-            "provider": { "anyversion": { "models": { "LongCat-2.0": { "name": "LongCat-2.0" } } } },
-            "model": "gpt-5"
-        });
-        assert_eq!(get_json_path(&doc, "model").as_deref(), Some("gpt-5"));
-        // 模型名里的 "." 在写入时被转义成占位符，读取时要还原
-        assert_eq!(
-            get_json_path(&doc, "provider.anyversion.models.LongCat-2__DOT__0.name").as_deref(),
-            Some("LongCat-2.0")
-        );
-        assert!(get_json_path(&doc, "provider.missing.key").is_none());
-    }
-
-    #[test]
-    fn scan_text_key_reads_toml_and_yaml_shapes() {
-        assert_eq!(
-            scan_text_key("model = \"gpt-5\"\nmodel_provider = \"anyversion\"\n", "model").as_deref(),
-            Some("gpt-5")
-        );
-        assert_eq!(scan_text_key("model: gpt-5\n", "model").as_deref(), Some("gpt-5"));
-        // 注释行里的同名键不算
-        assert_eq!(scan_text_key("# model = old\nmodel = new\n", "model").as_deref(), Some("new"));
-        assert!(scan_text_key("other = 1\n", "model").is_none());
-    }
 }
