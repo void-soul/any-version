@@ -266,10 +266,21 @@ pub fn suggest_file_name(path: &Path) -> Option<String> {
     })
 }
 
-/// 解析重命名目标路径：同目录、保留原扩展名、重名自动追加 ` (1)`、` (2)`…
+/// 用户填的**最后一段**算不算扩展名：复用扫描用的 `AUDIO_EXTS`（可解码的格式）。
 ///
-/// 用户可能把扩展名也填了（`歌手 - 标题.mp3`）：先剥掉再按原扩展名拼回，
-/// 避免得到 `xxx.mp3.mp3`。
+/// 只在「填的后缀 == 原扩展名」时才认的话，把 `1.flac` 改成 `1.mp3` 会得到
+/// `1.mp3.flac` —— 用户是在**纠正**扩展名，却被当成名字里的一段拼了双后缀。
+/// 刻意用**可解码**的那份清单而不是所有音频格式：改名不转码，改成 `.ape`/`.wma`
+/// 只会得到一个播不了的名字。
+fn is_audio_ext(tail: &str) -> bool {
+    AUDIO_EXTS.iter().any(|known| known.eq_ignore_ascii_case(tail))
+}
+
+/// 解析重命名目标路径：同目录、重名自动追加 ` (1)`、` (2)`…
+///
+/// 扩展名的处理规则：用户填的**最后一段**只要是已知音频扩展名，就按「用户指定了扩展名」
+/// 处理 —— 与原扩展名相同就沿用，不同就以用户填的为准（改名不转码，只是换名字）。
+/// 否则（填的是名字的一部分，如 `v1.2`、`No. 8`）沿用原扩展名。
 pub fn resolve_rename_target(path: &Path, new_name: &str) -> Result<PathBuf, String> {
     let parent = path.parent().ok_or("无法确定文件所在目录")?;
     let ext = path
@@ -281,9 +292,11 @@ pub fn resolve_rename_target(path: &Path, new_name: &str) -> Result<PathBuf, Str
     if cleaned.is_empty() {
         return Err("文件名不能为空".to_string());
     }
-    let stem = match cleaned.rsplit_once('.') {
-        Some((head, tail)) if !ext.is_empty() && tail.eq_ignore_ascii_case(&ext) => head.to_string(),
-        _ => cleaned,
+    // 与原来相同（`歌.mp3`）→ 沿用；与原来不同（`1.mp3` 改自 `1.flac`）→ 以用户填的为准。
+    // 两者都必须认，否则「纠正扩展名」会拼出 `1.mp3.flac` 这种双后缀。
+    let (stem, ext) = match cleaned.rsplit_once('.') {
+        Some((head, tail)) if is_audio_ext(tail) => (head.to_string(), tail.to_string()),
+        _ => (cleaned.clone(), ext),
     };
     let stem = stem.trim_end_matches([' ', '.']).to_string();
     if stem.is_empty() {
@@ -556,6 +569,27 @@ mod tests {
 
         // 名字清洗后为空 → 报错
         assert!(resolve_rename_target(&source, "  ").is_err());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 用户填的扩展名与原扩展名**不同**时，是在纠正扩展名 —— 不能拼出 `1.mp3.flac`。
+    #[test]
+    fn test_rename_accepts_a_different_extension() {
+        let dir = temp_dir("rename-ext");
+        let source = dir.join("1.flac");
+        fs::write(&source, b"fake").unwrap();
+
+        let target = resolve_rename_target(&source, "1.mp3").unwrap();
+        assert_eq!(target.file_name().unwrap().to_string_lossy(), "1.mp3");
+
+        // 没填扩展名 → 沿用原来的
+        let target = resolve_rename_target(&source, "1").unwrap();
+        assert_eq!(target.file_name().unwrap().to_string_lossy(), "1.flac");
+
+        // 名字里的点不是扩展名（`No. 8`）→ 不能被当成扩展名砍掉
+        let target = resolve_rename_target(&source, "Kaiju No. 8").unwrap();
+        assert_eq!(target.file_name().unwrap().to_string_lossy(), "Kaiju No. 8.flac");
 
         let _ = fs::remove_dir_all(&dir);
     }
