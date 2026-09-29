@@ -141,7 +141,16 @@ fn parse_postman_item(item: &Value, out: &mut Vec<EndpointDraft>, parent_module:
     let mut url = String::new();
     let mut query_params: Vec<KeyValueItem> = Vec::new();
     if let Some(u) = url_obj {
-        url = v_str(u, "raw");
+        // Postman v2.1 允许 `url` 直接写成字符串（`{"url": "https://x/y"}`）。
+        // 只认 `url.raw` 的话，这类请求得到的 url 恒为空，于是被下面的
+        // `if url.is_empty() { return }` 静默丢弃 —— 导入后少接口且不报错。
+        url = match u.as_str() {
+            Some(text) => text.to_string(),
+            None => v_str(u, "raw"),
+        };
+        // 查询串刻意**留在 URL 里原样送出**，不拆进 query_params：执行时 `exec.rs`
+        // 会把 query_params 追加到 URL 上（`request.query()`），拆出来既会重复一份，
+        // 又会把 raw 里已编码的值再编码一次（`%E7%8C%AB` → `%25E7%8C%AB`）。
         if url.is_empty() {
             // 由 protocol/host/path 拼装
             let protocol = v_str(u, "protocol");
@@ -1019,6 +1028,53 @@ mod tests {
         assert_eq!(drafts[0].headers[0].value, "Bearer {{token}}");
         assert_eq!(drafts[1].module, "");
         assert_eq!(drafts[1].body_type, "json");
+    }
+
+    /// Postman v2.1 允许 `request.url` 直接写成字符串（`{"url": "https://..."}`）。
+    /// 只认 `url.raw` 的话，这类请求的 url 恒为空 → 被后面的 `if url.is_empty() { return }`
+    /// **静默丢弃**（导入后少接口，且不报错）。手写集合里这种写法很常见。
+    #[test]
+    fn postman_url_as_plain_string_is_imported() {
+        let json = r#"{
+            "info": { "name": "手写集合" },
+            "item": [
+                { "name": "列表", "request": {
+                    "method": "GET",
+                    "url": "https://api.example.com/users?page=1"
+                } },
+                { "name": "详情", "request": {
+                    "method": "POST",
+                    "url": "https://api.example.com/users/1",
+                    "body": { "mode": "raw", "raw": "{\"name\":\"x\"}" }
+                } }
+            ]
+        }"#;
+        let drafts = parse_postman_collection(json).unwrap().drafts;
+        assert_eq!(drafts.len(), 2, "字符串形式的 url 不该被丢弃");
+        assert_eq!(drafts[0].url, "https://api.example.com/users?page=1");
+        assert_eq!(drafts[1].url, "https://api.example.com/users/1");
+        assert_eq!(drafts[1].body_type, "json");
+        // 查询串留在 URL 里原样送出，不进 query_params（见 parse_postman_item 的说明）
+        assert!(drafts[0].query_params.is_empty());
+    }
+
+    /// 退化输入不能 panic：`url` 缺失 / 为 null / 空串 / 空对象时该请求被跳过，
+    /// 且**不影响同一集合里其它正常接口的导入**。
+    #[test]
+    fn postman_missing_or_null_url_is_skipped_without_panic() {
+        let json = r#"{
+            "info": { "name": "空" },
+            "item": [
+                { "name": "无 url", "request": { "method": "GET" } },
+                { "name": "null url", "request": { "method": "GET", "url": null } },
+                { "name": "空串", "request": { "method": "GET", "url": "" } },
+                { "name": "空对象", "request": { "method": "GET", "url": {} } },
+                { "name": "有效", "request": { "method": "GET", "url": { "raw": "https://api.example.com/ok" } } }
+            ]
+        }"#;
+        let drafts = parse_postman_collection(json).unwrap().drafts;
+        assert_eq!(drafts.len(), 1, "拿不到 url 的请求应被跳过，且不影响其它接口");
+        assert_eq!(drafts[0].url, "https://api.example.com/ok");
     }
 
     #[test]
