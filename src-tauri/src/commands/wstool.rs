@@ -49,12 +49,18 @@ enum WsOut {
     Close,
 }
 
-fn insert_session(state: &WsState, id: &str, target: String, tx: mpsc::UnboundedSender<WsOut>, handle: tokio::task::JoinHandle<()>) {
-    state
-        .sessions
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(id.to_string(), Session { target, tx: Some(tx), handles: vec![handle] });
+fn insert_session(state: &WsState, id: &str, target: String, tx: Option<mpsc::UnboundedSender<WsOut>>, handle: tokio::task::JoinHandle<()>) {
+    let mut map = state.sessions.lock().unwrap_or_else(|e| e.into_inner());
+    // **同 id 重连必须先 abort 旧会话**：直接 insert 只是把旧 Session 从表里挤掉，
+    // 而 `JoinHandle` 的 Drop 只 detach 不 abort —— 旧的读写任务会继续跑，
+    // 旧连接活着，旧 tx 被 drop 后它的写任务还会推一条 `wstool://closed`，
+    // 把刚建好的新连接在前端显示成「已断开」。
+    if let Some(old) = map.remove(id) {
+        for h in old.handles {
+            h.abort();
+        }
+    }
+    map.insert(id.to_string(), Session { target, tx, handles: vec![handle] });
 }
 
 /// 列出当前活跃连接。
@@ -155,7 +161,7 @@ pub async fn ws_connect(
     let joined = tokio::spawn(async move {
         let _ = tokio::join!(writer_task, reader_task);
     });
-    insert_session(&state, &id, url, tx, joined);
+    insert_session(&state, &id, url, Some(tx), joined);
     Ok(())
 }
 
@@ -165,12 +171,8 @@ pub fn ws_send(state: tauri::State<'_, WsState>, id: String, data: String, hex_m
     let map = state.sessions.lock().unwrap_or_else(|e| e.into_inner());
     let session = map.get(&id).ok_or_else(|| format!("{} 未连接", id))?;
     let out = if hex_mode {
-        let clean: String = data.chars().filter(|c| !c.is_whitespace() && *c != ',').collect();
-        let bytes = (0..clean.len() / 2)
-            .map(|i| u8::from_str_radix(&clean[i * 2..i * 2 + 2], 16))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("HEX 解析失败: {}", e))?;
-        WsOut::Binary(bytes)
+        // 走公共解析 —— 校验只该有一处，别在这里再抄一份出来（抄的那份迟早会漏）
+        WsOut::Binary(parse_hex_bytes(&data)?)
     } else {
         WsOut::Text(data)
     };
@@ -207,8 +209,21 @@ pub fn wstool_disconnect(
     wstool_disconnect_core(state.inner(), id)
 }
 
+/// 解析前端传来的 HEX 文本（允许空格 / 逗号作分隔）。
+///
+/// 两条校验都是「静默发错数据 / 直接崩」的成因，必须在切片前挡掉：
+/// 1. **只认 ASCII 十六进制字符** —— 下面按**字节**下标两两切片，混进多字节字符
+///    （中文、全角符号）会切在字符边界中间，`&s[a..b]` 直接 panic；
+/// 2. **位数必须为偶数** —— 否则末位被悄悄丢掉：界面显示「已发送」，对端收到的
+///    却是另一串数据（`serial_write` 早就有这条校验，这里当初漏了）。
 fn parse_hex_bytes(data: &str) -> Result<Vec<u8>, String> {
     let clean: String = data.chars().filter(|c| !c.is_whitespace() && *c != ',').collect();
+    if !clean.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("HEX 只能包含 0-9 / A-F（可夹杂空格或逗号作分隔）".to_string());
+    }
+    if clean.len() % 2 != 0 {
+        return Err(format!("HEX 数据长度必须为偶数位（当前 {} 位）", clean.len()));
+    }
     (0..clean.len() / 2)
         .map(|i| u8::from_str_radix(&clean[i * 2..i * 2 + 2], 16))
         .collect::<Result<Vec<_>, _>>()
@@ -445,12 +460,8 @@ pub async fn sse_connect(
         let _ = app_task.emit("sstool://closed", serde_json::json!({ "id": id_task }));
     });
 
-    // SSE 无发送通道，tx 用占位（None）
-    state
-        .sessions
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(id, Session { target: url, tx: None, handles: vec![task] });
+    // SSE 无发送通道，tx 传 None（顺带走 insert_session：同 id 重订阅时同样要先 abort 旧任务）
+    insert_session(&state, &id, url, None, task);
     Ok(())
 }
 
@@ -581,5 +592,30 @@ mod net_echo_tests {
         assert_eq!(echoed, expected, "UDP HEX 回显字节不一致");
 
         wstool_disconnect_core(&state, "u1".into()).unwrap();
+    }
+
+    /// HEX 解析的两条硬约束。
+    ///
+    /// 都是「静默发错数据 / 直接崩」的成因：奇数位会被悄悄丢掉末位（界面照样显示发送成功），
+    /// 非 ASCII 则会让按字节下标的切片落在 UTF-8 字符边界中间而 panic。
+    /// `serial_write` 早就有这两条校验，`ws_send` / `net_send_core` 走的那份当初漏了。
+    #[test]
+    fn hex_parsing_rejects_odd_length_and_non_ascii() {
+        // 正常路径：空格 / 逗号随便夹
+        assert_eq!(parse_hex_bytes("01 02 ff").unwrap(), vec![0x01, 0x02, 0xff]);
+        assert_eq!(parse_hex_bytes("AABB,CC").unwrap(), vec![0xaa, 0xbb, 0xcc]);
+        assert!(parse_hex_bytes("").unwrap().is_empty());
+
+        // 奇数位：必须先报错，不能丢末位
+        let err = parse_hex_bytes("ABC").unwrap_err();
+        assert!(err.contains("偶数位"), "{err}");
+
+        // 非 ASCII：必须先报错，不能切在字符边界中间 panic
+        for bad in ["中", "AB中", "１２"] {
+            let err = parse_hex_bytes(bad).unwrap_err();
+            assert!(err.contains("0-9"), "{bad} → {err}");
+        }
+        // 非十六进制的 ASCII 也走同一条路
+        assert!(parse_hex_bytes("ZZ").is_err());
     }
 }

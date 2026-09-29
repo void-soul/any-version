@@ -39,12 +39,18 @@ export default function WsDebugger() {
   const [sendData, setSendData] = useState("");
   const [sendHex, setSendHex] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
+  // 事件回调与卸载清理都在只挂载一次的 effect 里，闭包只会捕获**首次渲染**的 connId ——
+  // 用 ref 才能拿到「当前」这条连接的 id（否则改了 id 再连，关闭事件会认错连接）。
+  const connIdRef = useRef(connId);
+  connIdRef.current = connId;
 
   useEffect(() => {
     const un: Array<() => void> = [];
     (async () => {
       un.push(
         await listen<{ id: string; kind?: string; data?: string; text?: string; hex?: string; from?: string }>("wstool://message", (e) => {
+          // 只认当前这条连接的数据：旧连接（同 id 重连前的那条 / 别的页签留下的）会往这里灌日志
+          if (e.payload.id !== connIdRef.current) return;
           if (e.payload.kind === "binary") {
             push(setLogs, "rx", `${t("wsdebug.binary", { bytes: e.payload.hex?.split(" ").length ?? 0 })}${e.payload.data ?? e.payload.text ?? ""}`);
           } else {
@@ -57,20 +63,34 @@ export default function WsDebugger() {
         push(setLogs, "open", t("wsdebug.connected", { url: e.payload.url ?? e.payload.id }));
       }));
       un.push(await listen<{ id: string }>("wstool://closed", (e) => {
+        // 必须按 id 过滤：同 id 重连时旧连接的 closed 会**后**到达，把刚连上的新连接
+        // 显示成「未连接」—— 界面与后端真实状态从此不一致。
+        if (e.payload.id !== connIdRef.current) return;
         setConnected(false);
         push(setLogs, "close", t("wsdebug.closed", { id: e.payload.id }));
       }));
-      un.push(await listen<{ id: string; raw: string }>("sstool://event", (e) => push(setLogs, "event", e.payload.raw)));
+      un.push(await listen<{ id: string; raw: string }>("sstool://event", (e) => {
+        if (e.payload.id !== connIdRef.current) return;
+        push(setLogs, "event", e.payload.raw);
+      }));
       un.push(await listen<{ id: string }>("sstool://open", (e) => {
         setConnected(true);
         push(setLogs, "open", t("wsdebug.sseSubscribed", { id: e.payload.id }));
       }));
       un.push(await listen<{ id: string }>("sstool://closed", (e) => {
+        if (e.payload.id !== connIdRef.current) return;
         setConnected(false);
         push(setLogs, "close", t("wsdebug.sseDisconnected", { id: e.payload.id }));
       }));
     })();
-    return () => un.forEach((u) => u());
+    return () => {
+      un.forEach((u) => u());
+      // **卸载时主动断开**：只注销事件的话，后端会话与 tokio 任务会变成孤儿 ——
+      // WS/TCP/UDP 仍连着、仍在收数据，重进本页时按钮显示「未连接」而后端其实还连着。
+      void invoke("wstool_disconnect", { id: connIdRef.current }).catch(() => {
+        /* 卸载路径，失败无可上报 */
+      });
+    };
   }, []);
 
   useEffect(() => {
