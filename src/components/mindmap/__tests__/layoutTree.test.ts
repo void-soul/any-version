@@ -34,15 +34,46 @@ describe("layoutTree", () => {
     const aYs = ["A1", "A2", "A3", "A4", "A5"].map((id) => pos.get(id)!.y);
     const bYs = ["B1", "B2", "B3", "B4", "B5"].map((id) => pos.get(id)!.y);
     expect(Math.max(...aYs)).toBeLessThan(Math.min(...bYs));
-    // 子树内部叶子等距排列，间距 120（卡片 90~110 高，留 10~30 才不叠）
-    expect(aYs[1] - aYs[0]).toBe(120);
+    // 子树内部叶子等距排列：未测量时按兜底卡片高 90 + 兄弟间距 22 = 112
+    expect(aYs[1] - aYs[0]).toBe(112);
   });
 
-  it("按深度沿展开方向推进，层间距收紧到 224", () => {
+  it("按深度沿展开方向推进，层间距 256（卡宽 200 + 走廊 56）", () => {
     const pos = layoutTree(wideTree());
     expect(pos.get("R")!.x).toBe(0);
-    expect(pos.get("A")!.x).toBe(224);   // 早先是 260
-    expect(pos.get("A1")!.x).toBe(448);
+    expect(pos.get("A")!.x).toBe(256);
+    expect(pos.get("A1")!.x).toBe(512);
+  });
+
+  it("按实测高度排行高：矮卡片不再被固定行高白留一大截", () => {
+    const nodes = wideTree();
+    // 每个节点只有 60px 高（未测量时会按兜底 90 排成 112 的行距）
+    const measured = new Map(
+      nodes.map(
+        (n) => [n.id, { width: 200, height: 60 }] as const,
+      ),
+    );
+    const pos = layoutTree(nodes, "lr", new Map(measured));
+    const aYs = ["A1", "A2", "A3", "A4", "A5"].map((id) => pos.get(id)!.y);
+    // 60 + 22
+    expect(aYs[1] - aYs[0]).toBe(82);
+    // 父节点仍居中于首末子节点
+    expect(pos.get("A")!.y).toBe((aYs[0] + aYs[4]) / 2);
+  });
+
+  it("超高的卡片会撑开层距，不会被下一层压住", () => {
+    const nodes = wideTree();
+    const measured = new Map(
+      nodes.map((n) => [n.id, { width: 200, height: 140 }] as const),
+    );
+    // 纵向布局的层距看「高」：最长的卡片 140 + 走廊 56
+    const tb = layoutTree(nodes, "tb", new Map(measured));
+    expect(tb.get("A")!.y).toBe(196);
+    // 横向布局的层距看「宽」，不受高度影响
+    const lr = layoutTree(nodes, "lr", new Map(measured));
+    expect(lr.get("A")!.x).toBe(256);
+    // 行高按 140 累计
+    expect(lr.get("A2")!.y - lr.get("A1")!.y).toBe(162);
   });
 
   it("四个方向都把深度映射到正确的轴", () => {
@@ -54,11 +85,11 @@ describe("layoutTree", () => {
     // lr/rl：深度走 X（rl 取负轴），堆叠走 Y
     expect(rl.get("A")!.x).toBe(-lr.get("A")!.x);
     expect(rl.get("A")!.y).toBe(lr.get("A")!.y);
-    // tb/bt：深度走 Y（bt 取负轴），层间距 176；堆叠改走 X，槽位不变、步长变成 224
+    // tb/bt：深度走 Y（bt 取负轴），层距 90 + 56 = 146；堆叠改走 X，行序不变、步长 200 + 22 = 222
     expect(tb.get("R")!.y).toBe(0);
-    expect(tb.get("A")!.y).toBe(176);
-    expect(bt.get("A")!.y).toBe(-176);
-    expect(tb.get("A")!.x).toBe((lr.get("A")!.y / 120) * 224);
+    expect(tb.get("A")!.y).toBe(146);
+    expect(bt.get("A")!.y).toBe(-146);
+    expect(tb.get("A")!.x).toBe((lr.get("A")!.y / 112) * 222);
   });
 
   it("成环的脏数据不卡死，且每个节点都拿到坐标", () => {

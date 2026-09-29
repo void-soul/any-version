@@ -876,7 +876,13 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   const byId = useMemo(() => new Map(graphNodes.map((n) => [n.id, n])), [graphNodes]);
   // 布局方向（画布级设置）：切换后自动重排并持久化；初始值取该文档保存的方向
   const [dir, setDir] = useState<LayoutDir>(() => (isLayoutDir(full.document.layoutDir) ? full.document.layoutDir : "lr"));
-  const layout = useMemo(() => layoutTree(graphNodes, dir), [graphNodes, dir]);
+  // 把实测尺寸喂给布局：行高按真实卡片高度累计。
+  // 不这么做就只能拿固定 90 当卡片高 —— 矮卡片之间白留一大截、超过 90 的卡片还会互相压住。
+  const measuredSizes = useMemo(
+    () => new Map(Object.entries(measuredMap)),
+    [measuredMap],
+  );
+  const layout = useMemo(() => layoutTree(graphNodes, dir, measuredSizes), [graphNodes, dir, measuredSizes]);
   const endpointPositions = dir === "tb"
     ? { target: Position.Top, source: Position.Bottom }
     : dir === "bt"
