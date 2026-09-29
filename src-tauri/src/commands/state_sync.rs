@@ -32,6 +32,8 @@ const MANAGED_FILES: &[&str] = &[
     "favorites_settings.json",
     "music/settings.json",
     "music/library.json",
+    // 音乐插件的登记表（启用/排序/来源/自述快照）。插件本体在下面的 MANAGED_DIRS 里。
+    "music/plugins/registry.json",
     "translate_history.json",
     "ai_config.json",
     "ai_sessions.json",
@@ -53,6 +55,11 @@ const MANAGED_FILES: &[&str] = &[
 ];
 
 /// 快照打包的整目录（相对 data_dir，递归收集其下所有文件）。
+///
+/// **`music/plugins/scripts` 只装用户的 `.js` 插件**，所以整个收进来是合适的。
+/// 刻意**不含**同级的另两样：
+/// - `music/plugins/node_modules`（约 10.6 MB，导入后 `npm install` 就能重建）
+/// - `music/plugins/bridge.js`（随 app 资产释放，且升级时必须用新版本）
 const MANAGED_DIRS: &[&str] = &[
     "certs",
     "clipboard/images",
@@ -60,6 +67,7 @@ const MANAGED_DIRS: &[&str] = &[
     "fonts",
     "mihomo/profiles",
     "mihomo/override",
+    "music/plugins/scripts",
 ];
 
 /// 快照打包的 mihomo 配置文件（用户订阅/代理配置，不包含可重新下载的 geo/日志/内核）。
@@ -474,6 +482,31 @@ mod tests {
             "picky/picky.db",
         ] {
             assert!(MANAGED_FILES.contains(&must), "快照清单缺少 {}", must);
+        }
+    }
+
+    /// 音乐插件要进快照（那是用户的音源配置），但**可重建的依赖**与**随 app 释放的桥**
+    /// 不能进：前者让快照白白胖 10 MB，后者会让恢复出来的桥版本与 app 对不上。
+    #[test]
+    fn plugins_are_archived_but_not_their_dependencies() {
+        assert!(MANAGED_FILES.contains(&"music/plugins/registry.json"));
+        assert!(MANAGED_DIRS.contains(&"music/plugins/scripts"));
+
+        let all: Vec<&str> = MANAGED_FILES
+            .iter()
+            .chain(MANAGED_DIRS.iter())
+            .copied()
+            .collect();
+        for forbidden in [
+            "music/plugins",
+            "music/plugins/node_modules",
+            "music/plugins/bridge.js",
+            "music/plugins/package.json",
+        ] {
+            assert!(
+                !all.contains(&forbidden),
+                "快照清单不该含 {forbidden}（会带上可重建的依赖或旧版桥）"
+            );
         }
     }
 

@@ -16,6 +16,7 @@ import {
   ArrowRight,
   FolderPlus,
   ListMusic,
+  Package,
   Pause,
   Pencil,
   Play,
@@ -36,6 +37,8 @@ import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog"
 import { ModuleSettingsButton } from "../shared/ModuleSettings";
 import { toast } from "../shared/Toast";
 import { MusicSettingsDialog } from "./MusicSettings";
+import OnlineSearch from "./OnlineSearch";
+import PluginManager from "./PluginManager";
 import {
   folderName,
   formatTime,
@@ -65,9 +68,24 @@ const MODE_ICONS = { sequence: ArrowRight, shuffle: Shuffle, single: Repeat1 } a
  */
 const TRACK_COL_WIDTHS = ["5%", "34%", "18%", "16%", "10%", "17%"];
 
+/**
+ * 音乐模块内的三个视图。
+ *
+ * 刻意做成**模块内视图**而不是三个顶级模块：它们是同一件事的三个面，
+ * 在线播放要落回同一个播放条，独立模块拿不到播放器状态，会变成「搜到歌不能直接播」。
+ */
+type MusicView = "library" | "online" | "plugins";
+
+const VIEW_TABS: { id: MusicView; icon: typeof ListMusic; label: string }[] = [
+  { id: "library", icon: ListMusic, label: "tabLibrary" },
+  { id: "online", icon: Search, label: "tabOnline" },
+  { id: "plugins", icon: Package, label: "tabPlugins" },
+];
+
 export default function MusicPanel() {
   const { t } = useTranslation();
 
+  const [view, setView] = useState<MusicView>("library");
   const [library, setLibrary] = useState<MusicLibrary>({ folders: [], tracks: [] });
   const [search, setSearch] = useState("");
   const [player, setPlayer] = useState<PlayerState | null>(null);
@@ -385,10 +403,43 @@ export default function MusicPanel() {
   const duration = player?.duration_ms ?? 0;
   const playingPath = player?.path ?? null;
 
+  /**
+   * 只让当前视图显示。
+   *
+   * 用类名而不是条件卸载：曲库视图切走再切回时，搜索词 / 选中行 / 滚动位置都还在。
+   * （Tailwind 的 `hidden` 定义在 `flex` 之后，能覆盖 `flex` 的 display。）
+   */
+  const showing = (target: MusicView) => (view === target ? "" : "hidden");
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
+      {/* ── 视图切换：曲库 / 在线搜索 / 插件 ── */}
+      <div className="flex items-center gap-0.5 px-3 pt-2 flex-shrink-0">
+        {VIEW_TABS.map(({ id, icon: Icon, label }) => {
+          const active = view === id;
+          return (
+            <button
+              key={id}
+              onClick={() => setView(id)}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-t-ctl text-caption cursor-pointer transition-colors border-b-2 ${
+                active
+                  ? "text-slate-100 border-[var(--module-accent)] bg-white/[0.05]"
+                  : "text-slate-500 border-transparent hover:text-slate-300"
+              }`}
+            >
+              <Icon className="w-3 h-3" />
+              {t(`music.${label}`)}
+            </button>
+          );
+        })}
+      </div>
+
       {/* ── 工具条 ── */}
-      <div className="flex items-center gap-2 flex-wrap p-3 border-b border-white/5 bg-white/[0.02] flex-shrink-0">
+      <div
+        className={`flex items-center gap-2 flex-wrap p-3 border-b border-white/5 bg-white/[0.02] flex-shrink-0 ${showing(
+          "library"
+        )}`}
+      >
         <SharedButton variant="primary" onClick={importFolder} disabled={busy}>
           <FolderPlus className="w-3.5 h-3.5" />
           {t("music.importFolder")}
@@ -433,7 +484,7 @@ export default function MusicPanel() {
       </div>
 
       {/* ── 文件夹与统计 ── */}
-      {library.folders.length > 0 && (
+      {view === "library" && library.folders.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap px-3 py-2 border-b border-white/5 flex-shrink-0">
           <ListMusic className="w-3 h-3 text-slate-500 flex-shrink-0" />
           {library.folders.map((folder) => (
@@ -459,7 +510,7 @@ export default function MusicPanel() {
       )}
 
       {/* ── 曲目列表 ── */}
-      <div className="flex-1 overflow-auto">
+      <div className={`flex-1 overflow-auto ${showing("library")}`}>
         {library.tracks.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-500">
             <ListMusic className="w-10 h-10 opacity-40" />
@@ -575,6 +626,12 @@ export default function MusicPanel() {
           </table>
         )}
       </div>
+
+      {/* ── 其它视图 ──
+          在线播放要落回同一个播放条（下面那条常驻），所以它们是同一模块内的视图，
+          而不是各做一个顶级模块 —— 独立模块拿不到播放器状态，搜到歌也播不了。 */}
+      {view === "online" && <OnlineSearch onPlayer={syncState} onLibrary={setLibrary} />}
+      {view === "plugins" && <PluginManager />}
 
       {/* ── 播放条 ── */}
       <div className="border-t border-white/10 bg-white/[0.02] px-3 py-2.5 flex items-center gap-3 flex-shrink-0">

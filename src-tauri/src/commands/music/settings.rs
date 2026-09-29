@@ -16,6 +16,12 @@ pub struct MusicSettings {
     /// 播放模式：sequence（顺序）/ shuffle（随机）/ single（单曲循环）
     pub play_mode: String,
     pub eq: EqParams,
+    /// 在线音源的下载目录。
+    ///
+    /// 空串 = 用默认目录 `data_dir/music/downloads`。刻意存空串而不是在默认时写死路径：
+    /// 用户改了数据目录后，写死的旧路径会指向不存在的位置。
+    #[serde(default)]
+    pub download_dir: String,
 }
 
 impl Default for MusicSettings {
@@ -24,6 +30,7 @@ impl Default for MusicSettings {
             volume: 0.8,
             play_mode: "sequence".to_string(),
             eq: EqParams::default(),
+            download_dir: String::new(),
         }
     }
 }
@@ -39,6 +46,7 @@ impl MusicSettings {
             self.play_mode = "sequence".to_string();
         }
         self.eq = self.eq.sanitized();
+        self.download_dir = self.download_dir.trim().to_string();
         self
     }
 }
