@@ -371,6 +371,11 @@ pub async fn serve_proxy(config: ProxyConfig, listener: std::net::TcpListener) -
                 app = app
                     .route("/v1/chat/completions", post(chat_completions_handler))
                     .route("/chat/completions", post(chat_completions_handler))
+                    // Responses 也挂在 openai 入站下：它是 OpenAI 家族的另一种形态，
+                    // 且新版 ChatGPT Desktop / Codex（26.901+）**只会**打这个端点 ——
+                    // 不给它注册路由，Codex 直接 404 not found: /responses。
+                    .route("/v1/responses", post(responses_handler))
+                    .route("/responses", post(responses_handler))
                     .route("/v1/models", get(models_handler))
                     .route("/models", get(models_handler));
             }
@@ -621,6 +626,131 @@ async fn google_handler(
         .map(|rest| rest.split([':', '?']).next().unwrap_or("").to_string())
         .unwrap_or_default();
     process_request(&state, &headers, "google", model, is_stream, body).await
+}
+
+/// POST /v1/responses — OpenAI **Responses API** 入站。
+///
+/// 为什么必须有：新版 ChatGPT Desktop / Codex（26.901 起，openai/codex discussion #7782）
+/// 不再支持 `wire_api = "chat"`，只会往 `{base_url}/responses` 发请求。缺这条路由的表现就是
+/// `unexpected status 404 Not Found: not found, url: http://127.0.0.1:<port>/responses`。
+///
+/// 设计：**Responses 只做「入口 / 出口方言」** —— 请求先转成 Chat Completions 形态交给
+/// [`process_request`]（模型伪装、协议转换、整流器、出站 SSE 全部复用），返回时再转回
+/// Responses。不为一个端点复制一整套转发管线。
+async fn responses_handler(
+    State(state): State<ProxyState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    let is_stream = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let claimed = body
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let chat_body = crate::proxy::responses::responses_to_chat(&body);
+    let upstream = process_request(&state, &headers, "openai", claimed, false, chat_body).await;
+
+    // 非 2xx 原样透传：Chat 的错误体 `{"error":{message,type,code}}` 正是 Codex 期望的形状，
+    // 再包一层 Responses 结构反而让 Codex 读不到 message（只显示一个空错误）。
+    if !upstream.status().is_success() {
+        return upstream;
+    }
+    if is_stream {
+        wrap_chat_stream_as_responses(upstream, &body)
+    } else {
+        wrap_chat_json_as_responses(upstream, &body).await
+    }
+}
+
+/// 非流式：Chat 响应体 → Responses 响应体。
+async fn wrap_chat_json_as_responses(upstream: Response, request: &Value) -> Response {
+    let status = upstream.status();
+    let bytes = match axum::body::to_bytes(upstream.into_body(), 32 * 1024 * 1024).await {
+        Ok(b) => b,
+        Err(e) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({
+                    "error": { "message": format!("读取上游响应失败: {e}"), "type": "proxy_error" }
+                })),
+            )
+                .into_response();
+        }
+    };
+    let Ok(chat) = serde_json::from_slice::<Value>(&bytes) else {
+        // 不是 JSON（畸形响应）：原样返回，让 Codex 自己把错误显出来
+        return Response::builder()
+            .status(status)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(bytes))
+            .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response());
+    };
+    let responses = crate::proxy::responses::chat_to_responses(&chat, request);
+    (status, Json(responses)).into_response()
+}
+
+/// 流式：把上游的 Chat SSE 逐帧翻译成 Responses 事件流。
+fn wrap_chat_stream_as_responses(upstream: Response, request: &Value) -> Response {
+    use axum::body::Bytes;
+    use futures_util::StreamExt;
+    let model = request
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or("")
+        .to_string();
+    let stream = upstream.into_body().into_data_stream();
+    let sse = async_stream::stream! {
+        tokio::pin!(stream);
+        let mut conv = crate::proxy::responses::ResponsesStreamConverter::new(&model);
+        let mut buffer = String::new();
+        while let Some(item) = stream.next().await {
+            let Ok(bytes) = item else { break };
+            buffer.push_str(&String::from_utf8_lossy(&bytes));
+            // SSE 帧以空行分隔；一帧里可能有 `event:` 与 `data:` 多行
+            while let Some(idx) = buffer.find("\n\n") {
+                let frame: String = buffer.drain(..idx + 2).collect();
+                if let Some(chunk) = parse_sse_json(&frame) {
+                    for ev in conv.push_chunk(&chunk) {
+                        yield Ok::<_, std::convert::Infallible>(Bytes::from(ev));
+                    }
+                }
+            }
+        }
+        // 末帧可能没以空行收尾，别把最后一段 delta 丢掉
+        if !buffer.trim().is_empty() {
+            if let Some(chunk) = parse_sse_json(&buffer) {
+                for ev in conv.push_chunk(&chunk) {
+                    yield Ok::<_, std::convert::Infallible>(Bytes::from(ev));
+                }
+            }
+        }
+        for ev in conv.finish() {
+            yield Ok::<_, std::convert::Infallible>(Bytes::from(ev));
+        }
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .body(Body::from_stream(sse))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+/// 从一帧 SSE 文本里取出 `data:` 的 JSON（`[DONE]` 与空行忽略）。
+fn parse_sse_json(frame: &str) -> Option<Value> {
+    for line in frame.lines() {
+        let Some(rest) = line.strip_prefix("data:") else {
+            continue;
+        };
+        let payload = rest.trim();
+        if payload.is_empty() || payload == "[DONE]" {
+            continue;
+        }
+        if let Ok(v) = serde_json::from_str::<Value>(payload) {
+            return Some(v);
+        }
+    }
+    None
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -334,14 +334,19 @@ const TEXT_ONLY_MODEL_PREFIXES: &[&str] = &[
     "moonshot-v1-", // Moonshot 文本系列（视觉版 moonshot-v1-vision）
     "qwen",         // Qwen 文本系列（qwen-vl / qwen2-vl / qvq 由 VISION_HINTS 排除）
     "ernie-",       // 文心一言文本系列
+    "kat-coder",    // KAT-Coder（抄 cc-switch 已确认名单）
+    "step-3.5-flash", // StepFun 3.5 Flash 文本版（视觉版名字里带 vision）
     "o1-mini",      // OpenAI o1-mini（o1 / o3 支持图片，不在此列）
 ];
 
 /// 名字里带这些片段 = 该模型**支持**图片，即使在上面注册表里也要跳过。
 const VISION_HINTS: &[&str] = &["-vl", "vl-", "-vision", "vision-", "4v", "qvq", "-audio", "-omni"];
 
-/// 该模型是否已确认「不接受图片输入」。
-pub fn is_text_only_model(model: &str) -> bool {
+/// 该模型是否**已确认**「不接受图片输入」（注册表判定，fail-open）。
+///
+/// 只收已确认的家族：误判会把用户发的图片静默丢掉，代价远大于漏判 ——
+/// 漏判还有「上游报错后降级（media_fallback）」那条路兜底。
+pub fn is_confirmed_text_only_model(model: &str) -> bool {
     let m = model.trim().to_lowercase();
     if m.is_empty() || VISION_HINTS.iter().any(|h| m.contains(h)) {
         return false;
@@ -351,6 +356,46 @@ pub fn is_text_only_model(model: &str) -> bool {
         return false;
     }
     TEXT_ONLY_MODEL_PREFIXES.iter().any(|p| m.starts_with(p))
+}
+
+/// 图片输入能力的**三态**判定（抄 cc-switch `model_capabilities.rs`）。
+///
+/// 为什么是三态而不是 bool：`Unknown` 必须区别于 `Supported` —— 注册表漏判时
+/// 「不知道」和「确定支持」的正确行为完全不同，由调用方自选 fail-open / fail-closed。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageInputCapability {
+    /// 确定支持图片
+    Supported,
+    /// 确定不支持图片（发送前就该降级）
+    Unsupported,
+    /// 不知道（注册表没覆盖，且用户没有显式声明）
+    Unknown,
+}
+
+/// 解析模型的图片输入能力。
+///
+/// 优先级：**显式声明 > 注册表启发式**（cc-switch `resolve_image_input_capability` 同款）。
+/// 声明由用户在聚合链候选 / 模型路由上显式标注（第三方供应商的视觉模型名字千奇百怪，
+/// 注册表覆盖不到时这是唯一可靠的来源）；声明为 `None` 时才回退到注册表，
+/// 且注册表判定受 `use_heuristic` 开关约束 —— 关掉它就退化成 `Unknown`（fail-open）。
+pub fn resolve_image_input_capability(
+    model: &str,
+    declared: Option<bool>,
+    use_heuristic: bool,
+) -> ImageInputCapability {
+    match declared {
+        Some(true) => ImageInputCapability::Supported,
+        // 显式声明「不支持」不受启发式开关影响：这是用户明确的事实，不是预测
+        Some(false) => ImageInputCapability::Unsupported,
+        None if !use_heuristic => ImageInputCapability::Unknown,
+        None if is_confirmed_text_only_model(model) => ImageInputCapability::Unsupported,
+        None => ImageInputCapability::Unknown,
+    }
+}
+
+/// 该模型是否已确认「不接受图片输入」（保留旧入口，等价于注册表判定）。
+pub fn is_text_only_model(model: &str) -> bool {
+    is_confirmed_text_only_model(model)
 }
 
 /// 纯文本模型预判：命中注册表就把图片块降级为文本标记，返回降级块数。
@@ -674,12 +719,28 @@ pub fn apply_preventive_rectifiers(body: &mut Value, outbound_protocol: &str, co
         return;
     }
 
-    // 纯文本模型预判（与协议无关，先于协议分支执行）：已确认不接受图片的模型，
+    // 纯文本模型预判（与协议无关，先于协议分支执行）：确定不接受图片的模型，
     // 发送前就把图片块降级成文本标记，省掉一次必然失败的往返。
     // 与「上游报错后降级（media_fallback）」是两条独立路径 —— 关掉这项只停用
     // 注册表预判，报错兜底仍在，且不会改动模型目录里的能力声明。
-    if config.rectifier_media_heuristic {
-        strip_images_for_text_only_model(body);
+    //
+    // 判定走三态（抄 cc-switch）：用户在模型路由上的**显式声明优先于注册表**，
+    // 且 `Unsupported` 才动手 —— `Unknown` 一律放行（fail-open，宁可让上游报错
+    // 再降级，也不能静默丢掉用户的图片）。
+    // 先拷出模型名再改 body：不可变借用在 mutable 借用前结束
+    let model = body
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let declared = config.model_routes.get(model.as_str()).and_then(|r| r.supports_image);
+    if resolve_image_input_capability(&model, declared, config.rectifier_media_heuristic)
+        == ImageInputCapability::Unsupported
+    {
+        let n = replace_image_blocks(body);
+        if n > 0 {
+            eprintln!("[rectifier] 图片能力预判：{model} 不支持图片，发送前降级 {n} 个图片块");
+        }
     }
 
     match outbound_protocol {
@@ -846,6 +907,22 @@ mod tests {
         }
         // 大小写不敏感（供应商回填的模型名可能带大写）
         assert!(is_text_only_model("DeepSeek-V3"));
+    }
+
+    /// 三态判定：显式声明 > 注册表；注册表没覆盖时必须是 Unknown（fail-open）。
+    #[test]
+    fn image_capability_is_tri_state_with_declared_priority() {
+        use ImageInputCapability as C;
+        // 显式声明压过注册表：哪怕注册表说是纯文本，声明「支持」就是支持
+        assert_eq!(resolve_image_input_capability("deepseek-chat", Some(true), true), C::Supported);
+        // 显式声明「不支持」不受启发式开关影响（这是事实，不是预测）
+        assert_eq!(resolve_image_input_capability("gpt-4o", Some(false), false), C::Unsupported);
+        // 注册表命中
+        assert_eq!(resolve_image_input_capability("deepseek-chat", None, true), C::Unsupported);
+        // 关掉启发式 → 只剩 Unknown
+        assert_eq!(resolve_image_input_capability("deepseek-chat", None, false), C::Unknown);
+        // 注册表没覆盖且无声明 → Unknown（绝不能当成「支持」而放行，也不能当成「不支持」而丢图）
+        assert_eq!(resolve_image_input_capability("some-unknown-model", None, true), C::Unknown);
     }
 
     /// 发送前预判：命中注册表就降级图片，未命中则原样转发。
