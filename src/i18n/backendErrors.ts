@@ -163,6 +163,23 @@ const STATIC_ERRORS: Record<string, string> = {
 /// 插值错误：正则 → 英文模板。`{}` 对应捕获组，模板用 $1/$2… 引用。
 /// 命中后把原文整体替换为翻译（动态值原样保留）。
 const PATTERN_ERRORS: { re: RegExp; to: string }[] = [
+  // 音乐插件（MusicFree 音源）：方法名 + 人话说明
+  { re: /^搜索失败: (.*)$/, to: "Search failed: $1" },
+  { re: /^获取播放地址失败: (.*)$/, to: "Failed to resolve the playback URL: $1" },
+  { re: /^加载插件失败: (.*)$/, to: "Failed to load the plugin: $1" },
+  { re: /^调用插件失败: (.*)$/, to: "Plugin call failed: $1" },
+  { re: /^音源服务器暂时不可用（HTTP (\d+)），可稍后重试或换一个音源$/, to: "The source server is temporarily unavailable (HTTP $1); retry later or switch sources" },
+  { re: /^音源拒绝了这个请求（HTTP (\d+)），可能需要登录，或该音质不可用$/, to: "The source rejected the request (HTTP $1); sign-in may be required, or this quality is unavailable" },
+  { re: /^音源接口不存在（HTTP (\d+)），插件可能已失效或需要更新$/, to: "The source API does not exist (HTTP $1); the plugin may be broken or need an update" },
+  { re: /^请求过于频繁（HTTP (\d+)），稍等一会儿再试$/, to: "Too many requests (HTTP $1); wait a moment and retry" },
+  { re: /^音源响应超时，可稍后重试或换一个音源$/, to: "The source timed out; retry later or switch sources" },
+  { re: /^连不上音源服务器（域名解析失败），请检查网络或代理$/, to: "Cannot reach the source server (DNS lookup failed); check your network or proxy" },
+  { re: /^连接音源服务器被拒绝，请检查网络或代理$/, to: "Connection to the source server was refused; check your network or proxy" },
+  { re: /^音源服务器中断了连接，可稍后重试$/, to: "The source server dropped the connection; retry later" },
+  { re: /^网络请求失败，请检查网络或代理$/, to: "Network request failed; check your network or proxy" },
+  { re: /^(.+?) 不支持搜索$/, to: "$1 does not support search" },
+  { re: /^(.+?) 不支持获取播放地址$/, to: "$1 does not support resolving the playback URL" },
+  { re: /^(搜索|获取播放地址|加载插件|调用插件)超时（(\d+) 秒），已重启插件进程$/, to: "$1 timed out ($2s); the plugin process was restarted" },
   { re: /^(.*?) 不是服务项目$/, to: "$1 is not a service project" },
   { re: /^文件不存在: (.*)$/, to: "File not found: $1" },
   { re: /^更新托盘图标失败: (.*)$/, to: "Failed to update the tray icon: $1" },

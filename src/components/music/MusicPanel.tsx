@@ -629,9 +629,16 @@ export default function MusicPanel() {
 
       {/* ── 其它视图 ──
           在线播放要落回同一个播放条（下面那条常驻），所以它们是同一模块内的视图，
-          而不是各做一个顶级模块 —— 独立模块拿不到播放器状态，搜到歌也播不了。 */}
-      {view === "online" && <OnlineSearch onPlayer={syncState} onLibrary={setLibrary} />}
-      {view === "plugins" && <PluginManager />}
+          而不是各做一个顶级模块 —— 独立模块拿不到播放器状态，搜到歌也播不了。
+
+          和曲库一样用**隐藏**而不是条件卸载：卸载会丢掉搜索结果 / 页码 / 滚动位置，
+          切走再切回就变成一片空白，用户得重新搜一遍。 */}
+      <div className={`flex-1 flex flex-col min-h-0 ${showing("online")}`}>
+        <OnlineSearch onPlayer={syncState} onLibrary={setLibrary} />
+      </div>
+      <div className={`flex-1 flex flex-col min-h-0 ${showing("plugins")}`}>
+        <PluginManager />
+      </div>
 
       {/* ── 播放条 ── */}
       <div className="border-t border-white/10 bg-white/[0.02] px-3 py-2.5 flex items-center gap-3 flex-shrink-0">

@@ -6,7 +6,7 @@
 //
 // 结果**按来源插件聚合展示**（同一首歌在多个音源里都有），每行带来源标记；
 // 某个音源出错只在顶部提示，不影响其它音源的结果。
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
@@ -52,6 +52,8 @@ export default function OnlineSearch({ onPlayer, onLibrary }: Props) {
   const [submitted, setSubmitted] = useState("");
   const [quality, setQuality] = useState<MusicQuality>("standard");
   const [hits, setHits] = useState<SearchHit[]>([]);
+  /** 当前选中的来源插件文件名；空串 = 全部（只在结果来自多个音源时才出现选项卡） */
+  const [activeSource, setActiveSource] = useState("");
   const [exhausted, setExhausted] = useState<string[]>([]);
   const [failures, setFailures] = useState<SearchOutcome["failures"]>([]);
   const [searched, setSearched] = useState(false);
@@ -100,6 +102,8 @@ export default function OnlineSearch({ onPlayer, onLibrary }: Props) {
     if (!trimmed) return;
     setSubmitted(trimmed);
     setHits([]);
+    // 换了关键词，上一次选中的音源大概率没有结果了，回到「全部」
+    setActiveSource("");
     void runSearch(1, true);
   };
 
@@ -107,15 +111,21 @@ export default function OnlineSearch({ onPlayer, onLibrary }: Props) {
     const key = hitKey(hit);
     setPlayingKey(key);
     try {
+      // 整份结果一起交给后端：播放列表换成这次搜到的歌，并从点中的这首开始往后播。
+      // 传的是**当前可见**的那份（按音源筛选时，播放列表就该是筛选后的结果）。
+      const index = visibleHits.indexOf(hit);
       const outcome = await invoke<PluginPlayOutcome>("music_plugin_play", {
         file: hit.file,
         item: hit.item,
         quality,
+        hits: visibleHits.map((item) => ({ file: item.file, item: item.item })),
+        index: index < 0 ? 0 : index,
       });
       onPlayer(outcome.player);
       if (outcome.from_cache) toast(t("music.onlinePlayCached"));
     } catch (e) {
-      toast(t("music.onlinePlayFail", { err: String(e) }), "err");
+      // 不加「播放失败:」前缀：后端消息本身已说清是什么失败、为什么、怎么办
+      toast(String(e), "err");
     } finally {
       setPlayingKey(null);
     }
@@ -134,7 +144,7 @@ export default function OnlineSearch({ onPlayer, onLibrary }: Props) {
       onLibrary(outcome.library);
       toast(t("music.onlineDownloaded", { dir: outcome.dir }));
     } catch (e) {
-      toast(t("music.onlineDownloadFail", { err: String(e) }), "err");
+      toast(String(e), "err");
     } finally {
       setDownloadingKey(null);
       setProgress(null);
@@ -142,7 +152,28 @@ export default function OnlineSearch({ onPlayer, onLibrary }: Props) {
   };
 
   const track = (hit: SearchHit): OnlineTrack => hit.item;
-  const sources = new Set(hits.map((hit) => hit.file)).size;
+
+  /**
+   * 按来源插件分组（同一首歌常常多个音源都有）。
+   *
+   * 一次遍历同时得到「有哪些音源」与「各有多少条」，供选项卡展示。
+   */
+  const sourceGroups = useMemo(() => {
+    const groups = new Map<string, { label: string; count: number }>();
+    for (const hit of hits) {
+      const existing = groups.get(hit.file);
+      if (existing) existing.count += 1;
+      else groups.set(hit.file, { label: hit.platform || hit.file, count: 1 });
+    }
+    return groups;
+  }, [hits]);
+
+  // 选中的来源若已不在结果里（换了关键词、该音源这次没结果），退回「全部」，
+  // 否则会呈现一个空列表，看起来像「搜索没结果」
+  const effectiveSource = activeSource && sourceGroups.has(activeSource) ? activeSource : "";
+  const visibleHits = effectiveSource
+    ? hits.filter((hit) => hit.file === effectiveSource)
+    : hits;
   const canLoadMore = hits.length > 0 && exhausted.length === 0;
 
   return (
@@ -179,11 +210,46 @@ export default function OnlineSearch({ onPlayer, onLibrary }: Props) {
         </SharedButton>
       </div>
 
+      {/* ── 按来源分选项卡 ──
+          只在结果来自**多个**音源时出现：只有一个音源时选项卡是纯噪音。 */}
+      {sourceGroups.size > 1 && (
+        <div className="flex items-center gap-0.5 px-3 py-1.5 border-b border-white/5 overflow-x-auto flex-shrink-0">
+          <button
+            onClick={() => setActiveSource("")}
+            className={`px-2.5 py-1 rounded-ctl text-caption whitespace-nowrap cursor-pointer transition-colors ${
+              effectiveSource === ""
+                ? "bg-[var(--module-accent)] text-white"
+                : "text-slate-400 hover:text-slate-200 hover:bg-white/9"
+            }`}
+          >
+            {t("music.onlineSourceAll")}
+            <span className="text-tiny opacity-70 ml-1">{hits.length}</span>
+          </button>
+          {[...sourceGroups.entries()].map(([file, info]) => (
+            <button
+              key={file}
+              onClick={() => setActiveSource(file)}
+              title={file}
+              className={`px-2.5 py-1 rounded-ctl text-caption whitespace-nowrap max-w-[180px] cursor-pointer transition-colors ${
+                effectiveSource === file
+                  ? "bg-[var(--module-accent)] text-white"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-white/9"
+              }`}
+            >
+              <span className="inline-block align-middle truncate max-w-[140px]">
+                {info.label}
+              </span>
+              <span className="text-tiny opacity-70 ml-1">{info.count}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* ── 汇总 / 失败提示 ── */}
       {(hits.length > 0 || failures.length > 0) && (
         <div className="px-3 py-1.5 border-b border-white/5 flex items-center gap-2 flex-wrap flex-shrink-0">
           <span className="text-tiny text-slate-500">
-            {t("music.onlineSearchSummary", { count: hits.length, sources })}
+            {t("music.onlineSearchSummary", { count: hits.length, sources: sourceGroups.size })}
           </span>
           {failures.length > 0 && (
             <span
@@ -211,7 +277,7 @@ export default function OnlineSearch({ onPlayer, onLibrary }: Props) {
           </div>
         ) : (
           <div className="divide-y divide-white/[0.03]">
-            {hits.map((hit) => {
+            {visibleHits.map((hit) => {
               const item = track(hit);
               const key = hitKey(hit);
               const isPlaying = playingKey === key;

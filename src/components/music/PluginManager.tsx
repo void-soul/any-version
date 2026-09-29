@@ -12,6 +12,8 @@ import { useTranslation } from "react-i18next";
 import {
   ChevronDown,
   ChevronUp,
+  CircleAlert,
+  CircleCheck,
   FolderOpen,
   Loader2,
   Package,
@@ -20,6 +22,7 @@ import {
   ShieldCheck,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
 
 import { SharedButton } from "../shared/Button";
@@ -34,6 +37,14 @@ import {
 /** 依赖安装日志事件名（与后端 plugin_commands::DEPS_LOG_EVENT 一致） */
 const DEPS_LOG_EVENT = "music-plugin-deps-log";
 
+/**
+ * 导入状态。
+ *
+ * 用**常驻**状态条而不是只弹 toast：订阅导入要逐个下载几十个插件、可能持续几十秒，
+ * 期间必须让用户看得见「在跑」，结束后结果也不该一闪而过（失败还要能逐条读）。
+ */
+type ImportStatus = { kind: "busy" | "ok" | "err"; text: string };
+
 export default function PluginManager() {
   const { t } = useTranslation();
 
@@ -44,6 +55,7 @@ export default function PluginManager() {
   const [installing, setInstalling] = useState(false);
   // 订阅导入要逐个下载几十个插件，可能持续很久 —— 期间禁掉按钮并转圈
   const [importing, setImporting] = useState(false);
+  const [importStatus, setImportStatus] = useState<ImportStatus | null>(null);
   const [depsLog, setDepsLog] = useState<string[]>([]);
   const [showLog, setShowLog] = useState(false);
   const [busyFile, setBusyFile] = useState<string | null>(null);
@@ -107,27 +119,36 @@ export default function PluginManager() {
     const trimmed = value.trim();
     if (!trimmed) return;
     setImporting(true);
+    // 三态里的「处理中」：先立起来，用户点完立刻有反馈（订阅导入可能几十秒）
+    setImportStatus({ kind: "busy", text: t("music.pluginImportBusy") });
     try {
       const outcome = await invoke<PluginImportResult>("music_plugin_import", { source: trimmed });
       if (outcome.kind === "subscription") {
-        // 订阅里单个插件失败很常见（下架 / 网络），不该当成整体失败
-        toast(
-          t("music.pluginSubscriptionDone", {
-            ok: outcome.imported,
-            fail: outcome.failures.length,
-          }),
-          outcome.failures.length > 0 ? "err" : "ok"
-        );
+        // 订阅里单个插件失败很常见（下架 / 网络），不该当成整体失败：
+        // 成功数照报，失败**逐个点名**（能换行展示，这也正是用状态条而不是 toast 的原因）
+        setImportStatus({
+          kind: outcome.failures.length > 0 ? "err" : "ok",
+          text: [
+            t("music.pluginSubscriptionDone", {
+              ok: outcome.imported,
+              fail: outcome.failures.length,
+            }),
+            ...outcome.failures.map((item) => `· ${item.name}：${item.error}`),
+          ].join("\n"),
+        });
       } else if (outcome.probe_error) {
         // 落盘成功但读不到插件信息：插件仍可用，提示清楚即可
-        toast(t("music.pluginProbeFail", { name: outcome.name, err: outcome.probe_error }), "err");
+        setImportStatus({
+          kind: "err",
+          text: t("music.pluginProbeFail", { name: outcome.name, err: outcome.probe_error }),
+        });
       } else {
-        toast(t("music.pluginImported", { name: outcome.name }));
+        setImportStatus({ kind: "ok", text: t("music.pluginImported", { name: outcome.name }) });
       }
       setSource("");
       await reload();
     } catch (e) {
-      toast(t("music.pluginImportFail", { err: String(e) }), "err");
+      setImportStatus({ kind: "err", text: t("music.pluginImportFail", { err: String(e) }) });
     } finally {
       setImporting(false);
     }
@@ -308,6 +329,38 @@ export default function PluginManager() {
           {t("music.pluginPickFile")}
         </SharedButton>
       </div>
+
+      {/* ── 导入状态（处理中 / 成功 / 失败）──
+          常驻而不是 toast：导入可能要几十秒，结果（尤其失败明细）不该一闪而过。 */}
+      {importStatus && (
+        <div
+          className={`flex items-start gap-1.5 rounded-ctl border px-2 py-1.5 text-caption whitespace-pre-line ${
+            importStatus.kind === "busy"
+              ? "border-white/10 bg-white/[0.02] text-slate-300"
+              : importStatus.kind === "ok"
+                ? "border-emerald-500/20 bg-emerald-500/[0.07] text-emerald-300"
+                : "border-rose-500/20 bg-rose-500/[0.07] text-rose-300"
+          }`}
+        >
+          {importStatus.kind === "busy" ? (
+            <Loader2 className="w-3.5 h-3.5 mt-[1px] animate-spin flex-shrink-0" />
+          ) : importStatus.kind === "ok" ? (
+            <CircleCheck className="w-3.5 h-3.5 mt-[1px] flex-shrink-0" />
+          ) : (
+            <CircleAlert className="w-3.5 h-3.5 mt-[1px] flex-shrink-0" />
+          )}
+          <span className="flex-1 break-all">{importStatus.text}</span>
+          {importStatus.kind !== "busy" && (
+            <button
+              onClick={() => setImportStatus(null)}
+              title={t("music.pluginImportDismiss")}
+              className="opacity-60 hover:opacity-100 cursor-pointer flex-shrink-0"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ── 列表 ── */}
       {loading ? (
