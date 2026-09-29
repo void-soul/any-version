@@ -10,7 +10,8 @@
     "win32": [
       "%APPDATA%/npm/codex.cmd",
       "%USERPROFILE%/scoop/shims/codex.cmd",
-      "%LOCALAPPDATA%/pnpm/codex.cmd"
+      "%LOCALAPPDATA%/pnpm/codex.cmd",
+      "%LOCALAPPDATA%/OpenAI/Codex/bin/*/codex.exe"
     ]
   }
 }

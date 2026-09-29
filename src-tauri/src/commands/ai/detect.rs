@@ -43,6 +43,21 @@ fn detect_single_tool(config: &ToolConfig, paths: &PathConfig) -> DetectedAiTool
     if let Some(exe) = &declared_exe {
         eprintln!("[detect]   磁盘命中: {}", exe.display());
     }
+    // 声明路径全落空时的兜底：npm 的**实际**全局前缀 / 注册表卸载项里的安装位置。
+    // 声明里写的都是**默认位置**，用户把工具装到别的盘就一条都不命中
+    // （实测 `WorkBuddy` 在 `D:\sim-tool\WorkBuddy`、`openscience` 在 `D:\Program Files\openscience`、
+    // npm 前缀在 `D:\any-versions\sdk\nodejs`），只靠 PATH 兜不住 →
+    // 表现为「明明装了却显示未安装、启动按钮不可用」。两条来源都有进程内缓存。
+    let resolved_exe = declared_exe.clone().or_else(|| {
+        let found = super::tool_paths::find_fallback_exe(&config.id, &paths.command, &paths.paths);
+        if let Some(exe) = &found {
+            eprintln!(
+                "[detect]   兜底命中（非默认安装位置）: {}",
+                exe.display()
+            );
+        }
+        found
+    });
 
     let upgrade_cmd = match config.pkg_manager.as_deref() {
         Some("npm") => format!("npm install -g {}@latest", config.pkg_name.as_deref().unwrap_or(&config.id)),
@@ -79,8 +94,10 @@ fn detect_single_tool(config: &ToolConfig, paths: &PathConfig) -> DetectedAiTool
         builtin_models: config.builtin_models.clone(),
         supports_optimizer: config.supports_optimizer,
         supports_rectifier: config.supports_rectifier,
+        supports_plugin_marketplace: config.supports_plugin_marketplace,
+        plugin_marketplace_kind: config.plugin_marketplace_kind.clone(),
         launch_uri: paths.launch_uri.clone(),
-        detected_path: declared_exe
+        detected_path: resolved_exe
             .as_ref()
             .map(|exe| exe.to_string_lossy().to_string()),
         custom_path: super::tool_paths::custom_path_for(&config.id),
@@ -131,7 +148,7 @@ fn detect_single_tool(config: &ToolConfig, paths: &PathConfig) -> DetectedAiTool
     // 策略 3：声明路径上确实有可执行文件，只是命令跑不起来（PATH 里还没有该目录）。
     // 按「未安装」处理会让用户明明装了却看到未安装、启动按钮不可用，
     // 所以这里判为已安装但版本未知（抄作业自 EchoBird f86fe961）。
-    if let Some(exe) = declared_exe {
+    if let Some(exe) = resolved_exe {
         eprintln!(
             "[detect]   [策略 3] ✓ 磁盘命中（版本未知）→ {}",
             exe.display()
@@ -143,8 +160,57 @@ fn detect_single_tool(config: &ToolConfig, paths: &PathConfig) -> DetectedAiTool
         };
     }
 
+    // 策略 4：Store（MSIX）应用 —— ChatGPT / Claude 桌面端这类「只有包注册、没有普通
+    // exe 安装路径」的应用，策略 1~3 全都命中不了（%LOCALAPPDATA%\Programs\ChatGPT\
+    // ChatGPT.exe 在 Store 版里根本不存在），只能问系统：包注册了没有。
+    if let Some(ver) = detect_via_store_package(paths.launch_uri.as_deref()) {
+        eprintln!("[detect]   [策略 4] ✓ Store 包已注册 → version={}", ver);
+        return DetectedAiTool {
+            installed: true,
+            version: Some(ver),
+            ..not_found
+        };
+    }
+
     eprintln!("[detect] ✗ 未检测到安装");
     not_found
+}
+
+/// 从 `shell:AppsFolder\OpenAI.Codex_2p2nqsd0c76g0!App` 里取出包名（`OpenAI.Codex`）。
+pub(crate) fn package_name_from_launch_uri(uri: &str) -> Option<String> {
+    let after_scheme = uri.strip_prefix("shell:AppsFolder\\")?;
+    // 形如 `<包族名>!<应用 Id>`；包族名是 `<包名>_<发布者 Id>`
+    let family = after_scheme.split('!').next()?.trim();
+    if family.is_empty() {
+        return None;
+    }
+    let name = family.split('_').next()?.trim().to_string();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+/// Store（MSIX）应用是否已在系统里注册。返回包版本号。
+///
+/// 为什么必须走这条路：Store 版应用既不写 `%LOCALAPPDATA%\Programs\…`，也不往 PATH 里
+/// 放命令行入口，检测不到它就一直显示「未安装」—— 用户明明装了却只能看到「安装」按钮，
+/// 点下去 winget 回「已安装且已是最新」（旧版本还会被当成安装失败）。
+fn detect_via_store_package(launch_uri: Option<&str>) -> Option<String> {
+    #[cfg(not(windows))]
+    {
+        let _ = launch_uri;
+        return None;
+    }
+
+    #[cfg(windows)]
+    {
+        let pkg = package_name_from_launch_uri(launch_uri?)?;
+        crate::commands::project::scanner::msix_package_version(&pkg)
+            .ok()
+            .flatten()
+    }
 }
 
 /// 通过包管理器查询已安装版本（npm / pip）。
@@ -225,6 +291,35 @@ fn neutral_detect_cwd() -> Option<std::path::PathBuf> {
     Some(dir)
 }
 
+/// 安装后置校验（抄 EchoBird `auto_fix.rs` / `validate_install_intent`）：
+/// **安装命令返回成功 ≠ 工具真的装对了、真的能跑**。
+///
+/// 要拦住两类问题：
+/// 1. **装成了别的包**（EchoBird 的 identity 校验就是这个意图）：命令成功、包也装上了，
+///    但工具自己的可执行文件根本不在 —— 版本探测与声明路径双双落空；
+/// 2. **装完但不在 PATH 里**：curl / scoop / choco 装的只对**之后**启动的进程生效，
+///    本进程 PATH 里还没有它（winget 被 PATH 过滤掉那个坑就是这一类）。
+///
+/// 因此判定口径与 `detect_single_tool` 的策略 2 / 策略 3 一致：
+/// 「版本探测成功」或「声明路径上确实有可执行文件」任一命中即算装好。
+pub(crate) fn verify_installed(tool_id: &str, paths: &PathConfig) -> Result<String, String> {
+    if !paths.detect_cmd.trim().is_empty() {
+        if let Some(ver) = detect_via_cmd(&paths.detect_cmd) {
+            return Ok(ver);
+        }
+    }
+    if let Some(exe) = super::tool_paths::find_declared_exe(tool_id, &paths.paths, &paths.command)
+        .or_else(|| super::tool_paths::find_fallback_exe(tool_id, &paths.command, &paths.paths))
+    {
+        return Ok(format!("已安装（{}）", exe.display()));
+    }
+    Err(format!(
+        "安装命令已执行成功，但本机找不到 {} 的可执行文件，也没能通过 `{}` 探测到版本。\
+         可能是装成了别的包，或安装目录尚未进入 PATH —— 请重新打开本应用后再试。",
+        paths.command, paths.detect_cmd
+    ))
+}
+
 /// 通过 detect_cmd 回退检测（执行工具自身的 --version 命令）
 pub(crate) fn detect_via_cmd(detect_cmd: &str) -> Option<String> {
     let parts: Vec<&str> = detect_cmd.split_whitespace().collect();
@@ -297,7 +392,10 @@ fn find_in_path_local(exe_name: &str) -> Option<PathBuf> {
 
 /// 带超时执行命令并完整收集输出（stdout/stderr）。
 /// 超时后 kill 进程树（Windows taskkill /T）并返回 None，避免检测工具 --version 卡死线程池。
-fn run_command_with_timeout(cmd: &mut std::process::Command, timeout_secs: u64) -> Option<std::process::Output> {
+///
+/// `pub(crate)`：插件市场要跑 `codex plugin …`（官方 CLI），同一套超时 + 杀进程树逻辑，
+/// 不再重复实现一份。
+pub(crate) fn run_command_with_timeout(cmd: &mut std::process::Command, timeout_secs: u64) -> Option<std::process::Output> {
     use std::io::Read;
     use std::sync::mpsc;
     use std::thread;

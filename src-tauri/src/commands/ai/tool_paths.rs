@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// 加载用户自定义路径覆盖
 ///
@@ -296,6 +296,74 @@ fn command_suffixes() -> &'static [&'static str] {
     }
 }
 
+/// 展开声明路径里的 `*`（**路径段通配**）。
+///
+/// 有些安装布局把可执行文件放在**带版本号 / hash 的中间目录**里，路径写不死：
+/// ChatGPT Desktop 自带的 Codex CLI 在 `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe`。
+/// 声明写成 `…/bin/*/codex.exe` 即可命中，不必为此加特例代码。
+///
+/// 没有 `*` 时原样返回单条路径（零开销），行为与以前完全一致。
+fn expand_wildcards(pattern: &str) -> Vec<PathBuf> {
+    if !pattern.contains('*') {
+        return vec![PathBuf::from(pattern)];
+    }
+    let normalized = pattern.replace('\\', "/");
+    let segments: Vec<&str> = normalized.split('/').filter(|s| !s.is_empty()).collect();
+    if segments.is_empty() {
+        return Vec::new();
+    }
+
+    // 起点：`/`（Unix 绝对）/ `C:/`（Windows 盘符）/ 空（相对）。
+    // 盘符那一段不能当目录名去遍历，单独拼回来。
+    let mut frontier: Vec<PathBuf> = Vec::new();
+    let mut index = 0usize;
+    if normalized.starts_with('/') {
+        frontier.push(PathBuf::from("/"));
+    } else if segments[0].ends_with(':') {
+        // Windows 盘符：用平台分隔符拼回 `C:\`。用 `/` 会展开成 `C:/Users\…`（混分隔符），
+        // 这条路径要回填给前端展示、也要喂给启动逻辑，不能是混合形态。
+        frontier.push(PathBuf::from(format!(
+            "{}{}",
+            segments[0],
+            std::path::MAIN_SEPARATOR
+        )));
+        index = 1;
+    } else {
+        frontier.push(PathBuf::new());
+    }
+
+    for segment in &segments[index..] {
+        let mut next: Vec<PathBuf> = Vec::new();
+        if *segment == "*" {
+            for base in &frontier {
+                let dir = if base.as_os_str().is_empty() {
+                    PathBuf::from(".")
+                } else {
+                    base.clone()
+                };
+                if let Ok(entries) = std::fs::read_dir(&dir) {
+                    for entry in entries.flatten() {
+                        next.push(if base.as_os_str().is_empty() {
+                            PathBuf::from(entry.file_name())
+                        } else {
+                            base.join(entry.file_name())
+                        });
+                    }
+                }
+            }
+        } else {
+            for base in &frontier {
+                next.push(base.join(segment));
+            }
+        }
+        frontier = next;
+        if frontier.is_empty() {
+            break;
+        }
+    }
+    frontier
+}
+
 /// 在工具声明的路径列表里找**磁盘上真实存在**的可执行文件。
 ///
 /// 抄作业自 EchoBird `f86fe961`（`command_exists || binary detected on disk`），两个用途：
@@ -318,24 +386,187 @@ pub fn find_declared_exe(
         if expanded.is_empty() {
             continue;
         }
-        let path = PathBuf::from(&expanded);
-        if path.is_file() {
-            return Some(path);
-        }
-        if path.is_dir() {
-            if !command.is_empty() {
-                for suffix in command_suffixes() {
-                    let candidate = path.join(format!("{}{}", command, suffix));
-                    if candidate.is_file() {
-                        return Some(candidate);
+        // 声明里可以带 `*`（见 expand_wildcards）；不带时就是原来那一条路径
+        for path in expand_wildcards(&expanded) {
+            if path.is_file() {
+                return Some(path);
+            }
+            if path.is_dir() {
+                if !command.is_empty() {
+                    for suffix in command_suffixes() {
+                        let candidate = path.join(format!("{}{}", command, suffix));
+                        if candidate.is_file() {
+                            return Some(candidate);
+                        }
                     }
+                } else if let Some(guessed) = guess_exe_in_dir(&path, tool_id) {
+                    // 没有命令名可拼：目录里的 exe 猜一个（见函数注释，猜不到就返回 None）
+                    return Some(guessed);
                 }
-            } else if let Some(guessed) = guess_exe_in_dir(&path, tool_id) {
-                // 没有命令名可拼：目录里的 exe 猜一个（见函数注释，猜不到就返回 None）
-                return Some(guessed);
             }
         }
     }
+    None
+}
+
+// ─── 声明路径全落空时的兜底 ───
+//
+// 声明里的路径写的都是**默认安装位置**，真机上经常一条都不命中（2026-09-29 实测）：
+// - npm 系 CLI：`%APPDATA%/npm/<cmd>.cmd` —— 用户的 npm 前缀被改到 `D:\any-versions\sdk\nodejs`；
+// - 桌面应用：`%LOCALAPPDATA%\Programs\<名>\<名>.exe` —— 用户装在 `D:\sim-tool\WorkBuddy`、
+//   `D:\Program Files\openscience`。
+// 只靠 PATH 兜不住，表现为「明明装了却显示未安装、启动按钮不可用」。
+
+/// npm 的**实际**全局前缀（`npm prefix -g`），进程内缓存。
+///
+/// 这条查询要起一次 node（慢），而同一个进程里前缀不会变，所以只跑一次。
+pub(crate) fn npm_global_prefix() -> Option<&'static PathBuf> {
+    static CACHE: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            let mut cmd = if cfg!(windows) {
+                let mut c = std::process::Command::new("cmd");
+                c.args(["/c", "npm", "prefix", "-g"]);
+                c
+            } else {
+                let mut c = std::process::Command::new("sh");
+                c.args(["-c", "npm prefix -g"]);
+                c
+            };
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                cmd.creation_flags(CREATE_NO_WINDOW);
+            }
+            let output = super::detect::run_command_with_timeout(&mut cmd, 30)?;
+            if !output.status.success() {
+                return None;
+            }
+            let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            (!text.is_empty()).then(|| PathBuf::from(text))
+        })
+        .as_ref()
+}
+
+/// 注册表卸载项里「exe 文件名（小写）→ 完整路径」的索引，进程内只建一次。
+///
+/// 两条来源：`DisplayIcon`（通常是 exe 全路径，末尾可能带 `,0`）与 `InstallLocation`
+/// （安装目录，扫第一层的 `*.exe`）。卸载项里的路径就是安装器写下的真实位置，
+/// 与「装在哪个盘」无关。
+#[cfg(windows)]
+fn uninstall_registry_index() -> &'static HashMap<String, PathBuf> {
+    static INDEX: std::sync::OnceLock<HashMap<String, PathBuf>> = std::sync::OnceLock::new();
+    INDEX.get_or_init(|| {
+        use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ};
+        use winreg::RegKey;
+
+        let mut map: HashMap<String, PathBuf> = HashMap::new();
+        let roots = [
+            (HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+            // 64 位系统上 32 位程序的卸载项在这个分支下
+            (HKEY_LOCAL_MACHINE, r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+        ];
+        for (root, sub) in roots {
+            let Ok(key) = RegKey::predef(root).open_subkey_with_flags(sub, KEY_READ) else {
+                continue;
+            };
+            for entry_name in key.enum_keys().flatten() {
+                let Ok(entry) = key.open_subkey_with_flags(&entry_name, KEY_READ) else {
+                    continue;
+                };
+                if let Ok(icon) = entry.get_value::<String, _>("DisplayIcon") {
+                    // 形如 `"C:\path\App.exe",0`
+                    let cleaned = icon.split(',').next().unwrap_or("").trim().trim_matches('"');
+                    record_registry_exe(&mut map, Path::new(cleaned));
+                }
+                if let Ok(location) = entry.get_value::<String, _>("InstallLocation") {
+                    let location = location.trim().trim_matches('"');
+                    if !location.is_empty() {
+                        if let Ok(entries) = std::fs::read_dir(location) {
+                            for file in entries.flatten() {
+                                record_registry_exe(&mut map, &file.path());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        map
+    })
+}
+
+#[cfg(windows)]
+fn record_registry_exe(map: &mut HashMap<String, PathBuf>, path: &Path) {
+    if !path.is_file() {
+        return;
+    }
+    let Some(name) = path.file_name() else {
+        return;
+    };
+    let name = name.to_string_lossy().to_ascii_lowercase();
+    // 只收 .exe：卸载器（unins000.exe 之类）会进索引，但我们按声明的文件名查，不会误命中
+    if !name.ends_with(".exe") {
+        return;
+    }
+    map.entry(name).or_insert_with(|| path.to_path_buf());
+}
+
+/// 从声明路径里提取「可执行文件名（小写）」候选（只取带 `.exe` 的最后一段）。
+fn declared_exe_names(tool_id: &str, declared: &HashMap<String, Vec<String>>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for raw in effective_tool_paths(tool_id, declared) {
+        let expanded = expand_tool_path(&raw);
+        let Some(name) = Path::new(&expanded).file_name() else {
+            continue;
+        };
+        let name = name.to_string_lossy().to_ascii_lowercase();
+        if name.ends_with(".exe") && !out.contains(&name) {
+            out.push(name);
+        }
+    }
+    out
+}
+
+/// 声明路径全落空时的兜底查找。
+///
+/// 只在「声明路径 + PATH 都没命中」时才该被调用（它会起 node / 读注册表，有成本）。
+/// 两个来源：
+/// 1. **npm 实际全局前缀** —— 覆盖所有 npm 系 CLI（`command` 非空时尝试）；
+/// 2. **注册表卸载项** —— 覆盖装到非默认目录的桌面应用（按声明的 exe 文件名反查）。
+pub fn find_fallback_exe(
+    tool_id: &str,
+    command: &str,
+    declared: &HashMap<String, Vec<String>>,
+) -> Option<PathBuf> {
+    // 1) npm 实际全局前缀
+    let cmd = command.split_whitespace().next().unwrap_or("").trim();
+    if !cmd.is_empty() {
+        if let Some(prefix) = npm_global_prefix() {
+            for suffix in command_suffixes() {
+                let candidate = prefix.join(format!("{cmd}{suffix}"));
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+
+    // 2) 注册表卸载项（Windows）
+    #[cfg(windows)]
+    {
+        for name in declared_exe_names(tool_id, declared) {
+            if let Some(found) = uninstall_registry_index().get(&name) {
+                return Some(found.clone());
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = tool_id;
+    }
+
     None
 }
 
@@ -509,6 +740,42 @@ mod tests {
             map.insert(key.to_string(), entries.to_vec());
         }
         map
+    }
+
+    /// 路径段通配：`…/bin/*/codex.exe` 要命中带 hash 的中间目录。
+    ///
+    /// 真机形态：ChatGPT Desktop 自带的 Codex CLI 在
+    /// `%LOCALAPPDATA%\OpenAI\Codex\bin\faa963e871dd422c\codex.exe` —— 中间那层 hash 写不死，
+    /// 于是 `command: codex` 又不在 PATH，检测只能落空（表现「装了却显示未安装」）。
+    #[test]
+    fn wildcard_segment_expands_hashed_directory() {
+        let root = std::env::temp_dir().join(format!("anyver-wildcard-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let hashed = root.join("bin").join("faa963e871dd422c");
+        std::fs::create_dir_all(&hashed).unwrap();
+        std::fs::write(hashed.join("codex.exe"), b"x").unwrap();
+
+        let pattern = root.join("bin").join("*").join("codex.exe");
+        let hits = super::expand_wildcards(&pattern.to_string_lossy());
+        assert_eq!(hits.len(), 1, "应命中带 hash 的那层: {hits:?}");
+        assert!(hits[0].is_file());
+        assert!(hits[0].ends_with("codex.exe"));
+
+        // 不含 `*` 时原样返回单条，行为与以前一致（也不去遍历目录）
+        let plain = root.join("bin").join("codex.exe");
+        assert_eq!(
+            super::expand_wildcards(&plain.to_string_lossy()),
+            vec![plain.clone()]
+        );
+
+        // 本函数只负责「展开」，不负责「存在性」——存在性由调用方 is_file()/is_dir() 判断。
+        // 锁住这个分工：通配段能展开，但目标不存在时必须 is_file()==false（否则会误报已安装）。
+        let miss = root.join("bin").join("*").join("nope.exe");
+        let miss_hits = super::expand_wildcards(&miss.to_string_lossy());
+        assert_eq!(miss_hits.len(), 1, "通配段应展开: {miss_hits:?}");
+        assert!(!miss_hits[0].is_file(), "不存在的目标不能被当成命中");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// `%VAR%` 能展开，未定义的变量原样保留（不能拼出一条假的绝对路径）。
