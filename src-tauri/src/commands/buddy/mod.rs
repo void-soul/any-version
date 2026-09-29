@@ -109,6 +109,56 @@ fn emit_switch_progress_inner(
     );
 }
 
+// ─── 冲突裁决进度事件 ───
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuddyConflictProgress {
+    pub platform: String,
+    /// resolving | done
+    pub stage: String,
+    /// 本次要处理的冲突条数
+    pub total: usize,
+    /// 已处理条数
+    pub done: usize,
+    /// 当前处理的会话 id
+    pub current_id: Option<String>,
+    /// 单条结果文案（已合并 / 已覆盖 / 已保留 / 已忽略）
+    pub message: Option<String>,
+}
+
+/// 冲突裁决的进度上报上下文。
+#[derive(Clone, Copy)]
+pub(crate) struct ConflictProgressCtx<'a> {
+    pub app: Option<&'a tauri::AppHandle>,
+    pub platform: BuddyPlatform,
+    pub total: usize,
+}
+
+pub(crate) fn emit_conflict_progress(
+    app: Option<&tauri::AppHandle>,
+    platform: BuddyPlatform,
+    stage: &str,
+    total: usize,
+    done: usize,
+    current_id: Option<String>,
+    message: Option<String>,
+) {
+    let Some(handle) = app else { return };
+    use tauri::Emitter;
+    let _ = handle.emit(
+        "buddy-conflict-progress",
+        BuddyConflictProgress {
+            platform: platform.as_str().to_string(),
+            stage: stage.to_string(),
+            total,
+            done,
+            current_id,
+            message,
+        },
+    );
+}
+
 fn platform_from_str(s: &str) -> Result<BuddyPlatform, String> {
     BuddyPlatform::from_str(s).ok_or_else(|| format!("未知平台: {}", s))
 }
@@ -867,17 +917,35 @@ pub fn buddy_list_session_conflicts(
 
 /// 裁决一条会话冲突，返回当前账号剩余的待处理冲突。
 ///
-/// `action`：`merge`（取较新）/ `overwrite`（用来源覆盖目标）/ `keep`（保留目标）。
+/// `action`：`merge`（取较新）/ `overwrite`（用来源覆盖目标）/ `keep`（保留目标）/ `ignore`。
+///
+/// 走 `spawn_blocking`：裁决要**递归复制整个会话目录**（几十~几百 MB）并重写 index，
+/// 同步命令会把这些全塞进主线程 —— 表现为点完按钮界面直接卡死、无任何反馈。
+/// 切换账号（`buddy_switch_account`）早就是这么做的，这里补齐同一处理。
 #[tauri::command]
-pub fn buddy_resolve_session_conflict(
+pub async fn buddy_resolve_session_conflict(
+    app: tauri::AppHandle,
     platform: String,
     conversation_id: String,
     action: String,
 ) -> Result<Vec<session_sync::PendingConflict>, String> {
-    match platform_from_str(&platform)? {
+    let platform = platform_from_str(&platform)?;
+    let action = session_transfer::codebuddy::ConflictAction::parse(&action)?;
+    match platform {
         BuddyPlatform::CodebuddyCn => {
-            let action = session_transfer::codebuddy::ConflictAction::parse(&action)?;
-            session_transfer::codebuddy::resolve_conflict_command(&conversation_id, action)
+            // 单条也走批量入口：批量版本一次加锁、共用备份目录与基线，
+            // 而单条版本每次都会清空备份目录（串行调用会丢掉前面的回滚点）。
+            let ids = vec![conversation_id];
+            let total = ids.len();
+            tauri::async_runtime::spawn_blocking(move || {
+                let ctx = ConflictProgressCtx { app: Some(&app), platform, total };
+                let result =
+                    session_transfer::codebuddy::resolve_conflicts_command(&ids, action, Some(&ctx));
+                emit_conflict_progress(Some(&app), platform, "done", total, total, None, None);
+                result
+            })
+            .await
+            .map_err(|e| format!("冲突处理任务异常退出: {}", e))?
         }
         BuddyPlatform::Workbuddy => Err("WorkBuddy 的会话合并不产生冲突，无需处理".to_string()),
     }
@@ -887,16 +955,32 @@ pub fn buddy_resolve_session_conflict(
 ///
 /// 走批量命令而不是前端串行调单条：备份目录在每次 `prepare_backup_root` 时会被清空，
 /// 串行调用只会留下最后一条的备份（前面的无法回滚）。
+///
+/// 同样是 `spawn_blocking` + 逐条进度事件，避免大批量处理时界面卡死。
 #[tauri::command]
-pub fn buddy_resolve_session_conflicts(
+pub async fn buddy_resolve_session_conflicts(
+    app: tauri::AppHandle,
     platform: String,
     conversation_ids: Vec<String>,
     action: String,
 ) -> Result<Vec<session_sync::PendingConflict>, String> {
-    match platform_from_str(&platform)? {
+    let platform = platform_from_str(&platform)?;
+    let action = session_transfer::codebuddy::ConflictAction::parse(&action)?;
+    match platform {
         BuddyPlatform::CodebuddyCn => {
-            let action = session_transfer::codebuddy::ConflictAction::parse(&action)?;
-            session_transfer::codebuddy::resolve_conflicts_command(&conversation_ids, action)
+            let total = conversation_ids.len();
+            tauri::async_runtime::spawn_blocking(move || {
+                let ctx = ConflictProgressCtx { app: Some(&app), platform, total };
+                let result = session_transfer::codebuddy::resolve_conflicts_command(
+                    &conversation_ids,
+                    action,
+                    Some(&ctx),
+                );
+                emit_conflict_progress(Some(&app), platform, "done", total, total, None, None);
+                result
+            })
+            .await
+            .map_err(|e| format!("冲突处理任务异常退出: {}", e))?
         }
         BuddyPlatform::Workbuddy => Err("WorkBuddy 的会话合并不产生冲突，无需处理".to_string()),
     }

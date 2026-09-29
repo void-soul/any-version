@@ -74,6 +74,9 @@ pub(crate) struct SyncTracker {
     /// 「当前工作区」上下文：`set_workspace` 设定后，其后 `record` 的明细都会带上它。
     /// 仅在按工作区目录逐个处理的调用链里使用（见 `set_workspace`）。
     current_workspace: Option<String>,
+    /// 基线 key 的命名空间（如 `CodeBuddy|workspace-hash`）：同一个会话 id 若出现在
+    /// 多个 IDE / 工作区，带上它才不会共用同一条基线。见 [`baseline_key`]。
+    namespace: Option<String>,
 }
 
 impl SyncTracker {
@@ -83,18 +86,29 @@ impl SyncTracker {
             next: BTreeMap::new(),
             summary: SessionSyncSummary::default(),
             current_workspace: None,
-        }
-    }
+            namespace: None,
+            }
+            }
 
-    /// 上次同步时该会话的指纹（None = 首次见到）
-    pub(crate) fn baseline_of(&self, id: &str) -> Option<&str> {
-        self.baseline.get(id).map(String::as_str)
-    }
+            /// 设定基线 key 的命名空间（IDE / 工作区维度）。空字符串 = 不使用命名空间。
+            pub(crate) fn set_namespace(&mut self, namespace: Option<String>) {
+            self.namespace = namespace.filter(|value| !value.is_empty());
+            }
 
-    /// 该会话本次是否与基线一致（一致即无需处理）
-    pub(crate) fn is_unchanged(&self, id: &str, fingerprint: &str) -> bool {
-        self.baseline_of(id) == Some(fingerprint)
-    }
+            /// 基线 key（带命名空间，见 [`baseline_key`]）
+            pub(crate) fn baseline_key(&self, id: &str) -> String {
+            baseline_key(self.namespace.as_deref().unwrap_or(""), id)
+            }
+
+            /// 上次同步时该会话的指纹（None = 首次见到）
+            pub(crate) fn baseline_of(&self, id: &str) -> Option<&str> {
+            self.baseline.get(&self.baseline_key(id)).map(String::as_str)
+            }
+
+            /// 该会话本次是否与基线一致（一致即无需处理）
+            pub(crate) fn is_unchanged(&self, id: &str, fingerprint: &str) -> bool {
+            self.baseline_of(id) == Some(fingerprint)
+            }
 
     /// 设定「当前工作区」上下文：其后 `record` 记录的明细都会带上它。
     ///
@@ -139,12 +153,13 @@ impl SyncTracker {
             SessionSyncStatus::Failed => self.summary.failed += 1,
         }
         if !id.is_empty() {
+            let key = self.baseline_key(id);
             if let Some(value) = fingerprint {
-                self.next.insert(id.to_string(), value);
+                self.next.insert(key, value);
             } else {
                 // 未给出新指纹时沿用旧值，避免"处理失败"把基线抹掉导致下次重做
-                if let Some(previous) = self.baseline.get(id) {
-                    self.next.insert(id.to_string(), previous.clone());
+                if let Some(previous) = self.baseline.get(&key) {
+                    self.next.insert(key, previous.clone());
                 }
             }
         }
@@ -288,10 +303,17 @@ pub struct PendingConflict {
     pub ide: String,
     pub source_uid: String,
     pub target_uid: String,
-    /// 来源侧最后消息时间（epoch 毫秒）
+    /// 来源侧最后消息时间（epoch 毫秒，展示用；缺失为 0）
     pub source_stamp: i64,
-    /// 目标侧最后消息时间（epoch 毫秒）
+    /// 目标侧最后消息时间（epoch 毫秒，展示用；缺失为 0）
     pub target_stamp: i64,
+    /// 来源侧**判定指纹**（时间戳 + 目录内容），裁决后写入基线 —— 必须与合并流程
+    /// 写入的格式一致，否则下一次切换会把它当成「两侧都变过」再次报冲突。
+    #[serde(default)]
+    pub source_fingerprint: String,
+    /// 目标侧判定指纹（同上）
+    #[serde(default)]
+    pub target_fingerprint: String,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -614,9 +636,73 @@ fn consider_path(best: &mut Option<(u128, String)>, path: &Path) {
     }
 }
 
-/// 组合指纹：`更新时间的毫秒 + 内容指纹`，任一部分变化都算"有变化"。
+/// 组合指纹：`更新时间 + 内容指纹`，任一部分变化都算"有变化"。
 pub(crate) fn combined_fingerprint(updated_at: i64, content: Option<&str>) -> String {
     format!("{}|{}", updated_at, content.unwrap_or("-"))
+}
+
+/// 同上，但更新时间部分已经是字符串（可能是"未知"哨兵值）。
+pub(crate) fn combined_fingerprint_str(stamp: &str, content: Option<&str>) -> String {
+    format!("{}|{}", stamp, content.unwrap_or("-"))
+}
+
+/// 目录状态指纹：`文件数:总字节:最大修改时间(毫秒)`。
+///
+/// 为什么不用"取 mtime 最大的那个文件"（会话正文常见的取法）：那样**删文件**不会改变
+/// 指纹 —— 删掉最后一条消息、上下文裁剪、辅助文件被清掉都发现不了。
+/// 带上文件数与总字节后，增删任一文件都会变；返回 None 表示目录为空或不可读。
+pub(crate) fn directory_state_fingerprint(dir: &Path) -> Option<String> {
+    let mut files: u64 = 0;
+    let mut bytes: u64 = 0;
+    let mut max_mtime: u128 = 0;
+    // 显式栈 + 步数上限：会话目录可能很大，避免递归过深 / 异常目录卡住扫描
+    let mut stack = vec![dir.to_path_buf()];
+    let mut steps = 0usize;
+    while let Some(current) = stack.pop() {
+        steps += 1;
+        if steps > 5000 {
+            break;
+        }
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if metadata.file_type().is_symlink() {
+                continue; // 软链不参与：跟随它会把共享库/整个盘算进来
+            }
+            if metadata.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            files += 1;
+            bytes += metadata.len();
+            if let Ok(modified) = metadata.modified() {
+                if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
+                    max_mtime = max_mtime.max(duration.as_millis());
+                }
+            }
+        }
+    }
+    if files == 0 {
+        return None;
+    }
+    Some(format!("{}:{}:{}", files, bytes, max_mtime))
+}
+
+/// 基线 key：`<命名空间>\u{1f}<会话 id>`（命名空间为空时就是会话 id 本身）。
+///
+/// 同一个 conversationId 可能同时存在于多个 IDE 目录 / 工作区里 —— 只用会话 id 做 key
+/// 会让这些副本共用一条基线，跨工作区的改动互相干扰（表现为莫名其妙的"两侧都改过"）。
+pub(crate) fn baseline_key(namespace: &str, id: &str) -> String {
+    if namespace.is_empty() {
+        id.to_string()
+    } else {
+        format!("{}\u{1f}{}", namespace, id)
+    }
 }
 
 #[cfg(test)]
@@ -771,6 +857,8 @@ mod tests {
             target_uid: "uid-b".to_string(),
             source_stamp: 1_700_000_000_000,
             target_stamp: 1_700_000_500_000,
+            source_fingerprint: "1700000000000|2:40:1700000000000".to_string(),
+            target_fingerprint: "1700000500000|3:60:1700000500000".to_string(),
         };
         let value = serde_json::to_value(&conflict).unwrap();
         // 前端类型按 camelCase 读，字段名错了界面会静默显示 undefined

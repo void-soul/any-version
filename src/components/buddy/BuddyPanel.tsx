@@ -162,8 +162,8 @@ export interface BuddyPendingConflict {
   targetStamp: number;
 }
 
-/** 用户对冲突的裁决方式：merge 取较新 / overwrite 用来源覆盖目标 / keep 保留目标 */
-type ConflictAction = "merge" | "overwrite" | "keep";
+/** 用户对冲突的裁决方式：merge 取较新 / overwrite 用来源覆盖目标 / keep 保留目标 / ignore 不处理只结束 */
+type ConflictAction = "merge" | "overwrite" | "keep" | "ignore";
 
 /** 一条冲突的处理结果（后端 session_sync::ConflictResolution） */
 export interface BuddyConflictResolution {
@@ -269,6 +269,17 @@ export interface BuddySwitchProgress {
   message?: string | null;
   /** 合并结束时后端一次性带上的同步台账 */
   sync?: BuddySessionSyncSummary;
+}
+
+/** 冲突裁决进度（后端 buddy-conflict-progress 事件）。
+ *  裁决要递归复制整个会话目录，批量跑得久 —— 没有它用户只能看到一个转圈的按钮。 */
+export interface BuddyConflictProgress {
+  platform: string;
+  stage: "resolving" | "done";
+  total: number;
+  done: number;
+  currentId?: string | null;
+  message?: string | null;
 }
 
 export interface BuddySessionRecord {
@@ -852,6 +863,9 @@ export default function BuddyPanel() {
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   // 切换进度（检查客户端已退出 → 合并 → 写入 → 启动），由后端 buddy-switch-progress 事件驱动
   const [switchProgress, setSwitchProgress] = useState<BuddySwitchProgress | null>(null);
+  // 冲突裁决进度（后端 buddy-conflict-progress）：裁决要递归复制整个会话目录，
+  // 批量处理可能跑很久，没有进度用户只能盯着一个转圈的按钮以为卡死了
+  const [conflictProgress, setConflictProgress] = useState<BuddyConflictProgress | null>(null);
   // 最近一次切换的会话同步台账（成功/跳过/冲突/失败明细），切换结束后保留给用户查看
   const [syncSummary, setSyncSummary] = useState<BuddySessionSyncSummary | null>(null);
   const [syncDetailsOpen, setSyncDetailsOpen] = useState(false);
@@ -1316,6 +1330,12 @@ export default function BuddyPanel() {
             .then(setAutoConfig)
             .catch(() => {});
           refreshTasks();
+        })
+      );
+      unlisteners.push(
+        await listen<BuddyConflictProgress>("buddy-conflict-progress", (e) => {
+          // done 事件只是收尾信号，清掉进度条（结果由 invoke 返回值渲染）
+          setConflictProgress(e.payload.stage === "done" ? null : e.payload);
         })
       );
       unlisteners.push(
@@ -3863,6 +3883,15 @@ export default function BuddyPanel() {
                   {t("buddy.conflictSelectedCount", { count: conflictSelectedIds.size, total: sessionConflicts.length })}
                 </span>
                 <span className="flex-1" />
+                {/* 处理进度：后端逐条上报（buddy-conflict-progress）。
+                    裁决要递归复制整个会话目录，没有它长时间无反馈会被当成卡死。 */}
+                {(conflictBatchBusy || conflictBusyId !== null) && (
+                  <span className="text-tiny text-slate-400">
+                    {conflictProgress && conflictProgress.total > 1
+                      ? t("buddy.conflictResolving", { done: conflictProgress.done, total: conflictProgress.total })
+                      : t("buddy.conflictResolvingOne")}
+                  </span>
+                )}
                 {(["merge", "overwrite", "keep"] as ConflictAction[]).map((action) => (
                   <button
                     key={action}
@@ -3947,6 +3976,16 @@ export default function BuddyPanel() {
                           className="px-2.5 py-1 rounded-md text-tiny bg-white/5 hover:bg-white/10 text-slate-300 font-semibold cursor-pointer disabled:opacity-50 transition-colors"
                         >
                           {t("buddy.conflictActionKeep")}
+                        </button>
+                        {/* 忽略：会话目录可能已被清理，给一个「不处理、别再提醒」的出口，
+                            否则这条冲突会永远留在列表里、横幅一直亮 */}
+                        <button
+                          disabled={conflictBusyId !== null}
+                          onClick={() => void resolveConflict(conflict, "ignore")}
+                          title={t("buddy.conflictActionIgnoreTip")}
+                          className="px-2.5 py-1 rounded-md text-tiny bg-white/5 hover:bg-white/10 text-slate-400 font-semibold cursor-pointer disabled:opacity-50 transition-colors"
+                        >
+                          {t("buddy.conflictActionIgnore")}
                         </button>
                       </div>
                       {/* 明细：两侧账号 / IDE / 会话 id / 双方最后消息时间 */}

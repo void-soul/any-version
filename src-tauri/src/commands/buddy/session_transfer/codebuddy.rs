@@ -204,6 +204,11 @@ pub(crate) enum ConflictAction {
     Overwrite,
     /// 保留目标会话，丢弃来源侧的修改
     Keep,
+    /// 什么都不动，只结束这条冲突（会话可能已被清理/不重要，别让横幅一直亮着）。
+    ///
+    /// 以前只有三选一，而 `Merge` / `Overwrite` / `Keep` 都需要来源或目标目录还在；
+    /// 一旦账号数据被清理，裁决直接报错，这条冲突就**永远留在列表里**。
+    Ignore,
 }
 
 impl ConflictAction {
@@ -212,6 +217,7 @@ impl ConflictAction {
             "merge" => Ok(Self::Merge),
             "overwrite" => Ok(Self::Overwrite),
             "keep" => Ok(Self::Keep),
+            "ignore" => Ok(Self::Ignore),
             other => Err(format!("未知的冲突处理方式: {}", other)),
         }
     }
@@ -222,6 +228,7 @@ impl ConflictAction {
             Self::Merge => "merge",
             Self::Overwrite => "overwrite",
             Self::Keep => "keep",
+            Self::Ignore => "ignore",
         }
     }
 }
@@ -305,23 +312,20 @@ fn find_pending_conflict(conversation_id: &str) -> Result<Option<(PendingConflic
     Ok(None)
 }
 
-/// 按会话 id 执行用户裁决，返回**当前账号**剩余的待处理冲突（前端直接整体替换）。
-pub(crate) fn resolve_conflict_command(
-    conversation_id: &str,
-    action: ConflictAction,
-) -> Result<Vec<PendingConflict>, String> {
-    resolve_conflicts_command(&[conversation_id.to_string()], action)
-}
-
 /// **批量**裁决：一次对多条执行同一 action，返回当前账号剩余的待处理冲突。
 ///
-/// 为什么必须走批量命令而不是前端串行调单条：`prepare_backup_root` 每次都会
+/// 为什么必须走批量入口而不是前端串行调单条：`prepare_backup_root` 每次都会
 /// `remove_dir_all` 清掉该 uid 的备份目录（见 `session_transfer.rs`），串行 N 次
 /// 的结果就是**只剩最后一条的备份**，前面几条想回滚已经没东西可回。批量在这里
 /// 只加一次锁、每个目标 uid 只准备一次备份目录、共用一份基线，最后统一落盘。
+/// 单条命令也因此统一走这里（ids 只有一个元素）。
+///
+/// `progress`：非 None 时逐条上报进度。裁决要递归复制整个会话目录，整批可能跑很久，
+/// 命令层已把它放进 `spawn_blocking`，进度事件是前端唯一的反馈来源。
 pub(crate) fn resolve_conflicts_command(
     conversation_ids: &[String],
     action: ConflictAction,
+    progress: Option<&super::super::ConflictProgressCtx>,
 ) -> Result<Vec<PendingConflict>, String> {
     if conversation_ids.is_empty() {
         return Err("未选择要处理的冲突".to_string());
@@ -356,6 +360,8 @@ pub(crate) fn resolve_conflicts_command(
         }
 
         let mut resolved: Vec<(String, PendingConflict, String)> = Vec::new();
+        let mut done = 0usize;
+        let total = progress.map(|p| p.total).unwrap_or(conversation_ids.len());
         for (uid, conflicts) in &grouped {
             let backup_root = super::prepare_backup_root(BACKUP_PLATFORM_LABEL, uid)?;
             let mut baseline =
@@ -368,6 +374,18 @@ pub(crate) fn resolve_conflicts_command(
                     &backup_root,
                     &mut baseline,
                 )?;
+                done += 1;
+                if let Some(ctx) = progress {
+                    super::super::emit_conflict_progress(
+                        ctx.app,
+                        ctx.platform,
+                        "resolving",
+                        total,
+                        done,
+                        Some(conflict.id.clone()),
+                        Some(message.clone()),
+                    );
+                }
                 resolved.push((uid.clone(), conflict.clone(), message));
             }
             super::super::session_sync::save_baseline(BACKUP_PLATFORM_LABEL, uid, &baseline);
@@ -479,18 +497,42 @@ fn resolve_pending_conflict_at(
         .join(&conflict.ide)
         .join(&conflict.target_uid);
     let target_workspace = target_account_root.join("history").join(&conflict.workspace);
-    if !source_workspace.is_dir() {
-        return Err(format!(
-            "来源会话目录不存在（可能账号数据已被清理）: {}",
-            source_workspace.display()
-        ));
+    let baseline_key = conflict_baseline_key(conflict);
+    let source_dir = source_workspace.join(&conflict.id);
+    let target_dir = target_workspace.join(&conflict.id);
+
+    // ── 「忽略」：不动任何文件，只结束这条冲突 ──
+    // 以前只有三选一，而三个动作都要求来源/目标目录还在；账号数据一旦被清理，
+    // 裁决直接报错，这条冲突就永远留在列表里、横幅一直亮。
+    if action == ConflictAction::Ignore {
+        baseline.insert(
+            baseline_key,
+            conflict_fingerprint(&conflict.target_fingerprint, conflict.target_stamp),
+        );
+        return Ok("已忽略此冲突：未改动任何会话，本次不再提醒".to_string());
     }
-    if !target_workspace.is_dir() {
-        return Err(format!(
-            "目标会话目录不存在: {}",
-            target_workspace.display()
-        ));
+
+    // ── 两侧目录都没了：没有可裁决的对象，直接清除 ──
+    let source_present = source_workspace.is_dir() && source_dir.is_dir();
+    let target_present = target_workspace.is_dir() && target_dir.is_dir();
+    if !source_present && !target_present {
+        eprintln!(
+            "[Buddy SessionTransfer] 冲突两侧目录均已不存在，清除该条: id={}",
+            conflict.id
+        );
+        baseline.remove(&baseline_key);
+        return Ok("两侧会话目录均已不存在，该冲突已清除".to_string());
     }
+
+    // ── 目录缺失时降级，而不是报错：──
+    // 没有来源可覆盖 / 合并 → 保留目标；目标没了 → 只能把来源拷过去。
+    let action = match action {
+        ConflictAction::Overwrite | ConflictAction::Merge if !source_present => {
+            ConflictAction::Keep
+        }
+        ConflictAction::Keep if !target_present => ConflictAction::Overwrite,
+        other => other,
+    };
     reject_symlink_if_exists(&source_workspace)?;
     reject_symlink_if_exists(&target_workspace)?;
 
@@ -510,7 +552,8 @@ fn resolve_pending_conflict_at(
     let overwrite_source = match action {
         ConflictAction::Overwrite => true,
         ConflictAction::Keep => false,
-        ConflictAction::Merge => {
+        // Ignore 已在前面返回；这里只为穷尽匹配
+        ConflictAction::Merge | ConflictAction::Ignore => {
             let target_dir = target_workspace.join(&conflict.id);
             if !target_dir.is_dir() {
                 return Err(format!(
@@ -557,16 +600,23 @@ fn resolve_pending_conflict_at(
             None => entry_list.push(source_entry.clone()),
         }
         write_workspace_index(&target_index_path, &target_index)?;
-        // 基线推进到来源时间戳：这轮来源改动已确认落地
-        baseline.insert(conflict.id.clone(), conflict.source_stamp.to_string());
+        // 基线推进到来源指纹：这轮来源改动已确认落地
+        // （key 与指纹格式都要和合并流程一致，否则下次切换会重复报同一条冲突）
+        baseline.insert(
+            baseline_key,
+            conflict_fingerprint(&conflict.source_fingerprint, conflict.source_stamp),
+        );
         Ok(format!(
             "已用来源会话（{}）覆盖目标（{}）",
             fmt_stamp(conflict.source_stamp),
             fmt_stamp(conflict.target_stamp)
         ))
     } else {
-        // 保留目标：基线推进到目标时间戳，冲突就此了结（来源侧改动视为放弃）
-        baseline.insert(conflict.id.clone(), conflict.target_stamp.to_string());
+        // 保留目标：基线推进到目标指纹，冲突就此了结（来源侧改动视为放弃）
+        baseline.insert(
+            baseline_key,
+            conflict_fingerprint(&conflict.target_fingerprint, conflict.target_stamp),
+        );
         Ok(format!(
             "已保留目标会话（{}），来源侧改动（{}）已放弃",
             fmt_stamp(conflict.target_stamp),
@@ -812,6 +862,12 @@ pub(super) fn sync_history_between_accounts(
                 source_uid: source_uid.to_string(),
                 target_uid: target_uid.to_string(),
             };
+            // 基线 key 带上 IDE + 工作区维度：同一个会话 id 可能同时存在于多个
+            // IDE / 工作区目录，共用一个 key 会让跨工作区的改动互相干扰。
+            tracker.set_namespace(Some(workspace_namespace(
+                &scan.ide,
+                &workspace_name.to_string_lossy(),
+            )));
             merge_workspace_history(
                 &source_workspace,
                 &target_workspace,
@@ -852,6 +908,8 @@ pub(crate) enum SyncDecision {
 ///
 /// - 无基线（首次同步）→ `Apply`（行为与改造前一致）；
 /// - 目标会话文件缺失 → `Apply`（必须补齐，不参与"无变化"判定）；
+/// - **任一侧时间戳未知** → `Apply`：未知的一侧没法自证"没变过"，
+///   宁可多比较一次，也不能像以前那样因"两边都是 0"被判成无变化而静默跳过；
 /// - 两侧都与基线一致 → `Unchanged`；
 /// - 两侧都偏离基线 → `Conflict`。
 pub(crate) fn decide_sync(
@@ -866,12 +924,39 @@ pub(crate) fn decide_sync(
     if !target_present {
         return SyncDecision::Apply;
     }
+    let known = |stamp: &str| !stamp.starts_with(UNKNOWN_STAMP);
+    if !(known(source_stamp) && known(target_stamp) && known(baseline)) {
+        return SyncDecision::Apply;
+    }
     let source_changed = source_stamp != baseline;
     let target_changed = target_stamp != baseline;
     match (source_changed, target_changed) {
         (false, false) => SyncDecision::Unchanged,
         (true, true) => SyncDecision::Conflict,
         _ => SyncDecision::Apply,
+    }
+}
+
+/// 基线 key 的命名空间：`IDE|工作区`（与 `merge_workspace_history` 里写入的维度一致）。
+pub(crate) fn workspace_namespace(ide: &str, workspace: &str) -> String {
+    format!("{}|{}", ide, workspace)
+}
+
+/// 这条冲突对应的基线 key（带 IDE + 工作区维度，见 [`workspace_namespace`]）。
+fn conflict_baseline_key(conflict: &PendingConflict) -> String {
+    super::super::session_sync::baseline_key(
+        &workspace_namespace(&conflict.ide, &conflict.workspace),
+        &conflict.id,
+    )
+}
+
+/// 裁决后要写入基线的指纹：优先用落盘时的判定指纹；
+/// 老记录（本次改动之前写的）没有这个字段，回落到纯时间戳，保证格式不混。
+fn conflict_fingerprint(stored: &str, stamp_ms: i64) -> String {
+    if stored.is_empty() {
+        stamp_ms.to_string()
+    } else {
+        stored.to_string()
     }
 }
 
@@ -1044,7 +1129,10 @@ fn merge_workspace_history(
                 &conversation_label(&conversation, &id, &workspace_display),
                 SessionSyncStatus::Copied,
                 "firstSync",
-                Some(conversation_timestamp(&conversation).to_string()),
+                Some(conversation_fingerprint(
+                    &conversation,
+                    &source_workspace.join(&id),
+                )),
             );
         }
         return Ok(());
@@ -1079,7 +1167,7 @@ fn merge_workspace_history(
         validate_conversation_id(id)?;
         let source_conversation_dir = source_workspace.join(id);
         let label = conversation_label(&source_conversation, id, &workspace_display);
-        let source_stamp = conversation_timestamp(&source_conversation).to_string();
+        let source_stamp = conversation_fingerprint(&source_conversation, &source_conversation_dir);
         if !source_conversation_dir.is_dir() {
             eprintln!(
                 "[Buddy SessionTransfer] 来源会话目录不存在，已跳过: {}",
@@ -1145,7 +1233,8 @@ fn merge_workspace_history(
                     ));
                 }
                 // 「只处理有变化的会话」+「两侧都改过即冲突」：参考 WorkDaddy §17 的三分支。
-                let target_stamp = conversation_timestamp(&merged[target_index_pos]).to_string();
+                let target_stamp =
+                    conversation_fingerprint(&merged[target_index_pos], &target_conversation_dir);
                 match decide_sync(
                     tracker.baseline_of(id),
                     &source_stamp,
@@ -1183,8 +1272,14 @@ fn merge_workspace_history(
                             ide: scan.ide.clone(),
                             source_uid: scan.source_uid.clone(),
                             target_uid: scan.target_uid.clone(),
-                            source_stamp: conversation_timestamp(&source_conversation),
-                            target_stamp: conversation_timestamp(&merged[target_index_pos]),
+                            source_stamp: conversation_timestamp(&source_conversation)
+                                .unwrap_or_default(),
+                            target_stamp: conversation_timestamp(&merged[target_index_pos])
+                                .unwrap_or_default(),
+                            // 裁决后写入基线用的必须是判定指纹（与合并流程同格式），
+                            // 否则下一次切换会因格式不一致再次报同一条冲突
+                            source_fingerprint: source_stamp.clone(),
+                            target_fingerprint: target_stamp.clone(),
                         });
                         tracker.record(id, &label, SessionSyncStatus::Conflict, "bothChanged", None);
                         continue;
@@ -1357,19 +1452,43 @@ fn conversation_is_newer(source: &Value, target: &Value) -> bool {
 }
 
 fn compare_conversation_recency(left: &Value, right: &Value) -> Ordering {
+    // None（取不到时间）按"最旧"处理，不再与 0 混为一谈
     conversation_timestamp(left).cmp(&conversation_timestamp(right))
 }
 
-fn conversation_timestamp(conversation: &Value) -> i64 {
-    let value = conversation.get("lastMessageAt");
-    if let Some(timestamp) = value.and_then(Value::as_i64) {
-        return timestamp;
+/// 会话最后消息时间（epoch 毫秒）。
+///
+/// 返回 `None` 表示**取不到**（字段缺失 / 类型异常 / RFC3339 解析失败）——
+/// 以前用 `unwrap_or_default()` 一律回 0，于是"两侧都缺时间戳"会被判成两边相等、
+/// 走"无变化"静默跳过，改动永远同步不过去。现在把"未知"显式区分出来：
+/// 未知的一侧无法证明自己没变，一律按"有变化"处理（见 [`decide_sync`]）。
+fn conversation_timestamp(conversation: &Value) -> Option<i64> {
+    let value = conversation.get("lastMessageAt")?;
+    if let Some(timestamp) = value.as_i64() {
+        return Some(timestamp);
     }
     value
-        .and_then(Value::as_str)
+        .as_str()
         .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
         .map(|ts| ts.timestamp_millis())
-        .unwrap_or_default()
+}
+
+/// 指纹里代表"取不到时间戳"的哨兵值（不会与任何数字字符串相等）。
+pub(crate) const UNKNOWN_STAMP: &str = "unknown";
+
+/// 会话判定指纹：`时间戳|目录状态`，任一部分变化都算"有变化"。
+///
+/// 只比时间戳会漏掉「内容变了但客户端没 bump lastMessageAt 」的场景
+/// （改标题、删末条消息、上下文裁剪）；目录状态见
+/// [`super::super::session_sync::directory_state_fingerprint`]。
+fn conversation_fingerprint(conversation: &Value, conversation_dir: &Path) -> String {
+    let stamp = conversation_timestamp(conversation)
+        .map(|ts| ts.to_string())
+        .unwrap_or_else(|| UNKNOWN_STAMP.to_string());
+    super::super::session_sync::combined_fingerprint_str(
+        &stamp,
+        super::super::session_sync::directory_state_fingerprint(conversation_dir).as_deref(),
+    )
 }
 
 pub(crate) fn reject_symlink_if_exists(path: &Path) -> Result<(), String> {
@@ -1733,6 +1852,8 @@ mod tests {
             target_uid: "dst-uid".to_string(),
             source_stamp: source_ts,
             target_stamp: target_ts,
+            source_fingerprint: source_ts.to_string(),
+            target_fingerprint: target_ts.to_string(),
         };
         (data_root, conflict)
     }
@@ -1787,8 +1908,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(backup_body, "target-body");
-        // 基线推进到来源时间戳：这轮来源改动视为已落地
-        assert_eq!(baseline.get("conv-1").map(String::as_str), Some("1700000000000"));
+        // 基线推进到来源指纹：这轮来源改动视为已落地
+        // （key 现在带 IDE + 工作区维度，避免跨工作区共用基线）
+        assert_eq!(
+            baseline.get(&conflict_baseline_key(&conflict)).map(String::as_str),
+            Some("1700000000000")
+        );
     }
 
     #[test]
@@ -1813,8 +1938,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(body, "target-body");
-        // 基线推进到目标时间戳：冲突了结，下次切换不再提醒
-        assert_eq!(baseline.get("conv-1").map(String::as_str), Some("1699000000000"));
+        // 基线推进到目标指纹：冲突了结，下次切换不再提醒
+        assert_eq!(
+            baseline.get(&conflict_baseline_key(&conflict)).map(String::as_str),
+            Some("1699000000000")
+        );
     }
 
     #[test]
@@ -1848,7 +1976,70 @@ mod tests {
         )
         .unwrap();
         assert_eq!(body2, "target-body");
-        assert_eq!(baseline2.get("conv-1").map(String::as_str), Some("1699000000000"));
+        assert_eq!(
+            baseline2.get(&conflict_baseline_key(&conflict2)).map(String::as_str),
+            Some("1699000000000")
+        );
+    }
+
+    /// 「忽略」：不改任何文件，只结束冲突（以前只有三选一，目录没了就永远卡住）。
+    #[test]
+    fn resolve_conflict_ignore_keeps_files_and_resolves() {
+        let dest = make_temp();
+        let (data_root, conflict) = conflict_fixture(&dest, 1_700_000_000_000, 1_699_000_000_000);
+        let mut baseline = std::collections::BTreeMap::new();
+        let message = resolve_pending_conflict_at(
+            &data_root,
+            &conflict,
+            ConflictAction::Ignore,
+            &dest.join("backup"),
+            &mut baseline,
+        )
+        .unwrap();
+        assert!(message.contains("忽略"), "返回文案应说明是忽略: {message}");
+        // 目标一字未动（与 keep 的区别只是语义，不带"放弃来源改动"的判断）
+        let body = std::fs::read_to_string(
+            data_root
+                .join("dst-uid")
+                .join("VSCode")
+                .join("dst-uid")
+                .join("history")
+                .join("ws")
+                .join("conv-1")
+                .join("messages.jsonl"),
+        )
+        .unwrap();
+        assert_eq!(body, "target-body");
+        assert_eq!(
+            baseline.get(&conflict_baseline_key(&conflict)).map(String::as_str),
+            Some("1699000000000")
+        );
+    }
+
+    /// 两侧会话目录都被清理时，裁决必须能结束（以前这里直接报错 → 横幅永远亮）。
+    #[test]
+    fn resolve_conflict_clears_when_both_sides_are_gone() {
+        let dest = make_temp();
+        let (data_root, mut conflict) =
+            conflict_fixture(&dest, 1_700_000_000_000, 1_699_000_000_000);
+        conflict.workspace = "ws-gone".to_string();
+        let mut baseline = std::collections::BTreeMap::new();
+        for action in [
+            ConflictAction::Merge,
+            ConflictAction::Overwrite,
+            ConflictAction::Keep,
+            ConflictAction::Ignore,
+        ] {
+            let message = resolve_pending_conflict_at(
+                &data_root,
+                &conflict,
+                action,
+                &dest.join("backup"),
+                &mut baseline,
+            )
+            .unwrap();
+            assert!(message.contains("清除") || message.contains("忽略"), "{message}");
+        }
     }
 
     #[test]
@@ -2040,6 +2231,86 @@ mod tests {
         assert_eq!(decide_sync(Some("3"), "5", "6", true), SyncDecision::Conflict);
         // 目标会话文件缺失时必须补齐，不参与"无变化"判定
         assert_eq!(decide_sync(Some("3"), "3", "3", false), SyncDecision::Apply);
+        // 任一侧时间戳未知 → 无法自证"没变"，按有变化处理
+        // （以前缺失会回落成 0，两边都是 0 就被判成无变化而静默跳过）
+        let unknown = |content: &str| format!("{}|{}", UNKNOWN_STAMP, content);
+        assert_eq!(
+            decide_sync(Some("3"), &unknown("-"), &unknown("-"), true),
+            SyncDecision::Apply
+        );
+        assert_eq!(decide_sync(Some("3"), &unknown("-"), "3", true), SyncDecision::Apply);
+        assert_eq!(decide_sync(Some("3"), "3", &unknown("2:40:9"), true), SyncDecision::Apply);
+        assert_eq!(
+            decide_sync(Some(&unknown("-")), &unknown("-"), &unknown("-"), true),
+            SyncDecision::Apply
+        );
+    }
+
+    /// 时间戳没变但目录内容变了（改标题 / 删消息 / 裁剪上下文）也必须判定为"有变化"。
+    #[test]
+    fn decide_sync_detects_content_change_without_timestamp_change() {
+        let same_ts = "1700000000000";
+        let before = format!("{}|{}", same_ts, "2:40:1700000000000");
+        let after = format!("{}|{}", same_ts, "3:60:1700000000000");
+        assert_eq!(
+            decide_sync(Some(&before), &after, &before, true),
+            SyncDecision::Apply,
+            "内容变了就不再是两侧都一致"
+        );
+        assert_eq!(
+            decide_sync(Some(&before), &after, &after, true),
+            SyncDecision::Conflict,
+            "两侧内容都偏离基线 → 冲突"
+        );
+    }
+
+    /// 目录状态指纹：增 / 删 / 改任一文件都要改变；软链不参与。
+    #[test]
+    fn directory_state_fingerprint_tracks_add_remove_modify() {
+        let dest = make_temp();
+        let dir = dest.join("conv");
+        std::fs::create_dir_all(dir.join("messages")).unwrap();
+        std::fs::write(dir.join("messages").join("0.json"), "aaaa").unwrap();
+        let first = super::super::super::session_sync::directory_state_fingerprint(&dir);
+        assert!(first.is_some());
+
+        // 改内容
+        std::fs::write(dir.join("messages").join("0.json"), "bbbbbbbb").unwrap();
+        let modified = super::super::super::session_sync::directory_state_fingerprint(&dir);
+        assert_ne!(first, modified, "字节数变了指纹必须变");
+
+        // 删文件（"取 mtime 最大者"那种做法发现不了删除）
+        std::fs::remove_file(dir.join("messages").join("0.json")).unwrap();
+        std::fs::write(dir.join("messages").join("1.json"), "").unwrap();
+        let removed = super::super::super::session_sync::directory_state_fingerprint(&dir);
+        assert_ne!(modified, removed, "删文件也必须被检测到");
+
+        // 空目录 → None
+        let empty = dest.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        assert!(super::super::super::session_sync::directory_state_fingerprint(&empty).is_none());
+
+        let _ = std::fs::remove_dir_all(&dest);
+    }
+
+    /// 基线 key 必须区分 IDE / 工作区：同一个会话 id 出现在两个工作区不能共用基线。
+    #[test]
+    fn baseline_key_is_scoped_by_ide_and_workspace() {
+        let a = super::super::super::session_sync::baseline_key(
+            &workspace_namespace("VSCode", "ws-a"),
+            "conv-1",
+        );
+        let b = super::super::super::session_sync::baseline_key(
+            &workspace_namespace("VSCode", "ws-b"),
+            "conv-1",
+        );
+        assert_ne!(a, b, "不同工作区的同一会话 id 不能共用基线");
+        assert_ne!(
+            a,
+            super::super::super::session_sync::baseline_key(&workspace_namespace("Cursor", "ws-a"), "conv-1")
+        );
+        // 命名空间为空时退化成会话 id 本身（WorkBuddy 那边的既有行为）
+        assert_eq!(super::super::super::session_sync::baseline_key("", "conv-1"), "conv-1");
     }
 
     /// 第二次合并同一批会话：内容没变 → 全部跳过，不再重复复制。
