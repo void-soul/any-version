@@ -47,8 +47,27 @@ import type {
   ModelCustomParam,
   ModelEntry,
   ToolOpResult,
+  CodexPluginMarketplaceStatus,
+  CodexPluginInfo,
+  ClaudePluginInfo,
+  ClaudePluginStatus,
 } from "./types";
 import { alertError } from "../shared/ThemedAlert";
+
+/**
+ * 插件列表的统一行结构。
+ * Codex 与 Claude 两套后端的字段名不同，逻辑层抹平后 UI 只认这一种（不用维护两套列表）。
+ */
+type PluginRow = {
+  /** 安装 / 卸载的寻址键（codex = 插件名；claude = `插件@市场`） */
+  key: string;
+  title: string;
+  group: string;
+  desc: string;
+  installed: boolean;
+  enabled: boolean;
+  version: string | null;
+};
 
 const PROTOCOL_LABELS: Record<string, string> = {
   anthropic: "Anthropic",
@@ -145,9 +164,76 @@ function getProxyInfo(
   };
 }
 
+/** 工具配置文件里当前写定的模型（后端 `get_ai_tool_models` 的返回）。 */
+export interface AppliedModels {
+  model: string | null;
+  fallback_model: string | null;
+}
+
+/** 在仓库里按模型值反查 (供应商, 模型)。
+ *
+ * 先精确匹配 `m.id`；再容忍 `前缀/模型` 形态 —— 有些工具写的值是 `provider/model`，
+ * 直接 `===` 会认不出来，界面就回显成「未选择」。 */
+function findModelRef(
+  providers: AiProvider[],
+  modelValue: string | null | undefined,
+): { providerId: string; modelId: string } | null {
+  const wanted = (modelValue ?? "").trim();
+  if (!wanted) return null;
+  for (const p of providers) {
+    for (const m of p.models) {
+      if (m.id === wanted) return { providerId: p.id, modelId: m.id };
+    }
+  }
+  const tail = wanted.split('/').pop() ?? "";
+  if (tail && tail !== wanted) {
+    for (const p of providers) {
+      for (const m of p.models) {
+        if (m.id === tail) return { providerId: p.id, modelId: m.id };
+      }
+    }
+  }
+  return null;
+}
+
 /** 未安装区的形态筛选：全部 / CLI / 桌面端（抄 EchoBird 的分组维度）。
  *  已安装区不分组——装了的就那么几个，分组只会让人多找一层。 */
 type ToolKindFilter = "all" | "cli" | "desktop";
+
+/** 可折叠的设置卡片。
+ *
+ * 折叠后必须靠 `summary` 保留关键信息（例如「当前选了哪个模型」）——
+ * 收起来就看不到设了什么，用户还得展开确认，等于没省事。
+ * `action` 用于标题行右侧的常驻控件（如优化器开关）：它不能放进折叠按钮里，
+ * 否则 button 套 button 是非法 HTML。 */
+function CollapsibleCard({
+  title, hint, summary, open, onToggle, action, children,
+}: {
+  title: string;
+  hint?: string;
+  summary?: React.ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <button onClick={onToggle} className="flex items-center gap-1.5 min-w-0 cursor-pointer text-left">
+          <ChevronRight className={`w-3 h-3 text-slate-500 transition-transform flex-shrink-0 ${open ? "rotate-90" : ""}`} />
+          <span className="text-body font-bold text-slate-300 truncate">{title}</span>
+        </button>
+        {hint && open && <span className="text-micro text-slate-500 truncate">{hint}</span>}
+        {!open && summary && (
+          <span className="text-micro text-slate-500 ml-auto truncate">{summary}</span>
+        )}
+        {action && <div className={!open && summary ? "" : "ml-auto"}>{action}</div>}
+      </div>
+      {open && children}
+    </div>
+  );
+}
 
 export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (question: string) => void } = {}) {
   const { t } = useTranslation();
@@ -213,6 +299,29 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
   });
   // Codex web_search 开关：开启 → 写 config.toml `web_search = "live"`（真实实时检索）
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  // 工具配置文件里**当前写定**的模型：切换工具时回读，用来把上次的选择回显出来。
+  // 不回显会出现「界面显示没选模型（看着像在用官方配置），实际工具还在用我们写进去的
+  // 自定义模型」—— 用户看到的和生效的完全是两回事。
+  const [configAppliedModel, setConfigAppliedModel] = useState<string | null>(null);
+  const [configAppliedFallback, setConfigAppliedFallback] = useState<string | null>(null);
+  // Codex 官方插件市场（写 ~/.codex/config.toml 的 [marketplaces.*]）。
+  // CodexPlusPlus 同样的思路：市场内容我们自己落地 + 注册，单个插件由客户端自己装。
+  const [marketplace, setMarketplace] = useState<CodexPluginMarketplaceStatus | null>(null);
+  const [marketplaceBusy, setMarketplaceBusy] = useState(false);
+  // 插件市场里的插件清单（逐个安装/卸载走官方 CLI）
+  const [marketplacePlugins, setMarketplacePlugins] = useState<CodexPluginInfo[]>([]);
+  // Claude Code 那套（`claude plugin`）：市场要自己添加、插件 id 带 @市场
+  const [claudeStatus, setClaudeStatus] = useState<ClaudePluginStatus | null>(null);
+  const [claudePlugins, setClaudePlugins] = useState<ClaudePluginInfo[]>([]);
+  // 单个插件的忙态：按插件名记，避免一个在装时把整列按钮都禁用
+  const [pluginBusy, setPluginBusy] = useState<Record<string, boolean>>({});
+  const [pluginQuery, setPluginQuery] = useState("");
+  // 各设置卡片的折叠状态：默认只展开「模型供应商」（选模型是主操作），
+  // 其余收起 —— 全部铺开会把启动按钮顶到看不见的地方。
+  const [vendorOpen, setVendorOpen] = useState(true);
+  const [fallbackOpen, setFallbackOpen] = useState(false);
+  const [optimizerOpen, setOptimizerOpen] = useState(false);
+  const [rectifierOpen, setRectifierOpen] = useState(false);
 
   const [launching, setLaunching] = useState(false);
   const [launchResult, setLaunchResult] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -408,13 +517,6 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
       .then(setSessions).catch(() => setSessions([]));
   }, [selectedTool]);
 
-  // 切换工具时回显「它配置文件里现在写的是哪个模型」（未声明 configFile 的工具清空）
-  useEffect(() => {
-    setApplyModelMsg(null);
-    if (selectedTool?.config_file) void loadAppliedModel(selectedTool.id);
-    else setAppliedModel(null);
-  }, [selectedTool?.id, selectedTool?.config_file]);
-
   // ── 模型供应商（统一列表）──
   // 新设计下代理会自动做协议转换，因此 ANY 提供模型列表的供应商都可选；
   // 协议差异由代理的入站/出站转换负责。这里合并为单一列表（按供应商分组）。
@@ -465,9 +567,9 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
       // - 勾选「使用官方模型」→ 先还原工具自己的官方配置（清掉 Kira 写进去的模型），再启动；
       // - 选了第三方模型 → 启动流程本身就会把该模型写进工具配置（后端 launch_ai_tool 已做）。
       if (useOfficialModel && selectedTool.config_file) {
-        const msg = await invoke<string>("restore_ai_tool_config", { toolId: selectedTool.id });
-        setApplyModelMsg({ ok: true, text: msg });
-        await loadAppliedModel(selectedTool.id);
+        // 勾选「使用官方模型」→ 先清掉 Kira 写进去的模型再启动（失败就别启动了，
+        // 否则启动出来的还是上一轮的模型）。
+        await invoke<string>("restore_ai_tool_config", { toolId: selectedTool.id });
       }
       const result = await invoke<{ success: boolean; message: string }>("launch_ai_tool", {
         req: {
@@ -576,39 +678,183 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
     setRemoveDataDirs(value);
   };
 
-  /** 打开卸载确认：先刷新数据目录清单，再把该工具实际占用的目录逐条列出来 */
-  // 「只设置模型、不启动工具」：写进工具自己的配置文件
-  const [applyModelBusy, setApplyModelBusy] = useState(false);
-  const [appliedModel, setAppliedModel] = useState<string | null>(null);
-  const [applyModelMsg, setApplyModelMsg] = useState<{ ok: boolean; text: string } | null>(null);
-
-  /** 读回工具配置文件里当前写定的模型（切换工具时刷新一次） */
-  const loadAppliedModel = async (toolId: string) => {
+  /**
+   * 读取插件市场状态（按工具声明的后端分派：`codex` 或 `claude`）。
+   * 未安装 / 未注册都只是状态，不是错误。
+   */
+  const loadMarketplace = useCallback(async (tool: DetectedAiTool) => {
+    if ((tool.plugin_marketplace_kind ?? "codex") === "claude") {
+      try {
+        const status = await invoke<ClaudePluginStatus>("claude_plugin_status");
+        setClaudeStatus(status);
+        // 一个市场都没配就列不出插件，跳过省一次调用
+        setClaudePlugins(
+          status.cliAvailable && status.marketplaces.length > 0
+            ? await invoke<ClaudePluginInfo[]>("claude_list_plugins").catch(() => [])
+            : []
+        );
+      } catch {
+        setClaudeStatus(null);
+        setClaudePlugins([]);
+      }
+      return;
+    }
     try {
-      const current = await invoke<string | null>("get_ai_tool_model", { toolId });
-      setAppliedModel(current ?? null);
+      const status = await invoke<CodexPluginMarketplaceStatus>("codex_plugin_marketplace_status");
+      setMarketplace(status);
+      // 市场没落盘时列插件只会得到空表，跳过省一次调用
+      setMarketplacePlugins(
+        status.installed
+          ? await invoke<CodexPluginInfo[]>("codex_list_marketplace_plugins").catch(() => [])
+          : []
+      );
     } catch {
-      setAppliedModel(null);
+      setMarketplace(null);
+      setMarketplacePlugins([]);
     }
-  };
+  }, []);
 
-  /** 还原官方配置：清掉 Kira 写进去的自定义模型（含恢复接管前的官方凭据）。
-   *  勾选「使用官方模型」启动时会自动走一遍；这里保留手动入口（不启动也能还原）。 */
-  const restoreOfficial = async () => {
-    if (!selectedTool) return;
-    setApplyModelBusy(true);
-    setApplyModelMsg(null);
+  /**
+   * 市场级操作。
+   *
+   * - **codex**：下载官方市场包 → 落盘并改名 → 注册进 config.toml（幂等更新）。
+   * - **claude**：市场来自仓库，不存在「官方内置包」这回事 → 这里是「添加官方市场来源」。
+   */
+  const installMarketplace = async (tool: DetectedAiTool) => {
+    setMarketplaceBusy(true);
     try {
-      const msg = await invoke<string>("restore_ai_tool_config", { toolId: selectedTool.id });
-      setApplyModelMsg({ ok: true, text: msg });
-      await loadAppliedModel(selectedTool.id);
-    } catch (e: any) {
-      setApplyModelMsg({ ok: false, text: String(e) });
+      if ((tool.plugin_marketplace_kind ?? "codex") === "claude") {
+        const source = claudeStatus?.officialMarketplaceSource ?? "anthropics/skills";
+        await invoke<string[]>("claude_plugin_marketplace_add", { source });
+      } else {
+        // 不额外弹提示：卡片本身会切成「已安装 N 个插件」，那才是用户要看的反馈
+        await invoke<CodexPluginMarketplaceStatus>("codex_install_plugin_marketplace");
+      }
+      await loadMarketplace(tool);
+    } catch (e) {
+      alertError(String(e));
     } finally {
-      setApplyModelBusy(false);
+      setMarketplaceBusy(false);
     }
   };
 
+  /**
+   * 撤销托管。
+   * - **codex**：摘掉 config.toml 的注册并删除落盘目录。
+   * - **claude**：移除指定的市场配置（不传 name 时移除第一个）。
+   */
+  const removeMarketplace = async (tool: DetectedAiTool, name?: string) => {
+    setMarketplaceBusy(true);
+    try {
+      if ((tool.plugin_marketplace_kind ?? "codex") === "claude") {
+        const target = name ?? claudeStatus?.marketplaces[0];
+        if (!target) return;
+        await invoke<string[]>("claude_plugin_marketplace_remove", { name: target });
+      } else {
+        await invoke<CodexPluginMarketplaceStatus>("codex_remove_plugin_marketplace");
+      }
+      await loadMarketplace(tool);
+    } catch (e) {
+      alertError(String(e));
+    } finally {
+      setMarketplaceBusy(false);
+    }
+  };
+
+  /**
+   * 单个插件的安装 / 卸载：一律走官方 CLI。
+   *
+   * CLI 除了写配置，还会把插件落到客户端的插件缓存并处理各自策略（Codex 的 `authPolicy`、
+   * Claude 的 `enabledPlugins`）—— 只写配置文件的话插件在客户端里是「看得见、用不了」。
+   */
+  const togglePlugin = async (tool: DetectedAiTool, key: string, install: boolean) => {
+    setPluginBusy((m) => ({ ...m, [key]: true }));
+    try {
+      if ((tool.plugin_marketplace_kind ?? "codex") === "claude") {
+        const list = await invoke<ClaudePluginInfo[]>(
+          install ? "claude_install_plugin" : "claude_uninstall_plugin",
+          { plugin: key }
+        );
+        setClaudePlugins(list);
+        setClaudeStatus(await invoke<ClaudePluginStatus>("claude_plugin_status"));
+      } else {
+        const list = await invoke<CodexPluginInfo[]>(
+          install ? "codex_install_plugin" : "codex_uninstall_plugin",
+          { name: key }
+        );
+        setMarketplacePlugins(list);
+        setMarketplace(
+          await invoke<CodexPluginMarketplaceStatus>("codex_plugin_marketplace_status")
+        );
+      }
+    } catch (e) {
+      alertError(String(e));
+    } finally {
+      setPluginBusy((m) => ({ ...m, [key]: false }));
+    }
+  };
+
+  /** 当前工具用的是哪套插件后端（未声明按 codex）。 */
+  const marketKind: "codex" | "claude" =
+    (selectedTool?.plugin_marketplace_kind ?? "codex") === "claude" ? "claude" : "codex";
+
+  /** 市场是否就绪（codex = 已落盘；claude = 至少配了一个市场）。 */
+  const marketReady =
+    marketKind === "claude"
+      ? (claudeStatus?.marketplaces.length ?? 0) > 0
+      : !!marketplace?.installed;
+
+  /** CLI 是否可用 —— 不可用时装/卸按钮要置灰，而不是让用户点了报错。 */
+  const marketCliAvailable =
+    marketKind === "claude"
+      ? claudeStatus?.cliAvailable !== false
+      : marketplace?.cliAvailable !== false;
+
+  /**
+   * 插件清单统一成一种行结构后按「市场 / 分类」分组 + 关键字过滤。
+   * 两套后端字段名不同（Codex 用 `name`+`category`，Claude 用 `id`+`marketplace`+`description`），
+   * 在这里抹平，UI 只认一种。
+   */
+  const pluginGroups: [string, PluginRow[]][] = (() => {
+    const rows: PluginRow[] =
+      marketKind === "claude"
+        ? claudePlugins.map((p) => ({
+            key: p.id,
+            title: p.name,
+            group: p.marketplace || t("toollaunch.pluginCategoryOther"),
+            desc: p.description,
+            installed: p.installed,
+            enabled: p.enabled,
+            version: p.version ?? null,
+          }))
+        : marketplacePlugins.map((p) => ({
+            key: p.name,
+            title: p.name,
+            group: p.category || t("toollaunch.pluginCategoryOther"),
+            desc: "",
+            installed: p.installed,
+            enabled: p.enabled,
+            version: p.version ?? null,
+          }));
+    const q = pluginQuery.trim().toLowerCase();
+    const filtered = q
+      ? rows.filter(
+          (r) =>
+            r.title.toLowerCase().includes(q) ||
+            r.group.toLowerCase().includes(q) ||
+            r.desc.toLowerCase().includes(q)
+        )
+      : rows;
+    const groups = new Map<string, PluginRow[]>();
+    for (const r of filtered) {
+      const bucket = groups.get(r.group);
+      if (bucket) bucket.push(r);
+      else groups.set(r.group, [r]);
+    }
+    return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  })();
+
+  /** 打开卸载确认：先刷新数据目录清单，再把该工具实际占用的目录逐条列出来 */
   const askUninstall = async (tool: DetectedAiTool) => {
     await loadCacheInfos();
     const dirs = cacheInfos.filter((c) => c.tool_id === tool.id && c.exists);
@@ -796,13 +1042,22 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
     // 分叉必须挑一条会话（没有源会话就无从复制）
     && (sessionMode !== "fork" || !!selectedSession);
 
-  // 列表分组（抄 EchoBird 的维度：先按已装/未装分开，未装的再按 CLI / 桌面端筛）
+  // 本次启动**实际会用第三方模型**：没勾「使用官方模型」**且**确实选了一个模型。
+  //
+  // 只勾掉官方开关、但一个模型都没选时，后端拿到的 `model_id` 是 null，
+  // 走的仍然是工具的官方配置 —— 此时优化器 / 整流器没有任何作用，不该显示。
+  const usingThirdPartyModel = !useOfficialModel && !!selectedModel;
+
+  // 列表分组（抄 EchoBird 的维度：先按已装/未装分开，已装的排在前面）
+  // 形态筛选对**两组都生效**：只筛未装那组的话，选「桌面端」时已装的 CLI 照样在列表里，
+  // 筛选看起来就是坏的。
+  const matchesKind = (t: DetectedAiTool) =>
+    kindFilter === "all" || (t.tool_kind ?? "other") === kindFilter;
   const installedTools = tools.filter(t => t.installed);
   const notInstalledTools = tools.filter(t => !t.installed);
-  const visibleNotInstalled = kindFilter === "all"
-    ? notInstalledTools
-    : notInstalledTools.filter(t => (t.tool_kind ?? "other") === kindFilter);
-  const visibleTools = [...installedTools, ...visibleNotInstalled];
+  const visibleInstalled = installedTools.filter(matchesKind);
+  const visibleNotInstalled = notInstalledTools.filter(matchesKind);
+  const visibleTools = [...visibleInstalled, ...visibleNotInstalled];
 
   return (
     <div className="h-full flex min-h-0 select-none">
@@ -812,9 +1067,9 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
         className="flex-shrink-0 border-r border-white/5 py-3 px-2 overflow-y-auto space-y-0.5 flex flex-col"
       >
         <div className="flex items-center gap-1 px-1 mb-1">
-          {/* 形态筛选：只作用于「未安装」那一组（已装的就几个，再分组只会多找一层）。
+          {/* 形态筛选：对已装 / 未装两组都生效。
               窄栏放不下「AI 工具」标题 + 三个 tab，标题去掉、tab 靠左铺满。 */}
-          {notInstalledTools.length > 0 && (
+          {tools.length > 0 && (
             <div className="flex items-center gap-0.5 flex-1 min-w-0">
               {(["all", "cli", "desktop"] as ToolKindFilter[]).map(k => (
                 <button
@@ -840,7 +1095,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
         {/* 不再打「已安装 / 未安装」分组标题：列表里每项自己就带状态（绿点 + 版本号），
             标题只是重复这句话，还占掉两行高度。 */}
         {/* 筛选后一个都不剩：明说原因，别让整段静默消失 */}
-        {notInstalledTools.length > 0 && visibleNotInstalled.length === 0 && (
+        {visibleTools.length === 0 && (
           <div className="px-1 py-1.5 text-micro text-slate-600">{t("toollaunch.kindEmpty")}</div>
         )}
         {visibleTools.map((tool) => {
@@ -911,6 +1166,34 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                   }
                 } catch { /* 无历史记录 */
                 }
+                // 再以**工具配置文件**为准回显一次：它比「上次启动配置」权威 ——
+                // 工具真正读的是自己的配置文件，用户也可能在别处改过它。
+                // 只信自己的记录会出现「看着像用官方配置、实际还在用自定义模型」。
+                setConfigAppliedModel(null);
+                setConfigAppliedFallback(null);
+                if (tool.config_file) {
+                  try {
+                    const applied = await invoke<AppliedModels>("get_ai_tool_models", { toolId: tool.id });
+                    setConfigAppliedModel(applied.model ?? null);
+                    setConfigAppliedFallback(applied.fallback_model ?? null);
+                    const providers = config?.providers ?? [];
+                    const mainRef = findModelRef(providers, applied.model);
+                    if (mainRef) {
+                      setUseOfficialModel(false);
+                      setSelectedModelProvider(mainRef.providerId);
+                      setSelectedModel(mainRef.modelId);
+                    }
+                    const fbRef = findModelRef(providers, applied.fallback_model);
+                    if (fbRef) {
+                      setSelectedFallbackProvider(fbRef.providerId);
+                      setSelectedFallbackModel(fbRef.modelId);
+                    }
+                  } catch { /* 读不到就当没有，不影响使用 */
+                  }
+                }
+                // Codex 插件市场状态只对声明了该能力的工具查（写的是全局 ~/.codex）
+                setMarketplace(null);
+                if (tool.supports_plugin_marketplace) void loadMarketplace(tool);
               }}
               className={`w-full px-3 py-2.5 rounded-ctl text-left transition-all cursor-pointer ${
                 selectedToolId === tool.id
@@ -1238,6 +1521,10 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                   <span className="text-amber-400/80">
                     {t("toollaunch.pathInvalid", { path: selectedTool.custom_path })}
                   </span>
+                ) : selectedTool.tool_kind === "desktop" ? (
+                  // Store / 桌面应用本来就没有常规 exe 安装路径（装在系统包注册里），
+                  // 这不是检测失灵：启动走 `shell:AppsFolder\…` 包 URI，不依赖这条路径
+                  <span className="text-slate-500">{t("toollaunch.pathStoreApp")}</span>
                 ) : (
                   t("toollaunch.pathNotDetected")
                 )}
@@ -1250,6 +1537,146 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
             {/* CLI 工具配置面板 */}
             {selectedTool.installed && selectedTool.supports_model && (
               <>
+                {/* 官方插件市场（两套后端共用这一块 UI）。
+                    - Codex 系：市场 = 下载官方仓库落盘 + 注册进 config.toml；插件走 `codex plugin`。
+                    - Claude Code：市场 = 添加一个仓库来源（写进 settings.json）；插件走 `claude plugin`。
+                    装/卸一律经官方 CLI —— 只有它才会落插件缓存、维护 enabled 与市场快照，
+                    自己写配置文件的话插件在客户端里是「看得见、用不了」。 */}
+                {selectedTool.supports_plugin_marketplace && selectedTool.installed && (
+                  <div className="rounded-card border border-white/5 bg-slate-900/30 p-3 space-y-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-body font-semibold text-slate-300">{t("toollaunch.pluginMarketplace")}</span>
+                      <span className={`text-micro px-1.5 py-px rounded font-semibold ${
+                        marketReady
+                          ? "bg-emerald-500/15 text-emerald-300"
+                          : "bg-slate-500/15 text-slate-400"
+                      }`}>
+                        {marketReady ? t("toollaunch.pluginMarketplaceInstalled") : t("toollaunch.pluginMarketplaceNotInstalled")}
+                      </span>
+                      {marketReady && (
+                        <span className="text-micro text-slate-500">
+                          {marketKind === "claude" ? (
+                            <>
+                              {t("toollaunch.pluginMarketplaceMarkets", { count: claudeStatus?.marketplaces.length ?? 0 })}
+                              {` · ${t("toollaunch.pluginMarketplaceCount", { count: claudePlugins.length })}`}
+                            </>
+                          ) : (
+                            <>
+                              {t("toollaunch.pluginMarketplaceCount", { count: marketplace?.pluginCount ?? 0 })}
+                              {` · ${t("toollaunch.pluginMarketplaceEnabled", { count: marketplace?.enabledCount ?? 0 })}`}
+                              {marketplace?.registered ? "" : ` · ${t("toollaunch.pluginMarketplaceUnregistered")}`}
+                            </>
+                          )}
+                        </span>
+                      )}
+                      <span className="flex-1" />
+                      <button onClick={() => void installMarketplace(selectedTool)} disabled={marketplaceBusy}
+                        className="px-2.5 py-1 rounded-md text-tiny bg-[var(--module-accent)]/20 hover:bg-[var(--module-accent)]/30 text-white cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                        {marketplaceBusy
+                          ? <><RefreshCw className="w-3 h-3 inline animate-spin" /> {t("toollaunch.pluginMarketplaceWorking")}</>
+                          : marketKind === "claude"
+                            ? (marketReady ? t("toollaunch.pluginMarketplaceAddAnother") : t("toollaunch.pluginMarketplaceAddOfficial"))
+                            : (marketplace?.installed ? t("toollaunch.pluginMarketplaceUpdate") : t("toollaunch.pluginMarketplaceInstall"))}
+                      </button>
+                      {marketReady && marketKind === "codex" && (
+                        <button onClick={() => void removeMarketplace(selectedTool)} disabled={marketplaceBusy}
+                          className="px-2.5 py-1 rounded-md text-tiny bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                          {t("toollaunch.pluginMarketplaceRemove")}
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-micro text-slate-500">{t("toollaunch.pluginMarketplaceHint")}</p>
+                    {/* Claude 的市场是「一个个加进来的」，逐个列出、逐个可移除 */}
+                    {marketKind === "claude" && (claudeStatus?.marketplaces.length ?? 0) > 0 && (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {claudeStatus!.marketplaces.map((m) => (
+                          <span key={m}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-ctl bg-white/5 border border-white/5 text-micro text-slate-300">
+                            <span className="font-mono">{m}</span>
+                            <button onClick={() => void removeMarketplace(selectedTool, m)} disabled={marketplaceBusy}
+                              className="text-slate-500 hover:text-red-400 cursor-pointer disabled:opacity-40 leading-none"
+                              title={t("toollaunch.pluginMarketplaceRemove")}>
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {marketKind === "codex" && marketplace?.root && (
+                      <div className="text-micro text-slate-600 font-mono break-all">{marketplace.root}</div>
+                    )}
+
+                    {/* 插件清单：逐个安装 / 卸载（两套后端共用同一份渲染） */}
+                    {marketReady && (
+                      !marketCliAvailable ? (
+                        <p className="text-micro text-amber-400/80">
+                          {marketKind === "claude"
+                            ? t("toollaunch.pluginCliMissingClaude")
+                            : t("toollaunch.pluginCliMissing")}
+                        </p>
+                      ) : (
+                        <div className="space-y-2 pt-1">
+                          <input
+                            value={pluginQuery}
+                            onChange={(e) => setPluginQuery(e.target.value)}
+                            placeholder={t("toollaunch.pluginSearch")}
+                            className="w-full ui-input rounded-ctl px-2 py-1 text-tiny text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
+                          />
+                          {pluginGroups.length === 0 ? (
+                            <p className="text-micro text-slate-500">{t("toollaunch.pluginEmpty")}</p>
+                          ) : (
+                            pluginGroups.map(([group, items]) => (
+                              <div key={group} className="space-y-1">
+                                <div className="text-micro text-slate-500 font-semibold">{group}</div>
+                                {items.map((p) => (
+                                  <div
+                                    key={p.key}
+                                    className="flex items-start gap-2 px-2 py-1 rounded-ctl bg-slate-900/40 border border-white/5"
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-tiny text-slate-200 truncate">{p.title}</span>
+                                        {p.version && (
+                                          <span className="text-micro text-slate-600 font-mono flex-shrink-0">{p.version}</span>
+                                        )}
+                                      </div>
+                                      {p.desc && (
+                                        <div className="text-micro text-slate-600 line-clamp-2">{p.desc}</div>
+                                      )}
+                                    </div>
+                                    {p.installed && (
+                                      <span className="text-micro px-1.5 py-px rounded bg-emerald-500/15 text-emerald-300 flex-shrink-0 mt-0.5">
+                                        {t("toollaunch.pluginInstalledTag")}
+                                      </span>
+                                    )}
+                                    <button
+                                      onClick={() => void togglePlugin(selectedTool, p.key, !p.installed)}
+                                      disabled={!!pluginBusy[p.key]}
+                                      className={`px-2 py-0.5 rounded text-micro cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0 mt-0.5 ${
+                                        p.installed
+                                          ? "bg-white/5 hover:bg-white/10 text-slate-300"
+                                          : "bg-[var(--module-accent)]/20 hover:bg-[var(--module-accent)]/30 text-white"
+                                      }`}
+                                    >
+                                      {pluginBusy[p.key] ? (
+                                        <RefreshCw className="w-3 h-3 animate-spin" />
+                                      ) : p.installed ? (
+                                        t("toollaunch.pluginUninstall")
+                                      ) : (
+                                        t("toollaunch.pluginInstall")
+                                      )}
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )
+                    )}
+                  </div>
+                )}
+
                 {/* 缓存路径（当前工具） */}
                 <div>
                   <button
@@ -1349,10 +1776,30 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                 {/* ─── 模型选择 ─── */}
                 {selectedTool.supports_model && !useOfficialModel && (
                   <div>
+                    {/* 配置文件里有模型、但仓库里查不到（比如写了伪装名，或那个供应商/模型
+                        已被删）：明说它还在生效，别静默显示成「未选择」—— 那会让人以为
+                        工具在用官方配置。 */}
+                    {configAppliedModel && !selectedModel && (
+                      <Note tone="warn">
+                        {t("toollaunch.configModelFromFile", { model: configAppliedModel })}
+                      </Note>
+                    )}
+                    {configAppliedFallback && !selectedFallbackModel && (
+                      <Note tone="warn">
+                        {t("toollaunch.configFallbackFromFile", { model: configAppliedFallback })}
+                      </Note>
+                    )}
+
                     {/* 模型供应商 — 统一列表（代理自动转换协议，任意供应商可选） */}
                     {eligibleProviders.length > 0 && (
-                      <div>
-                        <label className="text-body font-bold text-slate-300 mb-1.5 block">{t("toollaunch.modelVendor")}</label>
+                      <CollapsibleCard
+                        title={t("toollaunch.modelVendor")}
+                        open={vendorOpen}
+                        onToggle={() => setVendorOpen(!vendorOpen)}
+                        summary={selectedModel
+                          ? `${selectedModel}（${config?.providers.find(p => p.id === selectedModelProvider)?.name ?? "—"}）`
+                          : t("toollaunch.noModelSelected")}
+                      >
                         <div className="rounded-ctl border border-white/5 bg-slate-900/30">
                           {eligibleProviders.map(group => {
                             const isSelected = selectedModelProvider === group.provider_id;
@@ -1439,7 +1886,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                             ))}
                           </div>
                         )}
-                      </div>
+                      </CollapsibleCard>
                     )}
 
                     {/* 没有可用的供应商/模型时的警告 */}
@@ -1464,50 +1911,20 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                       </div>
                     )}
 
-                    {/* 配置文件面板：只做「展示 + 手动还原」，写入交给启动流程 ——
-                        启动时选第三方模型会自动写，勾选官方模型会自动还原。 */}
-                    {selectedTool.config_file && (
-                      <div className="mt-3 rounded-ctl border border-white/5 bg-slate-900/30 p-2.5">
-                        <div className="flex items-center gap-2">
-                          <span className="text-tiny text-slate-400 flex-1 min-w-0">
-                            {t("toollaunch.configAutoHint")}
-                          </span>
-                          {/* 手动还原：不启动也能清掉 Kira 写进去的自定义模型 */}
-                          <button
-                            onClick={() => void restoreOfficial()}
-                            disabled={applyModelBusy}
-                            className="px-2.5 py-1 rounded-md text-tiny bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                          >
-                            {applyModelBusy ? t("toollaunch.restoring") : t("toollaunch.restoreOfficial")}
-                          </button>
-                        </div>
-                        <div className="mt-1.5 text-micro text-slate-500 break-all">
-                          {t("toollaunch.configFileLabel")}
-                          <span className="font-mono text-slate-400">{selectedTool.config_file.path}</span>
-                        </div>
-                        {appliedModel !== null && (
-                          <div className="mt-1 text-micro text-slate-500">
-                            {t("toollaunch.currentConfigModel")}
-                            <span className="font-mono text-slate-300">{appliedModel || t("toollaunch.unknownModel")}</span>
-                          </div>
-                        )}
-                        {applyModelMsg && (
-                          <div className={`mt-1 text-micro break-all ${applyModelMsg.ok ? "text-emerald-400" : "text-rose-400"}`}>
-                            {applyModelMsg.text}
-                          </div>
-                        )}
-                      </div>
-                    )}
                   </div>
                 )}
 
-                {/* Fallback 模型 — 按供应商分组，可折叠 */}
-                {selectedTool.supports_fallback_model && selectedTool.installed && !useOfficialModel && fallbackGroups.length > 0 && (
-                  <div>
-                    <label className="text-body font-bold text-slate-300 mb-2 block">
-                      {t("toollaunch.fallbackLabel")}
-                      <span className="text-micro text-slate-500 font-normal ml-1">{t("toollaunch.fallbackHint")}</span>
-                    </label>
+                {/* Fallback 模型 — 按供应商分组，可折叠。
+                    与优化器 / 整流器同理：没选主模型时等于还是官方配置，
+                    fallback 也不会生效，摆出来是误导。 */}
+                {selectedTool.supports_fallback_model && selectedTool.installed && usingThirdPartyModel && fallbackGroups.length > 0 && (
+                  <CollapsibleCard
+                    title={t("toollaunch.fallbackLabel")}
+                    hint={t("toollaunch.fallbackHint")}
+                    open={fallbackOpen}
+                    onToggle={() => setFallbackOpen(!fallbackOpen)}
+                    summary={selectedFallbackModel || t("toollaunch.noFallbackShort")}
+                  >
                     <div className="rounded-ctl border border-white/5 bg-slate-900/30 overflow-hidden">
                       <div className="px-3 py-1.5 text-micro text-slate-600 font-mono cursor-pointer hover:bg-white/[0.05] border-b border-white/[0.03]"
                         onClick={() => { setSelectedFallbackModel(""); setSelectedFallbackProvider(""); setFallbackOneMContext(false); }}>
@@ -1586,7 +2003,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                         <div className="mt-1 text-tiny text-amber-400">{t("toollaunch.fallbackPreview", { model: `${selectedFallbackModel}${fallbackOneMContext ? "[1m]" : ""}` })}{fallbackMasqueradeModel && <>{t("toollaunch.masqueradeAs", { model: `${fallbackMasqueradeModel}${fallbackOneMContext ? "[1m]" : ""}` })}</>}</div>
                       </>
                     )}
-                  </div>
+                  </CollapsibleCard>
                 )}
 
                 {/* 1M Context Toggle — 由 config.json 的 supportOneMContext 字段驱动 */}
@@ -1621,21 +2038,26 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                   </div>
                 )}
 
-                {/* 代理增强能力（优化器 / 整流器）— 默认沿用全局配置，可在此按启动覆盖 */}
-                {selectedTool.supports_model && !useOfficialModel && (selectedTool.supports_optimizer || selectedTool.supports_rectifier) && (
+                {/* 代理增强能力（优化器 / 整流器）— 默认沿用全局配置，可在此按启动覆盖。
+                    只有真的会走第三方模型时才显示：没选模型等于还是用官方配置，
+                    代理根本不会介入，这两个开关摆出来是误导。 */}
+                {selectedTool.supports_model && usingThirdPartyModel && (selectedTool.supports_optimizer || selectedTool.supports_rectifier) && (
                   <div className="space-y-2">
                     {selectedTool.supports_optimizer && (
-                      <div className="rounded-ctl bg-slate-900/30 border border-white/5 overflow-hidden">
-                        <div className="flex items-center justify-between p-2.5">
-                          <div className="flex items-center gap-2">
-                            <span className="text-tiny font-semibold text-slate-300">{t("toollaunch.optimizer")}</span>
-                            <span className="text-[8px] text-slate-500 hidden sm:inline">{t("toollaunch.optimizerHint")}</span>
-                          </div>
+                      <CollapsibleCard
+                        title={t("toollaunch.optimizer")}
+                        hint={t("toollaunch.optimizerHint")}
+                        open={optimizerOpen}
+                        onToggle={() => setOptimizerOpen(!optimizerOpen)}
+                        summary={optimizerEnabled ? t("toollaunch.stateOn") : t("toollaunch.stateOff")}
+                        action={
                           <button onClick={() => setOptimizerEnabled(!optimizerEnabled)}
                             className={`p-1 rounded-md cursor-pointer transition-all ${optimizerEnabled ? "text-[var(--module-accent)]" : "text-slate-600 hover:text-slate-400"}`}>
                             {optimizerEnabled ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
                           </button>
-                        </div>
+                        }
+                      >
+                      <div className="rounded-ctl bg-slate-900/30 border border-white/5 overflow-hidden">
                         {optimizerEnabled && (
                           <div className="px-3 pb-2.5 space-y-1.5 border-t border-white/5 pt-2">
                             {[
@@ -1656,20 +2078,24 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                             ))}
                           </div>
                         )}
-                      </div>
+                        </div>
+                      </CollapsibleCard>
                     )}
                     {selectedTool.supports_rectifier && (
-                      <div className="rounded-ctl bg-slate-900/30 border border-white/5 overflow-hidden">
-                        <div className="flex items-center justify-between p-2.5">
-                          <div className="flex items-center gap-2">
-                            <span className="text-tiny font-semibold text-slate-300">{t("toollaunch.rectifier")}</span>
-                            <span className="text-[8px] text-slate-500 hidden sm:inline">{t("toollaunch.rectifierHint")}</span>
-                          </div>
+                      <CollapsibleCard
+                        title={t("toollaunch.rectifier")}
+                        hint={t("toollaunch.rectifierHint")}
+                        open={rectifierOpen}
+                        onToggle={() => setRectifierOpen(!rectifierOpen)}
+                        summary={rectifierEnabled ? t("toollaunch.stateOn") : t("toollaunch.stateOff")}
+                        action={
                           <button onClick={() => setRectifierEnabled(!rectifierEnabled)}
                             className={`p-1 rounded-md cursor-pointer transition-all ${rectifierEnabled ? "text-[var(--module-accent)]" : "text-slate-600 hover:text-slate-400"}`}>
                             {rectifierEnabled ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
                           </button>
-                        </div>
+                        }
+                      >
+                      <div className="rounded-ctl bg-slate-900/30 border border-white/5 overflow-hidden">
                         {rectifierEnabled && (
                           <div className="px-3 pb-2.5 space-y-1.5 border-t border-white/5 pt-2">
                             {[
@@ -1692,7 +2118,8 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                             ))}
                           </div>
                         )}
-                      </div>
+                        </div>
+                      </CollapsibleCard>
                     )}
                   </div>
                 )}
@@ -1857,8 +2284,8 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                   )}
                 </div>
 
-                {/* 项目目录 */}
-                {sessionMode === "new" && (
+                {/* 项目目录（桌面应用与项目目录无关，后端会用 exe 所在目录当工作目录） */}
+                {sessionMode === "new" && selectedTool.tool_kind !== "desktop" && (
                   <div>
                     <label className="text-body font-bold text-slate-300 mb-2 block">{t("toollaunch.projectDir")}</label>
                     <div className="flex gap-2">
@@ -1872,8 +2299,8 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                   </div>
                 )}
 
-                {/* 终端 */}
-                {terminals.length > 0 && (
+                {/* 终端（桌面应用直接拉起 GUI 进程，不经过终端包装） */}
+                {terminals.length > 0 && selectedTool.tool_kind !== "desktop" && (
                   <div>
                     <label className="text-body font-bold text-slate-300 mb-2 block">{t("toollaunch.terminal")}</label>
                     <select value={selectedTerminal} onChange={e => setSelectedTerminal(e.target.value)}
@@ -1910,10 +2337,10 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                           <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 text-micro font-semibold">{t("toollaunch.sameProtocol")}</span>
                         )}
                         <span className="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300 text-micro font-semibold">{t("toollaunch.statsOn")}</span>
-                        {selectedTool.supports_optimizer && optimizerEnabled && config?.optimizer.enabled && (
+                        {usingThirdPartyModel && selectedTool.supports_optimizer && optimizerEnabled && config?.optimizer.enabled && (
                           <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] text-micro font-semibold">{t("toollaunch.optimizerBadge")}</span>
                         )}
-                        {selectedTool.supports_rectifier && rectifierEnabled && config?.rectifier.enabled && (
+                        {usingThirdPartyModel && selectedTool.supports_rectifier && rectifierEnabled && config?.rectifier.enabled && (
                           <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] text-micro font-semibold">{t("toollaunch.rectifierBadge")}</span>
                         )}
                       </div>

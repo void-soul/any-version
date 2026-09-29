@@ -155,7 +155,7 @@ fn write_workbuddy(path: &Path, m: &ModelWrite<'_>) -> Result<(), String> {
     });
 
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
+        ensure_dir(parent)
             .map_err(|e| format!("创建 WorkBuddy 配置目录失败: {e}（{}）", parent.display()))?;
     }
     // 必须 UTF-8 **不带 BOM**：个别桌面构建解析带 BOM 的 models.json 会直接失败
@@ -317,7 +317,7 @@ pub fn write_claudedesktop_with(
 
     set_deployment_mode(&layout.official_cfg, "3p")?;
     set_deployment_mode(&layout.threep_cfg, "3p")?;
-    std::fs::create_dir_all(&layout.lib_dir)
+    ensure_dir(&layout.lib_dir)
         .map_err(|e| format!("创建 Claude Desktop profile 目录失败: {e}"))?;
 
     // `inferenceModels` 直接填充 Desktop 的模型选择器，并**跳过**它对网关的
@@ -413,11 +413,64 @@ fn read_json_or_empty(path: &Path) -> serde_json::Value {
         .unwrap_or_else(|| serde_json::json!({}))
 }
 
+/// 确保目录可用，**能处理「断链的重解析点」**（Windows 上 junction 指向的目标被删掉）。
+///
+/// 为什么不能直接用 `std::fs::create_dir_all`：junction 本身还在、目标没了时，
+/// `mkdir` 返回 `ERROR_ALREADY_EXISTS(183)`，紧接着 std 会用跟随链接的 `is_dir()` 判断，
+/// 链接断了就得到 false → 把 183 当成真错误抛出来，报的还是「当文件已存在时，无法创建该文件」，
+/// 用户完全看不懂，也想不到是链接的问题。
+///
+/// 2026-09-29 真机实测到：`%LOCALAPPDATA%\Claude-3p` 被 junction 到 `D:\sim-tool\Claude-3p`，
+/// 后者被删 → 给 Claude Desktop 设置模型**必然失败**（就是上面那条报错）。
+///
+/// 这里的做法：正常目录直接放行；失败时按链接把**目标目录补出来**（用户的意图就是数据放那边，
+/// 不该因为目标被删就整体失败），补完仍不行才报错，并且说明是链接的问题。
+pub(crate) fn ensure_dir(path: &Path) -> Result<(), String> {
+    if path.is_dir() {
+        return Ok(());
+    }
+    if std::fs::create_dir_all(path).is_ok() {
+        return Ok(());
+    }
+    // 走到这里通常是断链的重解析点：把链接目标建出来
+    if let Ok(raw) = std::fs::read_link(path) {
+        let target = normalize_link_target(path, &raw);
+        if let Err(e) = std::fs::create_dir_all(&target) {
+            return Err(format!(
+                "无法创建目录 {}：它是一个链接，指向 {}，而该目标也建不出来（{e}）",
+                path.display(),
+                target.display()
+            ));
+        }
+        if path.is_dir() {
+            return Ok(());
+        }
+    }
+    Err(format!(
+        "无法创建目录 {}（它可能是指向已删除目标的链接/联结，删除后重试即可）",
+        path.display()
+    ))
+}
+
+/// 把 `read_link` 给出的原始目标规整成可用路径。
+///
+/// Windows 上 junction 的目标形如 `\??\D:\sim-tool\Claude-3p`（NT 对象管理器前缀），
+/// 必须去掉该前缀才能当普通路径用；相对目标按链接所在目录展开。
+fn normalize_link_target(link: &Path, raw: &Path) -> PathBuf {
+    let text = raw.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\??\") {
+        return PathBuf::from(rest);
+    }
+    if raw.is_absolute() {
+        return raw.to_path_buf();
+    }
+    link.parent().unwrap_or(Path::new(".")).join(raw)
+}
+
 /// 写 JSON（serde_json 输出天然 UTF-8 无 BOM），父目录不存在则创建。
 fn write_json(path: &Path, doc: &serde_json::Value) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("创建目录失败: {e}（{}）", parent.display()))?;
+        ensure_dir(parent).map_err(|e| format!("创建目录失败: {e}"))?;
     }
     let text = serde_json::to_string_pretty(doc).map_err(|e| format!("序列化失败: {e}"))?;
     std::fs::write(path, text).map_err(|e| format!("写入失败: {e}（{}）", path.display()))
@@ -553,6 +606,48 @@ mod tests {
         // 未知写入器名也要报错（配置写错立刻可见）
         assert!(write_config("nope", &path, &with("https://x/v1", "sk")).is_err());
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// **断链的重解析点不能让我们整体失败**。
+    ///
+    /// 真机形态：`%LOCALAPPDATA%\Claude-3p` 被 junction 到 `D:\sim-tool\Claude-3p`，
+    /// 而目标目录被删了 → 裸 `create_dir_all` 报
+    /// `os error 183`「当文件已存在时，无法创建该文件」，用户完全看不懂，
+    /// 「给 Claude Desktop 设置模型」必然失败。
+    #[cfg(windows)]
+    #[test]
+    fn ensure_dir_repairs_dangling_junction() {
+        let root = std::env::temp_dir().join(format!("anyver-junction-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let link = root.join("link");
+        let target = root.join("real-target");
+
+        // 建 junction：mklink 是 cmd 内建命令，建 junction 不需要管理员权限
+        let created = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&target)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !created {
+            // 环境不允许建 junction：跳过（被测逻辑没问题，只是没法在这里复现）
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+        assert!(!target.exists(), "此刻应是断链状态");
+
+        // 记录裸调用会怎样（不同 std 版本行为可能不同，不作为断言）
+        let plain = std::fs::create_dir_all(&link).is_ok();
+
+        super::ensure_dir(&link).expect("断链 junction 应被修复");
+        assert!(target.is_dir(), "链接目标应被建出来（裸调用是否成功={plain}）");
+        std::fs::write(link.join("probe.json"), "{}").expect("修好后应能正常写入");
+
+        // 清理：先删链接本身，再删整个临时根
+        let _ = std::fs::remove_dir(&link);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn probe_layout(name: &str) -> ClaudeDesktopLayout {

@@ -109,6 +109,16 @@ fn default_aggregate_port() -> u16 { 15888 }
 fn default_aggregate_context_limit() -> u64 { 128_000 }
 fn default_aggregate_retry_count() -> u32 { 2 }
 fn default_aggregate_entry_model() -> String { "kiro-proxy".to_string() }
+/// 首字节超时（秒）：连上上游后迟迟不吐第一个字节就按瞬时失败计冷却并切下一个候选。
+/// 抄 cc-switch `AppProxyConfig.streamingFirstByteTimeout`（默认 60）。
+///
+/// 为什么必须有：此前候选只有一个 300s 的整体超时，上游「连得上但挂住不响应」时
+/// 整条聚合链会被这一个候选堵满 300s，故障转移形同虚设。
+fn default_aggregate_first_byte_timeout() -> u64 { 60 }
+/// 流式空闲超时（秒）：首字节之后两个 chunk 之间的最大间隔。
+/// 抄 cc-switch `AppProxyConfig.streamingIdleTimeout`（默认 120）。
+/// 超时只能终止当前流（字节已经发出，不能换候选，否则会重复计费）。
+fn default_aggregate_idle_timeout() -> u64 { 120 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AggregateConfig {
@@ -125,6 +135,12 @@ pub struct AggregateConfig {
     /// 客户端以该名字请求，聚合层按候选链改写为各上游配置的模型名。
     #[serde(default = "default_aggregate_entry_model")]
     pub entry_model: String,
+    /// 首字节超时（秒）：连上上游后迟迟不吐字节 → 计瞬时失败并切下一个候选。
+    #[serde(default = "default_aggregate_first_byte_timeout")]
+    pub first_byte_timeout_secs: u64,
+    /// 流式空闲超时（秒）：流式过程中两个 chunk 的最大间隔，超时终止该流。
+    #[serde(default = "default_aggregate_idle_timeout")]
+    pub idle_timeout_secs: u64,
 }
 
 impl Default for AggregateConfig {
@@ -134,6 +150,8 @@ impl Default for AggregateConfig {
             context_limit: default_aggregate_context_limit(),
             retry_count: default_aggregate_retry_count(),
             entry_model: default_aggregate_entry_model(),
+            first_byte_timeout_secs: default_aggregate_first_byte_timeout(),
+            idle_timeout_secs: default_aggregate_idle_timeout(),
         }
     }
 }
@@ -146,6 +164,14 @@ impl Default for AggregateConfig {
 pub struct RouteCandidate {
     pub provider_id: String,
     pub model_id: String,
+    /// 用户显式声明的「该模型是否支持图片输入」（None = 自动，交给注册表启发式判定）。
+    ///
+    /// 抄 cc-switch `model_capabilities.rs` 的「显式声明优先级最高」：
+    /// 注册表只覆盖已确认的家族，第三方供应商的视觉模型名字千奇百怪，
+    /// 漏判时用户只能被动等上游报错再降级。给用户一个显式开关，
+    /// 且它的优先级高于注册表（三态判定见 `proxy::optimizers::resolve_image_input_capability`）。
+    #[serde(default)]
+    pub supports_image: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -509,6 +535,14 @@ pub struct Skill {
     pub directory: String,
     pub installed_at: String,
     pub install_method: String,
+    /// 安装来源（`owner/repo` 或 git URL；本地目录安装为空）。
+    ///
+    /// 记它是为了能回答「这个技能有没有更新」—— 没有来源就无从比对。
+    #[serde(default)]
+    pub source: String,
+    /// 安装时远端 HEAD 的 commit sha，用于与最新 HEAD 比对。
+    #[serde(default)]
+    pub commit: String,
 }
 
 /// 技能视图（返回给前端）：在 `Skill` 基础上补充实时推导的 `installed_tools`。

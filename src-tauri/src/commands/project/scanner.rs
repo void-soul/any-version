@@ -702,10 +702,18 @@ pub(crate) fn invalidate_msix_version_cache(package_name: &str) {
     if let Ok(mut cache) = msix_version_cache().lock() {
         cache.remove(package_name);
     }
+    // 族名缓存的 key 是「候选列表用 | 拼接」，装 / 卸之后同样要失效，
+    // 否则启动仍会用旧的 AUMID（刚装完的 Store 应用照样拉不起来）。
+    if let Ok(mut cache) = msix_family_cache().lock() {
+        cache.retain(|key, _| !key.split('|').any(|n| n == package_name));
+    }
 }
 
 /// 查询系统里已注册的 MSIX 包版本。`Ok(None)` = 确实没装，`Err` = 查询失败（无法判定）。
-fn msix_package_version(package_name: &str) -> Result<Option<String>, String> {
+///
+/// AI 工具模块也用它判定 Store 应用（ChatGPT / Claude 桌面端）有没有装上 ——
+/// 这类应用没有普通 exe 安装路径，只能问系统包注册。
+pub(crate) fn msix_package_version(package_name: &str) -> Result<Option<String>, String> {
     {
         let cache = msix_version_cache().lock().map_err(|e| format!("MSIX 缓存锁失败: {}", e))?;
         if let Some((at, value)) = cache.get(package_name) {
@@ -731,6 +739,86 @@ fn msix_package_version(package_name: &str) -> Result<Option<String>, String> {
     Ok(value)
 }
 
+/// PackageFamilyName 查询结果缓存（与版本缓存同理：一次 PowerShell 约 1~2 秒）。
+fn msix_family_cache() -> &'static std::sync::Mutex<HashMap<String, (Instant, Option<String>)>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<String, (Instant, Option<String>)>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+/// 按候选顺序查出系统里已注册 MSIX 包的 **PackageFamilyName**（`<identity>_<publisherhash>`）。
+///
+/// 为什么需要它：`paths.json` 里硬编码的 `shell:AppsFolder\<PFN>!App` 把 publisher hash
+/// 写死了 —— 装的是 beta 渠道（如 `OpenAI.CodexBeta`）或其它 publisher 的版本时，这个
+/// AUMID 根本不存在，点启动要么没反应、要么弹出一个文件夹窗口。
+/// `Get-AppxPackage` 是 Windows 自己的权威来源，与 publisher hash 无关。
+///
+/// 候选按优先级给出（stable 优先、beta 兜底），**一次** PowerShell 调用搞定全部候选。
+/// 抄 EchoBird `codex_proxy/codex_binary.rs::find_codex_store_family_via_appx`。
+pub(crate) fn msix_package_family_name(
+    package_names: &[&str],
+) -> Result<Option<String>, String> {
+    let key = package_names.join("|");
+    if key.is_empty() {
+        return Ok(None);
+    }
+    {
+        let cache = msix_family_cache()
+            .lock()
+            .map_err(|e| format!("MSIX 缓存锁失败: {}", e))?;
+        if let Some((at, value)) = cache.get(&key) {
+            if at.elapsed() < MSIX_VERSION_TTL {
+                return Ok(value.clone());
+            }
+        }
+    }
+
+    let script = build_family_name_script(package_names);
+    let out = crate::commands::hidden_cmd::hidden_cmd("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .map_err(|e| format!("查询 MSIX 包族名失败: {}", e))?;
+    let value = parse_msix_family_name(&String::from_utf8_lossy(&out.stdout));
+
+    if let Ok(mut cache) = msix_family_cache().lock() {
+        cache.insert(key, (Instant::now(), value.clone()));
+    }
+    Ok(value)
+}
+
+/// 拼一段「按候选顺序取 PackageFamilyName」的 PowerShell。
+///
+/// 与 publisher hash 无关，所以候选里可以同时放 stable 与 beta；
+/// 同名的多个安装按版本倒序取最新。
+fn build_family_name_script(package_names: &[&str]) -> String {
+    let mut script = String::new();
+    for (i, name) in package_names.iter().enumerate() {
+        let escaped = name.replace('\'', "''");
+        let keyword = if i == 0 { "if" } else { "elseif" };
+        script.push_str(&format!(
+            "{keyword}($p=Get-AppxPackage -Name '{escaped}' -ErrorAction SilentlyContinue \
+             | Sort-Object Version -Descending | Select-Object -First 1){{$p.PackageFamilyName}}"
+        ));
+    }
+    script
+}
+
+/// 从 `Get-AppxPackage …PackageFamilyName` 的输出里取族名。
+///
+/// 必须校验 `<identity>_<hash>` 形态：PowerShell 报错或输出别的东西时，
+/// 不能让它变成一个假的 AUMID（那会比「找不到」更难排查）。
+fn parse_msix_family_name(stdout: &str) -> Option<String> {
+    let pfn = stdout
+        .lines()
+        .map(|l| l.trim().trim_matches('\u{feff}'))
+        .find(|l| !l.is_empty())?;
+    if pfn.contains('_') {
+        Some(pfn.to_string())
+    } else {
+        None
+    }
+}
+
 /// 从 `(Get-AppxPackage …).Version` 的输出里取版本号（可能带 BOM / 空行 / 多行）。
 fn parse_msix_version(stdout: &str) -> Option<String> {
     stdout
@@ -742,7 +830,7 @@ fn parse_msix_version(stdout: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_msix_version;
+    use super::{build_family_name_script, parse_msix_family_name, parse_msix_version};
 
     /// PowerShell 的输出形态：CRLF、前导空行、可能有 BOM；没装时只有空行。
     #[test]
@@ -753,6 +841,28 @@ mod tests {
         assert_eq!(parse_msix_version("\u{feff}1.29.380.0\r\n").as_deref(), Some("1.29.380.0"), "BOM 要剥掉");
         // 多个包命中时（同名多版本 / 多用户）只取第一行
         assert_eq!(parse_msix_version("2.0.0.0\r\n1.29.380.0\r\n").as_deref(), Some("2.0.0.0"));
+    }
+
+    /// 族名必须是 `<identity>_<hash>` 形态：PowerShell 报错或输出别的东西时不能
+    /// 让它变成一个假 AUMID（那比「找不到」更难排查）。
+    #[test]
+    fn msix_family_name_requires_identity_hash_shape() {
+        assert_eq!(parse_msix_family_name("OpenAI.Codex_2p2nqsd0c76g0\r\n").as_deref(), Some("OpenAI.Codex_2p2nqsd0c76g0"));
+        assert_eq!(parse_msix_family_name("\u{feff}OpenAI.Codex_abc\r\n").as_deref(), Some("OpenAI.Codex_abc"), "BOM 要剥掉");
+        assert_eq!(parse_msix_family_name("\r\n\r\n").as_deref(), None, "没装时输出为空");
+        // 报错信息 / 命令回显不是族名
+        assert_eq!(parse_msix_family_name("Get-AppxPackage : 找不到").as_deref(), None);
+    }
+
+    /// 一次 PowerShell 调用覆盖全部候选：首个用 `if`，其余 `elseif`（stable 优先）。
+    #[test]
+    fn family_name_script_chains_candidates_in_one_call() {
+        let script = build_family_name_script(&["OpenAI.Codex", "OpenAI.CodexBeta"]);
+        assert!(script.starts_with("if($p=Get-AppxPackage -Name 'OpenAI.Codex'"), "首个候选必须是 if");
+        assert!(script.contains("elseif($p=Get-AppxPackage -Name 'OpenAI.CodexBeta'"));
+        assert_eq!(script.matches("Get-AppxPackage").count(), 2, "两个候选一次查完");
+        // 单引号里的单引号要转义，否则 PowerShell 语法错、整条脚本静默失效
+        assert!(build_family_name_script(&["O'Brien.App"]).contains("O''Brien.App"));
     }
 }
 

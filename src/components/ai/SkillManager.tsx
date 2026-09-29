@@ -13,6 +13,22 @@ import { DetectedAiTool } from './types';
 import { alertError } from "../shared/ThemedAlert";
 
 // ─── 类型 ───
+/** 预置技能来源（后端 get_skill_sources） */
+interface SkillSourceItem {
+  label: string;
+  repo: string;
+  hint: string;
+}
+
+/** 有更新的技能（后端 check_skill_updates；camelCase） */
+interface SkillUpdateInfo {
+  skillId: string;
+  name: string;
+  source: string;
+  current: string;
+  latest: string;
+}
+
 interface SkillEntry {
   id: string;
   name: string;
@@ -169,6 +185,11 @@ export default function SkillManager() {
   const [installing, setInstalling] = useState(false);
   const [installLog, setInstallLog] = useState('');
   const [installErr, setInstallErr] = useState('');
+  // 预置来源（点一下填进输入框，省得用户自己翻仓库地址）
+  const [sources, setSources] = useState<SkillSourceItem[]>([]);
+  // 可更新的技能（安装时记了来源的才能比对）
+  const [updates, setUpdates] = useState<SkillUpdateInfo[]>([]);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
 
   // ── 加载 ──
   const loadSkills = async () => {
@@ -317,6 +338,23 @@ export default function SkillManager() {
     const statusMap = new Map(toolStatus.map((s) => [s.toolId, s]));
     return tools.map((t) => ({ tool: t, status: statusMap.get(t.id) }));
   }, [tools, toolStatus]);
+
+  /** 预置来源：进来就拉一次，失败就静默（不给用户添噪音） */
+  useEffect(() => {
+    invoke<SkillSourceItem[]>('get_skill_sources').then(setSources).catch(() => setSources([]));
+  }, []);
+
+  /** 检查已装技能是否有更新：后端按记录的来源 `git ls-remote` 比对，不 clone */
+  const checkUpdates = async () => {
+    setCheckingUpdates(true);
+    try {
+      setUpdates(await invoke<SkillUpdateInfo[]>('check_skill_updates'));
+    } catch {
+      setUpdates([]);
+    } finally {
+      setCheckingUpdates(false);
+    }
+  };
 
   // 市场安装
   const startInstall = async () => {
@@ -699,6 +737,46 @@ export default function SkillManager() {
                   {installing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
                   {installing ? t("skillmgr.installing") : t("skillmgr.installTo")}
                 </button>
+                {/* 预置来源：点一下把 owner/repo 填进输入框 */}
+                {sources.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-micro text-slate-500">{t("skillmgr.presetSources")}</span>
+                    {sources.map((s) => (
+                      <button key={s.repo} onClick={() => setInstallInput(s.repo)} title={`${s.repo} — ${s.hint}`}
+                        className="px-2 py-0.5 rounded-md text-micro bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer transition-colors">
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {/* 检查更新：只对「安装时记了来源」的技能有效 */}
+                <div className="flex items-center gap-2 pt-0.5">
+                  <button onClick={() => void checkUpdates()} disabled={checkingUpdates}
+                    className="px-2.5 py-1 rounded-md text-tiny bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer disabled:opacity-40 transition-colors">
+                    {checkingUpdates ? <Loader2 className="w-3 h-3 inline animate-spin" /> : null} {t("skillmgr.checkUpdates")}
+                  </button>
+                  <span className="text-micro text-slate-500">
+                    {updates.length > 0
+                      ? t("skillmgr.updatesAvailable", { count: updates.length })
+                      : t("skillmgr.noUpdates")}
+                  </span>
+                </div>
+                {updates.length > 0 && (
+                  <div className="rounded-ctl border border-white/10 divide-y divide-white/5">
+                    {updates.map((u) => (
+                      <div key={u.skillId} className="px-2.5 py-1.5 flex items-center gap-2 text-micro">
+                        <span className="text-slate-300 truncate">{u.name}</span>
+                        <span className="text-slate-600 font-mono truncate">{u.source}</span>
+                        <span className="flex-1" />
+                        <span className="text-amber-400/80 font-mono">{u.current.slice(0, 7) || "—"} → {u.latest.slice(0, 7)}</span>
+                        <button onClick={() => setInstallInput(u.source)}
+                          className="px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
+                          {t("skillmgr.updateNow")}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {installErr && (
                   <div className="p-2.5 rounded-ctl text-body flex items-center gap-2 bg-red-500/10 text-red-400">
                     <AlertTriangle className="w-3.5 h-3.5" /> {installErr}

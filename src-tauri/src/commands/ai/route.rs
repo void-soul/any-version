@@ -17,6 +17,21 @@ use super::config::{load_ai_config, save_ai_config_to_file};
 /// 请求按序遍历 + 冷却跳过，长链在失败场景才会走到底部，正常请求不受影响。
 pub const MAX_ROUTE_CHAIN: usize = 100;
 
+/// 取用户在聚合链上对该「供应商 + 模型」**显式声明**的图片输入能力（None = 未声明）。
+///
+/// 聚合服务与单工具代理都从这里取声明：声明的优先级高于注册表启发式
+/// （三态判定见 `proxy::optimizers::resolve_image_input_capability`）。
+pub fn declared_image_support(
+    chain: &[RouteCandidate],
+    provider_id: &str,
+    model_id: &str,
+) -> Option<bool> {
+    chain
+        .iter()
+        .find(|c| c.provider_id == provider_id && c.model_id == model_id)
+        .and_then(|c| c.supports_image)
+}
+
 /// 纯函数：清洗链路——保序去重、丢弃仓库里已不存在的供应商/模型。
 ///
 /// 触发场景：删除供应商、编辑供应商时删掉了某个模型、配置文件被手工改坏。
@@ -36,6 +51,8 @@ pub fn normalize_route_chain(chain: &[RouteCandidate], providers: &[AiProvider])
         let entry = RouteCandidate {
             provider_id: candidate.provider_id.clone(),
             model_id: model_id.to_string(),
+            // 显式能力声明是用户手工标的，必须跟着候选活下来（清洗只针对失效的供应商/模型）
+            supports_image: candidate.supports_image,
         };
         if !out.contains(&entry) {
             out.push(entry);
@@ -165,7 +182,11 @@ mod tests {
     }
 
     fn candidate(provider_id: &str, model_id: &str) -> RouteCandidate {
-        RouteCandidate { provider_id: provider_id.to_string(), model_id: model_id.to_string() }
+        RouteCandidate {
+            provider_id: provider_id.to_string(),
+            model_id: model_id.to_string(),
+            supports_image: None,
+        }
     }
 
     #[test]

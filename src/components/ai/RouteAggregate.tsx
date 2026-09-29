@@ -80,13 +80,20 @@ function ChainRow({
   order,
   name,
   onRemove,
+  supportsImage,
+  onSupportsImageChange,
 }: {
   id: string;
   order: number;
   name: string;
   onRemove: () => void;
+  /** 用户显式声明的图片能力：true=支持 / false=不支持 / null=自动（交给注册表） */
+  supportsImage: boolean | null;
+  onSupportsImageChange: (v: boolean | null) => void;
 }) {
+  const { t } = useTranslation();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const declareValue = supportsImage === true ? "yes" : supportsImage === false ? "no" : "auto";
   return (
     <div
       ref={setNodeRef}
@@ -105,6 +112,21 @@ function ChainRow({
         <GripVertical className="w-3.5 h-3.5" />
       </button>
       <span className="text-caption text-slate-200 truncate flex-grow min-w-0">{name}</span>
+      {/* 图片能力声明：声明的优先级高于「已确认纯文本模型」注册表 ——
+          第三方供应商的视觉模型名字千奇百怪，注册表覆盖不到时这是唯一可靠来源 */}
+      <select
+        value={declareValue}
+        onChange={(e) => {
+          const v = e.target.value;
+          onSupportsImageChange(v === "yes" ? true : v === "no" ? false : null);
+        }}
+        className="text-micro bg-slate-800/80 border border-white/10 rounded px-1 py-0.5 text-slate-300 cursor-pointer flex-shrink-0"
+        title={t("aggregate.imageCapabilityHint")}
+      >
+        <option value="auto">{t("aggregate.imageAuto")}</option>
+        <option value="yes">{t("aggregate.imageSupported")}</option>
+        <option value="no">{t("aggregate.imageUnsupported")}</option>
+      </select>
       <button
         onClick={onRemove}
         className="text-slate-600 hover:text-red-400 cursor-pointer transition-colors flex-shrink-0"
@@ -341,6 +363,11 @@ export default function RouteAggregate() {
     void persist(chain.filter((_, i) => i !== idx));
   };
 
+  /// 图片能力声明：只改这一个候选的 `supports_image`，其余字段原样带过去
+  const setSupportsImage = (idx: number, v: boolean | null) => {
+    void persist(chain.map((c, i) => (i === idx ? { ...c, supports_image: v } : c)));
+  };
+
   const onDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
@@ -544,6 +571,8 @@ export default function RouteAggregate() {
                         order={idx + 1}
                         name={nameOf(c)}
                         onRemove={() => removeAt(idx)}
+                        supportsImage={c.supports_image ?? null}
+                        onSupportsImageChange={(v) => setSupportsImage(idx, v)}
                       />
                     ))}
                   </div>
@@ -690,6 +719,22 @@ export default function RouteAggregate() {
                 onBlur={e => patchAggregate({ retry_count: Math.min(5, Math.max(1, Number(e.target.value) || 2)) })}
                 className="w-14 ui-input rounded-ctl px-2 py-1 text-tiny text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
               <span className="text-micro text-slate-600">{t("aggregate.retryCountHint")}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-tiny text-slate-500 flex-shrink-0">{t("aggregate.firstByteTimeout")}</label>
+              <input type="number" min={1} max={600} value={aggregate.first_byte_timeout_secs ?? 60}
+                onChange={e => setAggregate({ ...aggregate, first_byte_timeout_secs: Number(e.target.value) || 1 })}
+                onBlur={e => patchAggregate({ first_byte_timeout_secs: Math.min(600, Math.max(1, Number(e.target.value) || 60)) })}
+                className="w-16 ui-input rounded-ctl px-2 py-1 text-tiny text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
+              <span className="text-micro text-slate-600">{t("aggregate.firstByteTimeoutHint")}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-tiny text-slate-500 flex-shrink-0">{t("aggregate.idleTimeout")}</label>
+              <input type="number" min={1} max={600} value={aggregate.idle_timeout_secs ?? 120}
+                onChange={e => setAggregate({ ...aggregate, idle_timeout_secs: Number(e.target.value) || 1 })}
+                onBlur={e => patchAggregate({ idle_timeout_secs: Math.min(600, Math.max(1, Number(e.target.value) || 120)) })}
+                className="w-16 ui-input rounded-ctl px-2 py-1 text-tiny text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
+              <span className="text-micro text-slate-600">{t("aggregate.idleTimeoutHint")}</span>
             </div>
             <div className="flex items-center gap-2">
               <label className="text-tiny text-slate-500 flex-shrink-0">{t("aggregate.entryModel")}</label>

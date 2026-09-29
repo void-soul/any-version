@@ -24,9 +24,11 @@ use serde_json::Value;
 use tauri::Emitter;
 
 use super::config::{load_ai_config, save_ai_config_to_file};
-use super::models::{AggregateConfig, AiProvider, RouteCandidate};
+use super::models::{AggregateConfig, AiConfig, AiProvider, RouteCandidate};
 use super::route::normalize_route_chain;
 use super::usage::{log_usage_db_timed, log_usage_entry, log_usage_failure, UsageEntry};
+use crate::proxy::optimizers;
+use crate::proxy::types::{ModelRoute, ProxyConfig};
 
 /// 聚合服务对外只暴露一个模型（对内才按链分发）——这也是「聚合」的含义。
 pub const AGGREGATE_MODEL_ID: &str = "kiro-proxy";
@@ -122,6 +124,26 @@ pub fn retry_budget(class: FailureClass) -> usize {
         FailureClass::Transient => 2,
         _ => 1,
     }
+}
+
+/// 该失败是否值得换到下一个候选。
+///
+/// 抄 cc-switch `forwarder.rs` 的换家判定：只有「换一家有可能成功」的错误才换。
+/// 落到我们的分类上：
+/// - `Fatal`（内容策略拒绝）不换 —— 换哪家都一样；
+/// - **请求体层面的拒绝（400 / 422）不换** —— 这是我们这条请求本身的问题，
+///   换供应商也修不好，白跑一遍整条链还会把每个候选都拖进冷却；
+/// - 其余（5xx / 超时 / 连不上 / 401 / 402 / 404 / 429）都是**候选自身**的问题
+///   （凭据坏了、额度没了、模型没了、被限流）→ 换一家很可能就成了。
+///
+/// 与 cc-switch 的偏差是刻意的：它把整个 4xx 都归为「不换」，但我们的候选链里
+/// 401/402/404/429 是**按候选**变化的（每家 key、额度、上架模型都不同），
+/// 全部不换会让故障转移在这些最常见的场景下完全失效。
+pub fn should_switch_candidate(class: FailureClass, status: Option<u16>) -> bool {
+    if class == FailureClass::Fatal {
+        return false;
+    }
+    !matches!(status, Some(400) | Some(422))
 }
 
 /// 该类别是否值得对同一候选再试一次（只有瞬时错误才重试，其余直接切下一个）。
@@ -220,6 +242,12 @@ struct CandidateError {
     class: FailureClass,
     message: String,
     retry_after: Option<u64>,
+    /// 上游 HTTP 状态码（连接失败/超时为 None）
+    status: Option<u16>,
+    /// 上游原始错误体：反应式整流靠它判断「能不能修」
+    error_body: String,
+    /// 本次实际发出去的 P_out 请求体（整流器操作的就是这个形态）
+    outbound_body: Value,
 }
 
 /// 过滤掉自引用候选（会造成递归），返回 (可用候选, 被剔除数量)。
@@ -301,6 +329,56 @@ struct AggCandidate {
     /// 该供应商的自定义上游请求头（未配置则为空）。以前聚合转发完全忽略这个字段，
     /// 导致需要 X-Request-Id / 厂商标识的网关在聚合路径被拒。
     headers: Vec<crate::proxy::types::UpstreamHeader>,
+    /// 用户在聚合链上显式声明的「该模型是否支持图片」（None = 交给注册表启发式）。
+    supports_image: Option<bool>,
+}
+
+/// 为候选构造一份 **协议整流用的 ProxyConfig**。
+///
+/// 为什么必须有：整流器（`apply_optimizers` / `apply_preventive_rectifiers` /
+/// `try_reactive_rectify`）此前只在 `proxy::server`（单工具的协议转换代理）里被调用，
+/// 聚合服务一条都没调 —— 于是「走代理的启动」和「走聚合的启动」协议行为不一致，
+/// 同一份 AI 配置在两条路径上表现不同。这里让聚合复用**同一份**整流实现，
+/// 只是把端点/凭据/出站协议换成当前候选的。
+///
+/// 注意不要在单测里构造它（见 `proxy::optimizers` 的注释）：`#[serde(skip)]` 的
+/// `app_handle` 会把 tauri 运行时链进测试二进制。
+fn candidate_proxy_config(candidate: &AggCandidate, cfg: &AiConfig) -> ProxyConfig {
+    let r = &cfg.rectifier;
+    let o = &cfg.optimizer;
+    let mut config = ProxyConfig {
+        outbound_protocol: candidate.outbound.as_str().to_string(),
+        upstream_api_key: candidate.api_key.clone(),
+        upstream_base_url: candidate.base_url.clone(),
+        upstream_headers: candidate.headers.clone(),
+        upstream_include_v1: candidate.include_v1,
+        target_model: candidate.model_id.clone(),
+        tool_id: "aggregate".to_string(),
+        provider_id: candidate.provider_id.clone(),
+        rectifier_enabled: r.enabled,
+        rectifier_thinking_signature: r.thinking_signature,
+        rectifier_thinking_budget: r.thinking_budget,
+        rectifier_media_fallback: r.media_fallback,
+        rectifier_media_heuristic: r.media_heuristic,
+        rectifier_protocol_mismatch: r.protocol_mismatch,
+        optimizer_enabled: o.enabled,
+        optimizer_cache_injection: o.cache_injection,
+        optimizer_thinking: o.thinking_optimizer,
+        optimizer_deepseek: o.deepseek_normalize,
+        ..ProxyConfig::default()
+    };
+    // 显式能力声明按模型名挂进路由表：整流器从 `model_routes` 取「声明」，
+    // 与单工具代理走完全相同的解析路径（声明 > 注册表）。
+    if candidate.supports_image.is_some() {
+        config.model_routes.insert(
+            candidate.model_id.clone(),
+            ModelRoute {
+                supports_image: candidate.supports_image,
+                ..ModelRoute::default()
+            },
+        );
+    }
+    config
 }
 
 /// 按出站协议拼上游 URL，返回 (url, 鉴权头名)。
@@ -365,6 +443,7 @@ fn build_candidates(
             model_id: candidate.model_id.clone(),
             include_v1,
             headers: crate::proxy::headers::normalize(&provider.custom_headers),
+            supports_image: candidate.supports_image,
         });
     }
     out
@@ -756,6 +835,9 @@ async fn forward(state: AggState, inbound: &'static str, mut body: Value) -> Res
     let config = load_ai_config();
     let retry_count = config.aggregate.retry_count.clamp(1, 5) as usize;
     let context_limit = config.aggregate.context_limit;
+    // 首字节 / 空闲超时：每次请求实时读取，改完配置即生效（与 retry_count 一致）
+    let first_byte_timeout = config.aggregate.first_byte_timeout_secs;
+    let idle_timeout = config.aggregate.idle_timeout_secs;
     let headroom = if config.headroom.enabled {
         Some(HeadroomRuntime {
             base_url: format!("http://127.0.0.1:{}", config.headroom.port),
@@ -913,10 +995,29 @@ async fn forward(state: AggState, inbound: &'static str, mut body: Value) -> Res
             continue;
         }
 
+        // 整流配置按候选构造（端点/凭据/出站协议取当前候选，开关取全局）——
+        // 与单工具协议代理共用同一套整流实现，避免两条路径行为漂移。
+        let proxy_cfg = candidate_proxy_config(candidate, &config);
         let mut attempts = 0usize;
+        // 同一候选最多做一次反应式整流重试（cc-switch 同款：每个 provider 的每种
+        // 整流各只认领一次，避免上游持续报错时无限重试）
+        let mut rectified = false;
+        let mut rectified_body: Option<Value> = None;
         loop {
             attempts += 1;
-            match try_candidate(&state, candidate, inbound, &body, stream_requested).await {
+            let result = try_candidate(
+                &state,
+                candidate,
+                inbound,
+                &body,
+                stream_requested,
+                rectified_body.as_ref(),
+                &proxy_cfg,
+                std::time::Duration::from_secs(first_byte_timeout.max(1)),
+                std::time::Duration::from_secs(idle_timeout.max(1)),
+            )
+            .await;
+            match result {
                 Ok(response) => {
                     clear_health(&state.health, &key);
                     if idx > 0 || attempts > 1 {
@@ -986,6 +1087,69 @@ async fn forward(state: AggState, inbound: &'static str, mut body: Value) -> Res
                             err.message
                         ),
                     );
+                    // 反应式整流（与单工具协议代理同一套实现）：上游报的是「能修的错」
+                    // （thinking 签名 / budget、图片不支持、协议残留字段）就修正后重试一次；
+                    // 修不了才往下走。这是抄 cc-switch forwarder 的「报错后整流重试」。
+                    if !rectified {
+                        if let Some(status) = err.status {
+                            if let Some(fixed) = optimizers::try_reactive_rectify(
+                                status,
+                                &err.error_body,
+                                &err.outbound_body,
+                                &proxy_cfg,
+                                candidate.outbound.as_str(),
+                            ) {
+                                rectified = true;
+                                rectified_body = Some(fixed);
+                                emit_aggregate_log(
+                                    &state.app,
+                                    "rectify",
+                                    "info",
+                                    format!(
+                                        "候选 #{} {} / {} 上报 HTTP {}，已整流修正并重发一次",
+                                        idx + 1,
+                                        candidate.provider_name,
+                                        candidate.model_id,
+                                        status
+                                    ),
+                                );
+                                continue;
+                            }
+                        }
+                    }
+                    // 换家判定（抄 cc-switch）：请求体层面被拒（400/422）换到哪一家都一样，
+                    // 直接把上游错误回给客户端 —— 既不白跑整条链，也不误伤其它候选的冷却。
+                    if !should_switch_candidate(err.class, err.status) {
+                        emit_aggregate_log(
+                            &state.app,
+                            "route",
+                            "error",
+                            format!(
+                                "候选 #{} {} / {} 的请求被上游拒绝且不属候选问题，不再切换: {}",
+                                idx + 1,
+                                candidate.provider_name,
+                                candidate.model_id,
+                                err.message
+                            ),
+                        );
+                        let status_code = err
+                            .status
+                            .and_then(|s| StatusCode::from_u16(s).ok())
+                            .unwrap_or(StatusCode::BAD_GATEWAY);
+                        return (
+                            status_code,
+                            Json(serde_json::json!({
+                                "error": {
+                                    "message": format!(
+                                        "候选 {} / {} 拒绝了该请求（整流后仍失败）: {}",
+                                        candidate.provider_name, candidate.model_id, err.message
+                                    ),
+                                    "type": "upstream_rejected_request"
+                                }
+                            })),
+                        )
+                            .into_response();
+                    }
                     // 达到该类别的重试预算 → 记冷却并切换到下一个候选
                     if attempts >= retry_budget(err.class).min(retry_count.max(1)) {
                         let cooldown = record_failure(&state.health, &key, err.class, err.retry_after);
@@ -1087,27 +1251,83 @@ fn rewrite_upstream_model(mut body: Value, model: &str) -> Value {
 }
 
 /// 单候选请求：成功返回响应；失败返回分类错误。
+/// 空闲超时包装：流式过程中两个 chunk 之间超过 `idle` 没有数据就终止流。
+///
+/// 抄 cc-switch `AppProxyConfig.streamingIdleTimeout`。注意它**只能终止当前流**，
+/// 不能换候选 —— 首字节之后上游已经开始产出，换一家会把这段输出重复计费。
+/// 流被终止时以 `io::Error` 收尾，axum 会把它当成连接错误传给客户端，
+/// 客户端至少能立刻报错而不是无限挂住。
+fn idle_timeout_stream<S>(
+    inner: S,
+    idle: std::time::Duration,
+) -> impl futures_util::Stream<Item = Result<bytes::Bytes, std::io::Error>>
+where
+    S: futures_util::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static,
+{
+    async_stream::stream! {
+        // Pin 到堆上：reqwest 的 `bytes_stream()` 只承诺 `impl Stream`，不承诺 Unpin，
+        // 而 `StreamExt::next` 需要 Unpin。`Pin<Box<S>>` 本身是 Unpin。
+        let mut inner = Box::pin(inner);
+        loop {
+            match tokio::time::timeout(idle, futures_util::StreamExt::next(&mut inner)).await {
+                Ok(Some(Ok(chunk))) => yield Ok(chunk),
+                Ok(Some(Err(e))) => {
+                    yield Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
+                    break;
+                }
+                Ok(None) => break,
+                Err(_) => {
+                    yield Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        format!("上游流式响应空闲超时（{}s 无数据）", idle.as_secs()),
+                    ));
+                    break;
+                }
+            }
+        }
+    }
+}
+
 async fn try_candidate(
     state: &AggState,
     candidate: &AggCandidate,
     inbound: &'static str,
     body: &Value,
     stream_requested: bool,
+    // 反应式整流修正后的 P_out 请求体（Some = 本次直接发它，不再跑优化器）
+    outbound_override: Option<&Value>,
+    // 整流用的统一代理配置（由 [`candidate_proxy_config`] 构造）
+    proxy_cfg: &ProxyConfig,
+    // 首字节超时：连上上游后迟迟不吐字节就判失败，让故障转移真正生效
+    first_byte_timeout: std::time::Duration,
+    idle_timeout: std::time::Duration,
 ) -> Result<Response, CandidateError> {
     let model = &candidate.model_id;
     let outbound = candidate.outbound.as_str();
     // 同协议只改模型名（入口是 kiro-proxy，上游只认自己配置的模型名）；跨协议先按非流式
     // 整体转换（流式转换仅覆盖 a↔o 主流组合）。转换分发表统一走 proxy::convert，与代理一致。
     let cross = inbound != outbound;
-    let (upstream_body, upstream_stream) = if !cross {
-        (rewrite_upstream_model(body.clone(), model), stream_requested)
-    } else {
-        let mut b = body.clone();
-        if stream_requested {
-            b["stream"] = Value::Bool(false);
+    let upstream_body = match outbound_override {
+        Some(fixed) => fixed.clone(),
+        None => {
+            let mut built = if !cross {
+                rewrite_upstream_model(body.clone(), model)
+            } else {
+                let mut b = body.clone();
+                if stream_requested {
+                    b["stream"] = Value::Bool(false);
+                }
+                crate::proxy::convert::convert_request(inbound, outbound, &b, model)
+            };
+            // 与单工具代理同一套整流：出站前跑优化器 + 预防式整流。
+            // 此前聚合完全不走这两步，导致同一份配置在「代理」与「聚合」两条路径上
+            // 协议行为不一致（thinking 参数、图片降级、cache 断点全都只在一边生效）。
+            optimizers::apply_optimizers(&mut built, outbound, proxy_cfg);
+            optimizers::apply_preventive_rectifiers(&mut built, outbound, proxy_cfg);
+            built
         }
-        (crate::proxy::convert::convert_request(inbound, outbound, &b, model), false)
     };
+    let upstream_stream = !cross && stream_requested;
 
     let (url, auth_name) = build_candidate_url(
         candidate.outbound,
@@ -1123,6 +1343,9 @@ async fn try_candidate(
             class: FailureClass::Transient,
             message: format!("HTTP 客户端构建失败: {}", e),
             retry_after: None,
+            status: None,
+            error_body: String::new(),
+            outbound_body: upstream_body.clone(),
         })?;
     // 鉴权 + 自定义头统一走 proxy::upstream（与协议转换代理一致：anthropic 双头、显式头优先）
     let req = crate::proxy::upstream::inject_auth(
@@ -1131,20 +1354,41 @@ async fn try_candidate(
         &candidate.api_key,
         &candidate.headers,
     );
-    let resp = req
-        .json(&upstream_body)
-        .send()
-        .await
-        .map_err(|e| {
+    // 首字节超时（抄 cc-switch `streamingFirstByteTimeout`）：`send()` 返回即响应头到达，
+    // 也就是"第一个字节"。此前只有 300s 的整体超时，上游「连得上但挂住不响应」会把整条
+    // 聚合链堵死 300s —— 故障转移在此期间完全不起作用。超时按瞬时失败处理，
+    // 由调用方决定重试还是切下一个候选。
+    let send_result = tokio::time::timeout(first_byte_timeout, req.json(&upstream_body).send()).await;
+    let resp = match send_result {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => {
             let message = if e.is_connect() {
                 format!("连接被拒绝（{}）", url)
             } else if e.is_timeout() {
-                "请求超时".to_string()
+                format!("请求超时（{}s）", std::time::Duration::from_secs(300).as_secs())
             } else {
                 format!("请求失败: {}", e)
             };
-            CandidateError { class: FailureClass::Transient, message, retry_after: None }
-        })?;
+            return Err(CandidateError {
+                class: FailureClass::Transient,
+                message,
+                retry_after: None,
+                status: None,
+                error_body: String::new(),
+                outbound_body: upstream_body.clone(),
+            });
+        }
+        Err(_) => {
+            return Err(CandidateError {
+                class: FailureClass::Transient,
+                message: format!("首字节超时（{}s 内上游未响应，{}）", first_byte_timeout.as_secs(), url),
+                retry_after: None,
+                status: None,
+                error_body: String::new(),
+                outbound_body: upstream_body.clone(),
+            });
+        }
+    };
     let status = resp.status();
     let retry_after = resp
         .headers()
@@ -1167,6 +1411,9 @@ async fn try_candidate(
             class,
             message: format!("HTTP {} {}", status.as_u16(), trim_error(&text)),
             retry_after,
+            status: Some(status.as_u16()),
+            error_body: text,
+            outbound_body: upstream_body.clone(),
         });
     }
 
@@ -1174,7 +1421,7 @@ async fn try_candidate(
 
     // 同协议 + 流式：字节流透传（首字节后不再切换候选，避免重复计费）
     if upstream_stream && inbound == candidate.outbound.as_str() {
-        let stream = resp.bytes_stream();
+        let stream = idle_timeout_stream(resp.bytes_stream(), idle_timeout);
         let body_stream = axum::body::Body::from_stream(stream);
         let response = Response::builder()
             .status(StatusCode::OK)
@@ -1191,7 +1438,7 @@ async fn try_candidate(
             ("anthropic", Outbound::OpenAi) | ("openai", Outbound::Anthropic)
         );
         if pair_supported {
-            return stream_cross_protocol(state, candidate, inbound, resp, started);
+            return stream_cross_protocol(state, candidate, inbound, resp, started, idle_timeout);
         }
         emit_aggregate_log(
             &state.app,
@@ -1209,6 +1456,9 @@ async fn try_candidate(
         class: FailureClass::Transient,
         message: format!("读取响应失败: {}", e),
         retry_after: None,
+        status: Some(status.as_u16()),
+        error_body: String::new(),
+        outbound_body: upstream_body.clone(),
     })?;
     let upstream_json: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
     Ok(finish_non_stream(inbound, candidate, upstream_json, model, started.elapsed().as_millis()))
@@ -1242,6 +1492,7 @@ fn stream_cross_protocol(
     inbound: &'static str,
     resp: reqwest::Response,
     started: std::time::Instant,
+    idle_timeout: std::time::Duration,
 ) -> Result<Response, CandidateError> {
     use axum::response::sse::{Event, Sse};
     use futures_util::StreamExt;
@@ -1250,6 +1501,8 @@ fn stream_cross_protocol(
     let provider_id = candidate.provider_id.clone();
     let outbound = candidate.outbound;
     let stream = resp.bytes_stream();
+    // 生成出的流必须 'static，不能借用 `state`，先把 AppHandle 克隆进去
+    let app = state.app.clone();
     let sse = async_stream::stream! {
         let mut conv = match (inbound, outbound) {
             ("anthropic", Outbound::OpenAi) => Some(CrossStreamConverter::AnthropicToOpenai(
@@ -1266,7 +1519,22 @@ fn stream_cross_protocol(
         };
         let mut buffer = String::new();
         tokio::pin!(stream);
-        while let Some(r) = stream.next().await {
+        // 空闲超时：两个 chunk 之间超过 `idle_timeout` 无数据就终止流（首字节之后不能换
+        // 候选 —— 上游已在产出，换一家会重复计费，只能把错误传给客户端让它立刻失败）
+        loop {
+            let next = tokio::time::timeout(idle_timeout, stream.next()).await;
+            let r = match next {
+                Ok(Some(r)) => r,
+                Ok(None) => break,
+                Err(_) => {
+                    let msg = format!("上游流式响应空闲超时（{}s 无数据）", idle_timeout.as_secs());
+                    emit_aggregate_log(&app, "route", "warn", format!(
+                        "候选 {} / {} 流式空闲超时，已终止该流: {msg}", provider_id, model
+                    ));
+                    yield Ok::<_, std::convert::Infallible>(Event::default().data(format!("{{\"error\":\"{msg}\"}}")));
+                    break;
+                }
+            };
             let chunk = match r {
                 Ok(c) => c,
                 Err(e) => {
@@ -1387,7 +1655,32 @@ mod tests {
             model_id: "m".into(),
             include_v1: None,
             headers: vec![],
+            supports_image: None,
         }
+    }
+
+    /// 换家判定：候选自身的问题换家，请求体层面的拒绝不换家。
+    #[test]
+    fn switch_only_when_another_candidate_could_succeed() {
+        use FailureClass as F;
+        // 候选自身的问题 → 换家
+        for status in [500, 502, 503, 401, 403, 402, 404, 429, 408] {
+            assert!(
+                should_switch_candidate(classify_failure(Some(status), ""), Some(status)),
+                "HTTP {status} 应换家"
+            );
+        }
+        // 连不上 / 超时（无状态码）→ 换家
+        assert!(should_switch_candidate(F::Transient, None));
+        // 请求体层面的拒绝 → 不换家（换到哪一家都一样）
+        for status in [400, 422] {
+            assert!(
+                !should_switch_candidate(classify_failure(Some(status), ""), Some(status)),
+                "HTTP {status} 不该换家"
+            );
+        }
+        // 内容策略拒绝 → 不换家
+        assert!(!should_switch_candidate(F::Fatal, Some(400)));
     }
 
     #[test]
@@ -1402,6 +1695,7 @@ mod tests {
             model_id: model.into(),
             include_v1: None,
             headers: vec![],
+            supports_image: None,
         };
         let chain = vec![mk("a", "m1"), mk("b", "m2"), mk("c", "m1")];
         // 命中 m2 → 提到最前，其余保持原相对顺序

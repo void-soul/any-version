@@ -99,18 +99,79 @@ export interface HeadroomHealth {
 export interface RouteCandidate {
   provider_id: string;
   model_id: string;
+  /**
+   * 用户显式声明的「该模型是否支持图片输入」。
+   * undefined/null = 自动（交给已确认的纯文本模型注册表判定）。
+   * 声明的优先级高于注册表 —— 第三方供应商的视觉模型名字千奇百怪，注册表覆盖不到时
+   * 这是唯一可靠的来源。
+   */
+  supports_image?: boolean | null;
+}
+
+/** Codex 官方插件市场状态（后端 `codex_plugin_marketplace_status`）。 */
+export interface CodexPluginMarketplaceStatus {
+  marketplaceName: string;
+  /** 市场内容是否已落盘且清单可解析 */
+  installed: boolean;
+  /** `~/.codex/config.toml` 里是否已注册本市场 */
+  registered: boolean;
+  pluginCount: number;
+  /** 本市场里已启用的插件数 */
+  enabledCount: number;
+  root: string;
+  configPath: string;
+  /**
+   * Codex CLI 是否可用。
+   * 单个插件的安装/卸载要经 `codex plugin add/remove` 把插件落到客户端缓存，
+   * 找不到 CLI 时界面应当直接置灰而不是让用户点了报错。
+   */
+  cliAvailable: boolean;
+}
+
+/** 插件市场里的一个插件（后端 `codex_list_marketplace_plugins`）。 */
+export interface CodexPluginInfo {
+  name: string;
+  /** 清单里声明的分类，界面按它分组 */
+  category: string;
+  installed: boolean;
+  enabled: boolean;
+  version?: string | null;
+}
+
+/** Claude Code 市场里的一个插件（后端 `claude_list_plugins`）。 */
+export interface ClaudePluginInfo {
+  /** `插件@市场` —— 安装/卸载都用它寻址 */
+  id: string;
+  name: string;
+  description: string;
+  marketplace: string;
+  installed: boolean;
+  enabled: boolean;
+  version?: string | null;
+}
+
+/** Claude Code 插件市场状态（后端 `claude_plugin_status`）。 */
+export interface ClaudePluginStatus {
+  /** 找不到 `claude` CLI 时界面置灰 */
+  cliAvailable: boolean;
+  /** 已配置的市场名 */
+  marketplaces: string[];
+  installedCount: number;
+  availableCount: number;
+  /** 官方市场来源（「添加官方市场」按钮用） */
+  officialMarketplaceSource: string;
 }
 
 /** 聚合服务配置（本地聚合代理） */
 export interface AggregateConfig {
-  /** 监听端口 */
   port: number;
-  /** 上下文上限（token，按启发式估算） */
   context_limit: number;
-  /** 同一候选的重试次数（1~5；仅瞬时错误重试） */
   retry_count: number;
-  /** 对外暴露的入口模型名（默认 kiro-proxy） */
   entry_model: string;
+  /** 首字节超时（秒）：连上后迟迟不吐字节就判失败并切下一个候选 */
+  first_byte_timeout_secs?: number;
+  /** 流式空闲超时（秒）：两个数据块之间的最大间隔 */
+  idle_timeout_secs?: number;
 }
 
 /** 聚合服务运行状态 */
@@ -208,6 +269,13 @@ export interface DetectedAiTool {
   builtin_models: string[];
   supports_optimizer: boolean;
   supports_rectifier: boolean;
+  /** 是否使用官方插件市场（前端据此显示「插件市场」区块） */
+  supports_plugin_marketplace?: boolean;
+  /**
+   * 插件市场后端：`codex`（`codex plugin`）或 `claude`（`claude plugin`）。
+   * 未声明时按 `codex` 处理（Claude 接入前只有 Codex 系用这个开关）。
+   */
+  plugin_marketplace_kind?: "codex" | "claude" | null;
   /** MSIX/Store 启动 URI（无普通 exe 时使用） */
   launch_uri: string | null;
   /** 检测到的可执行文件路径（GUI/桌面应用启动用） */

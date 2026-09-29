@@ -14,6 +14,44 @@ pub static USER_QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "windows")]
 pub static STARTUP_PAGE_HANDLED: AtomicBool = AtomicBool::new(false);
 
+/// Windows「应用执行别名」目录（`%LOCALAPPDATA%\Microsoft\WindowsApps`）。
+///
+/// 里面放的全是 **0 字节的别名占位 exe**（winget、Store 版 python、ubuntu…），真正的
+/// 可执行文件由系统按已注册的 Store 包解析。AnyVersion 既无法接管也无法替代它们，
+/// 所以把这个目录从 PATH 里剔掉**挡不住任何命令劫持**，只会让这些命令凭空消失。
+///
+/// 实测事故：用户在 AnyVersion 里托管了 winget，`projects/winget/find_rules.json`
+/// 含 `path_contains { path_key: "WindowsApps", exe_name: "winget.exe" }`，
+/// 下面的「防劫持」过滤因此把 WindowsApps 从进程 PATH 中移除 —— 应用内所有
+/// `winget ...` 全部变成 cmd 的「'winget' 不是内部或外部命令」（退出码 1），
+/// AI 工具面板安装 ChatGPT / Claude 桌面端时报「命令以 exit code: 1 退出」。
+fn is_app_execution_alias_dir(path: &std::path::Path) -> bool {
+    path.to_string_lossy()
+        .to_lowercase()
+        .contains("microsoft\\windowsapps")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_app_execution_alias_dir;
+    use std::path::PathBuf;
+
+    /// 别名目录必须被认出来，否则会被「防劫持」过滤误删 —— 应用内 winget 直接失效。
+    #[test]
+    fn alias_dir_is_recognized() {
+        assert!(is_app_execution_alias_dir(&PathBuf::from(
+            r"C:\Users\Administrator\AppData\Local\Microsoft\WindowsApps"
+        )));
+    }
+
+    /// 普通 SDK 目录不能被误判成别名目录，否则防劫持过滤会整体失效。
+    #[test]
+    fn normal_dir_is_not_alias_dir() {
+        assert!(!is_app_execution_alias_dir(&PathBuf::from(r"D:\any-versions\sdk\winget")));
+        assert!(!is_app_execution_alias_dir(&PathBuf::from(r"D:\tool\go\bin")));
+    }
+}
+
 /// 同步注册表中的完整 PATH 到当前进程，并确保 AnyVersion 托管路径具有最高优先级。
 /// 解决 windows_subsystem="windows" 模式下进程 PATH 不包含用户 PATH 的问题。
 pub fn sync_process_path() {
@@ -47,6 +85,9 @@ pub fn sync_process_path() {
         if seen.insert(p_lower.clone()) {
             if p_lower.contains(&links_dir_lower) {
                 av_paths.push(p);
+            } else if is_app_execution_alias_dir(&p) {
+                // 系统别名目录：原样保留，不参与下面的「防劫持」过滤（见函数注释）
+                other_paths.push(p);
             } else {
                 // 检查是否匹配任何已托管项目的查找规则，若匹配则将其过滤掉以防进程命令劫持（例如过滤掉旧版 D:\tool\go\bin\go.exe）
                 let mut matches_managed_rule = false;
@@ -718,8 +759,22 @@ pub fn run() {
             commands::ai::sessions::get_ai_sessions,
             commands::ai::sessions::remove_ai_session,
             commands::ai::provider::start_proxy,
-            commands::ai::launch::get_ai_tool_model,
             commands::ai::launch::restore_ai_tool_config,
+            commands::ai::launch::get_ai_tool_models,
+            commands::ai::skills::get_skill_sources,
+            commands::ai::skills::check_skill_updates,
+            commands::ai::codex_plugins::codex_plugin_marketplace_status,
+            commands::ai::codex_plugins::codex_list_marketplace_plugins,
+            commands::ai::codex_plugins::codex_install_plugin_marketplace,
+            commands::ai::codex_plugins::codex_remove_plugin_marketplace,
+            commands::ai::codex_plugins::codex_install_plugin,
+            commands::ai::codex_plugins::codex_uninstall_plugin,
+            commands::ai::claude_plugins::claude_plugin_status,
+            commands::ai::claude_plugins::claude_list_plugins,
+            commands::ai::claude_plugins::claude_plugin_marketplace_add,
+            commands::ai::claude_plugins::claude_plugin_marketplace_remove,
+            commands::ai::claude_plugins::claude_install_plugin,
+            commands::ai::claude_plugins::claude_uninstall_plugin,
             commands::ai::install_agent::install_agent_chat,
             commands::favorites::agent::fav_agent_search,
             commands::ai::terminal::detect_terminals,
@@ -738,6 +793,8 @@ pub fn run() {
             commands::ai::collab::collab_get_agents,
             commands::ai::collab::collab_list_tasks,
             commands::ai::collab::collab_task_action,
+            commands::ai::collab::collab_set_input_policy,
+            commands::ai::collab::collab_list_archives,
             commands::ai::tools::install_ai_tool,
             commands::ai::tools::upgrade_ai_tool,
             commands::ai::tools::uninstall_ai_tool,

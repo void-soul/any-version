@@ -479,7 +479,14 @@ export default function CollabRoom() {
     if (!activeRoom || !newTaskTitle.trim()) return;
     invoke("collab_task_action", {
       roomId: activeRoom.id,
-      body: { op: "create", title: newTaskTitle.trim(), description: newTaskDesc, created_by: "user" },
+      body: {
+        op: "create",
+        title: newTaskTitle.trim(),
+        description: newTaskDesc,
+        created_by: "user",
+        // 幂等键：双击建任务不会建出两个一样的
+        request_id: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      },
     })
       .then(() => {
         setNewTaskTitle("");
@@ -796,6 +803,9 @@ export default function CollabRoom() {
     const supportsModel = toolObj?.supports_model ?? false;
     const effectiveModelId = supportsModel ? (modelId || null) : null;
     const effectiveProviderId = supportsModel ? (providerId || null) : null;
+    // 幂等键：本次「发送」的唯一 id。UI 重发 / 崩溃重放时后端按它去重，
+    // 不会真的再拉起一个 agent（抄 orca 的 mutation_receipts）。
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     try {
       const result = await invoke<CollabMessage[]>("collab_send_message", {
         roomId: activeRoom.id,
@@ -807,6 +817,7 @@ export default function CollabRoom() {
         modelId: effectiveModelId,
         providerId: effectiveProviderId,
         options: buildDispatchOptions(),
+        requestId,
       });
       const placeholder = result.find((m) => m.sender !== "user");
       runningMsgIdRef.current = placeholder?.id ?? null;

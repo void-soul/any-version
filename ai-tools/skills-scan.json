@@ -5,6 +5,7 @@
   "toolSkillsDirs": {
     "claude-code": ["~/.claude/skills"],
     "codex-cli": ["~/.codex/skills"],
+    "chatgptdesktop": ["~/.codex/skills"],
     "gemini-cli": ["~/.gemini/skills"],
     "kilocode": ["~/.kilocode/skills", "~/.config/kilo/skills"],
     "aider": ["~/.aider/skills"],

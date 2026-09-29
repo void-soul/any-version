@@ -816,7 +816,18 @@ fn temp_clone_dir() -> PathBuf {
 
 #[tauri::command]
 pub fn install_skill(skill_dir: String) -> Result<(), String> {
-    let src = PathBuf::from(&skill_dir);
+    install_skill_from_dir(&skill_dir, None).map(|_| ())
+}
+
+/// 安装技能到仓库，返回技能 id。
+///
+/// `origin` = `(来源, commit sha)`：在线安装时传，用来支持后续的「有没有更新」比对；
+/// 本地目录安装传 `None`（没有远端可取）。
+pub(crate) fn install_skill_from_dir(
+    skill_dir: &str,
+    origin: Option<(&str, &str)>,
+) -> Result<String, String> {
+    let src = PathBuf::from(skill_dir);
     if !src.exists() || !src.is_dir() {
         return Err("技能目录不存在".to_string());
     }
@@ -859,15 +870,22 @@ pub fn install_skill(skill_dir: String) -> Result<(), String> {
 
     let mut skills = load_skills();
     skills.skills.retain(|s| s.id != id);
+    let (source, commit) = match origin {
+        Some((s, c)) => (s.to_string(), c.to_string()),
+        None => (String::new(), String::new()),
+    };
     skills.skills.push(Skill {
-        id,
+        id: id.clone(),
         name,
         description,
         directory: dest_dir.to_string_lossy().to_string(),
         installed_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-        install_method: "local".to_string(),
+        install_method: if source.is_empty() { "local".to_string() } else { "online".to_string() },
+        source,
+        commit,
     });
-    save_skills(&skills)
+    save_skills(&skills)?;
+    Ok(id)
 }
 
 #[tauri::command]
@@ -978,7 +996,8 @@ pub async fn install_skill_from_source(source: String) -> Result<(), String> {
             return Err(e);
         }
     };
-    let result = install_skill(root.to_string_lossy().to_string());
+    let sha = rev_parse_head(&temp_dir).await.unwrap_or_default();
+    let result = install_skill_from_dir(&root.to_string_lossy(), Some((&base, &sha))).map(|_| ());
     let _ = fs::remove_dir_all(&temp_dir);
     result
 }
@@ -1054,13 +1073,127 @@ pub async fn install_skill_from_online(
             return Err(e);
         }
     };
-    let result = install_skill(root.to_string_lossy().to_string());
+    let sha = rev_parse_head(&temp_dir).await.unwrap_or_default();
+    let result = install_skill_from_dir(&root.to_string_lossy(), Some((&base, &sha))).map(|_| ());
     let _ = fs::remove_dir_all(&temp_dir);
 
     if result.is_ok() {
         emit_install_progress(&app, "完成", 1, 1, "", "安装完成！已管理工具自动获得新技能");
     }
     result
+}
+
+// ─── 预置来源与更新检测 ───
+
+/// 取某个 git 仓库当前 HEAD 的 sha（失败返回 None，不阻断安装）。
+async fn rev_parse_head(repo_dir: &std::path::Path) -> Option<String> {
+    let mut cmd = tokio::process::Command::new("git");
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    let out = cmd
+        .args(["-C", &repo_dir.to_string_lossy(), "rev-parse", "HEAD"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .await
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!sha.is_empty()).then_some(sha)
+}
+
+/// 把 `owner/repo` 形态的来源补成完整 URL（已是 URL 的原样返回）。
+fn source_to_url(source: &str) -> String {
+    if source.starts_with("http://") || source.starts_with("https://") {
+        source.to_string()
+    } else {
+        format!("https://github.com/{source}")
+    }
+}
+
+/// 预置技能源（抄 CodexPlusPlus 的默认源清单）。
+///
+/// 它的默认 4 源正好覆盖「官方 curated + 另一个官方 + 社区合集 + 中文向社区」，
+/// 直接照搬，用户不必自己去翻仓库地址。
+pub(crate) const PRESET_SKILL_SOURCES: &[(&str, &str, &str)] = &[
+    ("OpenAI 官方技能", "openai/skills", "Codex / ChatGPT 官方维护的 curated 技能"),
+    ("Anthropic 官方技能", "anthropics/skills", "Claude 官方技能合集"),
+    ("awesome-claude-skills", "ComposioHQ/awesome-claude-skills", "社区精选，覆盖面最广"),
+    ("myclaude", "cexll/myclaude", "社区实用技能，中文向"),
+];
+
+#[derive(Serialize, Clone, Debug)]
+pub struct SkillSource {
+    pub label: String,
+    pub repo: String,
+    pub hint: String,
+}
+
+/// 列出预置技能源（前端「在线」页直接展示，点一下即装）。
+#[tauri::command]
+pub fn get_skill_sources() -> Vec<SkillSource> {
+    PRESET_SKILL_SOURCES
+        .iter()
+        .map(|(label, repo, hint)| SkillSource {
+            label: label.to_string(),
+            repo: repo.to_string(),
+            hint: hint.to_string(),
+        })
+        .collect()
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillUpdateInfo {
+    pub skill_id: String,
+    pub name: String,
+    pub source: String,
+    pub current: String,
+    pub latest: String,
+}
+
+/// 检查已装技能是否有更新（只查记录过来源的）。
+///
+/// 用 `git ls-remote <url> HEAD` 比对安装时记下的 sha：**不 clone、不需要 API token**。
+/// （CodexPlusPlus 走 GitHub trees API 算子树的 SHA256，那个接口不带 token 会限流。）
+#[tauri::command]
+pub async fn check_skill_updates() -> Result<Vec<SkillUpdateInfo>, String> {
+    let skills = load_skills();
+    let mut updates = Vec::new();
+    for skill in skills.skills.iter().filter(|s| !s.source.is_empty()) {
+        let url = source_to_url(&skill.source);
+        let mut cmd = tokio::process::Command::new("git");
+        #[cfg(windows)]
+        cmd.creation_flags(0x08000000);
+        let out = cmd
+            .args(["ls-remote", &url, "HEAD"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+            .await;
+        let Ok(out) = out else { continue };
+        if !out.status.success() {
+            continue;
+        }
+        let latest = String::from_utf8_lossy(&out.stdout)
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_string();
+        if latest.is_empty() || latest == skill.commit {
+            continue;
+        }
+        updates.push(SkillUpdateInfo {
+            skill_id: skill.id.clone(),
+            name: skill.name.clone(),
+            source: skill.source.clone(),
+            current: skill.commit.clone(),
+            latest,
+        });
+    }
+    Ok(updates)
 }
 
 // ─── 旧数据迁移 ───
@@ -1213,8 +1346,32 @@ fn copy_dir_recursive(src: &PathBuf, dest: &PathBuf) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{find_skill_root, split_source_subdir};
+    use super::{find_skill_root, source_to_url, split_source_subdir, PRESET_SKILL_SOURCES};
     use std::path::{Path, PathBuf};
+
+    /// `owner/repo` 要补成完整 URL 才能喂给 `git ls-remote`；已是 URL 的不能被二次拼接。
+    #[test]
+    fn source_url_normalizes_repo_shorthand() {
+        assert_eq!(source_to_url("openai/skills"), "https://github.com/openai/skills");
+        assert_eq!(
+            source_to_url("https://github.com/anthropics/skills"),
+            "https://github.com/anthropics/skills"
+        );
+    }
+
+    /// 预置源里不能出现重复仓库（前端是按钮列表，重复会出两个一样的按钮）。
+    #[test]
+    fn preset_sources_are_unique_and_well_formed() {
+        let mut repos: Vec<&str> = PRESET_SKILL_SOURCES.iter().map(|(_, r, _)| *r).collect();
+        let total = repos.len();
+        repos.sort_unstable();
+        repos.dedup();
+        assert_eq!(repos.len(), total, "预置源有重复仓库");
+        for (label, repo, hint) in PRESET_SKILL_SOURCES {
+            assert!(!label.is_empty() && !hint.is_empty(), "{repo} 缺少标签或说明");
+            assert_eq!(repo.split('/').count(), 2, "{repo} 应是 owner/repo 形态");
+        }
+    }
 
     fn temp_dir(name: &str) -> PathBuf {
         let mut dir = std::env::temp_dir();

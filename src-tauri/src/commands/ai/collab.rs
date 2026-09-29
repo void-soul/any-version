@@ -68,6 +68,21 @@ pub struct ContextSnapshot {
     pub created_at: String,
 }
 
+/// 派发输出归档（抄 orca `worker_terminal_archives`）：取消 / 超时 / 出错前把已产出的
+/// 输出落一份。orca 的理由是「释放终端后输出就没了」，我们这里是「进程被杀后
+/// 半截输出只存在于那条消息里，下一次派发会把 content 整个覆盖掉」。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DispatchArchive {
+    pub id: String,
+    pub room_id: String,
+    pub tool_id: String,
+    pub message_id: String,
+    pub content: String,
+    /// 归档原因：`error`（含超时 / 用户取消）
+    pub reason: String,
+    pub created_at: String,
+}
+
 /// 线程中的一条消息
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CollabMessage {
@@ -96,8 +111,68 @@ pub struct CollabRoom {
     pub id: String,
     pub name: String,
     pub project_path: String,
+    /// 输入域策略（抄 open-tag `authorization.md` 的 sealed 模式）：
+    /// - `open`（默认）：任何来源的文本都能进上下文；
+    /// - `sealed`：只有**人类**消息与 [`CollabRoom::allowed_sources`] 里列出的工具
+    ///   能进上下文，其余 agent 的引用一律剔除。
+    ///
+    /// 用途：多个 agent 互喂时，一个 agent 的输出（可能含不可信指令）会被当作另一个
+    /// agent 的「事实」读进去。sealed 把这条链路收口到可信来源。
+    #[serde(default = "default_input_policy")]
+    pub input_policy: String,
+    /// sealed 模式下允许进入上下文的来源（tool id 列表）
+    #[serde(default)]
+    pub allowed_sources: Vec<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+fn default_input_policy() -> String {
+    "open".to_string()
+}
+
+/// 输入域判定：该来源的文本能否进入这个房间的上下文。
+///
+/// 人类（"user" / "我"）与空来源永远放行 —— sealed 只约束 agent 之间互喂，
+/// 把人挡在外面没有意义。
+pub fn input_allowed(room: Option<&CollabRoom>, source_sender: &str) -> bool {
+    let Some(room) = room else {
+        return true;
+    };
+    if room.input_policy != "sealed" {
+        return true;
+    }
+    let sender = source_sender.trim();
+    if sender.is_empty() || sender == "user" || sender == "我" {
+        return true;
+    }
+    room.allowed_sources.iter().any(|s| s == sender)
+}
+
+/// 按房间的输入域策略过滤引用卡（引用卡是最容易绕过输入域的入口）。
+pub fn filter_references_by_policy(
+    room: Option<&CollabRoom>,
+    room_msgs: &[CollabMessage],
+    refs: Vec<CollabReference>,
+) -> Vec<CollabReference> {
+    refs.into_iter()
+        .filter(|r| {
+            // 引用卡只存了展示名，来源 agent 的 id 要回消息表去查
+            let sender = room_msgs
+                .iter()
+                .find(|m| m.id == r.source_message_id)
+                .map(|m| m.sender.as_str())
+                .unwrap_or("");
+            let ok = input_allowed(room, sender);
+            if !ok {
+                eprintln!(
+                    "[collab] 输入域拦截：sealed 房间剔除了来自 {} 的引用",
+                    sender
+                );
+            }
+            ok
+        })
+        .collect()
 }
 
 /// 协作任务（任务流 E：open/claimed/in_progress/in_review/done），agent 可通过总线创建/认领/交接/完成
@@ -121,6 +196,11 @@ pub struct CollabTask {
     /// 父任务（用于拆分/交接链）
     #[serde(default)]
     pub parent_task: Option<String>,
+    /// 终态结果（抄 orca `worker_done --outcome`）：`done` | `failed` | `abandoned`。
+    /// 只有走到 `done` / `failed` / `abandoned` 时才填 —— 「完成」和「做失败了」在协同里
+    /// 是两件完全不同的事，光靠 status 分不出来（orca 的权威来自 dispatch 的 outcome）。
+    #[serde(default)]
+    pub outcome: Option<String>,
     #[serde(default)]
     pub created_at: String,
     #[serde(default)]
@@ -129,6 +209,145 @@ pub struct CollabTask {
 
 fn default_task_status() -> String {
     "open".to_string()
+}
+
+/// 任务的合法状态（orca 用 SQL CHECK 约束，我们这是同一份约束的 Rust 表达）。
+pub const TASK_STATUSES: &[&str] = &["open", "claimed", "in_progress", "in_review", "done"];
+
+/// 任务的终态结果取值（与 [`CollabTask::outcome`] 对应）。
+pub const TASK_OUTCOMES: &[&str] = &["done", "failed", "abandoned"];
+
+/// 允许的状态迁移（**状态机**：不让「open 直接跳 in_review」这类跳步写进存储）。
+///
+/// `open` → 认领 / 直接开工 / 直接完成；`done` 只保留「重开」一条出路，
+/// 免得一个已完成的任务被别的 agent 悄悄改回进行中。
+pub fn allowed_task_transitions(from: &str) -> &'static [&'static str] {
+    match from {
+        "open" => &["claimed", "in_progress", "done"],
+        "claimed" => &["in_progress", "open", "done"],
+        "in_progress" => &["in_review", "done", "open"],
+        "in_review" => &["in_progress", "done", "open"],
+        "done" => &["open"],
+        _ => &[],
+    }
+}
+
+/// 迁移是否被允许（未知状态一律拒绝，避免写进一个谁都不认识的状态）。
+pub fn can_transition_task(from: &str, to: &str) -> bool {
+    allowed_task_transitions(from).contains(&to)
+}
+
+/// 认领任务：**锁内条件更新**（抄 open-tag `core.ts:840` 的原子 CAS）。
+///
+/// 旧实现是「find 到就直接赋值」，两个 agent 同时认领时后写的静默覆盖先写的 ——
+/// 双方都拿到 `ok: true`，于是同一件事被做两遍。CAS 的判据就是
+/// `assignee 为空 或 已经是自己`；被别人占着就直接拒绝并说清是谁占的。
+pub fn claim_task(
+    store: &mut CollabStore,
+    room_id: &str,
+    task_id: &str,
+    by: &str,
+) -> Result<CollabTask, String> {
+    let Some(task) = store
+        .tasks
+        .iter_mut()
+        .find(|t| t.id == task_id && t.room_id == room_id)
+    else {
+        return Err("not found".to_string());
+    };
+    if let Some(holder) = task.assignee.as_deref() {
+        if holder == by {
+            // 自己重复认领是幂等的（重放 / 双击不该报错）
+            return Ok(task.clone());
+        }
+        return Err(format!(
+            "task_already_claimed: {} 已被 {} 认领，不能重复认领",
+            task_id, holder
+        ));
+    }
+    if !can_transition_task(&task.status, "claimed") {
+        return Err(format!(
+            "invalid_transition: {} → claimed（当前状态 {}）",
+            task.status, task.status
+        ));
+    }
+    task.assignee = Some(by.to_string());
+    task.status = "claimed".to_string();
+    task.outcome = None;
+    task.updated_at = now_str();
+    Ok(task.clone())
+}
+
+/// 置任务终态：校验 outcome 取值并落库（终态要带结果，光有 status 分不出成功/失败）。
+pub fn finish_task(
+    store: &mut CollabStore,
+    room_id: &str,
+    task_id: &str,
+    outcome: &str,
+) -> Result<CollabTask, String> {
+    if !TASK_OUTCOMES.contains(&outcome) {
+        return Err(format!(
+            "invalid_outcome: {}（可选 {})",
+            outcome,
+            TASK_OUTCOMES.join(" / ")
+        ));
+    }
+    let Some(task) = store
+        .tasks
+        .iter_mut()
+        .find(|t| t.id == task_id && t.room_id == room_id)
+    else {
+        return Err("not found".to_string());
+    };
+    if !can_transition_task(&task.status, "done") {
+        return Err(format!(
+            "invalid_transition: {} → done（当前状态 {}）",
+            task.status, task.status
+        ));
+    }
+    task.status = "done".to_string();
+    task.outcome = Some(outcome.to_string());
+    task.updated_at = now_str();
+    Ok(task.clone())
+}
+
+/// 交接任务：显式转移 assignee（不是认领，不受「已被认领」限制），
+/// 但**只有当前持有者或创建者**能转 —— 否则任意 agent 都能把别人的任务抢走。
+pub fn handoff_task(
+    store: &mut CollabStore,
+    room_id: &str,
+    task_id: &str,
+    to: &str,
+    by: &str,
+) -> Result<CollabTask, String> {
+    let Some(task) = store
+        .tasks
+        .iter_mut()
+        .find(|t| t.id == task_id && t.room_id == room_id)
+    else {
+        return Err("not found".to_string());
+    };
+    let holder = task.assignee.clone().unwrap_or_default();
+    if !holder.is_empty() && holder != by && !task.created_by.is_empty() && task.created_by != by {
+        return Err(format!(
+            "not_authorized: {} 当前由 {} 持有，只有持有者或创建者能交接",
+            task_id, holder
+        ));
+    }
+    // 交接换的是人、不是阶段：已开工的任务不能因为换人就退回 claimed，
+    // 已完成的任务不能再派活。
+    if task.status == "done" {
+        return Err(format!(
+            "invalid_transition: 任务 {task_id} 已完成，不能再交接"
+        ));
+    }
+    if task.status == "open" {
+        task.status = "claimed".to_string();
+    }
+    task.assignee = Some(to.to_string());
+    task.outcome = None;
+    task.updated_at = now_str();
+    Ok(task.clone())
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -155,6 +374,9 @@ pub struct CollabStore {
     /// 任务流（E）
     #[serde(default)]
     pub tasks: Vec<CollabTask>,
+    /// 派发输出归档（释放前留存，见 [`DispatchArchive`]）
+    #[serde(default)]
+    pub dispatch_archives: Vec<DispatchArchive>,
 }
 
 /// 回复授权槽位（回复协调用）
@@ -187,6 +409,71 @@ const TURN_WINDOW_MS: u64 = 800;
 const MAX_AGENT_WAKE_DEPTH: u32 = 4;
 /// 同一根消息的最大唤醒次数
 const MAX_AGENT_WAKES_PER_ROOT: u32 = 6;
+
+/// **全局并行 agent 上限**（orca 恰恰没有这个上限，我们必须自己补）。
+///
+/// orca 的并发约束只落在 git 子进程与磁盘上（`git-admission-state.ts`：general 2~4 /
+/// network 3），agent 进程本身不限流 —— 它在远端跑，打满的是别人的配额。
+/// 我们是**本地**桌面工具：同时开 N 个 Codex / Claude Code 会打满 CPU 与供应商配额，
+/// 所以派发入口必须有硬上限。取 4，与 orca 的 `GENERAL_CAP` 同量级。
+const MAX_PARALLEL_AGENTS: usize = 4;
+
+static AGENT_SLOTS: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
+
+fn agent_slots() -> &'static tokio::sync::Semaphore {
+    AGENT_SLOTS.get_or_init(|| tokio::sync::Semaphore::new(MAX_PARALLEL_AGENTS))
+}
+
+/// 变更幂等 receipt（抄 orca `mutation_receipts`）：UI 重发 / 崩溃重放会把同一条
+/// 消息派发两次，两次都会真的拉起一个 agent（重复计费 + 重复劳动）。
+/// 调用方带 `request_id` 时按「房间 + request_id」去重，重放直接返回上次的结果。
+static MUTATION_RECEIPTS: OnceLock<Mutex<HashMap<String, (u64, String)>>> = OnceLock::new();
+/// receipt 有效期（毫秒）：过期即忘，避免无限增长
+const MUTATION_RECEIPT_TTL_MS: u64 = 5 * 60_000;
+/// receipt 条数上限（防内存无界增长）
+const MUTATION_RECEIPT_MAX: usize = 256;
+
+/// 当前毫秒时间戳（receipt 过期判定用）。
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// 查 receipt：命中返回上次的序列化结果（过期即忘）。
+fn lookup_receipt(key: &str) -> Option<String> {
+    let map = MUTATION_RECEIPTS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut g = map.lock();
+    let now = now_ms();
+    match g.get(key) {
+        Some((ts, payload)) if now.saturating_sub(*ts) < MUTATION_RECEIPT_TTL_MS => {
+            Some(payload.clone())
+        }
+        Some(_) => {
+            g.remove(key);
+            None
+        }
+        None => None,
+    }
+}
+
+/// 写 receipt（顺带清掉过期与超限的旧条目）。
+fn store_receipt(key: &str, payload: String) {
+    let map = MUTATION_RECEIPTS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut g = map.lock();
+    let now = now_ms();
+    g.retain(|_, (ts, _)| now.saturating_sub(*ts) < MUTATION_RECEIPT_TTL_MS);
+    if g.len() >= MUTATION_RECEIPT_MAX {
+        // 丢最旧的一批，保证新请求也能拿到去重保护
+        let mut keys: Vec<(String, u64)> = g.iter().map(|(k, (ts, _))| (k.clone(), *ts)).collect();
+        keys.sort_by_key(|(_, ts)| *ts);
+        for (k, _) in keys.into_iter().take(MUTATION_RECEIPT_MAX / 4 + 1) {
+            g.remove(&k);
+        }
+    }
+    g.insert(key.to_string(), (now, payload));
+}
 
 // ─── agent 互聊总线（C 方案：agent 主动同步委派，对齐 open-tag 的 agent CLI） ───
 /// 一次同步委派的运行时状态，server 端持有，agent 通过 HTTP 阻塞等待结果返回
@@ -376,6 +663,15 @@ async fn tick_turns(app: tauri::AppHandle) {
                     files.extend(m.files.clone());
                 }
             }
+            // 输入域过滤（抄 open-tag `authorization.md` 的 sealed 模式）：sealed 房间里
+            // 只有人类消息与白名单工具的输出能进上下文。引用卡是最容易旁路的入口 ——
+            // 「拒绝输入」只过滤正文而不过滤引用，等于没过滤。
+            let policy = store
+                .rooms
+                .iter()
+                .find(|r| r.id == turn.room_id)
+                .cloned();
+            refs = filter_references_by_policy(policy.as_ref(), &room_msgs, refs);
             let placeholder_id = turn.dispatch_message_id.clone().unwrap_or_default();
             let prompt = build_prompt(&content, &refs, &files);
             let model_id = turn.model_id.clone();
@@ -727,6 +1023,8 @@ pub fn collab_create_room(name: String, project_path: String) -> Result<CollabRo
         id: new_id(),
         name: if name.trim().is_empty() { "未命名会话".to_string() } else { name.trim().to_string() },
         project_path,
+        input_policy: default_input_policy(),
+        allowed_sources: Vec::new(),
         created_at: ts.clone(),
         updated_at: ts,
     };
@@ -921,9 +1219,26 @@ pub async fn collab_send_message(
     model_id: Option<String>,
     provider_id: Option<String>,
     options: Option<CollabDispatchOptions>,
+    // 幂等键：前端每次「发送」生成一个 id 并带上；UI 重发 / 崩溃重放时后端据此
+    // 直接返回上次的结果，不会再真的拉起一个 agent（抄 orca `mutation_receipts`）。
+    request_id: Option<String>,
 ) -> Result<Vec<CollabMessage>, String> {
     eprintln!("[collab] ▶ 发送消息: room={}, tool={}, model={:?}, provider={:?}, content_len={}, refs={}, files={}",
         room_id, tool_id, model_id, provider_id, content.len(), references.len(), files.len());
+    // 幂等重放：同一个 request_id 再来一次就返回上次的消息，不重复派发
+    let receipt_key = request_id
+        .as_deref()
+        .map(|r| r.trim())
+        .filter(|r| !r.is_empty())
+        .map(|r| format!("send::{}::{}", room_id, r));
+    if let Some(key) = receipt_key.as_ref() {
+        if let Some(cached) = lookup_receipt(key) {
+            if let Ok(msgs) = serde_json::from_str::<Vec<CollabMessage>>(&cached) {
+                eprintln!("[collab] ↺ 幂等重放（request_id 已处理过），直接返回上次结果");
+                return Ok(msgs);
+            }
+        }
+    }
     // 读-改-写临界区：仅覆盖“加载→修改→保存”的同步段，持锁不跨越任何 await，
     // 保证 Tauri 命令的 future: Send（避免 std MutexGuard 跨 await）。
     let user_msg = CollabMessage {
@@ -1037,6 +1352,12 @@ pub async fn collab_send_message(
 
     // 触发 Turn 调度器：窗口到期后自动路由 + 派发（替代直接 spawn）
     ensure_turn_scheduler(app.clone());
+
+    if let Some(key) = receipt_key.as_ref() {
+        if let Ok(payload) = serde_json::to_string(&result) {
+            store_receipt(key, payload);
+        }
+    }
 
     Ok(result)
 }
@@ -2223,6 +2544,20 @@ fn finalize_message(
     complete_delegation(msg_id, status, &content);
     if let Some(msgs) = store.messages.get_mut(room_id) {
         if let Some(m) = msgs.iter_mut().find(|m| m.id == msg_id) {
+            // 释放前归档（抄 orca `worker_terminal_archives`）：取消 / 超时 / 出错时，
+            // 已经产出的那部分输出只存在于这条消息里，进程一结束就没了。
+            // 先存一份再覆盖，排查「跑了一半被掐掉」才有据可查。
+            if status == "error" && !m.content.trim().is_empty() {
+                store.dispatch_archives.push(DispatchArchive {
+                    id: new_id(),
+                    room_id: room_id.to_string(),
+                    tool_id: m.sender.clone(),
+                    message_id: msg_id.to_string(),
+                    content: m.content.clone(),
+                    reason: "error".to_string(),
+                    created_at: now_str(),
+                });
+            }
             m.content = content;
             m.status = Some(status.to_string());
             // 保留原始 created_at（创建时间），不覆盖为完成时间
@@ -2414,6 +2749,7 @@ pub fn collab_task_op(app: tauri::AppHandle, room_id: &str, body: &Value) -> Val
                 assignee: None,
                 created_by,
                 parent_task: parent,
+                outcome: None,
                 created_at: now_str(),
                 updated_at: now_str(),
             });
@@ -2422,36 +2758,31 @@ pub fn collab_task_op(app: tauri::AppHandle, room_id: &str, body: &Value) -> Val
         "claim" => {
             let id = body.get("task_id").and_then(|v| v.as_str()).unwrap_or("");
             let by = body.get("by").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            if let Some(t) = store.tasks.iter_mut().find(|t| t.id == id && t.room_id == room_id) {
-                t.assignee = Some(by);
-                t.status = "claimed".to_string();
-                t.updated_at = now_str();
-                json!({ "ok": true, "task": t })
-            } else {
-                json!({ "ok": false, "error": "not found" })
+            match claim_task(&mut store, room_id, id, &by) {
+                Ok(t) => json!({ "ok": true, "task": t }),
+                Err(e) => json!({ "ok": false, "error": e }),
             }
         }
         "complete" => {
             let id = body.get("task_id").and_then(|v| v.as_str()).unwrap_or("");
-            if let Some(t) = store.tasks.iter_mut().find(|t| t.id == id && t.room_id == room_id) {
-                t.status = "done".to_string();
-                t.updated_at = now_str();
-                json!({ "ok": true, "task": t })
-            } else {
-                json!({ "ok": false, "error": "not found" })
+            // outcome 缺省按 done（历史调用方不带该字段，不能因为加了校验就把它们打回）
+            let outcome = body
+                .get("outcome")
+                .and_then(|v| v.as_str())
+                .unwrap_or("done");
+            match finish_task(&mut store, room_id, id, outcome) {
+                Ok(t) => json!({ "ok": true, "task": t }),
+                Err(e) => json!({ "ok": false, "error": e }),
             }
         }
         "handoff" => {
             let id = body.get("task_id").and_then(|v| v.as_str()).unwrap_or("");
             let to = body.get("to").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let by = body.get("by").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let target = resolve_mention(&to).unwrap_or(to);
-            if let Some(t) = store.tasks.iter_mut().find(|t| t.id == id && t.room_id == room_id) {
-                t.assignee = Some(target);
-                t.status = "claimed".to_string();
-                t.updated_at = now_str();
-                json!({ "ok": true, "task": t })
-            } else {
-                json!({ "ok": false, "error": "not found" })
+            match handoff_task(&mut store, room_id, id, &target, &by) {
+                Ok(t) => json!({ "ok": true, "task": t }),
+                Err(e) => json!({ "ok": false, "error": e }),
             }
         }
         _ => json!({ "ok": false, "error": format!("unknown op: {}", op) }),
@@ -2477,7 +2808,28 @@ pub fn collab_list_tasks(room_id: String) -> Vec<CollabTask> {
 /// E 方案：任务操作（前端按钮调用）：op: create/claim/complete/handoff
 #[tauri::command]
 pub fn collab_task_action(room_id: String, body: Value, app: tauri::AppHandle) -> Value {
-    collab_task_op(app, &room_id, &body)
+    // 幂等（同 [`collab_send_message`]）：带 request_id 的重放直接返回上次结果，
+    // 避免 UI 双击 / 崩溃重放建出两个一模一样的任务。
+    let receipt_key = body
+        .get("request_id")
+        .and_then(|v| v.as_str())
+        .map(|r| r.trim())
+        .filter(|r| !r.is_empty())
+        .map(|r| format!("task::{}::{}", room_id, r));
+    if let Some(key) = receipt_key.as_ref() {
+        if let Some(cached) = lookup_receipt(key) {
+            if let Ok(v) = serde_json::from_str::<Value>(&cached) {
+                return v;
+            }
+        }
+    }
+    let res = collab_task_op(app, &room_id, &body);
+    if let Some(key) = receipt_key.as_ref() {
+        if let Ok(payload) = serde_json::to_string(&res) {
+            store_receipt(key, payload);
+        }
+    }
+    res
 }
 
 /// 派发到工具：流式读取 stdout，逐段 emit；带会话绑定 / 取消 / 超时。
@@ -2495,6 +2847,17 @@ async fn dispatch_to_tool(
 ) {
     eprintln!("[collab] ═══ 派发开始 ═══ tool={}, room={}, placeholder={}, prompt_len={}, model={:?}, provider={:?}",
         tool_id, room_id, placeholder_id, prompt.len(), model_id, provider_id);
+    // 全局并行上限：拿不到槽位就在这里排队（permit 是 RAII，函数任何路径返回都会归还）。
+    // 放在派发入口而不是某一处调用点，是因为 `dispatch_to_tool` 有两个调用方
+    // （turn 调度器与压缩请求），只堵一处等于没堵。
+    let _slot = match agent_slots().acquire().await {
+        Ok(permit) => permit,
+        Err(_) => {
+            eprintln!("[collab] ✗ 并发槽位已关闭，放弃派发: {}", tool_id);
+            finalize_message(app, &room_id, &placeholder_id, "error", "⚠ 协同派发服务已关闭".to_string(), None, None, None, None);
+            return;
+        }
+    };
     let (_tool_config, tool_paths) = match registry().get_tool(&tool_id) {
         Some((c, p)) => (c.clone(), p.clone()),
         None => {
@@ -3391,6 +3754,40 @@ pub fn collab_get_agents() -> Vec<CollabAgentStatus> {
     load_store().agents
 }
 
+/// 设置房间的输入域策略（sealed 模式下还要给出允许进入上下文的来源）。
+///
+/// 抄 open-tag `authorization.md`：多 agent 互喂时，一个 agent 的输出会被另一个
+/// agent 当成事实读进去。sealed 把这条链路收口到「人类 + 白名单工具」。
+#[tauri::command]
+pub fn collab_set_input_policy(
+    room_id: String,
+    policy: String,
+    allowed_sources: Option<Vec<String>>,
+) -> Result<(), String> {
+    if policy != "open" && policy != "sealed" {
+        return Err(format!("未知输入域策略：{}（可选 open / sealed）", policy));
+    }
+    let _store_lock = STORE_LOCK.get_or_init(|| Mutex::new(())).lock();
+    let mut store = load_store();
+    let Some(room) = store.rooms.iter_mut().find(|r| r.id == room_id) else {
+        return Err("会话不存在".to_string());
+    };
+    room.input_policy = policy;
+    room.allowed_sources = allowed_sources.unwrap_or_default();
+    room.updated_at = now_str();
+    save_store(&store)
+}
+
+/// 查询房间的派发输出归档（取消 / 超时 / 出错前留存的那半截输出）。
+#[tauri::command]
+pub fn collab_list_archives(room_id: String) -> Vec<DispatchArchive> {
+    load_store()
+        .dispatch_archives
+        .into_iter()
+        .filter(|a| a.room_id == room_id)
+        .collect()
+}
+
 /// 用户响应工具的交互式询问
 #[tauri::command]
 pub fn collab_respond_prompt(msg_id: String, response: String) -> Result<(), String> {
@@ -3430,6 +3827,108 @@ mod tests {
         // 任何值都被整体双引号包裹，作为 cmd /c 的单个参数字符串
         assert_eq!(escape_cmd_arg("abc"), "\"abc\"");
         assert_eq!(escape_cmd_arg("a & b | c"), "\"a & b | c\"");
+    }
+
+    fn open_task(id: &str, created_by: &str) -> CollabTask {
+        CollabTask {
+            id: id.to_string(),
+            room_id: "r1".to_string(),
+            title: "t".to_string(),
+            description: String::new(),
+            status: "open".to_string(),
+            assignee: None,
+            created_by: created_by.to_string(),
+            parent_task: None,
+            outcome: None,
+            created_at: now_str(),
+            updated_at: now_str(),
+        }
+    }
+
+    /// 认领是 CAS：第二次认领必须失败，且说清是谁占着（抄 open-tag core.ts:840）。
+    /// 旧实现「find 到就赋值」会让两个 agent 都以为自己拿到了同一个任务。
+    #[test]
+    fn claim_is_compare_and_set() {
+        let mut store = CollabStore {
+            tasks: vec![open_task("t1", "user")],
+            ..CollabStore::default()
+        };
+        let first = claim_task(&mut store, "r1", "t1", "claude-code");
+        assert!(first.is_ok(), "首个认领应成功");
+        assert_eq!(first.unwrap().assignee.as_deref(), Some("claude-code"));
+
+        let second = claim_task(&mut store, "r1", "t1", "codex");
+        let err = second.expect_err("被别人占着就不能再认领");
+        assert!(err.contains("claude-code"), "错误信息要指出持有者: {err}");
+        // 持有者不能被覆盖
+        assert_eq!(store.tasks[0].assignee.as_deref(), Some("claude-code"));
+        // 自己重复认领是幂等的（不报错）
+        assert!(claim_task(&mut store, "r1", "t1", "claude-code").is_ok());
+    }
+
+    /// 终态必须带 outcome，且非法取值要被拒（orca 的 worker_done 强制带 outcome 同款）。
+    #[test]
+    fn finish_requires_a_known_outcome() {
+        let mut store = CollabStore {
+            tasks: vec![open_task("t1", "user")],
+            ..CollabStore::default()
+        };
+        assert!(finish_task(&mut store, "r1", "t1", "maybe").is_err());
+        assert!(finish_task(&mut store, "r1", "t1", "failed").is_ok());
+        assert_eq!(store.tasks[0].status, "done");
+        // 「完成」与「做失败了」必须分得开
+        assert_eq!(store.tasks[0].outcome.as_deref(), Some("failed"));
+        // done 是终态：不能再迁到 claimed
+        assert!(claim_task(&mut store, "r1", "t1", "codex").is_err());
+    }
+
+    /// 交接要收口：非持有者、非创建者不能把别人的任务转走。
+    #[test]
+    fn handoff_only_by_holder_or_creator() {
+        let mut store = CollabStore {
+            tasks: vec![open_task("t1", "user")],
+            ..CollabStore::default()
+        };
+        claim_task(&mut store, "r1", "t1", "claude-code").unwrap();
+        assert!(handoff_task(&mut store, "r1", "t1", "codex", "codex").is_err());
+        assert!(handoff_task(&mut store, "r1", "t1", "codex", "user").is_ok());
+        assert_eq!(store.tasks[0].assignee.as_deref(), Some("codex"));
+    }
+
+    /// 输入域：open 放行一切；sealed 只放行人类与白名单工具（抄 open-tag sealed 模式）。
+    #[test]
+    fn sealed_input_domain_filters_agent_sources() {
+        let open_room = CollabRoom {
+            id: "r1".to_string(),
+            name: "n".to_string(),
+            project_path: String::new(),
+            input_policy: "open".to_string(),
+            allowed_sources: vec![],
+            created_at: now_str(),
+            updated_at: now_str(),
+        };
+        assert!(input_allowed(Some(&open_room), "some-random-agent"));
+
+        let sealed = CollabRoom {
+            input_policy: "sealed".to_string(),
+            allowed_sources: vec!["claude-code".to_string()],
+            ..open_room.clone()
+        };
+        // 人类永远放行
+        assert!(input_allowed(Some(&sealed), "user"));
+        assert!(input_allowed(Some(&sealed), "claude-code"));
+        assert!(!input_allowed(Some(&sealed), "unknown-agent"));
+    }
+
+    /// 幂等 receipt：同一个 request_id 第二次能拿到上次的载荷（抄 orca mutation_receipts）。
+    #[test]
+    fn mutation_receipt_replays_the_same_payload() {
+        let key = format!("send::r1::{}", new_id());
+        assert!(lookup_receipt(&key).is_none());
+        store_receipt(&key, "{\"ok\":true}".to_string());
+        assert_eq!(lookup_receipt(&key).as_deref(), Some("{\"ok\":true}"));
+        // 换一个 key 不能串味
+        assert!(lookup_receipt(&format!("{key}-other")).is_none());
     }
 
     #[test]
