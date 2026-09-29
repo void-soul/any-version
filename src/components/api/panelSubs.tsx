@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
-  Plus, Save, Play, Loader2, Trash2, Pencil, Upload, X, Star, Link2,
+  Plus, Save, Play, Loader2, Trash2, Pencil, Upload, X, Star, Link2, FileText,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -229,6 +229,9 @@ export function DocsPanel({ draft, onSave }: { draft: ApiEndpoint; onSave: (md: 
   );
 }
 
+/** 取路径最后一段作为文件名（文件列表展示用） */
+const baseName = (path: string) => path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || path;
+
 // ─── 导入弹窗 ───
 export function ImportModal({ projectId, modules, onClose, onImported }: {
   projectId: string;
@@ -238,6 +241,13 @@ export function ImportModal({ projectId, modules, onClose, onImported }: {
 }) {
   const [kind, setKind] = useState<"postman" | "swagger" | "framework" | "ai">("postman");
   const [postmanJson, setPostmanJson] = useState("");
+  /**
+   * 已选中的 Postman 集合**文件路径**（支持多选）。
+   *
+   * 只存路径、不存内容：一次选十几个集合、每个可能几 MB，选中时就全读进 state 纯属白占内存；
+   * 真正需要内容是在点「导入」的那一刻（见 importPostman）。
+   */
+  const [postmanFiles, setPostmanFiles] = useState<string[]>([]);
   const [swaggerSource, setSwaggerSource] = useState("");
   const [framework, setFramework] = useState("nest");
   const [frameworkDir, setFrameworkDir] = useState("");
@@ -276,11 +286,59 @@ export function ImportModal({ projectId, modules, onClose, onImported }: {
     if (dir) setAiDir(String(dir));
   };
 
-  const pickPostmanFile = async () => {
-    const f = await openDialog({ multiple: false, filters: [{ name: "Postman Collection", extensions: ["json"] }] });
-    if (!f) return;
-    const content = await invoke<string>("read_text_file", { path: String(f) }).catch(() => "");
-    if (content) setPostmanJson(content);
+  /** 批量选择 Postman 集合文件（追加到已选列表，重复选中的忽略） */
+  const pickPostmanFiles = async () => {
+    const picked = await openDialog({
+      multiple: true,
+      filters: [{ name: "Postman Collection", extensions: ["json"] }],
+    });
+    if (!picked) return;
+    const paths = (Array.isArray(picked) ? picked : [picked]).map(String);
+    // 去重：同一个文件被选两次不该被导入两遍
+    setPostmanFiles((prev) => [...prev, ...paths.filter((p) => !prev.includes(p))]);
+  };
+
+  const removePostmanFile = (path: string) => {
+    setPostmanFiles((prev) => prev.filter((p) => p !== path));
+  };
+
+  /**
+   * 导入 Postman 数据：**所选文件 + 粘贴框内容**逐个导入。
+   *
+   * 逐个导入而不是「合并成一个大 JSON」：合并要先解析再拼接，只要有一个文件格式不对
+   * 就整体失败；逐个导入则单个坏文件不影响其余文件，而且能**按文件回报失败原因**
+   * —— 合并后只剩一句「导入失败」，用户不知道该删哪个文件。
+   */
+  const importPostman = async (targetProjectId: string, moduleId: string | null) => {
+    const items: { label: string; read: () => Promise<string> }[] = postmanFiles.map((path) => ({
+      label: baseName(path),
+      // 到导入这一刻才读文件（见 postmanFiles 的注释）
+      read: () => invoke<string>("read_text_file", { path }),
+    }));
+    if (postmanJson.trim()) {
+      items.push({ label: t("apisubs.pastedCollection"), read: async () => postmanJson });
+    }
+    if (items.length === 0) throw new Error(t("apisubs.nothingToImport"));
+
+    let count = 0;
+    const failures: string[] = [];
+    for (const item of items) {
+      try {
+        const json = await item.read();
+        if (!json.trim()) {
+          failures.push(t("apisubs.emptyFile", { name: item.label }));
+          continue;
+        }
+        count += await invoke<number>("api_import_postman", {
+          json,
+          projectId: targetProjectId,
+          moduleId,
+        });
+      } catch (e) {
+        failures.push(t("apisubs.fileImportFail", { name: item.label, err: String(e) }));
+      }
+    }
+    return { count, failures, total: items.length };
   };
 
   const doImport = async () => {
@@ -291,7 +349,25 @@ export function ImportModal({ projectId, modules, onClose, onImported }: {
       let count = 0;
       const moduleId = targetModule || null;
       if (kind === "postman") {
-        count = await invoke<number>("api_import_postman", { json: postmanJson, projectId, moduleId });
+        const result = await importPostman(projectId, moduleId);
+        count = result.count;
+        if (result.failures.length > 0) {
+          // 成功的部分已经入库了，所以整体报「部分成功」而不是「失败」，
+          // 并把失败**点名到文件**（这是逐个导入换来的可读性）
+          setMsgOk(false);
+          setMsg(
+            [
+              t("apisubs.importedSome", {
+                count,
+                ok: result.total - result.failures.length,
+                fail: result.failures.length,
+              }),
+              ...result.failures.map((line) => `· ${line}`),
+            ].join("\n")
+          );
+          onImported();
+          return;
+        }
       } else if (kind === "swagger") {
         count = await invoke<number>("api_import_swagger", { source: swaggerSource, projectId, moduleId });
       } else if (kind === "framework") {
@@ -348,19 +424,57 @@ export function ImportModal({ projectId, modules, onClose, onImported }: {
           </select>
         </label>
         {kind === "postman" && (
-          <label className="block">
-            <span className="text-tiny text-slate-500">{t("apisubs.postmanDesc")}</span>
-            <div className="flex gap-1.5 mb-1">
-              <button onClick={pickPostmanFile} className="px-2.5 py-1 text-caption rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">{t("apisubs.chooseFile")}</button>
+          <div className="space-y-1.5">
+            <span className="block text-tiny text-slate-500">{t("apisubs.postmanDesc")}</span>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <button
+                onClick={pickPostmanFiles}
+                className="px-2.5 py-1 text-caption rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer"
+              >
+                {t("apisubs.chooseFiles")}
+              </button>
+              {postmanFiles.length > 0 && (
+                <>
+                  <span className="text-tiny text-slate-400">
+                    {t("apisubs.filesSelected", { count: postmanFiles.length })}
+                  </span>
+                  <button
+                    onClick={() => setPostmanFiles([])}
+                    className="text-tiny text-slate-500 hover:text-rose-400 cursor-pointer"
+                  >
+                    {t("apisubs.clearFiles")}
+                  </button>
+                </>
+              )}
             </div>
+            {postmanFiles.length > 0 && (
+              <div className="max-h-28 overflow-auto rounded-md border border-white/10 bg-black/20 divide-y divide-white/5">
+                {postmanFiles.map((path) => (
+                  <div key={path} className="flex items-center gap-1.5 px-2 py-1">
+                    <FileText className="w-3 h-3 text-slate-500 flex-shrink-0" />
+                    <span className="text-tiny text-slate-300 truncate flex-1" title={path}>
+                      {baseName(path)}
+                    </span>
+                    <button
+                      onClick={() => removePostmanFile(path)}
+                      title={t("apisubs.removeFile")}
+                      className="p-0.5 text-slate-500 hover:text-rose-400 cursor-pointer flex-shrink-0"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             <textarea
               value={postmanJson}
               onChange={(e) => setPostmanJson(e.target.value)}
-              rows={9}
+              rows={postmanFiles.length > 0 ? 4 : 9}
               placeholder='{"info":{"name":"..."},"variable":[...],"item":[...]}'
               className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body font-mono text-slate-200"
             />
-          </label>
+            <span className="block text-tiny text-slate-600">{t("apisubs.pasteHint")}</span>
+          </div>
         )}
         {kind === "swagger" && (
           <label className="block">
@@ -445,12 +559,14 @@ export function ImportModal({ projectId, modules, onClose, onImported }: {
             </div>
           </div>
         )}
-        {msg && <div className={`text-caption ${msgOk ? "text-emerald-400" : "text-rose-400"}`}>{msg}</div>}
+        {msg && (
+          <div className={`text-caption whitespace-pre-line ${msgOk ? "text-emerald-400" : "text-rose-400"}`}>{msg}</div>
+        )}
         <div className="flex justify-end gap-2 pt-1">
           <button onClick={onClose} className="px-3 py-1.5 text-body rounded-ctl bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">{t("common.close")}</button>
           <button
             onClick={doImport}
-            disabled={busy || (kind === "postman" && !postmanJson.trim()) || (kind === "swagger" && !swaggerSource.trim()) || (kind === "framework" && !frameworkDir.trim()) || (kind === "ai" && (!aiDir.trim() || !aiProviderId))}
+            disabled={busy || (kind === "postman" && !postmanJson.trim() && postmanFiles.length === 0) || (kind === "swagger" && !swaggerSource.trim()) || (kind === "framework" && !frameworkDir.trim()) || (kind === "ai" && (!aiDir.trim() || !aiProviderId))}
             className="px-4 py-1.5 text-body rounded-ctl font-semibold text-white cursor-pointer disabled:opacity-50"
             style={{ background: "var(--module-accent)" }}
           >
