@@ -71,8 +71,10 @@
     "onlinePlay": "Play",
     "onlinePlayCached": "Played from cache",
     "onlineDownload": "Download",
+    "onlineDownloadFrom": "Download (from {{platform}})",
     "onlineDownloading": "Downloading {{percent}}%",
     "onlineDownloaded": "Saved to {{dir}}",
+    "onlineDownloadFail": "Download failed: {{err}}",
     "qualityLabel": "Quality",
     "quality": {
       "low": "Low",
@@ -5193,6 +5195,10 @@
       "switch": "Switch"
     },
     "overdue": "overdue",
+    "creditSegments": "Credit mix",
+    "creditSegmentsHint": "One block per credit grant: redder expires sooner, greener later (grey = already expired); length is its share of this account's remaining credits. Hover for type and expiry",
+    "creditNeverExpires": "Never expires",
+    "creditDaysLeft": "{{days}} days left",
     "editTimeLabels": "Edit time labels",
     "timeLabel": "Time",
     "addTime": "Add time",

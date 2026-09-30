@@ -71,8 +71,10 @@
     "onlinePlay": "播放",
     "onlinePlayCached": "已缓存，直接播放",
     "onlineDownload": "下载",
+    "onlineDownloadFrom": "下载（来自 {{platform}}）",
     "onlineDownloading": "下载中 {{percent}}%",
     "onlineDownloaded": "已下载到 {{dir}}",
+    "onlineDownloadFail": "下载失败: {{err}}",
     "qualityLabel": "音质",
     "quality": {
       "low": "低",
@@ -5121,6 +5123,10 @@
       "switch": "切换"
     },
     "overdue": "已过期",
+    "creditSegments": "积分构成",
+    "creditSegmentsHint": "一段积分一个方块：越红越快到期、越绿越不着急（灰色=已过期），长度是它在本账号剩余积分里的占比；悬停看类型与到期时间",
+    "creditNeverExpires": "永不过期",
+    "creditDaysLeft": "剩 {{days}} 天",
     "editTimeLabels": "编辑时间标签",
     "timeLabel": "时间",
     "addTime": "添加时间",
