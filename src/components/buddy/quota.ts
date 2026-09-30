@@ -162,6 +162,45 @@ const DEFAULT_SOURCE = "积分";
 
 const round2 = (value: number) => Math.round(value * 100) / 100;
 
+/** 额度数字展示（与列表/详情一致，避免各处自己格式化）。 */
+export function formatQuotaNumber(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(Math.max(0, value));
+}
+
+/** 颜色映射的天数跨度：剩余天数 ≥ 它（或永不过期）都取绿色，不再更绿。 */
+export const CREDIT_EXPIRY_SPAN_DAYS = 30;
+
+/** 绿（安全）的色相值；红（最紧急）是 0。 */
+export const CREDIT_HUE_SAFE = 140;
+
+/**
+ * 距离到期的**整天数**：不足一天算 0，已过期也是 0；永不过期返回 null。
+ *
+ * 注意与「已过期」的区分交给 `segmentHue`：这里只给距离，不给语义。
+ */
+export function segmentDaysLeft(
+  segment: CreditSegment,
+  now: number = Date.now()
+): number | null {
+  if (segment.expiresAt == null) return null;
+  const ms = segment.expiresAt - now;
+  return ms <= 0 ? 0 : Math.floor(ms / 86_400_000);
+}
+
+/**
+ * 到期远近 → 色相（0 = 最紧急的红，140 = 安全的绿）。
+ *
+ * 已过期返回 null（调用方画成灰色）：过期的积分用不掉了，再按「紧急程度」染色反而误导。
+ */
+export function segmentHue(segment: CreditSegment, now: number = Date.now()): number | null {
+  const days = segmentDaysLeft(segment, now);
+  if (days === null) return CREDIT_HUE_SAFE;
+  if (days <= 0) return null;
+  const ratio = Math.min(1, days / CREDIT_EXPIRY_SPAN_DAYS);
+  return Math.round(ratio * CREDIT_HUE_SAFE);
+}
+
 /** 时间戳归一：数字（秒 / 毫秒）与 ISO 字符串都支持，非法值返回 null。 */
 export function parseCreditTimestamp(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {

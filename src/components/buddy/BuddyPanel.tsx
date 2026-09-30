@@ -5,7 +5,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
+import CreditSegmentsBar from "./CreditSegmentsBar";
 import {
+  formatQuotaNumber,
   LABEL_FIELDS,
   REMAINING_FIELDS,
   TOTAL_FIELDS,
@@ -629,11 +631,6 @@ function getPlanBadge(account: BuddyAccount): string {
   return "UNKNOWN";
 }
 
-function formatQuotaNumber(value: number): string {
-  if (!Number.isFinite(value)) return "0";
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(Math.max(0, value));
-}
-
 // 总额度（不区分个人体验/裂变包，全部合并为一个 remain/total）
 // 同一礼包（礼包码/来源 + 到期时间）的多条记录先合并再求和，与官方礼包分组一致；
 // 单条记录 total < remain 时以 remain 为准（对齐参考实现的归一化）。
@@ -805,6 +802,8 @@ function QuotaBar({
 // 账号表格各列固定宽度（px），表头与行按同一宽度对齐
 const COL_INFO = 240;
 const COL_QUOTA = 120;
+/** 积分构成条（一段一方块：颜色=到期远近，长度=占该账号剩余额的比例） */
+const COL_CREDITS = 140;
 const COL_W = 150;
 const COL_ACTIONS = 150;
 
@@ -2407,11 +2406,19 @@ export default function BuddyPanel() {
                 </button>
               </div>
             ) : (
-              <div style={{ minWidth: COL_INFO + COL_QUOTA + (expiryColumns.length + 1) * COL_W + COL_ACTIONS }}>
+              <div
+                style={{
+                  minWidth:
+                    COL_INFO + COL_QUOTA + COL_CREDITS + (expiryColumns.length + 1) * COL_W + COL_ACTIONS,
+                }}
+              >
                 {/* 表头 */}
                 <div className="flex items-stretch sticky top-0 z-10 bg-slate-950 border-b border-white/10 text-tiny text-slate-500">
                   <div style={{ width: COL_INFO }} className="px-3 py-1.5 flex-shrink-0">{t("buddy.colAccount")}</div>
                   <div style={{ width: COL_QUOTA }} className="px-2 py-1.5 flex-shrink-0">{t("buddy.quotaTotal")}</div>
+                  <div style={{ width: COL_CREDITS }} className="px-2 py-1.5 flex-shrink-0 border-l border-white/5">
+                    {t("buddy.creditSegments")}
+                  </div>
                   {/* 内置「到期」列：登录 token 过期时刻，只读，不属于自定义列 schema */}
                   <div style={{ width: COL_W }} className="px-2 py-1.5 flex-shrink-0 border-l border-white/5">{t("buddy.expiresAt")}</div>
                   {expiryColumns.map((col) => (
@@ -2509,6 +2516,18 @@ export default function BuddyPanel() {
                           />
                         ) : (
                           <span className="text-slate-600">—</span>
+                        )}
+                      </div>
+                      {/* 积分构成：一段一方块（颜色=到期远近，长度=占比），点开看用量详情 */}
+                      <div style={{ width: COL_CREDITS }} className="flex items-center px-2 flex-shrink-0 border-l border-white/5">
+                        {quota.unlimited ? (
+                          <span className="text-emerald-400">∞</span>
+                        ) : (
+                          <CreditSegmentsBar
+                            segments={mergeCreditSegments(accountCreditSegments(acc))}
+                            now={now}
+                            onClick={() => setUsageAccountId(acc.id)}
+                          />
                         )}
                       </div>
                       {/* 登录 token 到期：只读倒计时（已过期显示「已过期」） */}

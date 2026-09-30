@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  CREDIT_HUE_SAFE,
   mergeCreditSegments,
   nearestExpiringSegment,
+  segmentDaysLeft,
+  segmentHue,
   segmentsFromQuotaItems,
   selectRotationCandidate,
   summarizeCreditSegments,
@@ -12,6 +15,7 @@ import {
 } from "../quota";
 
 const NOW = Date.parse("2026-09-17T10:00:00Z");
+const DAY = 86_400_000;
 
 const item = (over: Partial<QuotaItemLike> = {}): QuotaItemLike => ({
   packageName: "体验包",
@@ -156,5 +160,38 @@ describe("selectRotationCandidate", () => {
       NOW
     );
     expect(candidate?.accountId).toBe("only");
+  });
+});
+
+describe("segmentDaysLeft", () => {
+  it("counts whole days, clamps sub-day leftovers to 0", () => {
+    expect(segmentDaysLeft(segment({ expiresAt: NOW + 3 * DAY }), NOW)).toBe(3);
+    // 剩不到一天：既不能显示 0 天以外的数，也不能四舍五入成 1 天
+    expect(segmentDaysLeft(segment({ expiresAt: NOW + 1000 }), NOW)).toBe(0);
+    expect(segmentDaysLeft(segment({ expiresAt: NOW - 1000 }), NOW)).toBe(0);
+  });
+
+  it("reports null for credits that never expire", () => {
+    expect(segmentDaysLeft(segment({ expiresAt: null }), NOW)).toBeNull();
+  });
+});
+
+describe("segmentHue", () => {
+  it("is redder the sooner it expires", () => {
+    const soon = segmentHue(segment({ expiresAt: NOW + DAY }), NOW);
+    const later = segmentHue(segment({ expiresAt: NOW + 20 * DAY }), NOW);
+    expect(soon).not.toBeNull();
+    expect(later).not.toBeNull();
+    expect(soon!).toBeLessThan(later!);
+  });
+
+  it("caps at the safe hue for far-off or never-expiring credits", () => {
+    expect(segmentHue(segment({ expiresAt: null }), NOW)).toBe(CREDIT_HUE_SAFE);
+    expect(segmentHue(segment({ expiresAt: NOW + 999 * DAY }), NOW)).toBe(CREDIT_HUE_SAFE);
+  });
+
+  it("returns null when already expired (caller paints it grey, not red)", () => {
+    // 过期的积分用不掉了，按「紧急程度」染红会让人以为还能抢救
+    expect(segmentHue(segment({ expiresAt: NOW - 1 }), NOW)).toBeNull();
   });
 });
