@@ -155,15 +155,21 @@ pub fn ensure(path: &str) -> Result<String, String> {
     }
 }
 
-/// ffmpeg 在哪：运行组件目录 → PATH。
-fn locate_ffmpeg() -> Result<PathBuf, String> {
-    utils::bin_tool_path("ffmpeg")
-        .or_else(|| utils::find_bin_executable("ffmpeg"))
-        .or_else(|| utils::find_in_path("ffmpeg"))
-        .filter(|path| path.is_file())
-        .ok_or_else(|| {
-            "这种编码需要先转码才能播放，但没找到 ffmpeg（可在设置的运行组件里安装）".to_string()
-        })
+/// ffmpeg 在哪：**只用软件内置的那份**（与 RTSP 服务同一套取法：bin/ffmpeg/ffmpeg.exe）。
+///
+/// 刻意不查用户 PATH 里的 ffmpeg：外部版本装了哪些编码器不可控（可能没有 AAC），
+/// 也可能是被别的软件塞进去的旧版 —— 转码结果不稳定，排查成本还高。
+pub(crate) fn locate_ffmpeg() -> Result<PathBuf, String> {
+    let path = utils::bin_tool_path("ffmpeg")
+        .unwrap_or_else(|| utils::get_bin_dir().join("ffmpeg").join("ffmpeg.exe"));
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(format!(
+            "这种编码需要先转码才能播放，但没找到内置的 ffmpeg（{}）；请在设置的运行组件里安装",
+            path.display()
+        ))
+    }
 }
 
 /// 跑 ffmpeg 并带超时卡口：卡死的外部进程会把播放彻底堵死，不能无限等。
