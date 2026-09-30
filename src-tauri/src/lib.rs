@@ -656,6 +656,8 @@ pub fn run() {
             commands::music::music_plugin_media_source,
             commands::music::music_plugin_play,
             commands::music::music_plugin_download,
+            // 下载正在播放的那首在线曲目（播放器记着它的来源，不必回搜索页再点一次）
+            commands::music::music_plugin_download_current,
             commands::music::music_plugin_clear_cache,
             commands::music::music_plugin_set_download_dir,
             commands::music::music_plugin_storage_info,

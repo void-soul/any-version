@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, State};
 
-use super::player::{MusicPlayerState, PendingOnline, PlayerState};
+use super::player::{MusicPlayerState, OnlineOrigin, PendingOnline, PlayerState};
 use super::queue::QueueItem;
 use super::{library, plugin_host, plugin_registry, settings as music_settings};
 
@@ -443,8 +443,15 @@ pub async fn music_plugin_play(
     let quality = quality.unwrap_or_else(|| "standard".to_string());
     let materialized = materialize(&app, &file, &item, &quality).await?;
     let path = materialized.path.to_string_lossy().to_string();
+    // 记下来源：搜索结果清掉之后，「下载当前曲目」还要靠它重新取流
+    let origin = OnlineOrigin {
+        platform: super::player::plugin_display_name(&file),
+        file: file.clone(),
+        item: item.clone(),
+        quality: quality.clone(),
+    };
     // 缓存文件名是内容哈希，必须把真实歌名交给播放器（否则播放条显示一串哈希）
-    let player = state.play_named(&path, &materialized.title, &materialized.artist)?;
+    let player = state.play_named(&path, &materialized.title, &materialized.artist, Some(origin))?;
 
     if let Some(hits) = hits {
         let mut items: Vec<QueueItem> = hits
@@ -482,9 +489,36 @@ pub async fn music_plugin_download(
     quality: Option<String>,
 ) -> Result<PluginDownloadOutcome, String> {
     let quality = quality.unwrap_or_else(|| "standard".to_string());
-    let (title, artist, label) = describe(&item);
+    download_track(&app, &file, &item, &quality).await
+}
 
-    let source = resolve_source(file, item, quality).await?;
+/// 下载**正在播放**的那首在线曲目（可选音质，默认沿用当前缓存的音质）。
+///
+/// 播放器记着这首的来源（插件 + 原始曲目对象），所以搜索结果被清掉之后依然能下 ——
+/// 不必让用户回到搜索页再点一次。
+#[tauri::command]
+pub async fn music_plugin_download_current(
+    app: AppHandle,
+    state: State<'_, MusicPlayerState>,
+    quality: Option<String>,
+) -> Result<PluginDownloadOutcome, String> {
+    let origin = state
+        .current_online_origin()
+        .ok_or_else(|| "当前播放的不是在线音源（本地曲目无需下载）".to_string())?;
+    let quality = quality.unwrap_or(origin.quality);
+    download_track(&app, &origin.file, &origin.item, &quality).await
+}
+
+/// 取流 → 落下载目录 → 登记曲库（「下载」与「下载当前曲目」共用）。
+async fn download_track(
+    app: &AppHandle,
+    file: &str,
+    item: &Value,
+    quality: &str,
+) -> Result<PluginDownloadOutcome, String> {
+    let (title, artist, label) = describe(item);
+
+    let source = resolve_source(file.to_string(), item.clone(), quality.to_string()).await?;
     let dir = download_dir();
     let dest = dir.join(format!(
         "{}.{}",
@@ -492,7 +526,7 @@ pub async fn music_plugin_download(
         extension_for(&source.url)
     ));
 
-    let bytes = download_to(&app, &source, &dest, &label).await?;
+    let bytes = download_to(app, &source, &dest, &label).await?;
     // 登记要扫目录、读标签，属于阻塞活
     let library = tauri::async_runtime::spawn_blocking({
         let dir = dir.clone();

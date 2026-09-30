@@ -281,6 +281,8 @@ pub struct PlayerState {
     pub position_ms: u64,
     pub duration_ms: u64,
     pub volume: f32,
+    /// 当前曲目来自在线音源时的来源摘要（界面据此显示「下载」）
+    pub online: Option<OnlineMeta>,
 }
 
 /// 当前曲目信息
@@ -289,6 +291,8 @@ struct CurrentTrack {
     title: String,
     artist: String,
     duration_ms: u64,
+    /// 来自在线音源时的来源（本地曲目为 None）
+    online: Option<OnlineOrigin>,
 }
 
 /// 非曲库文件（在线缓存文件）的显示名。
@@ -300,6 +304,32 @@ struct CurrentTrack {
 struct TrackName {
     title: String,
     artist: String,
+}
+
+/// 当前曲目来自**在线音源**时的来源信息。
+///
+/// 只记住缓存文件路径是不够的：下载要重新取流，而取流需要「插件 + 原始曲目对象」
+/// （`getMediaSource` 的入参）—— 搜索结果早就被清掉了，界面上只剩一个路径。
+/// 所以来源必须跟着当前曲目一起保存。
+#[derive(Clone, Debug)]
+pub struct OnlineOrigin {
+    /// 来源插件的脚本文件名
+    pub file: String,
+    /// 插件返回的曲目对象（原样保存；取流 / 下载都要原样回传）
+    pub item: serde_json::Value,
+    /// 当前缓存所用的音质（下载按钮默认选它）
+    pub quality: String,
+    /// 来源插件的展示名（播放时查一次，避免状态轮询每次读盘）
+    pub platform: String,
+}
+
+/// 暴露给前端的在线来源摘要（不含曲目对象，只够显示与选音质）。
+#[derive(Serialize, Clone, Debug)]
+pub struct OnlineMeta {
+    /// 来源插件的展示名
+    pub platform: String,
+    /// 当前缓存所用的音质
+    pub quality: String,
 }
 
 /// 曲目的显示名（标题 / 歌手）。
@@ -555,7 +585,8 @@ impl MusicPlayerState {
                 // 传**原路径**：play_locked 会自己找到转码副本，
                 // 于是曲库标签、队列对齐、改名/删除都仍以用户的原文件为准。
                 let (title, artist) = super::transcode::labels_for(path);
-                self.play_named(path, &title, &artist)
+                // 本地文件，没有在线来源
+                self.play_named(path, &title, &artist, None)
             }
         }
     }
@@ -564,11 +595,15 @@ impl MusicPlayerState {
     ///
     /// 在线播放落在缓存目录里的文件名是内容哈希，既不在曲库里也没有可读性，
     /// 名字只能由调用方给；登记后连播下一首（走 `play_locked`）也能取到正确名字。
+    ///
+    /// `online` 是这首曲目的在线来源：留了它，界面上的「下载」才知道该去哪个插件取流
+    /// （搜索结果清掉之后，路径本身是不够的）。本地曲目传 None。
     pub fn play_named(
         &self,
         path: &str,
         title: &str,
         artist: &str,
+        online: Option<OnlineOrigin>,
     ) -> Result<PlayerState, String> {
         let mut inner = self.inner.lock();
         // 输出已失效：本调用马上就会 append 新曲目，直接丢坏流即可
@@ -582,7 +617,20 @@ impl MusicPlayerState {
                 artist: artist.to_string(),
             },
         );
-        Self::play_locked(&mut inner, &self.eq, &self.output_lost, path)
+        Self::play_locked(&mut inner, &self.eq, &self.output_lost, path)?;
+        // 来源要在 play_locked 之后写：current 是它重建的
+        if let Some(origin) = online {
+            if let Some(current) = inner.current.as_mut() {
+                current.online = Some(origin);
+            }
+        }
+        Ok(Self::snapshot(&mut inner))
+    }
+
+    /// 当前曲目的在线来源（本地曲目为 None）——「下载当前曲目」用。
+    pub fn current_online_origin(&self) -> Option<OnlineOrigin> {
+        let inner = self.inner.lock();
+        inner.current.as_ref().and_then(|c| c.online.clone())
     }
 
     /// 重置播放队列（前端在曲库或播放模式变化时调用）
@@ -707,6 +755,7 @@ impl MusicPlayerState {
     ) -> Result<PlayerState, String> {
         let mut inner = self.inner.lock();
         let matches = inner.pending.as_ref().map(|p| p.seq == seq).unwrap_or(false);
+        let origin = inner.pending.clone();
         inner.pending = None;
         if !matches {
             return Ok(Self::snapshot(&mut inner));
@@ -723,7 +772,19 @@ impl MusicPlayerState {
                 artist: artist.to_string(),
             },
         );
-        Self::play_locked(&mut inner, &self.eq, &self.output_lost, path)
+        Self::play_locked(&mut inner, &self.eq, &self.output_lost, path)?;
+        // 记下来源：界面上的「下载」要靠它重新取流（一次播放只查一次插件名，不进轮询）
+        if let Some(pending) = origin {
+            if let Some(current) = inner.current.as_mut() {
+                current.online = Some(OnlineOrigin {
+                    file: pending.file.clone(),
+                    item: pending.item.clone(),
+                    quality: pending.quality.clone(),
+                    platform: plugin_display_name(&pending.file),
+                });
+            }
+        }
+        Ok(Self::snapshot(&mut inner))
     }
 
     /// 在线曲目取流失败：清掉「正在取流」标记（不清的话巡查线程会一直等下去）。
@@ -915,6 +976,8 @@ impl MusicPlayerState {
             title,
             artist,
             duration_ms,
+            // 来源由调用方（play_named / play_online_resolved）在播放后补上
+            online: None,
         });
         // 让队列下标对齐到本曲，之后的「下一首 / 上一首」都从这里继续
         inner.queue.focus(path);
@@ -1034,6 +1097,14 @@ impl MusicPlayerState {
             path: inner.current.as_ref().map(|c| c.path.clone()),
             title: inner.current.as_ref().map(|c| c.title.clone()),
             artist: inner.current.as_ref().map(|c| c.artist.clone()),
+            online: inner
+                .current
+                .as_ref()
+                .and_then(|c| c.online.as_ref())
+                .map(|origin| OnlineMeta {
+                    platform: origin.platform.clone(),
+                    quality: origin.quality.clone(),
+                }),
             position_ms,
             duration_ms,
             volume: inner.volume,
@@ -1048,6 +1119,21 @@ pub fn persist_settings(state: &MusicPlayerState, settings: &MusicSettings) -> R
     state.set_eq_params(settings.eq.clone());
     settings::save_settings(&settings)?;
     Ok(settings)
+}
+
+/// 插件脚本文件名 → 展示名（查不到就用文件名）。
+///
+/// 只在**开始播放时**查一次：`PlayerState` 每 500ms 被轮询一次，
+/// 把注册表读盘放进快照会让每次轮询都碰一次磁盘。
+pub(super) fn plugin_display_name(file: &str) -> String {
+    let entry = super::plugin_registry::load()
+        .plugins
+        .into_iter()
+        .find(|entry| entry.file == file);
+    match entry {
+        Some(entry) => entry.display_name(),
+        None => file.to_string(),
+    }
 }
 
 /// 把在线曲目交给异步运行时：取流 → 落缓存 → 接上播放。
@@ -1180,6 +1266,16 @@ mod tests {
             None,
         );
         assert_eq!(title, "x");
+    }
+
+    /// 本地曲目没有在线来源 → 界面据此隐藏「下载」；
+    /// 也只有在线曲目才拿得到重新取流需要的插件与曲目对象。
+    #[test]
+    fn local_track_has_no_online_origin() {
+        let state = MusicPlayerState::default();
+        assert!(state.current_online_origin().is_none());
+        // 快照里的在线标记同样为空（界面用它决定按钮是否出现）
+        assert!(state.state().online.is_none());
     }
 
     #[test]
