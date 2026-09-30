@@ -33,7 +33,20 @@ export interface PlayerState {
   position_ms: number;
   duration_ms: number;
   volume: number;
+  /** 当前曲目来自在线音源时的来源（本地曲目为 null） */
+  online: OnlineMeta | null;
 }
+
+/** 在线来源摘要：够显示「下载」按钮与默认音质，不含曲目对象 */
+export interface OnlineMeta {
+  /** 来源插件展示名 */
+  platform: string;
+  /** 当前缓存所用音质 */
+  quality: MusicQuality;
+}
+
+/** 音质档位（顺序与后端一致） */
+export const MUSIC_QUALITIES: MusicQuality[] = ["low", "standard", "high", "super"];
 
 export interface EqParams {
   enabled: boolean;

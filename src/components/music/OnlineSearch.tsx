@@ -16,6 +16,7 @@ import { SharedButton } from "../shared/Button";
 import { toast } from "../shared/Toast";
 import {
   formatSeconds,
+  MUSIC_QUALITIES,
   type DownloadProgress,
   type MusicLibrary,
   type MusicQuality,
@@ -30,7 +31,8 @@ import {
 /** 下载进度事件名（与后端 plugin_playback::DOWNLOAD_PROGRESS_EVENT 一致） */
 const DOWNLOAD_PROGRESS_EVENT = "music-plugin-download-progress";
 
-const QUALITIES: MusicQuality[] = ["low", "standard", "high", "super"];
+/** 音质档位（与后端一致，定义在 types.ts 供播放条共用） */
+const QUALITIES = MUSIC_QUALITIES;
 
 interface Props {
   /** 播放后把播放器状态同步回面板（否则要等下一次轮询才更新） */

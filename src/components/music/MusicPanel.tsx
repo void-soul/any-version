@@ -14,8 +14,10 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 import {
   ArrowRight,
+  Download,
   FolderPlus,
   ListMusic,
+  Loader2,
   Package,
   Pause,
   Pencil,
@@ -42,15 +44,18 @@ import PluginManager from "./PluginManager";
 import {
   folderName,
   formatTime,
+  MUSIC_QUALITIES,
   type AddFolderResult,
   type DeleteTracksResult,
   type EqParams,
   type EqPresetInfo,
   type MusicLibrary,
+  type MusicQuality,
   type MusicSettings,
   type MusicTrack,
   type PlayMode,
   type PlayerState,
+  type PluginDownloadOutcome,
   type RenameTrackResult,
   type TrackNameSuggestion,
 } from "./types";
@@ -100,6 +105,9 @@ export default function MusicPanel() {
   const [renameName, setRenameName] = useState("");
   const [renameFromTags, setRenameFromTags] = useState(false);
   const [renaming, setRenaming] = useState(false);
+  // 「下载当前曲目」：null = 跟随当前缓存的音质，用户选过就以选择为准
+  const [dlQuality, setDlQuality] = useState<MusicQuality | null>(null);
+  const [dlBusy, setDlBusy] = useState(false);
 
   const tracksRef = useRef<MusicTrack[]>([]);
   /** path -> 曲库下标（后端自行切歌时用于同步选中行） */
@@ -382,6 +390,25 @@ export default function MusicPanel() {
       syncState(await invoke<PlayerState>("music_stop"));
     } catch {
       /* 停止失败无副作用 */
+    }
+  };
+
+  // 当前播的是在线音源时，把这首按选定音质存进下载目录。
+  // 播放器记着它的来源（插件 + 原始曲目），所以搜索结果清掉之后也照样能下。
+  const downloadCurrent = async () => {
+    if (!player?.online) return;
+    setDlBusy(true);
+    try {
+      const outcome = await invoke<PluginDownloadOutcome>("music_plugin_download_current", {
+        quality: dlQuality ?? player.online.quality,
+      });
+      // 下载会自动登记进曲库，直接采用后端回传的最新曲库
+      setLibrary(outcome.library);
+      toast(t("music.onlineDownloaded", { dir: outcome.dir }), "ok");
+    } catch (e) {
+      toast(t("music.onlineDownloadFail", { err: String(e) }), "err");
+    } finally {
+      setDlBusy(false);
     }
   };
 
@@ -702,6 +729,36 @@ export default function MusicPanel() {
           </p>
           <p className="text-tiny text-slate-500 truncate">{player?.artist ?? ""}</p>
         </div>
+
+        {/* 在线音源才出现：下载 + 音质。本地曲目不显示，免得挤占播放条 */}
+        {player?.online && (
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <select
+              value={dlQuality ?? player.online.quality}
+              onChange={(e) => setDlQuality(e.target.value as MusicQuality)}
+              title={t("music.qualityLabel")}
+              className="glass-input h-7 text-tiny cursor-pointer"
+            >
+              {MUSIC_QUALITIES.map((item) => (
+                <option key={item} value={item}>
+                  {t(`music.quality.${item}`)}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => void downloadCurrent()}
+              disabled={dlBusy}
+              className="p-1.5 rounded text-slate-300 hover:text-white hover:bg-white/10 cursor-pointer disabled:opacity-40"
+              title={t("music.onlineDownloadFrom", { platform: player.online.platform })}
+            >
+              {dlBusy ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+            </button>
+          </div>
+        )}
 
         {/* 音量：右侧留出边距，避免贴着窗口边缘 */}
         <div className="flex items-center gap-1.5 flex-shrink-0 w-32 mr-3">
