@@ -17,6 +17,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use super::player::{MusicPlayerState, OnlineOrigin, PendingOnline, PlayerState};
 use super::queue::QueueItem;
+use super::tags;
 use super::{library, plugin_host, plugin_registry, settings as music_settings};
 
 /// 取流超时（插件内部可能要先请求一次接口才拿到直链）
@@ -509,7 +510,64 @@ pub async fn music_plugin_download_current(
     download_track(&app, &origin.file, &origin.item, &quality).await
 }
 
-/// 取流 → 落下载目录 → 登记曲库（「下载」与「下载当前曲目」共用）。
+/// 封面体积上限：超大图嵌进去会让文件虚胖，播放器也不会因此显示得更好。
+const MAX_COVER_BYTES: usize = 4 * 1024 * 1024;
+
+/// 下载用的元信息：标题 / 歌手 / 专辑，以及封面地址（插件给什么就用什么）。
+fn download_meta(item: &Value) -> (tags::TrackMeta, Option<String>) {
+    let text = |key: &str| {
+        item.get(key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+    // 各插件封面的字段名不统一，按常见顺序取第一个非空的
+    let cover = ["artwork", "cover", "picUrl", "img"]
+        .iter()
+        .find_map(|key| {
+            let raw = text(key);
+            if raw.is_empty() {
+                None
+            } else {
+                Some(raw)
+            }
+        });
+    (
+        tags::TrackMeta {
+            title: text("title"),
+            artist: text("artist"),
+            album: text("album"),
+        },
+        cover,
+    )
+}
+
+/// 下载封面图。拿不到（没给 / 404 / 不是图 / 太大）一律返回 None —— 封面只是锦上添花。
+async fn fetch_cover(url: &str) -> Option<tags::CoverArt> {
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return None;
+    }
+    let response = crate::commands::utils::get_http_client()
+        .get(url)
+        .header("User-Agent", FALLBACK_USER_AGENT)
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let bytes = response.bytes().await.ok()?;
+    if bytes.is_empty() || bytes.len() > MAX_COVER_BYTES {
+        return None;
+    }
+    Some(tags::CoverArt {
+        mime: tags::sniff_image_mime(&bytes),
+        bytes: bytes.to_vec(),
+    })
+}
+
+/// 取流 → 落下载目录 → 写元信息 → 登记曲库（「下载」与「下载当前曲目」共用）。
 async fn download_track(
     app: &AppHandle,
     file: &str,
@@ -527,6 +585,18 @@ async fn download_track(
     ));
 
     let bytes = download_to(app, &source, &dest, &label).await?;
+
+    // 把插件给的元信息写进文件：不写的话文件只有一个文件名，曲库里作者/专辑/封面全空。
+    // 只影响展示 —— 失败不回滚下载。
+    let (meta, cover_url) = download_meta(item);
+    let cover = match cover_url.as_deref() {
+        Some(url) => fetch_cover(url).await,
+        None => None,
+    };
+    if let Err(err) = tags::write_tags(&dest, &meta, cover) {
+        crate::exit_log!("[音乐] 写入标签失败（仅影响展示）: {err}");
+    }
+
     // 登记要扫目录、读标签，属于阻塞活
     let library = tauri::async_runtime::spawn_blocking({
         let dir = dir.clone();

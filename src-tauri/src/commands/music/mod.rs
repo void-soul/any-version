@@ -24,6 +24,7 @@ mod plugin_playback;
 mod plugin_registry;
 mod queue;
 mod settings;
+mod tags;
 mod transcode;
 
 pub use commands::*;
