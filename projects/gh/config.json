@@ -1,0 +1,54 @@
+{
+  "id": "gh",
+  "display_name": "GitHub CLI",
+  "category": "tool",
+  "official_website": "https://cli.github.com",
+  "bin_dirs": [
+    "bin"
+  ],
+  "has_cache": false,
+  "has_mirror": false,
+  "mirror_options": null,
+  "has_pkg": false,
+  "pkg_manager": null,
+  "pkg_homepage_template": null,
+  "is_service": false,
+  "simple_mode": false,
+  "default_port": null,
+  "config_file": null,
+  "config_file_candidates": [],
+  "start_cmd": null,
+  "stop_cmd": null,
+  "service_process_exes": [],
+  "service_names": [],
+  "version_cmd": "gh --version",
+  "version_exe": "gh",
+  "version_parse_regex": "gh version (\\d+\\.\\d+(?:\\.\\d+)*)",
+  "download_url_template": "https://github.com/cli/cli/releases/download/v{version}/gh_{version}_windows_amd64.zip",
+  "download_file_ext": "zip",
+  "extract_subdir": "gh_{version}_windows_amd64",
+  "remote_versions_url": "https://api.github.com/repos/cli/cli/releases",
+  "remote_versions_config": {
+    "type": "json_api",
+    "response_type": "array",
+    "version_field": "tag_name",
+    "version_transform": "trim_prefix:v",
+    "sort_by_version": true,
+    "reverse": true
+  },
+  "data_dirs": [
+    {
+      "id": "config",
+      "display_name": "gh 配置目录（登录态 hosts.yml / config.yml）",
+      "kind": "config",
+      "possible_paths": [
+        "{roaming_appdata}\\GitHub CLI"
+      ],
+      "default_path": "{roaming_appdata}\\GitHub CLI",
+      "env_var": "GH_CONFIG_DIR",
+      "supports_direct": false,
+      "auto_create": false,
+      "required_for_start": false
+    }
+  ]
+}

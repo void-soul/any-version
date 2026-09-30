@@ -1,0 +1,32 @@
+[
+  {
+    "pattern": {
+      "type": "fixed_path",
+      "path": "{program_files}\\GitHub CLI",
+      "exe_name": "gh.exe"
+    },
+    "source_label": "GitHub CLI 官方安装目录",
+    "priority": 20,
+    "root_offset": 0
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "scoop\\apps\\gh",
+      "exe_name": "gh.exe"
+    },
+    "source_label": "Scoop",
+    "priority": 40,
+    "root_offset": 0
+  },
+  {
+    "pattern": {
+      "type": "path_contains",
+      "path_key": "",
+      "exe_name": "gh.exe"
+    },
+    "source_label": "系统 PATH",
+    "priority": 90,
+    "root_offset": 0
+  }
+]

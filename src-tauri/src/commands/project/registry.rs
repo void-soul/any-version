@@ -383,7 +383,10 @@ mod tests {
     /// 2) 自带「安装根」语义的工具（scoop / winget）：必须声明——它们的 app / 缓存 / 状态目录
     ///    跟服务的数据目录是同一类东西，就该走同一套机制（声明 → 卡片 → 开始变更做 junction），
     ///    而不是被塞进 package_managers 或让用户手工改环境变量；
-    /// 3) 普通 SDK（nodejs / python / nuget / ffmpeg…）一个都不声明——SDK 自己的
+    /// 3) 自带**用户数据**的工具（gh）：它的配置目录里是登录态（hosts.yml），
+    ///    与 scoop 的根目录同类 —— 用户会想让它跟着 Kira 的数据目录走（备份 / 迁移），
+    ///    所以同样声明一个条目，并把它对应的环境变量声明成 Clear 层避免两套机制并存；
+    /// 4) 普通 SDK（nodejs / python / nuget / ffmpeg…）一个都不声明——SDK 自己的
     ///    程序目录 ↔ 版本目录映射是 Kira 的底层行为，不该出现在界面上让用户改。
     #[test]
     fn data_dirs_are_declared_where_they_belong() {
@@ -402,11 +405,12 @@ mod tests {
             }
         }
 
-        for id in ["scoop", "winget"] {
+        // gh 属于第 3 类：配置目录里是登录态，用户要能把它迁到 Kira 的数据目录
+        for id in ["scoop", "winget", "gh"] {
             let def = by_id(id);
             assert!(
                 !def.data_dirs.is_empty(),
-                "{} 的安装根 / 缓存 / 状态目录要由「数据管理」页签托管，不能没有 data_dirs",
+                "{} 的安装根 / 配置 / 缓存目录要由「数据管理」页签托管，不能没有 data_dirs",
                 id
             );
             // 同一份目录不允许两套机制并存：数据管理才是唯一入口

@@ -1,0 +1,8 @@
+[
+  {
+    "name": "GH_CONFIG_DIR",
+    "desc": "gh 的配置目录（登录态 hosts.yml、config.yml）。**归「数据管理」页签的「gh 配置目录」条目托管**：托管时清除本变量，让 gh 回落到默认位置 {roaming_appdata}\\GitHub CLI —— 位置移动交给该条目的「开始变更」（复制 + Junction），与 scoop 的做法一致。变量留着会被写成 SDK 的版本链接目录、并绕过 junction（路径解析里 env 优先于默认路径），切版本即丢登录态。",
+    "check_type": "path",
+    "tier": "clear"
+  }
+]
