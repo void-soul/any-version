@@ -642,9 +642,8 @@ mod tests {
         );
         assert!(!q.remove_paths(&["a.mp3".to_string(), "b.mp3".to_string()]));
         assert_eq!(q.len(), 1);
-        assert!(
-            q.current().map(|item| item.path().is_none()).unwrap_or(false),
-            "剩下的应是在线曲目"
-        );
+        // 没设过当前曲目，删除后下标仍是空 —— 所以看队列里剩下的那一条，而不是 current()
+        let remaining = q.first().expect("还剩一个条目");
+        assert!(remaining.path().is_none(), "剩下的应是在线曲目");
     }
 }

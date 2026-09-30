@@ -11,6 +11,25 @@ fn main() {
 
     #[cfg(target_os = "windows")]
     {
+        // **让 comctl32.dll 延迟加载**，否则单测二进制连一个测试都跑不起来。
+        //
+        // 现象：`cargo test` 直接以 `0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND` 退出，
+        // 与用例内容无关（连 `--list` 都失败），换机器和全新 CI 都一样 —— 很像环境问题，
+        // 其实是链接/清单问题：
+        //   - 菜单/对话框依赖（muda）导入了 `comctl32!TaskDialogIndirect`，该函数
+        //     **只在 Common Controls v6 里存在**；
+        //   - v6 位于 WinSxS，要靠清单里的 `dependentAssembly` 激活。应用二进制有
+        //     （`tauri_build` 编译进 resource.lib，挂给 bins），**测试二进制没有** →
+        //     加载器把 comctl32 解析到 System32 的 v5.82 → 解析失败 → 进程起不来。
+        //
+        // 不能靠给测试补清单解决：构建脚本输出按包缓存，无法只对测试目标生效；
+        // 一旦对所有目标生效，应用会因为资源重复（VERSION / MANIFEST）链接失败（CVT1100）。
+        //
+        // 延迟加载后，comctl32 的导入不在启动阶段解析，谁真正调用时才加载；
+        // 应用侧带 v6 清单，行为完全不变。
+        println!("cargo:rustc-link-arg=/DELAYLOAD:comctl32.dll");
+        println!("cargo:rustc-link-arg=delayimp.lib");
+
         // 仅正式(release)构建让应用以管理员身份运行：通过 UAC manifest 请求 requireAdministrator。
         // 这样打包部署后无论从注册表 Run 键 / 托盘 / 双击启动，都会静默提权为管理员。
         // 注意：开发(debug)构建不做提权，否则 `tauri dev` / `cargo run` 直接运行
