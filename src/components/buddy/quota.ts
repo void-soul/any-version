@@ -189,6 +189,44 @@ export function segmentDaysLeft(
 }
 
 /**
+ * 每个方块内显示的「剩余天数」—— 与顺序无关，返回与入参等长的数组，`null` = 不显示。
+ *
+ * 只有两种不显示：
+ * - **已过期**：积分已经用不掉，再标个天数反而像「还来得及用」；
+ * - **永不过期**：没有天数可言（悬停里仍会写「永不过期」）。
+ *
+ * 占比再小的段也要显示 —— 放不下是**布局**问题（靠加宽整条 + 每块最小宽度解决），
+ * 不该让小段的到期信息凭空消失。
+ *
+ * 格式：天数只给数字（方块里默认单位就是天，写 `100d` 白白多占一个字符）；
+ * 超过 99 天一律 `99+` —— 方块里要的是「急不急」，一年后还是三年后没区别，
+ * 精确日期在悬停里看。
+ */
+export function segmentDayLabels(
+  segments: CreditSegment[],
+  now: number = Date.now()
+): (string | null)[] {
+  return (segments ?? []).map((segment) => {
+    const days = segmentDaysLeft(segment, now);
+    // null = 永不过期，0 = 已过期
+    if (days === null || days <= 0) return null;
+    if (days > 99) return "99+";
+    return String(days);
+  });
+}
+
+/**
+ * 列内的总额：**取整**，且不要千分位分隔符。
+ *
+ * `1,234` 的逗号和 `85.3` 的小数在窄列里都纯占地方 —— 这一列要的是量级，
+ * 精确到小数点的值在悬停和用量详情里都有。
+ */
+export function formatQuotaPlain(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  return String(Math.round(Math.max(0, value)));
+}
+
+/**
  * 到期远近 → 色相（0 = 最紧急的红，140 = 安全的绿）。
  *
  * 已过期返回 null（调用方画成灰色）：过期的积分用不掉了，再按「紧急程度」染色反而误导。

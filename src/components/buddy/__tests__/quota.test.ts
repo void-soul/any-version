@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   CREDIT_HUE_SAFE,
+  formatQuotaPlain,
   mergeCreditSegments,
   nearestExpiringSegment,
   segmentDaysLeft,
+  segmentDayLabels,
   segmentHue,
   segmentsFromQuotaItems,
   selectRotationCandidate,
@@ -59,6 +61,66 @@ describe("segmentsFromQuotaItems", () => {
 
   it("ignores unlimited rows (handled separately by the account card)", () => {
     expect(segmentsFromQuotaItems([item({ unlimited: true, remain: 0, total: 0 })])).toHaveLength(0);
+  });
+});
+
+describe("segmentDayLabels", () => {
+  it("shows the days left inside a wide enough block", () => {
+    const labels = segmentDayLabels(
+      [
+        segment({ remaining: 800, expiresAt: NOW + 3 * DAY }),
+        segment({ remaining: 200, expiresAt: NOW + 20 * DAY }),
+      ],
+      NOW
+    );
+    expect(labels).toEqual(["3", "20"]);
+  });
+
+  it("hides expired blocks (their credits are unusable anyway)", () => {
+    const labels = segmentDayLabels(
+      [
+        segment({ remaining: 500, expiresAt: NOW - DAY }),
+        segment({ remaining: 500, expiresAt: NOW + 5 * DAY }),
+      ],
+      NOW
+    );
+    expect(labels[0]).toBeNull();
+    expect(labels[1]).toBe("5");
+  });
+
+  it("hides blocks that never expire (there is no count down)", () => {
+    expect(segmentDayLabels([segment({ expiresAt: null })], NOW)).toEqual([null]);
+  });
+
+  it("keeps tiny blocks readable by widening them, not by dropping the number", () => {
+    // 2% 的段也要显示天数：放不下是布局问题（条更宽 + 每块有最小宽度），
+    // 不能让小段的到期信息凭空消失
+    const labels = segmentDayLabels(
+      [
+        segment({ remaining: 20, expiresAt: NOW + 3 * DAY }),
+        segment({ remaining: 980, expiresAt: NOW + 30 * DAY }),
+      ],
+      NOW
+    );
+    expect(labels).toEqual(["3", "30"]);
+  });
+
+  it("caps long countdowns at 99+ (the exact date is in the tooltip)", () => {
+    expect(segmentDayLabels([segment({ expiresAt: NOW + 100 * DAY })], NOW)).toEqual(["99+"]);
+    expect(segmentDayLabels([segment({ expiresAt: NOW + 1000 * DAY })], NOW)).toEqual(["99+"]);
+  });
+});
+
+describe("formatQuotaPlain", () => {
+  it("drops the thousands separator (it just eats width in a narrow column)", () => {
+    expect(formatQuotaPlain(1_234)).toBe("1234");
+    expect(formatQuotaPlain(1_234_567)).toBe("1234567");
+  });
+
+  it("rounds to whole numbers (decimals just eat width here)", () => {
+    expect(formatQuotaPlain(85)).toBe("85");
+    expect(formatQuotaPlain(85.3)).toBe("85");
+    expect(formatQuotaPlain(85.6)).toBe("86");
   });
 });
 
