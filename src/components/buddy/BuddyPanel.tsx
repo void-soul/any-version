@@ -21,6 +21,7 @@ import {
   type RotationAccount,
 } from "./quota";
 import { filterSyncDetails, SYNC_STATUS_FILTERS } from "./sessionSync";
+import { formatCountdown } from "./timeLabel";
 import {
   RefreshCw,
   Download,
@@ -664,17 +665,6 @@ function summarizeQuota(items: QuotaItem[]): {
   };
 }
 
-// 时间标签倒计时：距目标还有多久 / 已过期多久
-function formatDuration(ms: number): string {
-  const totalSec = Math.floor(ms / 1000);
-  const d = Math.floor(totalSec / 86400);
-  const h = Math.floor((totalSec % 86400) / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  if (d > 0) return `${d}d${h}h`;
-  if (h > 0) return `${h}h${m}m`;
-  return `${m}m`;
-}
-
 // 恢复进度条的填充窗口：限额窗口多为小时级，取最后 6h 由 0→100%
 const RECOVER_HORIZON_MS = 6 * 3600000;
 
@@ -692,12 +682,13 @@ function describeLabel(ts: number, now: number): LabelState {
   const diff = ts - now;
   if (diff <= 0) {
     // 时间标签记录的是"恢复时刻"：此刻已过 → 额度已恢复（绿色，进度满）
-    return { recovered: true, progress: 100, tone: "emerald", text: formatDuration(-diff), absolute };
+    // 文本带负号（`formatCountdown` 对负数加 `-`）：已过多久
+    return { recovered: true, progress: 100, tone: "emerald", text: formatCountdown(diff), absolute };
   }
   // 尚未到恢复时刻：进度随临近而增长，最后 30 分钟转琥珀提示"即将恢复"
   const progress = Math.max(0, Math.min(100, Math.round((1 - diff / RECOVER_HORIZON_MS) * 100)));
   const tone: LabelState["tone"] = diff < 30 * 60000 ? "amber" : "sky";
-  return { recovered: false, progress, tone, text: formatDuration(diff), absolute };
+  return { recovered: false, progress, tone, text: formatCountdown(diff), absolute };
 }
 
 function formatTime(t: number | null | undefined): string {
@@ -801,10 +792,13 @@ function QuotaBar({
 
 // 账号表格各列固定宽度（px），表头与行按同一宽度对齐
 const COL_INFO = 240;
-const COL_QUOTA = 120;
-/** 积分构成条（一段一方块：颜色=到期远近，长度=占该账号剩余额的比例） */
-const COL_CREDITS = 140;
-const COL_W = 150;
+/** 积分列：构成条（一段一方块，块内显示剩余天数）+ 右侧剩余总额。
+    原来「额度」与「积分构成」是两列，但两者说的是同一笔积分，分开后要来回对照才知道
+    这些方块一共是多少 —— 合并成一列，总额就放在构成条右边。
+    宽度按「每个方块都放得下最长的天数」定（每块最小 18px），不是随便加宽。 */
+const COL_CREDITS = 320;
+/** 时间列（内置「到期」+ 每个自定义列）：只要放得下 `55.21` 这种紧凑写法 */
+const COL_W = 72;
 const COL_ACTIONS = 150;
 
 // 时间标签 chip 配色（sky=等待恢复 / amber=即将恢复 / emerald=已恢复可用）
@@ -2409,22 +2403,29 @@ export default function BuddyPanel() {
               <div
                 style={{
                   minWidth:
-                    COL_INFO + COL_QUOTA + COL_CREDITS + (expiryColumns.length + 1) * COL_W + COL_ACTIONS,
+                    COL_INFO + COL_CREDITS + (expiryColumns.length + 1) * COL_W + COL_ACTIONS,
                 }}
               >
                 {/* 表头 */}
                 <div className="flex items-stretch sticky top-0 z-10 bg-slate-950 border-b border-white/10 text-tiny text-slate-500">
                   <div style={{ width: COL_INFO }} className="px-3 py-1.5 flex-shrink-0">{t("buddy.colAccount")}</div>
-                  <div style={{ width: COL_QUOTA }} className="px-2 py-1.5 flex-shrink-0">{t("buddy.quotaTotal")}</div>
                   <div style={{ width: COL_CREDITS }} className="px-2 py-1.5 flex-shrink-0 border-l border-white/5">
                     {t("buddy.creditSegments")}
                   </div>
-                  {/* 内置「到期」列：登录 token 过期时刻，只读，不属于自定义列 schema */}
-                  <div style={{ width: COL_W }} className="px-2 py-1.5 flex-shrink-0 border-l border-white/5">{t("buddy.expiresAt")}</div>
+                  {/* 内置「到期」列：登录 token 过期时刻，只读，不属于自定义列 schema
+                      列宽只够显示紧凑倒计时，格式说明放在表头的悬停里 */}
+                  <div
+                    style={{ width: COL_W }}
+                    title={t("buddy.countdownFormat")}
+                    className="px-1 py-1.5 flex-shrink-0 border-l border-white/5 truncate"
+                  >
+                    {t("buddy.expiresAt")}
+                  </div>
                   {expiryColumns.map((col) => (
-                    <div key={col.id} style={{ width: COL_W }} className="px-2 py-1 flex-shrink-0 border-l border-white/5">
+                    <div key={col.id} style={{ width: COL_W }} className="px-1 py-1 flex-shrink-0 border-l border-white/5 relative">
                       {editingColumnId === col.id ? (
-                        <div className="flex items-center gap-1">
+                        // 改名框要打得下整列名，72px 的列放不下 → 浮出列外（改完即收）
+                        <div className="absolute left-0 top-0 z-20 flex items-center gap-1 w-40 bg-slate-900 border border-white/15 rounded px-1 py-1 shadow-lg">
                           <input
                             autoFocus
                             value={columnNameDraft}
@@ -2437,12 +2438,12 @@ export default function BuddyPanel() {
                             }}
                             className="min-w-0 flex-1 bg-black/40 border border-white/15 rounded px-1 py-0.5 text-tiny text-white outline-none"
                           />
-                          <button onClick={() => void commitRenameColumn(col.id)} className="text-emerald-300 cursor-pointer"><Check className="w-3 h-3" /></button>
-                          <button onClick={() => setEditingColumnId(null)} className="text-slate-500 cursor-pointer"><X className="w-3 h-3" /></button>
+                          <button onClick={() => void commitRenameColumn(col.id)} className="text-emerald-300 cursor-pointer flex-shrink-0"><Check className="w-3 h-3" /></button>
+                          <button onClick={() => setEditingColumnId(null)} className="text-slate-500 cursor-pointer flex-shrink-0"><X className="w-3 h-3" /></button>
                         </div>
                       ) : (
                         <div className="flex items-center gap-1">
-                          <button onClick={() => startRenameColumn(col)} title={t("buddy.renameColumn")} className="truncate text-slate-300 hover:text-white cursor-pointer">{col.name}</button>
+                          <button onClick={() => startRenameColumn(col)} title={`${col.name} · ${t("buddy.renameColumn")}`} className="truncate text-slate-300 hover:text-white cursor-pointer">{col.name}</button>
                           <button onClick={() => void deleteColumn(col.id)} title={t("buddy.deleteColumn")} className="text-slate-600 hover:text-rose-300 cursor-pointer flex-shrink-0"><X className="w-2.5 h-2.5" /></button>
                         </div>
                       )}
@@ -2462,8 +2463,15 @@ export default function BuddyPanel() {
                   return (
                     <div
                       key={acc.id}
+                      // 当前账号 = **整行的绿色描边**（原来是一个「当前」标签：它挤在账号名
+                      // 旁边，占了本就不够的账号列宽度，而且不如整行描边一眼可见）。
+                      // 用 ring 而不是 border：border 会占掉 1px 布局，行与表头就对不齐了。
                       className={`flex items-stretch border-b border-white/5 text-tiny ${
-                        isCurrent ? "bg-emerald-500/[0.06]" : isSelected ? "bg-sky-500/[0.06]" : "hover:bg-white/[0.03]"
+                        isCurrent
+                          ? "bg-emerald-500/[0.06] ring-1 ring-inset ring-emerald-400/50"
+                          : isSelected
+                            ? "bg-sky-500/[0.06]"
+                            : "hover:bg-white/[0.03]"
                       }`}
                     >
                       {/* 账号信息 */}
@@ -2496,29 +2504,10 @@ export default function BuddyPanel() {
                         >
                           {t(`buddy.plan.${planBadge.toLowerCase()}`, { defaultValue: planBadge })}
                         </span>
-                        <span className="font-semibold text-white truncate max-w-[120px]" title={acc.email}>{displayName(acc)}</span>
-                        {isCurrent && (
-                          <span className="inline-flex items-center gap-0.5 text-[8px] px-1 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/25 flex-shrink-0">
-                            <Check className="w-2 h-2" /> {t("buddy.current")}
-                          </span>
-                        )}
+                        {/* 「当前」不再占账号列的位置：整行有绿色描边（见行的 className） */}
+                        <span className="font-semibold text-white truncate max-w-[150px]" title={acc.email}>{displayName(acc)}</span>
                       </div>
-                      {/* 额度 */}
-                      <div style={{ width: COL_QUOTA }} className="flex items-center px-2 flex-shrink-0">
-                        {quota.unlimited ? (
-                          <span className="text-emerald-400">∞</span>
-                        ) : quota.hasData ? (
-                          <QuotaBar
-                            remain={quota.remain}
-                            total={quota.total}
-                            className="w-full"
-                            title={`${t("buddy.quotaTotal")}: ${formatQuotaNumber(quota.remain)}/${formatQuotaNumber(quota.total)}`}
-                          />
-                        ) : (
-                          <span className="text-slate-600">—</span>
-                        )}
-                      </div>
-                      {/* 积分构成：一段一方块（颜色=到期远近，长度=占比），点开看用量详情 */}
+                      {/* 积分：构成条（一段一方块，块内是剩余天数）+ 右侧剩余总额 */}
                       <div style={{ width: COL_CREDITS }} className="flex items-center px-2 flex-shrink-0 border-l border-white/5">
                         {quota.unlimited ? (
                           <span className="text-emerald-400">∞</span>
@@ -2530,8 +2519,8 @@ export default function BuddyPanel() {
                           />
                         )}
                       </div>
-                      {/* 登录 token 到期：只读倒计时（已过期显示「已过期」） */}
-                      <div style={{ width: COL_W }} className="px-1.5 py-1 flex-shrink-0 border-l border-white/5">
+                      {/* 登录 token 到期：只读倒计时（`55.21` = 55 天 21 小时；已过带负号） */}
+                      <div style={{ width: COL_W }} className="px-1 py-1 flex-shrink-0 border-l border-white/5">
                         {(() => {
                           const raw = acc.expiresAt ?? 0;
                           if (raw <= 0) return <span className="text-slate-600 px-1">—</span>;
@@ -2564,33 +2553,36 @@ export default function BuddyPanel() {
                         const ts = acc.expiryTimes?.[col.id];
                         if (cellEditingAcc && cellEditingAcc.colId === col.id) {
                           return (
-                            <div key={col.id} style={{ width: COL_W }} className="px-1.5 py-1 flex-shrink-0 border-l border-white/5">
-                              <input
-                                autoFocus
-                                value={cellEditingAcc.value}
-                                onChange={(e) => setEditingCell({ ...cellEditingAcc, value: e.target.value })}
-                                onBlur={(e) => setEditingCell({ ...cellEditingAcc, value: normalizedColumnInput(e.target.value) })}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    commitCell(acc);
-                                  } else if (e.key === "Escape") {
-                                    setEditingCell(null);
-                                  }
-                                }}
-                                placeholder={t("buddy.timeInputPlaceholder")}
-                                className={`w-full bg-black/40 border rounded px-1 py-0.5 text-tiny text-white outline-none ${
-                                  cellEditingAcc.value.trim() && parseTimeInput(cellEditingAcc.value) == null
-                                    ? "border-rose-400/60"
-                                    : "border-[var(--module-accent)]/50"
-                                }`}
-                              />
-                              <div className="flex items-center gap-1 mt-1">
-                                <button onClick={() => commitCell(acc)} className="px-1.5 py-0.5 rounded bg-[var(--module-accent)] text-white text-micro cursor-pointer">{t("buddy.saveLabels")}</button>
-                                {ts && ts > 0 && (
-                                  <button onClick={() => clearCell(acc, col.id)} className="px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-300 text-micro cursor-pointer">{t("buddy.clear")}</button>
-                                )}
-                                <button onClick={() => setEditingCell(null)} className="px-1.5 py-0.5 rounded text-slate-400 text-micro hover:bg-white/5 cursor-pointer">{t("buddy.cancel")}</button>
+                            <div key={col.id} style={{ width: COL_W }} className="px-1 py-1 flex-shrink-0 border-l border-white/5 relative">
+                              {/* 要输入完整日期时间，72px 的列放不下 → 浮出列外（编辑完即收） */}
+                              <div className="absolute left-0 top-0 z-20 w-44 bg-slate-900 border border-white/15 rounded p-1.5 shadow-lg">
+                                <input
+                                  autoFocus
+                                  value={cellEditingAcc.value}
+                                  onChange={(e) => setEditingCell({ ...cellEditingAcc, value: e.target.value })}
+                                  onBlur={(e) => setEditingCell({ ...cellEditingAcc, value: normalizedColumnInput(e.target.value) })}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      commitCell(acc);
+                                    } else if (e.key === "Escape") {
+                                      setEditingCell(null);
+                                    }
+                                  }}
+                                  placeholder={t("buddy.timeInputPlaceholder")}
+                                  className={`w-full bg-black/40 border rounded px-1 py-0.5 text-tiny text-white outline-none ${
+                                    cellEditingAcc.value.trim() && parseTimeInput(cellEditingAcc.value) == null
+                                      ? "border-rose-400/60"
+                                      : "border-[var(--module-accent)]/50"
+                                  }`}
+                                />
+                                <div className="flex items-center gap-1 mt-1">
+                                  <button onClick={() => commitCell(acc)} className="px-1.5 py-0.5 rounded bg-[var(--module-accent)] text-white text-micro cursor-pointer">{t("buddy.saveLabels")}</button>
+                                  {ts && ts > 0 && (
+                                    <button onClick={() => clearCell(acc, col.id)} className="px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-300 text-micro cursor-pointer">{t("buddy.clear")}</button>
+                                  )}
+                                  <button onClick={() => setEditingCell(null)} className="px-1.5 py-0.5 rounded text-slate-400 text-micro hover:bg-white/5 cursor-pointer">{t("buddy.cancel")}</button>
+                                </div>
                               </div>
                             </div>
                           );
@@ -2599,28 +2591,28 @@ export default function BuddyPanel() {
                           const st = describeLabel(ts, now);
                           const tone = LABEL_TONE[st.tone];
                           return (
-                            <div key={col.id} style={{ width: COL_W }} className="px-1.5 py-1 flex-shrink-0 border-l border-white/5">
+                            <div key={col.id} style={{ width: COL_W }} className="px-1 py-1 flex-shrink-0 border-l border-white/5">
                               <button
                                 onClick={() => startEditCell(acc, col.id)}
                                 title={`${col.name} · ${st.absolute}`}
-                                className={`relative overflow-hidden rounded border px-1.5 py-0.5 w-full text-left ${tone.chip} ${
+                                className={`relative overflow-hidden rounded border px-1 py-0.5 w-full text-left ${tone.chip} ${
                                   st.recovered ? "animate-pulse ring-1 ring-emerald-400/70" : ""
                                 }`}
                               >
                                 <div className={`absolute left-0 top-0 bottom-0 ${tone.bar}`} style={{ width: `${st.progress}%` }} />
-                                <span className={`relative tabular-nums flex items-center gap-1 ${tone.text}`}>
-                                  {st.recovered ? (<><Bell className="w-2.5 h-2.5" />{t("buddy.recovered")}</>) : st.text}
+                                <span className={`relative tabular-nums flex items-center gap-1 truncate ${tone.text}`}>
+                                  {st.recovered ? (<><Bell className="w-2.5 h-2.5 flex-shrink-0" />{t("buddy.recovered")}</>) : st.text}
                                 </span>
                               </button>
                             </div>
                           );
                         }
                         return (
-                          <div key={col.id} style={{ width: COL_W }} className="px-1.5 py-1 flex-shrink-0 border-l border-white/5">
+                          <div key={col.id} style={{ width: COL_W }} className="px-1 py-1 flex-shrink-0 border-l border-white/5">
                             <button
                               onClick={() => startEditCell(acc, col.id)}
                               title={t("buddy.addCellTime")}
-                              className="w-full rounded border border-dashed border-white/15 text-slate-600 hover:text-white hover:border-white/30 py-0.5 px-1.5 text-left flex items-center gap-0.5 cursor-pointer"
+                              className="w-full rounded border border-dashed border-white/15 text-slate-600 hover:text-white hover:border-white/30 py-0.5 px-1 text-left flex items-center gap-0.5 cursor-pointer"
                             >
                               <Plus className="w-2.5 h-2.5" />
                             </button>
