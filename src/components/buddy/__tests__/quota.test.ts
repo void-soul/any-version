@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   CREDIT_HUE_SAFE,
+  blockLayout,
   formatQuotaPlain,
   mergeCreditSegments,
   nearestExpiringSegment,
@@ -121,6 +122,42 @@ describe("formatQuotaPlain", () => {
     expect(formatQuotaPlain(85)).toBe("85");
     expect(formatQuotaPlain(85.3)).toBe("85");
     expect(formatQuotaPlain(85.6)).toBe("86");
+  });
+});
+
+describe("blockLayout", () => {
+  it("caps the per-block min at 16px when there is room", () => {
+    expect(blockLayout(4, 250)).toEqual({ minWidth: 16, labelScale: 1 });
+  });
+
+  it("shrinks the min so every block fits (fixed mins clipped the last block)", () => {
+    // 16 段：每段均分 ~14.7px —— 恰好都放得下，不再溢出裁掉尾部；
+    // 数字基准宽 18px，块只有 14.7px → 稍微缩一点（0.82），完整显示
+    const layout = blockLayout(16, 250);
+    expect(layout.minWidth).toBeCloseTo((250 - 15) / 16, 5);
+    expect(layout.labelScale).toBeCloseTo(((250 - 15) / 16) / 18, 5);
+  });
+
+  it("scales the number down instead of hiding it on very narrow blocks", () => {
+    // 40 段：每段只有 ~5px —— 数字跟着缩（用户要求：再小也要显示出来）
+    const tiny = blockLayout(40, 250);
+    expect(tiny.minWidth).toBeCloseTo((250 - 39) / 40, 5);
+    expect(tiny.labelScale).toBeCloseTo(((250 - 39) / 40) / 18, 5);
+    expect(tiny.labelScale).toBeLessThan(1);
+    expect(tiny.labelScale).toBeGreaterThan(0);
+  });
+
+  it("never lets the blocks overflow the bar", () => {
+    // minWidth 之和 + 间隙不得超过条宽（否则尾部的块被裁）
+    for (const count of [1, 3, 8, 16, 25, 40, 64]) {
+      const { minWidth } = blockLayout(count, 250);
+      expect(minWidth * count + (count - 1)).toBeLessThanOrEqual(250 + 1e-9);
+    }
+  });
+
+  it("handles degenerate input", () => {
+    expect(blockLayout(0, 250).labelScale).toBe(0);
+    expect(blockLayout(5, 0).labelScale).toBe(0);
   });
 });
 

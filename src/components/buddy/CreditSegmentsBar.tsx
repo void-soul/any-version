@@ -7,6 +7,9 @@
 // - **块内只显示剩余天数**（纯数字，方块里默认单位就是天）：两行（额度+天数）在真机
 //   截图里挤得没法看，砍掉了额度一行；各段的额度、类型、到期时刻都在悬停里。
 //   已过期 / 永不过期没有天数，块留空；
+// - **块的最小宽度按实测条宽均分**（[`blockLayout`]）：固定 minWidth 在段多时之和
+//   会超过条宽，flex 压不下去 → 尾部整块被裁掉（真机截图：最后一块整个消失）。
+//   数字**始终显示**：块放不下就按比例整体缩小（transform 缩放不占布局宽度）。
 // - **右侧数字 = 剩余总额**（悬停给「剩余/总量」）：总额与构成本是同一件事的两面
 //   （构成就是这些剩余积分的来源分布），分成两列时用户得来回对照才知道一共多少。
 // - 悬停显示：类型 · 剩余/总量 · 到期时刻 · 还剩几天。
@@ -14,9 +17,11 @@
 // 数据来自 `mergeCreditSegments`（同一礼包已合并、按到期先后排序），
 // 所以方块从左到右依次是「最快到期 → 最慢到期」。
 
+import { useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
+  blockLayout,
   formatQuotaNumber,
   formatQuotaPlain,
   segmentDayLabels,
@@ -26,10 +31,9 @@ import {
   type CreditSegment,
 } from "./quota";
 
-/** 一个方块的最小宽度：再窄就放不下最长的天数（`99+`，9px 字体约 16px）。
-    占比极小的段会被**撑到**这个宽度 —— 严格等比会让它们的信息没法显示，
-    可读性优先（悬停里仍有精确值）。 */
-const BLOCK_MIN_WIDTH = 16;
+/** 首帧（还没量到条宽）用的估计值：积分列 320px − padding/总额区。
+    ResizeObserver 挂上后立即会被实测值覆盖，只影响第一帧。 */
+const ESTIMATED_BAR_WIDTH = 250;
 
 interface Props {
   segments: CreditSegment[];
@@ -41,6 +45,21 @@ interface Props {
 
 export default function CreditSegmentsBar({ segments, now = Date.now(), onClick }: Props) {
   const { t } = useTranslation();
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const [barWidth, setBarWidth] = useState(0);
+
+  // 条宽是布局算出来的（积分列是填充列，还要给右侧总额让位），CSS 算不出「每块能分多少」，
+  // 只能实测。列宽变化（窗口缩放 / 显隐侧栏）也要跟着重算。
+  // 用 useLayoutEffect：第一次测量发生在**绘制之前**，否则会先按估计值画一帧再跳变。
+  useLayoutEffect(() => {
+    const el = barRef.current;
+    if (!el) return;
+    const update = () => setBarWidth(el.clientWidth);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const describe = (segment: CreditSegment): string => {
     const amount = `${formatQuotaNumber(segment.remaining)}/${formatQuotaNumber(segment.total)}`;
@@ -62,12 +81,12 @@ export default function CreditSegmentsBar({ segments, now = Date.now(), onClick 
 
   const labels = segmentDayLabels(segments, now);
   const summary = summarizeCreditSegments(segments);
-  // 段特别多时收一档字号与块宽：宁可字小一点，也不能让尾部的段被挤出可视区（丢段更糟）
-  const dense = segments.length > 10;
+  const { minWidth, labelScale } = blockLayout(segments.length, barWidth || ESTIMATED_BAR_WIDTH);
 
   return (
     <div className="flex items-center gap-2 w-full">
       <div
+        ref={barRef}
         className={`flex flex-1 min-w-0 h-4 gap-px rounded-sm overflow-hidden bg-white/5 ${
           onClick ? "cursor-pointer" : ""
         }`}
@@ -80,18 +99,28 @@ export default function CreditSegmentsBar({ segments, now = Date.now(), onClick 
           return (
             <span
               key={`${segment.packageCode || segment.source}-${index}`}
-              className="flex items-center justify-center h-full overflow-hidden leading-none font-semibold text-white"
+              className="relative flex items-center justify-center h-full overflow-hidden leading-none font-semibold text-white"
               style={{
                 flexGrow: Math.max(0, segment.remaining),
                 flexBasis: 0,
-                minWidth: dense ? 12 : BLOCK_MIN_WIDTH,
+                minWidth,
                 backgroundColor:
                   hue === null ? "rgba(148,163,184,0.45)" : `hsl(${hue} 68% 45%)`,
               }}
               title={describe(segment)}
             >
-              {/* 只显示剩余天数；额度/类型/到期都在悬停里 */}
-              <span className={dense ? "text-[8px]" : "text-[9px]"}>{labels[index]}</span>
+              {/* 只显示剩余天数；额度/类型/到期都在悬停里。
+                  数字**始终显示**：块放不下就整体缩小（transform 不占布局宽度，
+                  缩到多小都完整居中）。必须绝对定位 —— 9px 文本的原生宽度比块宽大，
+                  流内布局会把块撑大，条又溢出了 */}
+              {labels[index] && (
+                <span
+                  className="absolute inset-0 flex items-center justify-center text-[9px]"
+                  style={{ transform: `scale(${labelScale})` }}
+                >
+                  {labels[index]}
+                </span>
+              )}
             </span>
           );
         })}

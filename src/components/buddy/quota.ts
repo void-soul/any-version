@@ -226,6 +226,40 @@ export function formatQuotaPlain(value: number): string {
   return String(Math.round(Math.max(0, value)));
 }
 
+/** 方块 min-width 的上限：条内空间充裕时块也不该无限宽（等比已经由 flexGrow 决定）。 */
+export const BLOCK_MAX_MIN_WIDTH = 16;
+
+/** 数字标签的基准字号（px）：块放不下时按比例整体缩小，而不是隐藏。 */
+export const BLOCK_LABEL_FONT_SIZE = 9;
+
+/** 9px 字体下最长标签（`99+`，3 个字符）的近似宽度：缩放比例的分母。 */
+export const BLOCK_LABEL_BASE_WIDTH = 18;
+
+/**
+ * 条内每个方块的 `minWidth` 与数字标签的缩放比例。
+ *
+ * 方块若是**固定**的最小宽度，段一多（十几二十段的账号很常见）最小宽度之和就会
+ * 超过条宽 —— flex 压不下去，尾部整块被裁掉（真机截图：最后一块整个消失）。
+ * 所以 minWidth 必须**按实测条宽均分**：均分值就是「所有块都恰好放得下」的上限。
+ *
+ * 数字**始终显示**（用户要求：再小也要显示出来）：块放不下时就按比例缩小 ——
+ * 用 `transform: scale()` 缩放不占布局宽度，缩到多小都居中完整显示，不会被裁。
+ */
+export function blockLayout(
+  count: number,
+  barWidth: number
+): { minWidth: number; labelScale: number } {
+  if (!(count > 0) || !(barWidth > 0)) {
+    return { minWidth: 0, labelScale: 0 };
+  }
+  // gap-px：块间 1px 间隙也要占条宽
+  const per = Math.max(0, (barWidth - (count - 1)) / count);
+  return {
+    minWidth: Math.min(BLOCK_MAX_MIN_WIDTH, per),
+    labelScale: Math.min(1, per / BLOCK_LABEL_BASE_WIDTH),
+  };
+}
+
 /**
  * 到期远近 → 色相（0 = 最紧急的红，140 = 安全的绿）。
  *
