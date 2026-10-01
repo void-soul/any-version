@@ -24,7 +24,7 @@ use crate::commands::utils;
 const TRANSCODE_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// 转码缓存目录：`<data_dir>/music/cache/transcoded`
-fn cache_dir() -> PathBuf {
+pub(crate) fn cache_dir() -> PathBuf {
     library::music_dir().join("cache").join("transcoded")
 }
 
@@ -67,6 +67,81 @@ pub fn cached(path: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// 这个播放器自己解不开这个文件吗？（只探头部，不解码、不转码）
+///
+/// 后台预转码靠它判断「下一首值不值得先转」—— 直接对每个文件都跑 ffmpeg 的话，
+/// 会为几 MB 的普通 mp3 白白起一堆外部进程。
+pub fn needs_transcode(path: &str) -> bool {
+    if cached(path).is_some() {
+        return false;
+    }
+    // 与 play_locked 完全相同的开流方式：它解不开，播放时就一定会走到转码分支
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let byte_len = file.metadata().map(|meta| meta.len()).unwrap_or(0);
+    let mut builder = rodio::Decoder::builder().with_data(std::io::BufReader::new(file));
+    if byte_len > 0 {
+        builder = builder.with_byte_len(byte_len);
+    }
+    builder.build().is_err()
+}
+
+/// 转码缓存占用（字节）。
+pub fn cache_bytes() -> u64 {
+    dir_size(&cache_dir())
+}
+
+/// 清空转码缓存，返回释放的字节数。`playing` 为正在播放的**原文件**（若有）。
+///
+/// 与在线缓存一起清（设置页的「清理缓存」）：清掉的只是**副本**，
+/// 再播那首歌会重新转一次 —— 慢一点，但不会丢任何东西。
+///
+/// 正在播放的那首要跳过：它的转码副本正被播放器读着，删掉会打断播放，
+/// 在 Windows 上更是直接删不掉（文件被占用）—— 强行删只会让「已清理 x MB」
+/// 和实际对不上。
+pub fn clear_cache(playing: Option<&str>) -> Result<u64, String> {
+    let keep = playing.and_then(cached);
+    let dir = cache_dir();
+    if !dir.is_dir() {
+        return Ok(0);
+    }
+    let mut freed = 0u64;
+    for entry in std::fs::read_dir(&dir)
+        .map_err(|e| format!("读取转码缓存目录失败: {e}"))?
+        .flatten()
+    {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if keep
+            .as_deref()
+            .map(|k| library::same_path(&path.to_string_lossy(), k))
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        freed += entry.metadata().map(|meta| meta.len()).unwrap_or(0);
+        let _ = std::fs::remove_file(&path);
+    }
+    Ok(freed)
+}
+
+/// 目录里所有文件的总大小（目录不存在则为 0）。
+fn dir_size(dir: &Path) -> u64 {
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| entry.path().is_file())
+                .filter_map(|entry| entry.metadata().ok())
+                .map(|meta| meta.len())
+                .sum()
+        })
+        .unwrap_or(0)
 }
 
 /// 这种失败才值得拉起 ffmpeg。
@@ -242,6 +317,35 @@ mod tests {
         assert!(worth_retrying("无法解码该音频文件（实际容器：MP4/M4A…"));
         assert!(!worth_retrying("打开文件失败: 系统找不到指定的路径"));
         assert!(!worth_retrying("创建音频输出失败"));
+    }
+
+    /// 后台预转码靠 `needs_transcode` 决定「要不要起 ffmpeg」—— 它一旦对**能播的**
+    /// 文件判成 true，后台就会为曲库里每一首都白跑一次外部进程。
+    #[test]
+    fn needs_transcode_stays_false_for_a_playable_file() {
+        let Ok(ffmpeg) = locate_ffmpeg() else {
+            return; // 没装内置 ffmpeg，跳过
+        };
+        let dir = std::env::temp_dir().join(format!("anyver-needs-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let playable = dir.join("plain.m4a");
+        let generated = hidden_cmd(&ffmpeg)
+            .args(["-nostdin", "-y", "-v", "error"])
+            .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=1"])
+            .args(["-c:a", "aac", "-ac", "2"])
+            .arg(&playable)
+            .output();
+        if !matches!(generated, Ok(out) if out.status.success()) {
+            let _ = std::fs::remove_dir_all(&dir);
+            return; // 这个 ffmpeg 构建造不出音频，跳过
+        }
+
+        let path = playable.to_string_lossy().to_string();
+        assert!(!needs_transcode(&path), "能播的文件不该被判定为需要转码");
+        // 文件不存在 / 打不开：不值得转码（播放时会由 play() 给出真正的错误）
+        assert!(!needs_transcode("D:/no/such/file.mp3"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 真转一次：造一个 6 声道 E-AC-3（symphonia 解不了），确认转码后能拿到 AAC 副本。

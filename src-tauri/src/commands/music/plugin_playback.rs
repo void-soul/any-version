@@ -616,25 +616,50 @@ async fn download_track(
     })
 }
 
-/// 清理在线播放缓存，返回释放的字节数。
+/// 清空一个缓存目录下的所有文件，返回释放的字节数。
+///
+/// `keep` 是**正在播放**的文件（在线缓存里的文件就是播放源）：它正被播放器读着，
+/// 删掉会打断播放，Windows 上更是直接删不掉 —— 留着它，报出的数字才对得上。
+fn clear_dir(dir: &Path, keep: Option<&str>) -> Result<u64, String> {
+    if !dir.is_dir() {
+        return Ok(0);
+    }
+    let mut freed = 0u64;
+    for entry in std::fs::read_dir(dir)
+        .map_err(|e| format!("读取缓存目录失败: {e}"))?
+        .flatten()
+    {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if keep
+            .map(|k| library::same_path(&path.to_string_lossy(), k))
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        freed += entry.metadata().map(|meta| meta.len()).unwrap_or(0);
+        let _ = std::fs::remove_file(&path);
+    }
+    Ok(freed)
+}
+
+/// 清理**在线缓存 + 转码缓存**，返回释放的字节数。
+///
+/// 转码缓存（播放器解不开的编码转出来的副本）也要一起清 —— 它由本软件生成、
+/// 只存在于数据目录里，用户无从手动清理，留着就一直是垃圾。
+/// 清掉不影响任何文件，只是下次播那首歌要再转一次。
 #[tauri::command]
-pub async fn music_plugin_clear_cache() -> Result<u64, String> {
-    tauri::async_runtime::spawn_blocking(|| -> Result<u64, String> {
-        let dir = cache_dir();
-        if !dir.is_dir() {
-            return Ok(0);
-        }
-        let entries = std::fs::read_dir(&dir).map_err(|e| format!("读取缓存目录失败: {e}"))?;
-        let mut freed = 0u64;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() {
-                freed += entry.metadata().map(|meta| meta.len()).unwrap_or(0);
-                let _ = std::fs::remove_file(&path);
-            }
-        }
-        eprintln!("[plugin] 已清理在线播放缓存 {freed} 字节");
-        Ok(freed)
+pub async fn music_plugin_clear_cache(
+    state: State<'_, MusicPlayerState>,
+) -> Result<u64, String> {
+    let playing = state.current_path();
+    tauri::async_runtime::spawn_blocking(move || -> Result<u64, String> {
+        let online = clear_dir(&cache_dir(), playing.as_deref())?;
+        let transcoded = super::transcode::clear_cache(playing.as_deref())?;
+        eprintln!("[plugin] 已清理缓存：在线 {online} + 转码 {transcoded} 字节");
+        Ok(online + transcoded)
     })
     .await
     .map_err(|e| format!("清理任务失败: {e}"))?
@@ -657,11 +682,14 @@ pub async fn music_plugin_set_download_dir(
 }
 
 /// 当前下载目录与缓存占用（设置页展示用）。
+///
+/// `cache_bytes` 是**在线缓存 + 转码缓存**之和 —— 设置页只有一个「清理缓存」
+/// 按钮，两者一起清，显示的数字就得对得上，否则用户点了清理却看不到清零。
 #[tauri::command]
 pub async fn music_plugin_storage_info() -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(|| -> Result<Value, String> {
         let cache = cache_dir();
-        let cache_bytes: u64 = std::fs::read_dir(&cache)
+        let online = std::fs::read_dir(&cache)
             .map(|entries| {
                 entries
                     .flatten()
@@ -671,10 +699,11 @@ pub async fn music_plugin_storage_info() -> Result<Value, String> {
                     .sum()
             })
             .unwrap_or(0);
+        let transcoded = super::transcode::cache_bytes();
         Ok(json!({
             "download_dir": download_dir().to_string_lossy(),
             "cache_dir": cache.to_string_lossy(),
-            "cache_bytes": cache_bytes,
+            "cache_bytes": online + transcoded,
         }))
     })
     .await
@@ -698,6 +727,37 @@ mod tests {
         // 洗完之后不能再有分隔符（Path::join 出去要留在同一层目录里）
         assert!(!safe_file_stem("../../x").contains('/'));
         assert!(!safe_file_stem(r"a\b").contains('\\'));
+    }
+
+    /// 「清理缓存」要真的删掉文件并报出字节数（在线缓存与转码缓存共用这段）：
+    /// 报的数字必须等于删掉的量，否则用户点了清理却看不到清零。
+    #[test]
+    fn clearing_a_cache_dir_empties_it_and_reports_the_bytes() {
+        let dir = std::env::temp_dir().join(format!("anyver-clear-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.bin"), vec![0u8; 128]).unwrap();
+        std::fs::write(dir.join("b.bin"), vec![0u8; 64]).unwrap();
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+
+        assert_eq!(clear_dir(&dir, None).unwrap(), 192);
+        assert!(!dir.join("a.bin").exists());
+        assert!(!dir.join("b.bin").exists());
+        // 子目录不是缓存文件，不动它
+        assert!(dir.join("sub").is_dir());
+        assert_eq!(clear_dir(&dir, None).unwrap(), 0, "再清一次应为 0");
+        // 目录不存在也不该报错（还没缓存过任何东西时就是这个情形）
+        assert_eq!(clear_dir(&dir.join("nope"), None).unwrap(), 0);
+
+        // 正在播放的那个文件要留下：它正被播放器读着，删也删不掉（Windows 文件占用）
+        std::fs::write(dir.join("playing.m4a"), vec![0u8; 100]).unwrap();
+        std::fs::write(dir.join("other.m4a"), vec![0u8; 100]).unwrap();
+        let playing = dir.join("playing.m4a").to_string_lossy().to_string();
+        assert_eq!(clear_dir(&dir, Some(&playing)).unwrap(), 100);
+        assert!(dir.join("playing.m4a").exists(), "正在播放的不能删");
+        assert!(!dir.join("other.m4a").exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 扩展名只作可读性用，不在白名单里就退 mp3（解码按内容嗅探）。
