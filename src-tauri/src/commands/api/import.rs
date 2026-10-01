@@ -116,6 +116,14 @@ fn kv_enabled(v: &Value) -> bool {
     v.get("disabled").and_then(|d| d.as_bool()).unwrap_or(false) == false
 }
 
+/// 剥掉 URL 里的查询串（`?` 及其后所有内容），只在 `url.query` 数组非空时用。
+fn strip_query(url: &str) -> &str {
+    match url.split_once('?') {
+        Some((base, _)) => base,
+        None => url,
+    }
+}
+
 // ─── Postman 导入（v2.1 / v2.0） ───
 
 fn parse_postman_item(item: &Value, out: &mut Vec<EndpointDraft>, parent_module: &str) {
@@ -179,6 +187,13 @@ fn parse_postman_item(item: &Value, out: &mut Vec<EndpointDraft>, parent_module:
             url = buf;
         }
         if let Some(query) = u.get("query").and_then(|x| x.as_array()) {
+            // 有了结构化的 `query`，就把 raw 里的查询串剥掉：执行时 `exec.rs` 会把
+            // `query_params` **追加**到 URL 上（`request.query()`），两边都留着会
+            // 拼成 `?page=1&page=1`。值取自 `query` 里**已解码**的那份，因此也不存在
+            // 二次编码问题（raw 里的 `%E7%8C%AB` 再编一次会变成 `%25E7%8C%AB`）。
+            if !query.is_empty() {
+                url = strip_query(&url).to_string();
+            }
             for q in query {
                 let key = v_str(q, "key");
                 if key.is_empty() {
@@ -1056,6 +1071,93 @@ mod tests {
         assert_eq!(drafts[1].body_type, "json");
         // 查询串留在 URL 里原样送出，不进 query_params（见 parse_postman_item 的说明）
         assert!(drafts[0].query_params.is_empty());
+    }
+
+    /// Postman 导出的常规形态：`url.raw` 里带着查询串，`url.query` 数组里又列了一遍。
+    /// 两边都留着的话，执行时 `exec.rs` 把 `query_params` **追加**到 URL 上
+    /// （`request.query()`），实际发出去的是 `?page=1&page=1`。
+    /// 既然有结构化的 query，就以它为准，把 raw 里的那一份剥掉。
+    #[test]
+    fn postman_raw_query_is_not_duplicated_by_the_query_array() {
+        let json = r#"{
+            "info": { "name": "带查询" },
+            "item": [
+                { "name": "列表", "request": {
+                    "method": "GET",
+                    "url": {
+                        "raw": "https://api.example.com/users?page=1&size=20",
+                        "query": [
+                            { "key": "page", "value": "1" },
+                            { "key": "size", "value": "20" }
+                        ]
+                    }
+                } }
+            ]
+        }"#;
+        let drafts = parse_postman_collection(json).unwrap().drafts;
+        assert_eq!(
+            drafts[0].url, "https://api.example.com/users",
+            "raw 里的查询串要剥掉，否则会和 query_params 重复: {}", drafts[0].url
+        );
+        assert_eq!(drafts[0].query_params.len(), 2);
+        assert_eq!(drafts[0].query_params[0].key, "page");
+        assert_eq!(drafts[0].query_params[0].value, "1");
+    }
+
+    /// 没有 query 数组（或它是空的）时，查询串必须**留在 URL 里** —— 剥掉就丢了。
+    #[test]
+    fn postman_raw_query_is_kept_when_there_is_no_query_array() {
+        let json = r#"{
+            "info": { "name": "只有 raw" },
+            "item": [
+                { "name": "列表", "request": {
+                    "method": "GET",
+                    "url": { "raw": "https://api.example.com/users?page=1" }
+                } },
+                { "name": "空数组", "request": {
+                    "method": "GET",
+                    "url": { "raw": "https://api.example.com/users?page=1", "query": [] }
+                } },
+                { "name": "字符串形式", "request": {
+                    "method": "GET",
+                    "url": "https://api.example.com/users?page=1"
+                } }
+            ]
+        }"#;
+        let drafts = parse_postman_collection(json).unwrap().drafts;
+        assert_eq!(drafts.len(), 3);
+        for (index, draft) in drafts.iter().enumerate() {
+            assert_eq!(
+                draft.url, "https://api.example.com/users?page=1",
+                "第 {index} 个请求的查询串不该被剥掉"
+            );
+            assert!(draft.query_params.is_empty());
+        }
+    }
+
+    /// `disabled` 的查询参数不该发出去（与 Postman 一致）：剥掉 raw 后它由
+    /// `query_params` 的 enabled 标记控制，所以必须原样保留在列表里。
+    #[test]
+    fn postman_disabled_query_param_is_not_sent() {
+        let json = r#"{
+            "info": { "name": "禁用" },
+            "item": [
+                { "name": "列表", "request": {
+                    "method": "GET",
+                    "url": {
+                        "raw": "https://api.example.com/users?page=1&debug=1",
+                        "query": [
+                            { "key": "page", "value": "1" },
+                            { "key": "debug", "value": "1", "disabled": true }
+                        ]
+                    }
+                } }
+            ]
+        }"#;
+        let drafts = parse_postman_collection(json).unwrap().drafts;
+        assert_eq!(drafts[0].url, "https://api.example.com/users");
+        assert_eq!(drafts[0].query_params.len(), 2);
+        assert!(!drafts[0].query_params[1].enabled, "禁用的参数要保留标记");
     }
 
     /// 退化输入不能 panic：`url` 缺失 / 为 null / 空串 / 空对象时该请求被跳过，
