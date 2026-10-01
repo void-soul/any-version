@@ -373,6 +373,8 @@ struct Inner {
     pending: Option<PendingOnline>,
     /// 取流请求序号：每次发起自增，回来时对不上说明用户已经切走
     seq: u64,
+    /// 已经预转码过的「下一首」（避免巡查每 250ms 重复检查同一个文件）
+    prefetched: Option<String>,
     /// 看门狗：上次观测到的播放位置（毫秒）
     last_pos_ms: u64,
     /// 看门狗：上次观测到位置发生变化的时间
@@ -436,6 +438,7 @@ impl Default for MusicPlayerState {
                 names: HashMap::new(),
                 pending: None,
                 seq: 0,
+                prefetched: None,
                 last_pos_ms: 0,
                 last_progress_at: Instant::now(),
             }),
@@ -882,6 +885,8 @@ impl MusicPlayerState {
             && matches!(inner.status, PlayStatus::Playing | PlayStatus::Ended)
             && matches!(inner.player.as_ref(), Some(player) if player.empty());
         if !exhausted {
+            // 还在播（或暂停中）：趁现在把下一首先准备好
+            self.prefetch_next(&mut inner);
             return;
         }
 
@@ -911,6 +916,41 @@ impl MusicPlayerState {
             }
         }
         inner.status = PlayStatus::Ended;
+    }
+
+    /// 后台预转码下一首。
+    ///
+    /// **为什么需要它**：转码要跑 ffmpeg（几秒）。只在「用户点播放」时才转的话，
+    /// 自动切歌和「下一首」走到解不开的文件上会直接失败 —— 那首根本没转过。
+    /// 趁当前这首还在播（通常还有好几分钟）提前转好，轮到它时直接命中缓存。
+    ///
+    /// 只在**真的解不开**时才跑 ffmpeg：先探一下头部（[`transcode::needs_transcode`]），
+    /// 普通 mp3 不值得起一个外部进程。
+    fn prefetch_next(&self, inner: &mut Inner) {
+        let Some(next) = inner.queue.peek_next() else {
+            return;
+        };
+        // 在线曲目轮到时才取流，这里没有文件可转
+        let Some(path) = next.path().map(str::to_string) else {
+            return;
+        };
+        if inner.prefetched.as_deref() == Some(path.as_str()) {
+            return;
+        }
+        inner.prefetched = Some(path.clone());
+        // 另起线程：ffmpeg 是秒级操作，不能堵住 250ms 的巡查循环
+        std::thread::spawn(move || {
+            if super::transcode::cached(&path).is_some() {
+                return;
+            }
+            if !super::transcode::needs_transcode(&path) {
+                return;
+            }
+            match super::transcode::ensure(&path) {
+                Ok(_) => crate::exit_log!("[音乐] 后台预转码完成: {path}"),
+                Err(err) => crate::exit_log!("[音乐] 后台预转码失败（播放时会再试一次）: {err}"),
+            }
+        });
     }
 
     /// 真正播放：调用方必须已持有 `inner` 的锁

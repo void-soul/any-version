@@ -261,6 +261,27 @@ impl PlayQueue {
         self.order.get(next).cloned()
     }
 
+    /// 下一首**是什么**（不改变下标）：后台预转码用它提前准备。
+    ///
+    /// 刻意不改状态：`advance()` 在随机模式播到队尾时会重新洗牌，预转码若跟着洗牌
+    /// 就会打乱用户马上要听到的顺序。所以那种情况（以及单曲循环，下一首就是当前曲）
+    /// 直接返回 None —— 预转码只是优化，猜错不如不转。
+    pub fn peek_next(&self) -> Option<&QueueItem> {
+        let total = self.order.len();
+        if total == 0 {
+            return None;
+        }
+        let next = match (self.mode, self.index) {
+            (PlayMode::Single, _) => return None,
+            (_, None) => 0,
+            (PlayMode::Sequence, Some(idx)) => (idx + 1) % total,
+            (PlayMode::Shuffle, Some(idx)) if idx + 1 < total => idx + 1,
+            // 队尾：advance 会重新洗牌，下一首还不确定
+            (PlayMode::Shuffle, Some(_)) => return None,
+        };
+        self.order.get(next)
+    }
+
     /// 上一首（随机模式按实际播放顺序回退）
     pub fn back(&mut self) -> Option<QueueItem> {
         let total = self.order.len();
@@ -432,6 +453,34 @@ mod tests {
         // 当前曲目必须仍在队列中（且能被 focus 定位）
         assert!(q.focus("track-3.mp3"));
         assert_eq!(q.current_path(), Some("track-3.mp3"));
+    }
+
+    /// `peek_next` 供后台预转码用：**只看不动**，且不能改变下标 / 洗牌结果。
+    #[test]
+    fn peek_next_looks_ahead_without_moving() {
+        let mut q = PlayQueue::default();
+        q.set(queue_of(3), PlayMode::Sequence, Some("track-0.mp3"));
+        assert_eq!(path(q.peek_next().cloned()).as_deref(), Some("track-1.mp3"));
+        // 不能挪动下标：预转码不该影响马上要播的顺序
+        assert_eq!(q.current_path(), Some("track-0.mp3"));
+        assert_eq!(path(q.advance()).as_deref(), Some("track-1.mp3"));
+
+        // 顺序模式到队尾：下一首绕回第一首
+        q.set(queue_of(2), PlayMode::Sequence, Some("track-1.mp3"));
+        assert_eq!(path(q.peek_next().cloned()).as_deref(), Some("track-0.mp3"));
+
+        // 单曲循环：下一首就是自己，没有预转码的必要
+        q.set(queue_of(2), PlayMode::Single, Some("track-0.mp3"));
+        assert!(q.peek_next().is_none());
+
+        // 随机模式播到队尾：advance 会重新洗牌，下一首还不确定 → 不猜
+        let mut q = PlayQueue::with_seed(7);
+        q.set(queue_of(4), PlayMode::Shuffle, None);
+        // 走到队尾（4 首 → 下标 3）
+        for _ in 0..4 {
+            let _ = q.advance();
+        }
+        assert!(q.peek_next().is_none(), "队尾要重洗，不该猜下一首");
     }
 
     #[test]
