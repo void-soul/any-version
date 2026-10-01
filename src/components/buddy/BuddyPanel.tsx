@@ -795,11 +795,14 @@ const COL_INFO = 240;
 /** 积分列：构成条（一段一方块，块内显示剩余天数）+ 右侧剩余总额。
     原来「额度」与「积分构成」是两列，但两者说的是同一笔积分，分开后要来回对照才知道
     这些方块一共是多少 —— 合并成一列，总额就放在构成条右边。
-    宽度按「每个方块都放得下最长的天数」定（每块最小 18px），不是随便加宽。 */
-const COL_CREDITS = 320;
+    **填充列**：剩余宽度全给它（`flex-1`）—— 段多的账号最需要宽度，窗口越宽构成条越长。
+    这里是它的**最小宽度**：窗口窄或自定义列多时靠横向滚动兜底，不能再压。 */
+const COL_CREDITS_MIN = 240;
 /** 时间列（内置「到期」+ 每个自定义列）：只要放得下 `55.21` 这种紧凑写法 */
 const COL_W = 72;
-const COL_ACTIONS = 150;
+/** 操作列：5 个图标按钮，按实际按钮宽度收死（不再靠 `pl-9` 把按钮顶到右边，
+    那样按钮会被挤在一半列宽里） */
+const COL_ACTIONS = 144;
 
 // 时间标签 chip 配色（sky=等待恢复 / amber=即将恢复 / emerald=已恢复可用）
 const LABEL_TONE: Record<LabelState["tone"], { chip: string; bar: string; text: string }> = {
@@ -2402,14 +2405,19 @@ export default function BuddyPanel() {
             ) : (
               <div
                 style={{
+                  // 积分列是填充列，这里只按它的最小宽度算（窗口更宽时它自己会长）
                   minWidth:
-                    COL_INFO + COL_CREDITS + (expiryColumns.length + 1) * COL_W + COL_ACTIONS,
+                    COL_INFO + COL_CREDITS_MIN + (expiryColumns.length + 1) * COL_W + COL_ACTIONS,
                 }}
               >
                 {/* 表头 */}
                 <div className="flex items-stretch sticky top-0 z-10 bg-slate-950 border-b border-white/10 text-tiny text-slate-500">
                   <div style={{ width: COL_INFO }} className="px-3 py-1.5 flex-shrink-0">{t("buddy.colAccount")}</div>
-                  <div style={{ width: COL_CREDITS }} className="px-2 py-1.5 flex-shrink-0 border-l border-white/5">
+                  {/* 填充列：吃掉剩余宽度（段多的账号最需要它） */}
+                  <div
+                    style={{ minWidth: COL_CREDITS_MIN }}
+                    className="flex-1 min-w-0 px-2 py-1.5 border-l border-white/5"
+                  >
                     {t("buddy.creditSegments")}
                   </div>
                   {/* 内置「到期」列：登录 token 过期时刻，只读，不属于自定义列 schema
@@ -2507,8 +2515,11 @@ export default function BuddyPanel() {
                         {/* 「当前」不再占账号列的位置：整行有绿色描边（见行的 className） */}
                         <span className="font-semibold text-white truncate max-w-[150px]" title={acc.email}>{displayName(acc)}</span>
                       </div>
-                      {/* 积分：构成条（一段一方块，块内是剩余天数）+ 右侧剩余总额 */}
-                      <div style={{ width: COL_CREDITS }} className="flex items-center px-2 flex-shrink-0 border-l border-white/5">
+                      {/* 积分：构成条（一段一方块，块内是剩余天数）+ 右侧剩余总额 —— 填充列 */}
+                      <div
+                        style={{ minWidth: COL_CREDITS_MIN }}
+                        className="flex-1 min-w-0 flex items-center px-2 border-l border-white/5"
+                      >
                         {quota.unlimited ? (
                           <span className="text-emerald-400">∞</span>
                         ) : (
@@ -2620,7 +2631,7 @@ export default function BuddyPanel() {
                         );
                       })}
                       {/* 操作 */}
-                      <div style={{ width: COL_ACTIONS }} className="flex items-center justify-end gap-1 pl-9 flex-shrink-0 border-l border-white/5">
+                      <div style={{ width: COL_ACTIONS }} className="flex items-center justify-end gap-1 px-1 flex-shrink-0 border-l border-white/5">
                         <button onClick={() => switchAccount(acc.id)} disabled={busy || isCurrent} className={ACC_BTN} title={t("buddy.switch")}><LogIn className="w-3 h-3" /></button>
                         <button onClick={() => refreshAccount(acc.id)} disabled={busy} className={ACC_BTN} title={t("buddy.refreshToken")}><RefreshCw className="w-3 h-3" /></button>
                         <button onClick={() => void exportByIds([acc.id])} disabled={busy} className={ACC_BTN} title={t("buddy.exportOne")}><Upload className="w-3 h-3" /></button>
