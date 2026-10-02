@@ -1,4 +1,4 @@
-[7126432f] 2026-09-19 WorkDaddy DAEMON_VERSION 1.2.76（build release-1.2.76-20260919-session-fork-stream-alignment-fix）—— 技能主轴改以 WorkDaddy 为主 + 会话同步增量与成长计划落地
+[d3f29616] 2026-10-02 WorkDaddy DAEMON_VERSION 1.2.148（build release-1.2.148-20260923-windows-compat-target）—— 本轮审阅完毕，逐域判定「不移植」（见末条）
 学习记录：
 - 2026-09-17 首次把 WorkDaddy（E:\pro\other-sdk\buddy\WorkDaddy）纳入本技能（此前只有 cockpit-tools）。精读并建档 16 个功能域：账号库与加密导出导入（lib.js / secure-transfer.js）、本地导入与 .logged-out（lib.js）、无感 OAuth（daemon.js）、用量/积分（credit-request-usage / credit-history-sync / credit-usage-store / credit-segments）、Token 统计（token-stats.js）、积分轮换建议（credit-rotation.js）、签到（checkin-result / checkin-consent / daemon.js dailyCheckin）、会话列表（session-db.js）、切换与假退出（lib.js::switchTo、/api/switch、/api/logout）、会话归档 .wds v4（session-transfer.js）、auto-copy lineage 合并（daemon.js）、主账号与排序（primary-account.js）、profile 与能力矩阵（profiles.js / cdp-targets.js）、自动化任务（automation*.js + schemas/automation-package.v1.schema.json）、模型管理与 cc-switch 导入（third-party-models.js）、增强开关（inject.js + theme-*.js）。commit a0cdb0a0 / 1.2.42。
 - 2026-09-19 技能主轴调整：**WorkDaddy 升为主参考，cockpit-tools 降为辅参考**（我们的产品线以 WorkBuddy/CodeBuddy 为主，WorkDaddy 是只做 WorkBuddy 的深挖实现）。SKILL.md 重写 §0/§2/§3/§4/§6：新增 §0.1 硬规则「WorkDaddy 学到的语义默认只落 WorkBuddy 分支，不得据此改 CodeBuddy CN 行为」；§2.1 改为 WorkDaddy 全量对照表、§2.2 收缩为"仅在 WorkDaddy 未覆盖时按需查阅 cockpit"；裁决规则改为「账号域以 WorkDaddy 为准，切换时序与合并模型仍以 cockpit 为准」。relearn.sh 两仓输出加主/辅标注，并对 WorkDaddy 新增 `excludes`（Linux/打包类文件）。
@@ -32,3 +32,10 @@
     `workbuddy.rs::build_account_from_auth_text`、`store::parse_accounts_json`（纯函数抽取）、命令 `buddy_import_third_party`（tool=workdaddy 时强制 WorkBuddy，§0.1）、前端来源清单 + 10 键 i18n ×2。
   - 验证：`cargo test --no-default-features --lib` **531 passed**（新增 11：scrypt KAT 1 + WorkDaddy 5 + cockpit 3 + 其它 2）；`npx tsc --noEmit` 干净。qa：**Q-0154**（已解决待验证）。契约与踩坑已回写 `references/workdaddy.md` §1 落地状态、`references/pitfalls.md` §H。
   - **本轮未学习 relearn 差异**（用户给定了范围，与 diff 无关）：WorkDaddy `7126432f → d3f29616`（DAEMON_VERSION 1.2.76 → **1.2.148**；新增 `session-sync.js`/`session-dirty.js`/`workbuddy-compat.js`/`automation-likes.js`/`account-credit-cache.js`、大量 `test/session-*`，主体是**会话同步与自动化/会话筛选**域）。**pin 保持不变，下次同步仍从 7126432f 开始。**
+- 2026-10-02 **本轮逐域审阅（无落地改动）**：`7126432f → d3f29616`（1.2.76 → **1.2.148**），66 文件 +8176/−1154。**pin 推进到 d3f29616**（差异已全部审阅完毕，避免下次重复列出）。
+  - **官方核心接口：无变化**。全量 diff 里 URL / 端点增删只有 3 处，都不属于官方业务接口：新增 `workdaddy.dev/api/automation-likes`（§14 automation，已否决域）；更新检查的 gitee/github release 页（平台专属）；V3 自动化协议文档提到的 `/api/accounts/checkin-sync`、`/api/switch`（**它自己本地 daemon 的路由**，不是官方接口）。我们 `api.rs` 用的 `/v2/plugin/*`、`/v2/billing/meter/*` 一个都没动 → **接口域不学**。
+  - **会话同步明细**（`session-sync.js` 936 + `session-dirty.js` 88 + 测试 1261）：代码完整可读，但**用户判定「没啥用」** → 不移植。将来若重开，job 模型与「三分支判定（baselineAt vs contentMtime）」仍以 §17 为准。
+  - **账号积分缓存**（`account-credit-cache.js` 51 + test 50）：**用户判定没意义** → 不移植。其中唯一有独立价值的是 `order()`（按最近到期时间排序刷新队列、循环前快照全部 key 防顺序抖动），约 30 行；将来若要「多账号刷新谁先谁后」可单独取这一条。
+  - **用量历史**（`credit-history-sync.js` 16，新增按天 × 按模型 `models` 细分）：**用户判定没意义** → 不移植。**注意这个域我们整体没有**：`daily_history.rs` 是签到/旅行归档、不是用量；`api.rs` 只查当前余量，未对接官方用量记录接口（对应 `credit-request-usage.js`）。所以只移植 `models` 字段无意义，要做必须连底层一起做。
+  - **按既有结论排除**：`automation-*` 全套（2026-09-19 已评估否决、实现已删，不得重新实现）、`inject.js`（+2111，注入依赖，只借语义）、`docs/session-fork.md`（用户已明确不做 Fork）、平台专属件 / 打包 / 遥测 / 主题类测试。
+  - **本轮未改动任何产品代码**，仅回写同步点与 qa.db。

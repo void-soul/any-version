@@ -15,11 +15,11 @@
 # open-tag + orca（多 agent 协同）。ai-toolbox / headroom / farming / claude-code-cli
 # **已移出跟踪范围**，下次不要再把它们纳入 diff。
 
-EchoBird        2f2ce490  2026-09-28  安装知识表 + 装错包拦截 + 后置校验 + 启动前置 PATH
-cc-switch       846de29c  2026-09-28  AppProxyConfig（首字/空闲超时）、换家判定、模型能力三态
-CodexPlusPlus   27cdd21f  2026-09-28  TOML 语义合并（toml_edit DocumentMut）
-open-tag        35d8eee6  2026-09-28  无新提交；已抄 sealed 输入域 + 回复授权语义
-orca            1bfbc155  2026-09-28  Task/Dispatch 状态机、mutation_receipts、并发上限
+EchoBird        77228c38  2026-10-02  本轮评估：新增 Cline / Antigravity 客户端，但二者不支持自定义模型 → 按学习目标 1 规则不纳入；其余为自身版本与 UI
+cc-switch       b9e96202  2026-10-02  本轮评估：Stack 模式（多供应商模型同列客户端选择器）与我们「路由链」模型不同 → 不抄
+CodexPlusPlus   27d50a1   2026-10-02  本轮评估：1.4.0→1.5.0 多为拓展接口与 UI 修复，协议对齐无命中 → 不抄
+open-tag        35d8eee6  2026-10-02  无新提交
+orca            3f37fcc42 2026-10-02  本轮评估：仅 3 条 orchestration 相关，其余为 native-chat / SSH / worktree 自身产品 → 不抄
 
 # ─── 学习记录 ───
 
@@ -470,3 +470,15 @@ document-skills@… installed=true enabled=true version="8a1541c4a3ff"
 
 验证：`cargo test --lib` 774 passed / 0 failed；`npx tsc --noEmit` 退出码 0；`npm test` 20 files / 126 tests 全绿；
 临时集成测试文件全部删除（`src-tauri/tests` 只剩原有 4 个）。
+
+2026-10-02 本轮评估（**无落地改动**，pin 已推进到各仓当前 HEAD）：
+
+- **EchoBird**（2f2ce490 → 77228c38，v5.8.2 → v5.8.4，37 提交）：新增 **Cline / Antigravity** 两个客户端（`14daf1d8`）。按学习目标 1 的收窄规则「只关注能改模型的工具」：**二者不支持自定义模型 → 不纳入 any-version 管理**（用户已确认）。其余为工具管理统一、rustls 补丁、Store launcher 仅 Windows 编译、主题默认深色 —— 与四个学习目标无关。
+- **cc-switch**（846de29c → b9e96202，38 提交）：主线是 **Stack 模式**（`b925c2bb` 由 attached models 改名；`01230112` 别名指向默认 Stack 模型；`1bc68e29` 非 Stack 模式拒绝 Stack id）、Codex OAuth 身份升 0.159.0、proxy session 同 bucket、usage TPS 修正。
+  **Stack 模式是什么**：代理模式之上的附加开关，给每家供应商分配永久 key，把模型 id 以保留前缀发布给客户端（Claude `ccs-claude-<key>--<model>` / Codex `ccs-<key>/<model>`），用户在客户端 `/model` 里点哪个就直连哪家。**判定不抄**：我们是「一个供应商 + 路由链 / 故障转移 + fallback」模型，启动即定走向；Stack 是为「客户端里手动挑家」设计的，且需要在代理层加整套前缀发布与解析 + 按工具写模型列表，与既有路由链能力重叠。
+  **两个值得记的设计细节**（将来若做类似能力）：① key 一经分配永久归这家（否则旧会话的 id 会被悄悄发到另一家，用别家的钱和模型）；② 带前缀的 id 解不出来一律报错，**绝不回落默认路由**（回落同样是用别家的钱，用户看不出来）。
+- **CodexPlusPlus**（27cdd21f → 27d50a1，1.4.0 → 1.5.0，85 提交）：主体是**拓展系统**（`registerMenuItem`、`window.codexPlus`）与 manager UI 修复；按协议关键字（proxy / rectif / transform / compat / protocol / responses / streaming）筛不出命中 → **学习目标 3 无内容可抄**。
+- **open-tag**：无新提交。
+- **orca**（1bfbc155 → 3f37fcc42，367 提交）：只有 3 条属学习目标 4（orchestration：agent 自带编排地址、orca_session_id 统一、worker-abandon 清理卡住 worker）；其余是 native-chat 行为修复、SSH relay、worktree 性能、大量测试基建 —— 都是 orca 自身产品能力，与我们的多 agent 协同（CollabRoom + 任务流）不同形态 → **不抄**。
+
+**本轮未改动任何产品代码**（仅回写同步点与 qa.db）。
