@@ -53,6 +53,66 @@ pub fn project_preview_manage(id: String, delegation: crate::commands::config::P
     scanner::preview_manage(&id, delegation)
 }
 
+/// PATH 里的一条目录是不是「这个项目装在别处的副本」—— 是的话托管时会把它摘掉。
+///
+/// 清理是**破坏性**操作（改的是用户的 PATH），所以这里刻意保守，两种情况一律不算：
+/// - **MSIX 型**（如 WinGet）：它的 exe 在 WindowsApps（应用执行别名），而它的
+///   find_rules 正好命中那个目录 —— 摘掉会连所有应用执行别名（winget、Store 版
+///   python…）一起废掉；
+/// - **`path_key` 为空的规则**：`contains("")` 恒为真，等于「PATH 里任何目录只要有
+///   这个 exe 就删」。宽匹配规则不该触发删除。
+///
+/// 其余情况必须在**这个目录里真的找到**可执行文件才算（避免匹配到同名无关目录）。
+fn is_foreign_path_entry(entry: &str, def: &super::types::ProjectDef, links_dir: &str) -> bool {
+    if def.is_msix() {
+        return false;
+    }
+    let entry_lower = entry.to_lowercase();
+    // 已经是我们自己的 links 目录：那是托管路径，不是「外部副本」
+    if !links_dir.is_empty() && entry_lower.contains(&links_dir.to_lowercase()) {
+        return false;
+    }
+
+    for rule in &def.find_rules {
+        let exe_name = match &rule.pattern {
+            super::types::ResolvePattern::PathContains { path_key, exe_name } => {
+                if path_key.is_empty() {
+                    continue;
+                }
+                if !entry_lower.contains(&path_key.to_lowercase()) {
+                    continue;
+                }
+                exe_name
+            }
+            super::types::ResolvePattern::FixedPath { path, exe_name } => {
+                if !entry_lower.contains(&path.to_lowercase()) {
+                    continue;
+                }
+                exe_name
+            }
+            _ => continue,
+        };
+
+        let mut names = vec![exe_name.clone()];
+        #[cfg(windows)]
+        {
+            let lower = exe_name.to_lowercase();
+            if !lower.ends_with(".exe") && !lower.ends_with(".cmd") && !lower.ends_with(".bat") {
+                names.push(format!("{exe_name}.exe"));
+                names.push(format!("{exe_name}.cmd"));
+                names.push(format!("{exe_name}.bat"));
+            }
+        }
+        if names
+            .iter()
+            .any(|name| std::path::Path::new(entry).join(name).exists())
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// 托管项目（将项目纳入 AnyVersion 管理）
 #[tauri::command]
 pub fn project_manage(app: tauri::AppHandle, id: String, delegation: crate::commands::config::ProjectDelegation) -> Result<(), String> {
@@ -99,71 +159,11 @@ pub fn project_manage(app: tauri::AppHandle, id: String, delegation: crate::comm
 
                 for p_str in parts {
                     if p_str.is_empty() { continue; }
-                    let p_lower = p_str.to_lowercase();
-
-                    if !p_lower.contains(&config.links_dir.to_lowercase()) {
-                        let mut matches = false;
-                        for rule in &def.find_rules {
-                            match &rule.pattern {
-                                super::types::ResolvePattern::PathContains { path_key, exe_name } => {
-                                    if p_lower.contains(&path_key.to_lowercase()) {
-                                        let mut exists = false;
-                                        let mut check_names = vec![exe_name.clone()];
-                                        #[cfg(windows)]
-                                        {
-                                            let exe_lower = exe_name.to_lowercase();
-                                            if !exe_lower.ends_with(".exe") && !exe_lower.ends_with(".cmd") && !exe_lower.ends_with(".bat") {
-                                                check_names.push(format!("{}.exe", exe_name));
-                                                check_names.push(format!("{}.cmd", exe_name));
-                                                check_names.push(format!("{}.bat", exe_name));
-                                            }
-                                        }
-                                        for name in check_names {
-                                            if Path::new(&p_str).join(&name).exists() {
-                                                exists = true;
-                                                break;
-                                            }
-                                        }
-                                        if exists {
-                                            matches = true;
-                                            break;
-                                        }
-                                    }
-                                }
-                                super::types::ResolvePattern::FixedPath { path: fixed_path, exe_name } => {
-                                    if p_lower.contains(&fixed_path.to_lowercase()) {
-                                        let mut exists = false;
-                                        let mut check_names = vec![exe_name.clone()];
-                                        #[cfg(windows)]
-                                        {
-                                            let exe_lower = exe_name.to_lowercase();
-                                            if !exe_lower.ends_with(".exe") && !exe_lower.ends_with(".cmd") && !exe_lower.ends_with(".bat") {
-                                                check_names.push(format!("{}.exe", exe_name));
-                                                check_names.push(format!("{}.cmd", exe_name));
-                                                check_names.push(format!("{}.bat", exe_name));
-                                            }
-                                        }
-                                        for name in check_names {
-                                            if Path::new(&p_str).join(&name).exists() {
-                                                exists = true;
-                                                break;
-                                            }
-                                        }
-                                        if exists {
-                                            matches = true;
-                                            break;
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                        if matches {
-                            matched_entries.push(p_str.clone());
-                            continue;
-                        }
+                    if is_foreign_path_entry(&p_str, &def, &config.links_dir) {
+                        matched_entries.push(p_str.clone());
+                    } else {
+                        remaining_entries.push(p_str);
                     }
-                    remaining_entries.push(p_str);
                 }
 
                 if !matched_entries.is_empty() {
@@ -210,30 +210,36 @@ pub fn project_manage(app: tauri::AppHandle, id: String, delegation: crate::comm
     }
 
     // 5. 添加被勾选的 bin 路径到 PATH
-    if let Some(ref dirs) = def.bin_dirs {
-        let mut add_paths = Vec::new();
-        for bin_dir in dirs {
-            if delegation.path_vars.contains(bin_dir) {
-                let path_val = if bin_dir.is_empty() {
-                    link_str.clone()
-                } else {
-                    format!("{}\\{}", link_str, bin_dir)
-                };
-                add_paths.push(path_val);
+    //
+    //    MSIX 型（如 WinGet）**不写**：它是系统级安装，不做 junction，
+    //    `links_dir/<id>` 永远不会存在 —— 写进去就是一条永远解析不到的条目。
+    //    它的可执行文件由 Windows 的应用执行别名（WindowsApps）提供，本来就不需要 PATH。
+    if !def.is_msix() {
+        if let Some(ref dirs) = def.bin_dirs {
+            let mut add_paths = Vec::new();
+            for bin_dir in dirs {
+                if delegation.path_vars.contains(bin_dir) {
+                    let path_val = if bin_dir.is_empty() {
+                        link_str.clone()
+                    } else {
+                        format!("{}\\{}", link_str, bin_dir)
+                    };
+                    add_paths.push(path_val);
+                }
             }
-        }
-        if !add_paths.is_empty() {
-            if def.requires_system_path {
-                // 构建工具（如 Flutter 启动的 cmake 子进程）只读取系统级 PATH 视图，
-                // 必须写入 HKLM PATH 才能被 find_program 找到。需要管理员权限。
-                add_to_system_path(&add_paths).map_err(|e| {
-                    format!(
-                        "已将 {} 添加到用户级 PATH，但写入系统级 PATH 失败（{}）。\n请「以管理员身份运行」Kira 后重新托管该项目，否则 Flutter/cmake 等构建子进程将无法找到其可执行文件。",
-                        id, e
-                    )
-                })?;
-            } else {
-                let _ = add_to_user_path(&add_paths);
+            if !add_paths.is_empty() {
+                if def.requires_system_path {
+                    // 构建工具（如 Flutter 启动的 cmake 子进程）只读取系统级 PATH 视图，
+                    // 必须写入 HKLM PATH 才能被 find_program 找到。需要管理员权限。
+                    add_to_system_path(&add_paths).map_err(|e| {
+                        format!(
+                            "已将 {} 添加到用户级 PATH，但写入系统级 PATH 失败（{}）。\n请「以管理员身份运行」Kira 后重新托管该项目，否则 Flutter/cmake 等构建子进程将无法找到其可执行文件。",
+                            id, e
+                        )
+                    })?;
+                } else {
+                    let _ = add_to_user_path(&add_paths);
+                }
             }
         }
     }
@@ -2109,5 +2115,109 @@ pub fn update_git_repo(path: String, bootstrap_cmd: Option<String>) -> Result<()
         bootstrap_git_repo(path, b_cmd.clone())
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_foreign_path_entry;
+    use super::super::types::{FindRule, ProjectDef, ResolvePattern};
+
+    fn def_with(rules: Vec<FindRule>, msix: bool) -> ProjectDef {
+        ProjectDef {
+            id: "probe".to_string(),
+            display_name: "probe".to_string(),
+            install_mode: if msix { Some("msix".to_string()) } else { None },
+            find_rules: rules,
+            ..Default::default()
+        }
+    }
+
+    /// 造一个「里面真的有 winget.exe」的目录（清理判定要求 exe 真实存在）
+    fn dir_with_exe(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("anyver-path-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("winget.exe"), b"").unwrap();
+        dir
+    }
+
+    #[test]
+    fn msix_projects_never_clean_path_entries() {
+        // WinGet 的 exe 在 WindowsApps（应用执行别名）：它会被 find_rules 命中，
+        // 但当成「外部副本」摘掉会让所有应用执行别名一起失效。
+        let dir = dir_with_exe("msix");
+        let def = def_with(
+            vec![FindRule {
+                pattern: ResolvePattern::FixedPath {
+                    path: dir.to_string_lossy().to_string(),
+                    exe_name: "winget.exe".to_string(),
+                },
+                source_label: "Windows 应用执行别名".to_string(),
+                priority: 5,
+                root_offset: 0,
+            }],
+            true,
+        );
+        assert!(
+            !is_foreign_path_entry(&dir.to_string_lossy(), &def, "D:\\any-versions\\sdk"),
+            "MSIX 型不该清理任何 PATH 条目"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn empty_path_key_never_drives_a_deletion() {
+        // `contains("")` 恒为真 —— 等于「PATH 里任何目录只要有这个 exe 就删」。
+        // 清理是破坏性操作，宽匹配规则不该触发删除。
+        let dir = dir_with_exe("emptykey");
+        let def = def_with(
+            vec![FindRule {
+                pattern: ResolvePattern::PathContains {
+                    path_key: String::new(),
+                    exe_name: "winget.exe".to_string(),
+                },
+                source_label: "系统 PATH".to_string(),
+                priority: 90,
+                root_offset: 0,
+            }],
+            false,
+        );
+        assert!(!is_foreign_path_entry(
+            &dir.to_string_lossy(),
+            &def,
+            "D:\\any-versions\\sdk"
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_real_foreign_install_is_still_cleaned_up() {
+        // 常规（archive）项目：明确命中 path_key 且 exe 真的在 → 仍然要清理
+        let dir = dir_with_exe("foreign");
+        let def = def_with(
+            vec![FindRule {
+                pattern: ResolvePattern::PathContains {
+                    path_key: dir.file_name().unwrap().to_string_lossy().to_string(),
+                    exe_name: "winget.exe".to_string(),
+                },
+                source_label: "外部安装".to_string(),
+                priority: 90,
+                root_offset: 0,
+            }],
+            false,
+        );
+        assert!(is_foreign_path_entry(
+            &dir.to_string_lossy(),
+            &def,
+            "D:\\any-versions\\sdk"
+        ));
+
+        // 自己的 links 目录不算「外部」
+        assert!(!is_foreign_path_entry(
+            "D:\\any-versions\\sdk\\nodejs",
+            &def,
+            "D:\\any-versions\\sdk"
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

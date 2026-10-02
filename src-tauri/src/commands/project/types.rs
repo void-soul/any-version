@@ -6,10 +6,11 @@ use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 
 /// 项目分类
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectCategory {
     Language,
+    #[default]
     Tool,
     Service,
     #[serde(rename = "ai_tool")]
@@ -331,7 +332,7 @@ pub struct ConflictManagerStatus {
 }
 
 /// 项目定义（存储于 projects/ 目录下各 <id>/config.json）
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ProjectDef {
     /// 唯一标识
     pub id: String,
@@ -476,8 +477,7 @@ pub struct ProjectDef {
     pub dependency_url_template: Option<String>,
     /// `install_mode="msix"` 时的包名（卸载用 `Get-AppxPackage -Name <name>` 定位）
     #[serde(default)]
-    pub msix_package_name: Option<String>,
-    /// 安装后置配置
+    pub msix_package_name: Option<String>,    /// 安装后置配置
     #[serde(default)]
     pub post_install: Option<serde_json::Value>,
     /// Local version detection output regex pattern.
@@ -556,6 +556,17 @@ pub struct ServiceStatus {
     /// 在 Windows 注册的系统服务名称
     #[serde(default)]
     pub system_service_name: Option<String>,
+}
+
+impl ProjectDef {
+    /// MSIX 型（如 WinGet）：由 Windows 统一安装的**系统级包**。
+    ///
+    /// 这类项目不落 versions_dir、不做 junction，`links_dir/<id>` 永远不存在，
+    /// 可执行文件由 Windows 的应用执行别名（WindowsApps）提供 ——
+    /// 因此它们**既不写 PATH，也不清理 PATH 里的外部条目**（见 `project_manage`）。
+    pub fn is_msix(&self) -> bool {
+        self.install_mode.as_deref() == Some("msix")
+    }
 }
 
 /// Kira 托管写入用户 PATH 的条目（前端「环境变量」页展示用）。

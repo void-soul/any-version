@@ -112,7 +112,11 @@ pub fn preview_manage(id: &str, delegation: crate::commands::config::ProjectDele
     let links_dir = Path::new(&config.links_dir);
     let link_dir = links_dir.join(&id);
     
-    let has_path_delegated = if let Some(ref dirs) = def.bin_dirs {
+    // MSIX 型（如 WinGet）不参与 PATH：它是系统级安装，没有 link 目录（不做 junction），
+    // 而它的 exe 在 WindowsApps（应用执行别名）—— 写/清 PATH 都是错的。
+    let has_path_delegated = if def.is_msix() {
+        false
+    } else if let Some(ref dirs) = def.bin_dirs {
         dirs.iter().any(|d| delegation.path_vars.contains(d))
     } else {
         false
@@ -151,20 +155,22 @@ pub fn preview_manage(id: &str, delegation: crate::commands::config::ProjectDele
         });
     }
 
-    // 4. 添加 PATH
-    if let Some(ref dirs) = def.bin_dirs {
-        for bin_dir in dirs {
-            if delegation.path_vars.contains(bin_dir) {
-                let link_bin_path = if bin_dir.is_empty() {
-                    link_dir.to_string_lossy().to_string()
-                } else {
-                    format!("{}\\{}", link_dir.to_string_lossy(), bin_dir)
-                };
-                steps.push(ManageStep {
-                    action: "add_path".to_string(),
-                    description: format!("将 {} 添加到用户 PATH", link_bin_path),
-                    target: link_bin_path,
-                });
+    // 4. 添加 PATH（MSIX 型跳过，理由同第 2 步）
+    if !def.is_msix() {
+        if let Some(ref dirs) = def.bin_dirs {
+            for bin_dir in dirs {
+                if delegation.path_vars.contains(bin_dir) {
+                    let link_bin_path = if bin_dir.is_empty() {
+                        link_dir.to_string_lossy().to_string()
+                    } else {
+                        format!("{}\\{}", link_dir.to_string_lossy(), bin_dir)
+                    };
+                    steps.push(ManageStep {
+                        action: "add_path".to_string(),
+                        description: format!("将 {} 添加到用户 PATH", link_bin_path),
+                        target: link_bin_path,
+                    });
+                }
             }
         }
     }
