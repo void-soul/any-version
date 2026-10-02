@@ -1972,6 +1972,7 @@ mod tests {
             custom_headers: Vec::new(),
             openai_include_v1: None,
             anthropic_include_v1: None,
+            promotions: Vec::new(),
         };
         let (outbound, base, _) = pick_outbound(&provider).unwrap();
         assert_eq!(outbound, Outbound::OpenAi);

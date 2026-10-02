@@ -315,6 +315,7 @@ mod tests {
             custom_headers: Vec::new(),
             openai_include_v1: None,
             anthropic_include_v1: None,
+            promotions: Vec::new(),
         };
 
         let mut providers = vec![
@@ -520,6 +521,7 @@ mod tests {
                 custom_headers: Vec::new(),
                 openai_include_v1: None,
                 anthropic_include_v1: None,
+                promotions: Vec::new(),
             }],
             proxy_port: 15721,
             default_project_path: String::new(),

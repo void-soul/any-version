@@ -8,6 +8,15 @@ export interface ModelEntry {
   customParams?: ModelCustomParam[];
 }
 
+/** 供应商的促销活动倒计时（用户手动登记）：到期置灰、保留 7 天后由前端惰性清除。 */
+export interface ProviderPromotion {
+  id: string;
+  /** 活动名称，如「Gemini 2.5 Flash 免费 1 个月」 */
+  name: string;
+  /** 到期时刻（Unix 毫秒） */
+  ends_at: number;
+}
+
 /**
  * 模型自定义启动参数（用户定义）。
  * target='env' 以 envKey 作环境变量注入；target='config' 以 configPath 写入工具配置文件。
@@ -61,6 +70,8 @@ export interface AiProvider {
   openai_include_v1?: boolean | null;
   /** Anthropic 端点拼接时是否带 `/v1`（语义同上） */
   anthropic_include_v1?: boolean | null;
+  /** 促销活动倒计时（供应商行内展示，见 promotions.ts） */
+  promotions: ProviderPromotion[];
 }
 
 export interface ProviderPreset {

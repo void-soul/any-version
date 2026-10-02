@@ -2645,7 +2645,13 @@
     "confirm": "确定",
     "deleteTitle": "确认删除",
     "deleteHint": "删除后不可恢复，确定要删除 {{name}} 吗？",
-    "deleteBtn": "删除"
+    "deleteBtn": "删除",
+    "promotionAdd": "添加活动倒计时",
+    "promotionNamePh": "活动名称，如「Flash 免费 1 个月」",
+    "promotionEndsAt": "到期时间",
+    "promotionEnded": "已结束",
+    "promotionRemove": "删除该活动",
+    "promotionSave": "保存"
   },
   "skillmgr": {
     "statusLinked": "已软链接",

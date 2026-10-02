@@ -256,6 +256,19 @@ pub struct AiProvider {
     /// 或干脆不带版本号的兼容层时用）。Anthropic 的 `/v1/messages` 同理。
     pub openai_include_v1: Option<bool>,
     pub anthropic_include_v1: Option<bool>,
+    /// 供应商的促销活动（用户手动登记，纯展示用）：活动名 + 到期时刻。
+    /// 到期后前端置灰保留 7 天，再由前端惰性清除（见 modelcfg 的 promotions 逻辑）。
+    pub promotions: Vec<ProviderPromotion>,
+}
+
+/// 一条促销活动倒计时（用户在模型配置页手动添加/删除）。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProviderPromotion {
+    pub id: String,
+    /// 活动名称，如「Gemini 2.5 Flash 免费 1 个月」
+    pub name: String,
+    /// 到期时刻（Unix 毫秒）
+    pub ends_at: i64,
 }
 
 impl AiProvider {
@@ -307,7 +320,7 @@ impl Serialize for AiProvider {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut st = serializer.serialize_struct("AiProvider", 13)?;
+        let mut st = serializer.serialize_struct("AiProvider", 14)?;
         st.serialize_field("id", &self.id)?;
         st.serialize_field("name", &self.name)?;
         st.serialize_field("category", &self.category)?;
@@ -321,6 +334,7 @@ impl Serialize for AiProvider {
         st.serialize_field("custom_headers", &self.custom_headers)?;
         st.serialize_field("openai_include_v1", &self.openai_include_v1)?;
         st.serialize_field("anthropic_include_v1", &self.anthropic_include_v1)?;
+        st.serialize_field("promotions", &self.promotions)?;
         st.end()
     }
 }
@@ -353,6 +367,10 @@ impl<'de> Deserialize<'de> for AiProvider {
             openai_include_v1: Option<bool>,
             #[serde(default)]
             anthropic_include_v1: Option<bool>,
+
+            // ─── 促销活动倒计时（旧数据没有该字段 → 空列表）───
+            #[serde(default)]
+            promotions: Vec<ProviderPromotion>,
 
             // ─── 新格式：三个协议 URL ───
             #[serde(default)]
@@ -440,6 +458,7 @@ impl<'de> Deserialize<'de> for AiProvider {
             custom_headers: crate::proxy::headers::normalize(&h.custom_headers),
             openai_include_v1: h.openai_include_v1,
             anthropic_include_v1: h.anthropic_include_v1,
+            promotions: h.promotions,
         })
     }
 }

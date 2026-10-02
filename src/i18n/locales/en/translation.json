@@ -2639,7 +2639,13 @@
     "confirm": "OK",
     "deleteTitle": "Confirm deletion",
     "deleteHint": "This cannot be undone. Delete {{name}}?",
-    "deleteBtn": "Delete"
+    "deleteBtn": "Delete",
+    "promotionAdd": "Add a promo countdown",
+    "promotionNamePh": "Promo name, e.g. \"Flash free for 1 month\"",
+    "promotionEndsAt": "Ends at",
+    "promotionEnded": "Ended",
+    "promotionRemove": "Remove this promo",
+    "promotionSave": "Save"
   },
   "skillmgr": {
     "statusLinked": "Symlinked",

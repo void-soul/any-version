@@ -13,6 +13,7 @@ function provider(partial: Partial<AiProvider> & { id: string; name: string }): 
     models: [],
     active_model_id: null,
     custom_headers: [],
+    promotions: [],
     ...partial,
   };
 }

@@ -22,8 +22,9 @@ import {
   EyeOff,
   FolderOpen,
 } from "lucide-react";
-import type { ModelEntry, AiProvider, AiConfig, ModelCustomParam, UpstreamHeader } from "./types";
+import type { ModelEntry, AiProvider, AiConfig, ModelCustomParam, UpstreamHeader, ProviderPromotion } from "./types";
 import { filterProviders } from "./providerSearch";
+import { promotionCountdown, promotionState, prunePromotions } from "./promotions";
 import { theamedAlert } from "../shared/ThemedAlert";
 
 type Preset = {
@@ -37,6 +38,7 @@ const EMPTY_PROVIDER: AiProvider = {
   openai_url: "", anthropic_url: "", google_url: "",
   models: [], active_model_id: null, custom_headers: [],
   openai_include_v1: null, anthropic_include_v1: null,
+  promotions: [],
 };
 
 /// 「是否包含 /v1」三态 → 下拉框字符串（null 即自动）。
@@ -112,6 +114,56 @@ export default function ModelConfig() {
 
   // 删除确认
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+
+  // ─── 促销倒计时 ───
+  // 倒计时以分钟精度展示，60s 刷新一次足够（Chip 文本里最小单位是小时）
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  // 添加活动的内联弹层：挂在哪个供应商 + 草稿
+  const [promoDraft, setPromoDraft] = useState<{
+    providerId: string;
+    name: string;
+    endsAt: string; // datetime-local 原始值
+  } | null>(null);
+
+  const addPromotion = () => {
+    if (!config || !promoDraft) return;
+    const name = promoDraft.name.trim();
+    const endsAt = Date.parse(promoDraft.endsAt);
+    if (!name || !Number.isFinite(endsAt)) return;
+    const promo: ProviderPromotion = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name,
+      ends_at: endsAt,
+    };
+    const next: AiConfig = {
+      ...config,
+      providers: config.providers.map((p) =>
+        p.id === promoDraft.providerId
+          // 顺带做一次惰性 GC：过期超 7 天的旧活动在这里被清出配置文件
+          ? { ...p, promotions: [...prunePromotions(p.promotions, Date.now()), promo] }
+          : p
+      ),
+    };
+    saveConfig(next);
+    setPromoDraft(null);
+  };
+
+  const removePromotion = (providerId: string, promoId: string) => {
+    if (!config) return;
+    const next: AiConfig = {
+      ...config,
+      providers: config.providers.map((p) =>
+        p.id === providerId
+          ? { ...p, promotions: p.promotions.filter((x) => x.id !== promoId) }
+          : p
+      ),
+    };
+    saveConfig(next);
+  };
 
   // 测速
   const [testing, setTesting] = useState<string | null>(null);
@@ -543,7 +595,66 @@ export default function ModelConfig() {
                   {provider.openai_url && <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-blue-500/15 text-blue-300/80 flex-shrink-0">OA</span>}
                   {provider.anthropic_url && <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-amber-500/15 text-amber-300/80 flex-shrink-0">ANT</span>}
                   {provider.google_url && <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-green-500/15 text-green-300/80 flex-shrink-0">GG</span>}
-                  <span className="ml-auto text-micro text-slate-500 flex-shrink-0">{t("modelcfg.modelCount", { count: provider.models.length })}</span>
+                  {/* 促销倒计时：这一行里空间最大的部分留给它（flex-1）。
+                      最多显示 2 个，其余折叠成 +N（悬停给完整清单）；
+                      已过期的置灰标「已结束」，7 天后由 prunePromotions 惰性清除 */}
+                  <div className="flex-1 min-w-0 flex items-center gap-1 overflow-hidden ml-1">
+                    {(() => {
+                      const live = prunePromotions(provider.promotions, now)
+                        .sort((a, b) => a.ends_at - b.ends_at);
+                      const shown = live.slice(0, 2);
+                      const hidden = live.length - shown.length;
+                      return (
+                        <>
+                          {shown.map((p) => {
+                            const st = promotionState(p.ends_at, now);
+                            const cd = promotionCountdown(p.ends_at, now);
+                            const tone =
+                              st === "ended"
+                                ? "bg-slate-500/15 text-slate-500 border-slate-500/20"
+                                : st === "urgent"
+                                  ? "bg-rose-500/15 text-rose-300 border-rose-500/30"
+                                  : st === "soon"
+                                    ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                                    : "bg-sky-500/10 text-sky-300/90 border-sky-500/25";
+                            return (
+                              <span
+                                key={p.id}
+                                title={`${p.name} · ${t("modelcfg.promotionEndsAt")} ${new Date(p.ends_at).toLocaleString()}`}
+                                className={`group/promo inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[9px] font-semibold whitespace-nowrap flex-shrink-0 ${tone}`}
+                              >
+                                <span className="truncate max-w-[140px]">{p.name}</span>
+                                <span className="tabular-nums">{cd ?? t("modelcfg.promotionEnded")}</span>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); removePromotion(provider.id, p.id); }}
+                                  className="opacity-0 group-hover/promo:opacity-100 text-slate-400 hover:text-rose-300 cursor-pointer flex-shrink-0"
+                                  title={t("modelcfg.promotionRemove")}
+                                >
+                                  <X className="w-2 h-2" />
+                                </button>
+                              </span>
+                            );
+                          })}
+                          {hidden > 0 && (
+                            <span
+                              className="px-1 py-0.5 rounded text-[9px] text-slate-500 flex-shrink-0"
+                              title={live.slice(2).map((p) => `${p.name} · ${promotionCountdown(p.ends_at, now) ?? t("modelcfg.promotionEnded")}`).join("\n")}
+                            >
+                              +{hidden}
+                            </span>
+                          )}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setPromoDraft({ providerId: provider.id, name: "", endsAt: "" }); }}
+                            className="p-0.5 rounded text-slate-600 hover:text-[var(--module-accent)] hover:bg-white/5 cursor-pointer flex-shrink-0 transition-colors"
+                            title={t("modelcfg.promotionAdd")}
+                          >
+                            <Plus className="w-2.5 h-2.5" />
+                          </button>
+                        </>
+                      );
+                    })()}
+                  </div>
+                  <span className="text-micro text-slate-500 flex-shrink-0">{t("modelcfg.modelCount", { count: provider.models.length })}</span>
                   {BALANCE_CAPABLE.has(provider.id) && (
                     <button onClick={(e) => { e.stopPropagation(); openDetail(provider, true); }}
                       className="p-1 rounded-md text-slate-600 hover:text-emerald-400 hover:bg-emerald-500/10 cursor-pointer transition-all"
@@ -1035,6 +1146,42 @@ export default function ModelConfig() {
                 className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-tiny font-semibold cursor-pointer">{t("modelcfg.cancel")}</button>
               <button onClick={() => handleDelete(deleteTarget)}
                 className="px-3.5 py-1.5 rounded-ctl bg-red-600 hover:bg-red-500 text-white text-tiny font-semibold cursor-pointer">{t("modelcfg.deleteBtn")}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── 添加促销倒计时（轻量小弹层） ─── */}
+      {promoDraft && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 modal-mask flex items-center justify-center p-4" onClick={() => setPromoDraft(null)}>
+          <div className="w-80 bg-slate-950/95 border border-white/10 rounded-panel shadow-2xl p-4 space-y-3" onClick={e => e.stopPropagation()}>
+            <h3 className="text-body font-bold text-slate-200">{t("modelcfg.promotionAdd")}</h3>
+            <div className="space-y-2">
+              <input
+                autoFocus
+                value={promoDraft.name}
+                onChange={(e) => setPromoDraft({ ...promoDraft, name: e.target.value })}
+                placeholder={t("modelcfg.promotionNamePh")}
+                className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
+              />
+              <div>
+                <label className="text-micro text-slate-500">{t("modelcfg.promotionEndsAt")}</label>
+                <input
+                  type="datetime-local"
+                  value={promoDraft.endsAt}
+                  onChange={(e) => setPromoDraft({ ...promoDraft, endsAt: e.target.value })}
+                  className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 focus:outline-none focus:border-[var(--module-accent)] [color-scheme:dark]"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setPromoDraft(null)}
+                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-tiny font-semibold cursor-pointer">{t("modelcfg.cancel")}</button>
+              <button
+                onClick={addPromotion}
+                disabled={!promoDraft.name.trim() || !Number.isFinite(Date.parse(promoDraft.endsAt))}
+                className="px-3.5 py-1.5 rounded-ctl ui-btn-primary text-white text-tiny font-semibold disabled:opacity-40 cursor-pointer"
+              >{t("modelcfg.promotionSave")}</button>
             </div>
           </div>
         </div>
