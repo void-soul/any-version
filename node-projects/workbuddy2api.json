@@ -12,5 +12,8 @@
   "packageManager": "pip",
   "buildScript": "",
   "startCmd": ["-m", "core.converter", "--desensitize", "--log", "converter.log", "--port", "8788"],
+  "env": {
+    "WORKBUDDY_ELECTRON_PATH": "D:\\sim-tool\\WorkBuddy\\WorkBuddy.exe"
+  },
   "managed": true
 }
