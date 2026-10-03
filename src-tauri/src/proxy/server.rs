@@ -572,10 +572,13 @@ async fn models_handler(State(state): State<ProxyState>, headers: HeaderMap) -> 
     let url = format!("{}/models", config.upstream_base_url.trim_end_matches('/'));
     log_proxy(&format!("← IN   /v1/models  → OUT GET {}", url));
 
-    let mut req = state
-        .client
-        .get(&url)
-        .header("Authorization", format!("Bearer {}", config.upstream_api_key));
+    let mut req = state.client.get(&url);
+    // 与其它端点一致地注入自定义头：有些上游（如 WorkBuddy 后端）的模型目录同样要鉴权，
+    // 只发 provider key 会 401/404。用户显式配了 Authorization 时不再叠加 Bearer。
+    req = crate::proxy::headers::apply(req, &config.upstream_headers);
+    if !crate::proxy::headers::has_authorization(&config.upstream_headers) {
+        req = req.header("Authorization", format!("Bearer {}", config.upstream_api_key));
+    }
     if let Some(ct) = headers.get(header::CONTENT_TYPE) {
         if let Ok(v) = ct.to_str() {
             req = req.header(header::CONTENT_TYPE, v);

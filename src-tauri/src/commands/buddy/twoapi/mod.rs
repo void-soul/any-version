@@ -499,3 +499,135 @@ mod runtime_tests {
         assert!(!touched, "不应执行修改");
     }
 }
+
+    /// 端到端：真机起服务、打真请求。
+    ///
+    /// 单元测试证明不了代理链路（proxy 转换 → 上游 → SSE）真的通。
+    /// 需要网络与本机 WorkBuddy，默认不跑：
+    /// `cargo test --no-default-features --lib -- --ignored twoapi::e2e`
+    #[tokio::test]
+    #[ignore = "端到端：需要网络与本机 WorkBuddy"]
+    async fn e2e_chat_completions_against_real_backend() {
+        let started = buddy2api_start(None).await.expect("启动 2API");
+        assert_eq!(started.phase, "running", "启动失败：{:?}", started.last_error);
+
+        // axum 监听是异步的，给它一点时间
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+        let client = reqwest::Client::new();
+        let url = format!("http://127.0.0.1:{}/v1/chat/completions", started.port);
+        let payload = serde_json::json!({
+            "model": "hy3",
+            "messages": [{"role": "user", "content": "1+1=? 只回答数字"}],
+            "stream": false
+        });
+        let resp = client
+            .post(&url)
+            .json(&payload)
+            .timeout(std::time::Duration::from_secs(90))
+            .send()
+            .await
+            .expect("请求失败");
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        println!("[e2e] 非流式 HTTP {status}");
+        assert_eq!(status.as_u16(), 200, "非流式失败：{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).expect("响应不是 JSON");
+        let content = v["choices"][0]["message"]["content"].as_str().unwrap_or("");
+        println!("[e2e] content = {content:?}");
+        assert!(!content.is_empty(), "内容为空：{body}");
+
+        buddy2api_stop().expect("停止 2API");
+    }
+
+    /// 端到端：流式 + Anthropic messages + /v1/models
+    #[tokio::test]
+    #[ignore = "端到端：需要网络与本机 WorkBuddy"]
+    async fn e2e_streaming_anthropic_and_models() {
+        let started = buddy2api_start(None).await.expect("启动 2API");
+        assert_eq!(started.phase, "running", "启动失败：{:?}", started.last_error);
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let client = reqwest::Client::new();
+        let base = format!("http://127.0.0.1:{}", started.port);
+
+        // 流式
+        let resp = client
+            .post(format!("{base}/v1/chat/completions"))
+            .json(&serde_json::json!({
+                "model": "hy3",
+                "messages": [{"role": "user", "content": "说：好"}],
+                "stream": true
+            }))
+            .timeout(std::time::Duration::from_secs(90))
+            .send()
+            .await
+            .expect("流式请求失败");
+        let st = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        println!("[e2e] 流式 HTTP {st}，body 前 120 字 = {:?}", &text[..std::cmp::min(120, text.len())]);
+        assert_eq!(st.as_u16(), 200, "流式失败：{text}");
+        assert!(text.contains("data:"), "应是 SSE 格式：{text}");
+
+        // Anthropic messages
+        let resp2 = client
+            .post(format!("{base}/v1/messages"))
+            .json(&serde_json::json!({
+                "model": "hy3",
+                "max_tokens": 64,
+                "messages": [{"role": "user", "content": "1+1=?"}]
+            }))
+            .timeout(std::time::Duration::from_secs(90))
+            .send()
+            .await
+            .expect("messages 请求失败");
+        let st2 = resp2.status();
+        let text2 = resp2.text().await.unwrap_or_default();
+        println!("[e2e] messages HTTP {st2}，body 前 160 字 = {:?}", &text2[..std::cmp::min(160, text2.len())]);
+        assert_eq!(st2.as_u16(), 200, "messages 失败：{text2}");
+
+        // /v1/models —— 客户端靠它枚举模型
+        let resp3 = client
+            .get(format!("{base}/v1/models"))
+            .timeout(std::time::Duration::from_secs(60))
+            .send()
+            .await
+            .expect("models 请求失败");
+        let st3 = resp3.status();
+        let text3 = resp3.text().await.unwrap_or_default();
+        println!("[e2e] models HTTP {st3}，body 前 200 字 = {:?}", &text3[..std::cmp::min(200, text3.len())]);
+
+        buddy2api_stop().expect("停止 2API");
+    }
+
+    /// 端到端：/v1/models 必须列全（客户端靠它枚举模型，含 space-bunny 这类新模型）
+    #[tokio::test]
+    #[ignore = "端到端：需要网络与本机 WorkBuddy"]
+    async fn e2e_models_lists_new_models() {
+        let started = buddy2api_start(None).await.expect("启动 2API");
+        assert_eq!(started.phase, "running");
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(format!("http://127.0.0.1:{}/v1/models", started.port))
+            .timeout(std::time::Duration::from_secs(60))
+            .send()
+            .await
+            .expect("models 请求失败");
+        assert_eq!(resp.status().as_u16(), 200);
+        let v: serde_json::Value = resp.json().await.expect("不是 JSON");
+        let ids: Vec<String> = v["data"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|m| m.get("id").and_then(|x| x.as_str()).map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        println!("[e2e] /v1/models 共 {} 个", ids.len());
+        println!("[e2e] 列表 = {}", ids.join(", "));
+        assert!(
+            ids.iter().any(|i| i == "space-bunny"),
+            "必须含 space-bunny（上游已支持、本地 product.json 没有的模型）"
+        );
+        buddy2api_stop().expect("停止 2API");
+    }
