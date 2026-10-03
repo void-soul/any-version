@@ -315,6 +315,14 @@ pub fn managed_path_entries_for_sdk(
     link_dir: &str,
     def: &super::project::types::ProjectDef,
 ) -> Vec<super::project::types::ManagedPathEntry> {
+    // MSIX 型（如 WinGet）不写 PATH（见 `project_manage`），因此没有「托管写入的条目」。
+    // 这里必须短路：`bin_dirs` 的空串会生成 `links_dir/<id>` 这个**永远不存在**的候选目录
+    // （msix 不做 junction），而完全托管的项目是全量展示候选（含「目录缺失」告警）——
+    // 结果就是环境变量页挂出一条我们从不写入、也永远不存在的假条目。
+    if def.is_msix() {
+        return Vec::new();
+    }
+
     let current: Vec<String> = std::env::split_paths(&get_registry_env("PATH").unwrap_or_default())
         .map(|p| p.to_string_lossy().to_string())
         .collect();
@@ -1075,6 +1083,38 @@ pub fn save_path_directories(user_paths: Vec<String>, system_paths: Vec<String>,
 mod tests {
     use super::*;
     use crate::commands::project::types::EnvVarDef;
+    /// MSIX 型（如 WinGet）不写 PATH，也就没有「托管写入的条目」可展示。
+    /// 不短路的话：`bin_dirs` 里的空串会生成 `links_dir\<id>` 这个**永远不存在**的候选目录，
+    /// 而完全托管的项目是全量展示候选（含「目录缺失」告警）—— 界面上就会挂出一条假的环境变量。
+    #[test]
+    fn msix_projects_have_no_managed_path_entries() {
+        let def = crate::commands::project::types::ProjectDef {
+            id: "probe".to_string(),
+            display_name: "probe".to_string(),
+            install_mode: Some("msix".to_string()),
+            bin_dirs: Some(vec![String::new()]),
+            ..Default::default()
+        };
+        assert!(
+            managed_path_entries_for_sdk("probe", "D:\\any-versions\\sdk\\probe", &def).is_empty(),
+            "MSIX 型不该有托管 PATH 条目"
+        );
+    }
+
+    /// 对照：普通项目（bin_dirs 含空串 = 托管目录本身）仍要给出候选条目。
+    #[test]
+    fn regular_projects_still_report_their_bin_entries() {
+        let def = crate::commands::project::types::ProjectDef {
+            id: "probe".to_string(),
+            display_name: "probe".to_string(),
+            bin_dirs: Some(vec![String::new()]),
+            ..Default::default()
+        };
+        let entries = managed_path_entries_for_sdk("probe", "D:\\any-versions\\sdk\\probe", &def);
+        assert_eq!(entries.len(), 1, "bin_dirs 的空串应产出托管目录这一条");
+        assert_eq!(entries[0].kind, "sdk_bin");
+    }
+
 
     fn var(name: &str, sub_dir: Option<&str>) -> EnvVarDef {
         EnvVarDef {
