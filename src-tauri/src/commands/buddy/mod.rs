@@ -26,6 +26,7 @@ mod session_sync;
 mod session_transfer;
 mod sessions;
 mod store;
+pub(crate) mod twoapi;
 mod third_party_import;
 mod workbuddy;
 
