@@ -711,6 +711,17 @@ pub fn switch_account(platform: BuddyPlatform, account_id: &str) -> Result<Strin
     let mut updated = account;
     updated.last_used = chrono::Utc::now().timestamp();
     let _ = store::upsert_account(platform, updated);
+    // 2API 与 Buddy 读同一个登录态文件：切号后立刻把新鉴权头热更新进正在运行的
+    // 2API 服务，否则它会继续用旧账号的凭据（要等到 token 过期才暴露）。
+    // 放后台任务：读凭据可能要调 WorkBuddy 的 Electron 取密钥，不能挡住切号 UI；
+    // 同进程调用、无竞态；服务没在跑时静默跳过。
+    if platform.is_workbuddy_family() {
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = crate::commands::buddy::twoapi::on_account_switched().await {
+                eprintln!("[buddy] 2API 凭据同步失败：{e}");
+            }
+        });
+    }
     Ok(result)
 }
 #[cfg(test)]

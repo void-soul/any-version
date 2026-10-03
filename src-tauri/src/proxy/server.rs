@@ -308,6 +308,51 @@ fn extract_inbound_full_text(inbound: &str, resp: &Value) -> String {
     }
 }
 
+/// 运行中代理实例的配置句柄注册表（按监听端口索引）。
+///
+/// `serve_proxy` 会把 `ProxyConfig` 封进内部的 `Arc<RwLock<_>>`，外部拿不到，
+/// 因此**无法**在服务运行期间换配置。2API 需要这一点：Buddy 切号后要立刻把新的
+/// 鉴权头换进去，而不是重启服务。这里登记一份句柄，让外部能按端口找到它。
+static RUNNING_CONFIGS: std::sync::LazyLock<
+    std::sync::Mutex<Vec<(u16, Arc<RwLock<ProxyConfig>>)>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new()));
+
+/// 热更新某个运行中实例的配置。返回是否找到该实例。
+///
+/// 找不到通常意味着服务没在跑（尚未启动 / 已停止），调用方应视作"无需更新"。
+///
+/// 注意：注册表用 `std::sync::Mutex` 保护，但取出句柄后就释放锁，再 `.write().await`
+/// —— 不能把同步锁的 guard 带过 await 点，否则会卡住整个 runtime。
+pub async fn update_running_config(
+    port: u16,
+    f: impl FnOnce(&mut ProxyConfig),
+) -> bool {
+    let handle = {
+        let Ok(guard) = RUNNING_CONFIGS.lock() else {
+            return false;
+        };
+        guard
+            .iter()
+            .find(|(p, _)| *p == port)
+            .map(|(_, cfg)| cfg.clone())
+    };
+    match handle {
+        Some(cfg) => {
+            let mut w = cfg.write().await;
+            f(&mut w);
+            true
+        }
+        None => false,
+    }
+}
+
+/// 注销某个端口的实例（服务停止时调用，避免句柄残留）
+pub fn unregister_running(port: u16) {
+    if let Ok(mut guard) = RUNNING_CONFIGS.lock() {
+        guard.retain(|(p, _)| *p != port);
+    }
+}
+
 /// 代理服务器共享状态
 #[derive(Clone)]
 pub struct ProxyState {
@@ -352,6 +397,13 @@ pub async fn serve_proxy(config: ProxyConfig, listener: std::net::TcpListener) -
         collab_room_id: config.collab_room_id.clone(),
         tool_id: config.tool_id.clone(),
     };
+
+    // 登记配置句柄：2API 在 Buddy 切号后靠它热更新鉴权头（否则只能重启服务）。
+    // 同端口先清掉旧句柄，避免反复启动后残留。
+    if let Ok(mut running) = RUNNING_CONFIGS.lock() {
+        running.retain(|(p, _)| *p != config.listen_port);
+        running.push((config.listen_port, state.config.clone()));
+    }
 
     let mut app = Router::new().route("/health", get(health_handler));
     // 注册路由时同时挂载「带 /v1 前缀」与「无 /v1 前缀」两种路径。

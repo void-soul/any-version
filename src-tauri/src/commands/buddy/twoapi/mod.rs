@@ -446,9 +446,56 @@ pub fn buddy2api_stop() -> Result<TwoApiStatus, String> {
             handle.abort();
         }
     }
+    let port = status().port;
+    crate::proxy::server::unregister_running(port);
     set_status(|s| {
         s.phase = "stopped".to_string();
         s.started_at_ms = None;
     });
     Ok(status())
+}
+
+// ─── 账号联动 ───
+
+/// 把某账号的鉴权头热更新到运行中的服务实例。
+///
+/// 返回 false 表示服务当前没在跑（尚未启动/已停止）—— 这不算错误，
+/// 下次启动时会用最新的凭据组装配置。
+pub async fn apply_account_to_running(
+    port: u16,
+    account: &credentials::Account,
+) -> bool {
+    crate::proxy::server::update_running_config(port, |cfg| {
+        cfg.upstream_headers = workbuddy_headers(account);
+    })
+    .await
+}
+
+/// Buddy 面板切号成功后调用：重读登录态并把新鉴权头热更新进服务。
+///
+/// 同进程调用，不依赖 mtime 轮询，因此没有"切了但还没生效"的窗口。
+/// 返回是否真的更新到了运行中的服务。
+pub async fn on_account_switched() -> Result<bool, String> {
+    let creds = credentials_instance()?;
+    creds.reload_from_buddy()?;
+    let account = creds.current()?;
+    let port = status().port;
+    let applied = apply_account_to_running(port, &account).await;
+    set_status(|s| s.account = Some(account.uid.clone()));
+    eprintln!("[2api] 凭据已同步（uid={}，服务{}）", account.uid, if applied { "已热更新" } else { "未在运行" });
+    Ok(applied)
+}
+
+#[cfg(test)]
+mod runtime_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn updating_an_unregistered_port_is_a_noop() {
+        // 服务没在跑时（尚未启动/已停止）不应报错：下次启动会用最新凭据组装配置
+        let mut touched = false;
+        let ok = crate::proxy::server::update_running_config(59999, |_| touched = true).await;
+        assert!(!ok, "未注册的端口应返回 false");
+        assert!(!touched, "不应执行修改");
+    }
 }
