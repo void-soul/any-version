@@ -6,6 +6,8 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 import CreditSegmentsBar from "./CreditSegmentsBar";
+import TwoApiPanel from "./TwoApiPanel";
+import { Plug } from "lucide-react";
 import {
   formatQuotaNumber,
   LABEL_FIELDS,
@@ -487,7 +489,7 @@ const PLATFORMS = [
   { id: "workbuddy", label: "WorkBuddy", emoji: "🟣" },
 ] as const;
 
-type Tab = "accounts" | "sessions" | "checkin" | "settings";
+type Tab = "accounts" | "twoapi" | "sessions" | "checkin" | "settings";
 
 /** 派 Buddy 旅行可选地点（与后端 location_id 对应） */
 const TRAVEL_LOCATIONS = [
@@ -2019,6 +2021,7 @@ export default function BuddyPanel() {
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: "accounts", label: t("buddy.tabAccounts"), icon: <Users className="w-3 h-3" /> },
+    { id: "twoapi", label: t("buddy.tabTwoApi"), icon: <Plug className="w-3 h-3" /> },
     { id: "sessions", label: t("buddy.tabSessions"), icon: <MessageSquareText className="w-3 h-3" /> },
     { id: "checkin", label: t("buddy.tabCheckin"), icon: <CalendarCheck className="w-3 h-3" /> },
     { id: "settings", label: t("buddy.tabSettings"), icon: <Settings className="w-3 h-3" /> },
@@ -2064,6 +2067,8 @@ export default function BuddyPanel() {
           ))}
         </div>
         <div className="flex-1" />
+        {tab === "twoapi" && <TwoApiPanel />}
+
         {tab === "accounts" && (
           <>
             <button
