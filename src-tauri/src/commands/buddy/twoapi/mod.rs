@@ -11,3 +11,4 @@
 
 pub(crate) mod atrest;
 pub(crate) mod credentials;
+pub(crate) mod upstream;
