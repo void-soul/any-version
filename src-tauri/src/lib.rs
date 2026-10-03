@@ -351,6 +351,18 @@ pub fn run() {
                     let _ = commands::mihomo::launch_core(&h, s_mihomo).await;
                 }
 
+                // 1.4 2API 自启（Buddy → 2API 面板里勾选「随 Kira 启动」后生效）
+                // 与其它服务同一待遇：失败只记日志，不影响其余服务自启。
+                if auto_start_services.contains("buddy2api") {
+                    exit_log::exit_log("[autostart] 正在自启 2API 服务...");
+                    match crate::commands::buddy::twoapi::buddy2api_start(None).await {
+                        Ok(_) => exit_log::exit_log("[autostart] 2API 自启成功"),
+                        Err(e) => {
+                            exit_log::exit_log(&format!("[autostart] 2API 自启失败: {e}"))
+                        }
+                    }
+                }
+
                 // 1.5 聚合服务自启（AI「聚合」页可勾选）
                 if auto_start_services.contains("aggregate") {
                     exit_log::exit_log("[autostart] 正在自启聚合服务...");
@@ -1227,6 +1239,11 @@ commands::node_manager::npm_init,
                 commands::buddy::buddy_import_from_local,
                 commands::buddy::buddy_get_current_account_id,
                 commands::buddy::buddy_switch_account,
+                // 2API（内嵌的 WorkBuddy → OpenAI/Anthropic 兼容 API）
+                crate::commands::buddy::twoapi::buddy2api_status,
+                crate::commands::buddy::twoapi::buddy2api_preflight,
+                crate::commands::buddy::twoapi::buddy2api_start,
+                crate::commands::buddy::twoapi::buddy2api_stop,
                 commands::buddy::buddy_get_paths,
                 commands::buddy::buddy_refresh_token,
                 commands::buddy::buddy_refresh_all_tokens,
