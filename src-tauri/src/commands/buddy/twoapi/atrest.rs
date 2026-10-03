@@ -257,6 +257,28 @@ pub fn decrypt_field(value: &serde_json::Value, secret_b64: &str) -> Result<Stri
     String::from_utf8(pt).map_err(|e| format!("解密结果不是 UTF-8: {e}"))
 }
 
+/// 写回登录态时替换 `auth.accessToken`，**保持原有的加密包装形式**。
+///
+/// 原来明文就仍写明文，原来是 `$wbEncrypted` 就重新加密写回 —— 明文写回会让
+/// WorkBuddy 客户端读到后报 integrity 错误，甚至重置登录态（上游 issue #23）。
+pub fn set_access_token(
+    raw: &mut serde_json::Value,
+    new_token: &str,
+    secret_b64: &str,
+) -> Result<(), String> {
+    let field = raw
+        .get_mut("auth")
+        .and_then(|a| a.get_mut("accessToken"))
+        .ok_or_else(|| "登录态 JSON 里没有 auth.accessToken".to_string())?;
+    let replacement = if is_encrypted(&field.clone()) {
+        encrypt_field(new_token, secret_b64)?
+    } else {
+        serde_json::Value::String(new_token.to_string())
+    };
+    *field = replacement;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

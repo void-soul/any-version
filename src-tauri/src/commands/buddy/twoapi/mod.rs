@@ -10,3 +10,4 @@
 //! 内嵌后密钥获取、账号切换、错误呈现都在我们自己的代码里，可测可控。
 
 pub(crate) mod atrest;
+pub(crate) mod credentials;
