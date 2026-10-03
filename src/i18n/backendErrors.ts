@@ -245,6 +245,7 @@ const PATTERN_ERRORS: { re: RegExp; to: string }[] = [
   { re: /^ping (.*?) 失败（无法解析主机或网络不可达）$/, to: "ping $1 failed (unresolvable host or unreachable network)" },
   { re: /^`(.*?) install` 失败: (.*)$/, to: "`$1 install` failed: $2" },
   { re: /^`(.*?) run (.*?)` 失败: (.*)$/, to: "`$1 run $2` failed: $3" },
+  { re: /^git pull 失败（本地与上游无共同祖先），且无法对齐到 origin\/main: (.*)$/, to: "git pull failed (local history is unrelated to upstream) and could not align to origin/main: $1" },
   { re: /^git pull 失败: (.*)$/, to: "git pull failed: $1" },
   { re: /^Git pull 失败: (.*)$/, to: "Git pull failed: $1" },
   { re: /^端口 (.*?) 位于 Windows 保留端口范围内，无法强行释放$/, to: "Port $1 is in the Windows reserved range and cannot be force-released" },

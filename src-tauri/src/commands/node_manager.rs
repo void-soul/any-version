@@ -1823,6 +1823,19 @@ pub async fn npm_install(app: tauri::AppHandle, project_id: String) -> Result<()
     Ok(())
 }
 
+/// `git pull` 失败是否因为「本地与上游没有共同祖先」。
+///
+/// 托管项目一律 `clone --depth 1` 浅克隆，本地只带最近一次提交；上游一旦改写历史
+/// （rebase / squash / force-push），那次提交就不再是新 `origin/main` 的祖先，
+/// 此后每次 `git pull` 都必然撞上 `refusing to merge unrelated histories`
+/// （真机：`workbuddy2api` 本地停在 PR #26、远端已是 PR #28，`merge-base` 为空）。
+///
+/// 判定必须**只认这一句**：其它 pull 失败（合并冲突、认证失败、网络问题）若被误判，
+/// 就会走到「丢弃本地提交」那条路，白扔用户的数据。
+fn is_unrelated_histories(stderr: &str) -> bool {
+    stderr.contains("refusing to merge unrelated histories")
+}
+
 #[tauri::command]
 pub async fn npm_upgrade(app: tauri::AppHandle, project_id: String) -> Result<(), String> {
     let def = find_project(&project_id).ok_or_else(|| format!("未找到项目: {}", project_id))?;
@@ -1846,7 +1859,40 @@ pub async fn npm_upgrade(app: tauri::AppHandle, project_id: String) -> Result<()
     }
 
     emit_progress(&app, &def.id, "pull", "正在拉取最新代码 (git pull)…");
-    let (ok, last_err, _out) = run_capture_live(&app, &def.id, "pull", "git", &["pull"], Some(&dir), &[], None);
+    let (mut ok, mut last_err, _out) =
+        run_capture_live(&app, &def.id, "pull", "git", &["pull"], Some(&dir), &[], None);
+    if !ok && is_unrelated_histories(&last_err) {
+        // 浅克隆（--depth 1）+ 上游改写历史 → 本地与 origin/main 无共同祖先，pull 永远拒绝合并。
+        // 托管项目的代码以 upstream 为准：对齐到 origin/main，而不是让用户每次手动处理。
+        // `reset --hard` 只动已跟踪文件 —— 未跟踪的东西（.deps/、本地 .env、qa.db）原样保留。
+        emit_progress(
+            &app,
+            &def.id,
+            "pull",
+            "本地历史与上游无共同祖先（浅克隆 + 上游改写过历史），正在丢弃本地提交并对齐到 origin/main（未跟踪文件保留）…",
+        );
+        let (reset_ok, reset_err, _) = run_capture_live(
+            &app,
+            &def.id,
+            "pull",
+            "git",
+            &["reset", "--hard", "origin/main"],
+            Some(&dir),
+            &[],
+            None,
+        );
+        if !reset_ok {
+            return Err(format!(
+                "git pull 失败（本地与上游无共同祖先），且无法对齐到 origin/main: {}",
+                reset_err.trim()
+            ));
+        }
+        // 对齐后一般已是最新；再 pull 一次确认状态干净（例如期间有新的远端提交）
+        let (retry_ok, retry_err, _) =
+            run_capture_live(&app, &def.id, "pull", "git", &["pull"], Some(&dir), &[], None);
+        ok = retry_ok;
+        last_err = retry_err;
+    }
     if !ok {
         let msg = last_err.trim();
         return Err(format!("git pull 失败: {}", if msg.is_empty() { "未知错误" } else { msg }));
@@ -2995,6 +3041,30 @@ pub fn update_node_projects_dir(new_dir: String) -> Result<Vec<String>, String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 只有这一句才算「无共同祖先」。别的 pull 失败（冲突 / 认证 / 网络）不能被误判 ——
+    /// 误判会走到 `reset --hard`，把本不该丢的本地提交白扔了。
+    #[test]
+    fn detects_only_the_unrelated_histories_failure() {
+        assert!(is_unrelated_histories(
+            "fatal: refusing to merge unrelated histories"
+        ));
+        // 真实输出里这句前面还跟着 fetch 日志，必须按「包含」判定
+        assert!(is_unrelated_histories(
+            "POST git-upload-pack (440 bytes)\nFrom https://github.com/x/y\n = [up to date] main -> origin/main\nfatal: refusing to merge unrelated histories"
+        ));
+
+        assert!(!is_unrelated_histories(
+            "CONFLICT (content): Merge conflict in core/converter.py"
+        ));
+        assert!(!is_unrelated_histories(
+            "error: Your local changes to the following files would be overwritten by merge"
+        ));
+        assert!(!is_unrelated_histories(
+            "fatal: could not read Username for 'https://github.com'"
+        ));
+        assert!(!is_unrelated_histories(""));
+    }
 
     #[test]
     fn test_version_satisfies() {
