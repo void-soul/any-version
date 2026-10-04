@@ -279,6 +279,25 @@ pub fn set_access_token(
     Ok(())
 }
 
+/// 写回登录态时替换 `auth.refreshToken`（与 accessToken 同样保持加密包装）。
+pub fn set_refresh_token(
+    raw: &mut serde_json::Value,
+    new_token: &str,
+    secret_b64: &str,
+) -> Result<(), String> {
+    let field = raw
+        .get_mut("auth")
+        .and_then(|a| a.get_mut("refreshToken"))
+        .ok_or_else(|| "登录态 JSON 里没有 auth.refreshToken".to_string())?;
+    let replacement = if is_encrypted(&field.clone()) {
+        encrypt_field(new_token, secret_b64)?
+    } else {
+        serde_json::Value::String(new_token.to_string())
+    };
+    *field = replacement;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

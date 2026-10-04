@@ -186,12 +186,25 @@ impl Credentials {
         snap: &Snapshot,
         new_access_token: &str,
     ) -> Result<bool, String> {
+        self.write_back_tokens_if_unchanged(snap, new_access_token, None)
+    }
+
+    /// 写回 token（accessToken 必改，refreshToken 有则一并改）。同样受 mtime 保护。
+    pub fn write_back_tokens_if_unchanged(
+        &self,
+        snap: &Snapshot,
+        access: &str,
+        refresh: Option<&str>,
+    ) -> Result<bool, String> {
         let (mtime, len) = self.stamp();
         if mtime != snap.mtime || len != snap.len {
             return Ok(false);
         }
         let mut raw = snap.raw.clone();
-        super::atrest::set_access_token(&mut raw, new_access_token, &self.secret)?;
+        super::atrest::set_access_token(&mut raw, access, &self.secret)?;
+        if let Some(token) = refresh {
+            super::atrest::set_refresh_token(&mut raw, token, &self.secret)?;
+        }
         let tmp = self.path.with_extension("info.tmp");
         std::fs::write(&tmp, serde_json::to_string_pretty(&raw).unwrap())
             .map_err(|e| format!("写临时文件 {} 失败: {e}", tmp.display()))?;
@@ -208,6 +221,88 @@ impl Credentials {
             raw,
         });
         Ok(true)
+    }
+
+    /// token 临近过期就刷新并写回，返回（可能已更新的）账号。
+    ///
+    /// 写回走 mtime 保护：刷新在网络往返期间若 Buddy 切了号，就放弃写回，
+    /// 避免用旧账号的刷新结果覆盖用户的切换。
+    pub async fn ensure_fresh(&self) -> Result<Account, String> {
+        use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+        let account = self.current()?;
+        if !needs_refresh(account.expires_at_ms, now_ms(), REFRESH_SKEW_MS) {
+            return Ok(account);
+        }
+        eprintln!("[2api] token 即将过期（{}），正在刷新…", account.expires_at_ms);
+        let snapshot = self.snapshot()?;
+        let url = format!(
+            "{}/v2/plugin/auth/token/refresh",
+            super::upstream::BACKEND_BASE
+        );
+        let mut headers = HeaderMap::new();
+        let pairs: Vec<(String, String)> = vec![
+            (
+                "Authorization".to_string(),
+                format!("Bearer {}", account.access_token),
+            ),
+            ("X-User-Id".to_string(), account.uid.clone()),
+            ("X-Enterprise-Id".to_string(), account.enterprise_id.clone()),
+            ("X-Tenant-Id".to_string(), account.enterprise_id.clone()),
+            ("X-Domain".to_string(), account.domain.clone()),
+            ("X-Refresh-Token".to_string(), account.refresh_token.clone()),
+            (
+                "X-Auth-Refresh-Source".to_string(),
+                "plugin".to_string(),
+            ),
+            ("Content-Type".to_string(), "application/json".to_string()),
+        ];
+        for (name, value) in pairs {
+            let n: HeaderName = name
+                .parse()
+                .map_err(|_| format!("非法请求头名：{name}"))?;
+            let v: HeaderValue = value
+                .parse()
+                .map_err(|_| format!("请求头 {name} 的值非法"))?;
+            headers.insert(n, v);
+        }
+        let resp = reqwest::Client::new()
+            .post(&url)
+            .headers(headers)
+            .timeout(std::time::Duration::from_secs(20))
+            .send()
+            .await
+            .map_err(|e| format!("刷新 token 网络失败：{e}"))?;
+        let status = resp.status();
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("刷新响应不是 JSON：{e}"))?;
+        if !status.is_success() || body.get("code").and_then(|c| c.as_i64()) != Some(0) {
+            let msg = body
+                .get("msg")
+                .and_then(|m| m.as_str())
+                .unwrap_or("无原因");
+            return Err(format!("刷新 token 被拒（HTTP {status}）：{msg}"));
+        }
+        let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
+        let new_access = data
+            .get("accessToken")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if new_access.is_empty() {
+            return Err("刷新响应里没有 accessToken".to_string());
+        }
+        let new_refresh = data
+            .get("refreshToken")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        if self.write_back_tokens_if_unchanged(&snapshot, &new_access, new_refresh.as_deref())? {
+            eprintln!("[2api] token 已刷新并写回");
+        } else {
+            eprintln!("[2api] 刷新期间登录态被外部改动（Buddy 切号？），已放弃写回");
+        }
+        self.current()
     }
 }
 
@@ -418,6 +513,19 @@ mod tests {
     }
 
     #[test]
+    fn token_refresh_is_decided_with_a_skew_margin() {
+        // 到期前 60s 就要刷新：否则请求正好卡在过期瞬间发出，服务端会拒
+        let now = 1_000_000_000_000i64;
+        assert!(super::needs_refresh(now + 30_000, now, 60_000), "临近过期应刷新");
+        assert!(!super::needs_refresh(now + 120_000, now, 60_000), "还很新不用刷");
+        assert!(super::needs_refresh(now - 1_000, now, 60_000), "已过期必须刷");
+        assert!(
+            !super::needs_refresh(0, now, 60_000),
+            "没有过期时间就别乱刷（明文/老格式登录态）"
+        );
+    }
+
+    #[test]
     fn missing_file_yields_readable_error() {
         let cred = super::Credentials::new(
             PathBuf::from("D:/no/such/workbuddy-desktop.info"),
@@ -480,4 +588,25 @@ mod tests {
         assert_eq!(found, Some(new), "应取 mtime 最新的那个");
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// 提前这么多毫秒就认为需要刷新（到期瞬间才刷会撞上服务端拒绝）
+pub const REFRESH_SKEW_MS: i64 = 60_000;
+
+/// 当前 epoch 毫秒
+pub fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// token 是否需要刷新。
+///
+/// `expires_at_ms <= 0` 表示登录态里没有过期时间（老格式/明文），此时不猜、不刷。
+pub fn needs_refresh(expires_at_ms: i64, now_ms: i64, skew_ms: i64) -> bool {
+    if expires_at_ms <= 0 {
+        return false;
+    }
+    now_ms + skew_ms >= expires_at_ms
 }

@@ -418,7 +418,9 @@ pub async fn buddy2api_start(port: Option<u16>) -> Result<TwoApiStatus, String> 
         return Err(report.message);
     }
     let creds = credentials_instance()?;
-    let account = creds.current()?;
+    // 启动即保证 token 有效：临近过期就顺手刷新并写回（写回受 mtime 保护，
+    // 期间若 Buddy 切号则只更新内存、不覆盖用户的切换）
+    let account = creds.ensure_fresh().await?;
     let cfg = build_proxy_config(port, &account);
     set_status(|s| {
         s.phase = "starting".to_string();
@@ -715,4 +717,67 @@ pub async fn buddy2api_set_port(port: u16) -> Result<TwoApiStatus, String> {
     }
     eprintln!("[2api] 端口 {old} → {port}（已同步 {synced} 条 AI 供应商 URL）");
     Ok(status())
+}
+
+#[cfg(test)]
+mod direct_probe {
+    use super::*;
+
+    /// 二分定位：绕开 proxy 直连上游。若这里 200 而经 proxy 404，问题在转发；
+    /// 若这里也 404，问题在凭据或上游。
+    #[tokio::test]
+    #[ignore = "诊断用：需要网络与本机 WorkBuddy"]
+    async fn probe_upstream_directly() {
+        let creds = credentials_instance().expect("凭据");
+        let acct = creds.current().expect("当前账号");
+        eprintln!("[direct] uid={} domain={} token_len={}", acct.uid, acct.domain, acct.access_token.len());
+        use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+        let mut headers = HeaderMap::new();
+        for h in workbuddy_headers(&acct) {
+            let n: HeaderName = h.key.parse().unwrap();
+            let v: HeaderValue = h.value.parse().unwrap();
+            headers.insert(n, v);
+        }
+        for path in ["/v2/chat/completions", "/v2/models"] {
+            let method = if path.contains("chat") { "POST" } else { "GET" };
+            let mut req = reqwest::Client::new()
+                .request(reqwest::Method::from_bytes(method.as_bytes()).unwrap(), format!("{}{}", super::upstream::BACKEND_BASE, path))
+                .headers(headers.clone())
+                .timeout(std::time::Duration::from_secs(30));
+            if method == "POST" {
+                req = req.json(&serde_json::json!({"model":"hy3","messages":[{"role":"user","content":"1+1=?"}],"stream":false}));
+            }
+            match req.send().await {
+                Ok(r) => {
+                    let s = r.status();
+                    let t = r.text().await.unwrap_or_default();
+                    eprintln!("[direct] {method} {path} -> {s}  {}", &t[..std::cmp::min(160, t.len())]);
+                }
+                Err(e) => eprintln!("[direct] {method} {path} 请求失败: {e}"),
+            }
+            // 上游可能只收流式：单独验证一次
+            if method == "POST" {
+                let stream_req = reqwest::Client::new()
+                    .post(format!("{}/v2/chat/completions", super::upstream::BACKEND_BASE))
+                    .headers(headers.clone())
+                    .timeout(std::time::Duration::from_secs(30))
+                    .json(&serde_json::json!({
+                        "model": "hy3",
+                        "messages": [{"role": "user", "content": "1+1=?"}],
+                        "stream": true
+                    }));
+                match stream_req.send().await {
+                    Ok(r) => {
+                        let s = r.status();
+                        let t = r.text().await.unwrap_or_default();
+                        eprintln!(
+                            "[direct] POST /v2/chat/completions (stream=true) -> {s}  {}",
+                            &t[..std::cmp::min(200, t.len())]
+                        );
+                    }
+                    Err(e) => eprintln!("[direct] 流式请求失败: {e}"),
+                }
+            }
+        }
+    }
 }
