@@ -254,11 +254,25 @@ pub(crate) async fn start_tool_proxy_with_collab(
             // 模型伪装：声明名 C → 实际模型 B；masquerade_model 为空表示不伪装。
             let target_model = req.model_id.clone().unwrap_or_default();
             let mut model_aliases: HashMap<String, String> = HashMap::new();
-            if let Some(ref c) = req.masquerade_model {
-                let c_norm = c.replace("[1m]", "").replace("[1M]", "").trim().to_string();
-                if !c_norm.is_empty() && c_norm != target_model {
-                    model_aliases.insert(c_norm, target_model.clone());
-                }
+            // 声明名 C 的唯一来源：Claude Desktop 需要伪装（它的选择器会剔除非 Anthropic
+            // 模型名），其余工具原样。**必须与写 profile 那条路径调同一个函数** ——
+            // 否则会出现「profile 写 A、这里注册 B」，Desktop 发的名字无人认领 → 400。
+            let tool_writer = tool_config
+                .config_file
+                .as_ref()
+                .and_then(|c| c.custom_writer(&tool_config.id));
+            let effective_claimed = crate::commands::ai::tool_config_custom::effective_claimed_model(
+                tool_writer.as_deref(),
+                &target_model,
+                req.masquerade_model.as_deref().unwrap_or(""),
+            );
+            let c_norm = effective_claimed
+                .replace("[1m]", "")
+                .replace("[1M]", "")
+                .trim()
+                .to_string();
+            if !c_norm.is_empty() && c_norm != target_model {
+                model_aliases.insert(c_norm, target_model.clone());
             }
 
             // fallback/小模型伪装映射：声明名 C_small → 实际模型 B_small。
@@ -718,9 +732,19 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
 
                 // 声明模型名 C（工具以为自己调用的模型）：
                 // 若配置了伪装则是 masquerade_model，否则直接是所选取的供应商模型 B。
-                let claimed_model = req.masquerade_model.clone()
-                    .filter(|c| !c.is_empty())
-                    .or_else(|| req.model_id.clone());
+                // Claude Desktop 由 `effective_claimed_model` 自动补一个合法别名 ——
+                // 与上面注册 `model_aliases` 用的是同一个函数，两边必然一致。
+                let cfg_writer = tool_config
+                    .config_file
+                    .as_ref()
+                    .and_then(|c| c.custom_writer(&tool_config.id));
+                let claimed_model = Some(
+                    crate::commands::ai::tool_config_custom::effective_claimed_model(
+                        cfg_writer.as_deref(),
+                        req.model_id.as_deref().unwrap_or(""),
+                        req.masquerade_model.as_deref().unwrap_or(""),
+                    ),
+                );
 
                 // 代理模式：本次启动了本地代理（统计 + 转换 + 伪装映射）时为 true。
                 let proxy_mode = proxy_port != 0;
