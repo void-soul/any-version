@@ -61,6 +61,20 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub upstream_is_aggregate: bool,
 
+    /// GET /v1/models 时用上游的哪个路径（相对 `upstream_base_url`）。
+    /// 默认 "/models"（OpenAI 惯例）。有些后端的模型目录不在这儿 ——
+    /// 如 WorkBuddy 是 "/enterprises/personal/models"，配错了客户端就枚举不到模型。
+    #[serde(default = "default_models_path")]
+    pub models_path: String,
+
+    /// 强制对上游发流式请求，客户端要非流式时由代理聚合 SSE 后回一个普通 JSON。
+    ///
+    /// 用于「上游只收流式」的后端（如 WorkBuddy 的 `copilot.tencent.com`，非流式
+    /// 直接返回 `Non-stream chat request is currently not supported`）。默认关，
+    /// 因为对支持非流式的上游来说强流式没有收益、还会让代理多一层聚合开销。
+    #[serde(default)]
+    pub force_upstream_stream: bool,
+
     /// 目标模型 ID（请求体写入的"实际模型 B"）
     pub target_model: String,
     /// 请求超时（秒）
@@ -144,6 +158,11 @@ pub struct UpstreamHeader {
     pub value: String,
 }
 
+/// 默认的模型目录路径（OpenAI 惯例）
+fn default_models_path() -> String {
+    "/models".to_string()
+}
+
 impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
@@ -161,6 +180,8 @@ impl Default for ProxyConfig {
             upstream_headers: Vec::new(),
             upstream_include_v1: None,
             upstream_is_aggregate: false,
+            models_path: default_models_path(),
+            force_upstream_stream: false,
             target_model: "gpt-4o".to_string(),
             timeout_secs: 300,
             model_aliases: HashMap::new(),

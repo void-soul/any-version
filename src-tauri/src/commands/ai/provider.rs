@@ -272,6 +272,8 @@ pub async fn start_proxy(port: u16) -> Result<(), String> {
             _ => None,
         },
         upstream_is_aggregate: false,
+        models_path: "/models".to_string(),
+        force_upstream_stream: false,
         app_handle: None,
         collab_room_id: None,
     };

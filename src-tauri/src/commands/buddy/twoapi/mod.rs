@@ -114,8 +114,18 @@ pub fn build_proxy_config(port: u16, account: &credentials::Account) -> ProxyCon
     cfg.outbound_protocol = "openai".to_string();
     cfg.upstream_base_url = format!("{}/v2", upstream::BACKEND_BASE);
     cfg.upstream_api_key = String::new();
+    // WorkBuddy 后端的版本号是 /v2，不是 /v1。`resolve_url` 的 include_v1 自动模式
+    // 判「结尾不是 /v1 就补 /v1」，会拼出 /v2/v1/chat/completions → 上游 404。
+    // 所以显式关掉：让它按 base 直接拼 chat/completions。
+    cfg.upstream_include_v1 = Some(false);
+    // 模型目录不在 OpenAI 惯例的 /models 上：后端是 /v2/enterprises/personal/models。
+    // 这是客户端 UI 用的同一份数据，只有它跟得上新模型（space-bunny 等）。
+    cfg.models_path = "/enterprises/personal/models".to_string();
     cfg.timeout_secs = 600;
     cfg.upstream_headers = workbuddy_headers(account);
+    // WorkBuddy 后端只收流式：非流式请求会被拒（Non-stream chat request is currently
+    // not supported）。所以对上游一律发流式，客户端要非流式时代理侧聚合 SSE 再回 JSON。
+    cfg.force_upstream_stream = true;
     cfg
 }
 
@@ -181,6 +191,25 @@ mod tests {
         assert!(cfg.inbound_protocols.contains(&"anthropic".to_string()));
         assert!(cfg.inbound_protocols.contains(&"openai".to_string()));
         assert!(cfg.upstream_api_key.is_empty(), "鉴权由 headers 承担，不填 provider key");
+        assert_eq!(
+            cfg.upstream_include_v1,
+            Some(false),
+            "base 以 /v2 结尾，必须关掉 include_v1，否则会拼出 /v2/v1/chat/completions 而 404"
+        );
+        // 端到端钉死最终 URL：/v2/chat/completions，而不是 /v2/v1/chat/completions
+        let (url, auth_name) = crate::proxy::upstream::resolve_url(
+            "openai",
+            &cfg.upstream_base_url,
+            "hy3",
+            true,
+            cfg.upstream_include_v1,
+        );
+        assert_eq!(url, "https://copilot.tencent.com/v2/chat/completions");
+        assert_eq!(auth_name, "Authorization");
+        assert!(
+            cfg.force_upstream_stream,
+            "WorkBuddy 后端只收流式，必须强制对上游发流式（客户端要非流式时代理侧聚合）"
+        );
     }
 
     #[test]

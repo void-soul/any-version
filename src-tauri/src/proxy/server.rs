@@ -569,7 +569,18 @@ async fn health_handler() -> Json<Value> {
 /// GET /v1/models — OpenAI 入站时透传到上游 OpenAI 的 /models（用于工具列举可用模型）
 async fn models_handler(State(state): State<ProxyState>, headers: HeaderMap) -> Response {
     let config = state.config.read().await.clone();
-    let url = format!("{}/models", config.upstream_base_url.trim_end_matches('/'));
+    // 模型目录路径可配：OpenAI 惯例是 /models，但有些后端（WorkBuddy）在别的路径上，
+    // 配错的话客户端一个模型都枚举不到。
+    let models_path = if config.models_path.is_empty() {
+        "/models"
+    } else {
+        config.models_path.as_str()
+    };
+    let url = format!(
+        "{}{}",
+        config.upstream_base_url.trim_end_matches('/'),
+        models_path
+    );
     log_proxy(&format!("← IN   /v1/models  → OUT GET {}", url));
 
     let mut req = state.client.get(&url);
@@ -601,11 +612,21 @@ async fn models_handler(State(state): State<ProxyState>, headers: HeaderMap) -> 
                         .into_response();
                 }
             };
+            // 上游不一定是 OpenAI 形状（WorkBuddy 返回 data.models），归一后再给客户端，
+            // 否则客户端按 {object:"list",data:[…]} 解析会拿到空列表。
+            let normalized_bytes: Vec<u8> = match serde_json::from_slice::<Value>(&bytes) {
+                Ok(body) => {
+                    let normalized = convert::normalize_models_response(body);
+                    serde_json::to_vec(&normalized).unwrap_or_else(|_| bytes.to_vec())
+                }
+                // 不是 JSON 就原样透传（例如上游返回纯文本错误）
+                Err(_) => bytes.to_vec(),
+            };
+            let bytes = normalized_bytes;
             let mut out = Response::new(Body::from(bytes));
             *out.status_mut() = status;
-            if let Some(c) = ct {
-                out.headers_mut().insert(header::CONTENT_TYPE, c);
-            }
+            out.headers_mut()
+                .insert(header::CONTENT_TYPE, ct.unwrap_or(header::HeaderValue::from_static("application/json")));
             out
         }
         Err(e) => (
@@ -886,13 +907,18 @@ async fn process_request(
     // 出站为 OpenAI / Anthropic 时，确保请求体带 stream 字段：
     // Google 入站（流式靠 URL 判定）以及跨协议转换后的 body 可能未写入 `stream`，
     // 而 OpenAI / Anthropic 上游依赖 body 中的 stream 字段决定是否流式返回。
-    if is_stream && (outbound == "openai" || outbound == "anthropic") {
+    //
+    // `upstream_stream` 与 `is_stream` 分开：前者是「发给上游要不要流式」，
+    // 后者是「客户端要不要流式」。配置了 force_upstream_stream 的上游只收流式，
+    // 此时即使客户端要非流式也强发流式，响应再由 process_response 聚合回去。
+    let upstream_stream = is_stream || config.force_upstream_stream;
+    if upstream_stream && (outbound == "openai" || outbound == "anthropic") {
         if let Some(o) = out_body.as_object_mut() {
             o.insert("stream".into(), json!(true));
         }
     }
     let (upstream_url, auth_name, route_api_key, route_headers) =
-        build_upstream_url(&config, &outbound, &actual_model, is_stream);
+        build_upstream_url(&config, &outbound, &actual_model, upstream_stream);
     if upstream_url.is_empty() {
         let mut stats = state.stats.write().await;
         stats.failed_requests += 1;
@@ -956,7 +982,7 @@ async fn process_request(
                 if let Ok(retry_resp) = retry_req.send().await {
                     if retry_resp.status().is_success() {
                         log_proxy(&format!("↻ retry succeeded after rectify  ({}ms)", start.elapsed().as_millis()));
-                        return process_response(state, retry_resp, &config, inbound, &outbound, &claimed_model, &actual_model, is_stream).await;
+                        return process_response(state, retry_resp, &config, inbound, &outbound, &claimed_model, &actual_model, is_stream, upstream_stream).await;
                     }
                 }
             }
@@ -998,7 +1024,7 @@ async fn process_request(
                 if let Ok(fb_resp) = fb_req.send().await {
                     if fb_resp.status().is_success() {
                         log_proxy(&format!("↻ fallback succeeded  ({}ms)", start.elapsed().as_millis()));
-                        return process_response(state, fb_resp, &fb_config, inbound, "openai", &claimed_model, &actual_model, is_stream).await;
+                        return process_response(state, fb_resp, &fb_config, inbound, "openai", &claimed_model, &actual_model, is_stream, fb_config.force_upstream_stream).await;
                     }
                     log_proxy(&format!("↻ fallback also failed: {}", fb_resp.status().as_u16()));
                 }
@@ -1030,7 +1056,7 @@ async fn process_request(
             .into_response();
     }
 
-    process_response(state, upstream_resp, &config, inbound, &outbound, &claimed_model, &actual_model, is_stream).await
+    process_response(state, upstream_resp, &config, inbound, &outbound, &claimed_model, &actual_model, is_stream, upstream_stream).await
 }
 
 /// 处理成功的上游响应（流式 / 非流式）
@@ -1045,10 +1071,15 @@ async fn process_response(
     claimed_model: &str,
     actual_model: &str,
     is_stream: bool,
+    upstream_stream: bool,
 ) -> Response {
     let start = Instant::now();
     if is_stream {
         return stream_response(state, upstream_resp, config, inbound, outbound, claimed_model, actual_model).await;
+    }
+    if upstream_stream {
+        // 客户端要非流式、上游却只给流式：收集 SSE 聚合成单个 chat.completion
+        return aggregate_upstream_stream(state, upstream_resp, config, inbound, outbound, claimed_model, actual_model).await;
     }
 
     let content_type = upstream_resp.headers().get(header::CONTENT_TYPE).cloned();
@@ -1122,6 +1153,109 @@ async fn process_response(
     } else {
         Json(in_resp).into_response()
     }
+}
+
+/// 强制上游流式、但客户端要非流式时的响应路径：把上游 SSE 收集聚合成普通 JSON。
+///
+/// 上游只收流式时（如 WorkBuddy 后端对非流式直接返回
+/// `Non-stream chat request is currently not supported`），而客户端发了非流式请求，
+/// 代理就把上游的 SSE 收集起来聚合成一个 `chat.completion` —— 客户端看不出中间发生过什么。
+///
+/// 只有 `force_upstream_stream` 打开且入站非流式时才会走到这里；其余情况走原来的两条路。
+async fn aggregate_upstream_stream(
+    state: &ProxyState,
+    upstream_resp: reqwest::Response,
+    config: &ProxyConfig,
+    inbound: &str,
+    outbound: &str,
+    claimed_model: &str,
+    actual_model: &str,
+) -> Response {
+    use futures_util::StreamExt;
+    let start = Instant::now();
+
+    // 逐帧收集上游的 chat.completion.chunk
+    let mut chunks: Vec<Value> = Vec::new();
+    let mut buffer = String::new();
+    let mut byte_stream = upstream_resp.bytes_stream();
+    while let Some(item) = byte_stream.next().await {
+        let Ok(bytes) = item else { break };
+        buffer = sse::append_utf8_safe(&buffer, &bytes);
+        loop {
+            // take_sse_block 返回的 rest 借用 buffer，这里立刻转成 owned 再回写 buffer
+            let Some((block, rest_owned)) =
+                sse::take_sse_block(&buffer).map(|(b, r)| (b, r.to_string()))
+            else {
+                break;
+            };
+            buffer = rest_owned;
+            let Some(data) = sse::extract_sse_data(&block) else { continue };
+            let trimmed = data.trim();
+            if trimmed.is_empty() || trimmed == "[DONE]" {
+                continue;
+            }
+            if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
+                chunks.push(v);
+            }
+        }
+    }
+    // 流末尾可能还挂着没分隔符的半帧
+    if let Some(data) = sse::extract_sse_data(&buffer) {
+        let trimmed = data.trim();
+        if !trimmed.is_empty() && trimmed != "[DONE]" {
+            if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
+                chunks.push(v);
+            }
+        }
+    }
+
+    if chunks.is_empty() {
+        let mut stats = state.stats.write().await;
+        stats.failed_requests += 1;
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({
+                "error": {"message": "上游流式响应为空（已强制流式但没收到任何数据）"}
+            })),
+        )
+            .into_response();
+    }
+
+    // 聚合成单个 chat.completion，再按入站协议回填
+    let aggregated = sse::aggregate_chat_chunks(&chunks, actual_model);
+    let mut in_resp = convert_response(outbound, inbound, &aggregated, claimed_model);
+    set_response_model(&mut in_resp, claimed_model, inbound);
+
+    // 统计落库（与流式分支不同：没有首字延迟，整体耗时记为延迟）
+    record_usage_from_response(
+        state,
+        config,
+        inbound,
+        &in_resp,
+        actual_model,
+        start.elapsed().as_millis() as u64,
+    );
+
+    let full_text = extract_inbound_full_text(inbound, &in_resp);
+    log_proxy(&format!(
+        "✓ 聚合流式响应（非流式入站）: {} 帧, text_len={}, {}ms",
+        chunks.len(),
+        full_text.len(),
+        start.elapsed().as_millis()
+    ));
+    if !full_text.is_empty() {
+        store_proxy_text_for(state, &full_text);
+    }
+    emit_proxy_event(state, "collab:proxy-complete", json!({
+        "text": full_text,
+        "elapsed_ms": start.elapsed().as_millis(),
+    }));
+
+    let mut stats = state.stats.write().await;
+    stats.success_requests += 1;
+
+    // 聚合后是普通 JSON，与转换后的非流式响应同样用 application/json
+    Json(in_resp).into_response()
 }
 
 /// 流式响应：把上游（出站协议）SSE 转换为入站协议 SSE。

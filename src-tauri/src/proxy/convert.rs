@@ -23,6 +23,90 @@ pub fn convert_request(inbound: &str, outbound: &str, body: &Value, model: &str)
     }
 }
 
+/// 把非 OpenAI 形状的模型目录响应规范化成 OpenAI 的 `{object:"list", data:[...]}`。
+///
+/// 有些上游（WorkBuddy 的 `/v2/enterprises/personal/models`）返回的是
+/// `{"code":0,"data":{"models":[{"id":…,"tags":[…]}]}}`，客户端按 OpenAI 形状解析会
+/// 拿到空列表（`data` 不是数组）。这里做一次归一，让 `/v1/models` 对客户端始终可用。
+///
+/// 已经是 OpenAI 形状的**原样返回**（不猜、不动供应商自己的字段）；认不出来的形状也
+/// 原样返回 —— 宁可返回供应商原样，也不要返回空列表把客户端坑了。
+pub fn normalize_models_response(body: Value) -> Value {
+    use serde_json::json;
+    if body.get("data").map(|d| d.is_array()).unwrap_or(false) {
+        return body;
+    }
+    let Some(models) = body
+        .get("data")
+        .and_then(|d| d.get("models"))
+        .and_then(|m| m.as_array())
+    else {
+        return body;
+    };
+    let data: Vec<Value> = models
+        .iter()
+        .filter_map(|m| m.get("id").and_then(|v| v.as_str()))
+        .filter(|id| !id.is_empty())
+        .map(|id| {
+            json!({
+                "id": id,
+                "object": "model",
+                "created": 1700000000,
+                "owned_by": "upstream",
+            })
+        })
+        .collect();
+    json!({ "object": "list", "data": data })
+}
+
+#[cfg(test)]
+mod model_normalize_tests {
+    use super::normalize_models_response;
+    use serde_json::json;
+
+    #[test]
+    fn backend_shape_becomes_openai_list() {
+        // WorkBuddy 后端：data.models → OpenAI 的 data 数组，客户端才枚举得到
+        let body = json!({"code":0,"data":{"models":[
+            {"id":"hy3","vendor":"f"},
+            {"id":"space-bunny","vendor":"f"}
+        ]}});
+        let out = normalize_models_response(body);
+        assert_eq!(out["object"], "list");
+        let ids: Vec<&str> = out["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["hy3", "space-bunny"], "顺序保持上游顺序");
+    }
+
+    #[test]
+    fn already_openai_shape_is_returned_untouched() {
+        // 已经是 OpenAI 形状就别动它 —— 不猜供应商字段
+        let body = json!({"object":"list","data":[{"id":"a","object":"model","owned_by":"x"}]});
+        let out = normalize_models_response(body.clone());
+        assert_eq!(out, body);
+    }
+
+    #[test]
+    fn unrecognizable_shape_is_returned_as_is() {
+        // 认不出来时原样返回：宁可返回供应商原样，也不要返回空列表把客户端坑了
+        let body = json!({"error_msg":"404 Route Not Found"});
+        let out = normalize_models_response(body.clone());
+        assert_eq!(out, body);
+    }
+
+    #[test]
+    fn entries_without_id_are_skipped() {
+        let body = json!({"data":{"models":[{"vendor":"f"},{"id":"ok"},{"id":""}]}});
+        let out = normalize_models_response(body);
+        assert_eq!(out["data"].as_array().unwrap().len(), 1);
+        assert_eq!(out["data"][0]["id"], "ok");
+    }
+}
+
 /// 响应体：P_out → P_in（同协议原样返回）。
 pub fn convert_response(outbound: &str, inbound: &str, resp: &Value, claimed: &str) -> Value {
     match (outbound, inbound) {
