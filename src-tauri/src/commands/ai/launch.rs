@@ -1462,7 +1462,7 @@ fn write_tool_config_generic(
         if !stale.is_empty() {
             eprintln!("[config_file] 已清理遗留键: {:?}", stale);
         }
-        // 兄弟文件（如 codex 的 auth.json、dsh 的 .credentials.yaml）里本来就可能有用户自己的
+        // 兄弟文件（如 codex 的 auth.json）里本来就可能有用户自己的
         // 官方凭据，第一次接管前先存一份：勾「使用官方模型」还原时把它放回去，
         // 否则「用 Kira 跑一次」就把用户的官方 Key 冲掉了（EchoBird 同样做法：codex-auth.bak.json）。
         if p != main_config_path {
@@ -2609,53 +2609,6 @@ name = "personal"
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// dsh（A1/A2）：权威配置是 `profiles/<profile>/cordis.patch.yml`（YAML 序列），
-    /// 凭据在 `.credentials.yaml` 的 **`refs` 层级**，且 `profile` 名**随实例而变**
-    /// （真机上是 `web`，不是参考实现写死的 `desktop`）。
-    #[test]
-    fn dsh_writes_authoritative_profile_and_credential_refs() {
-        let dir = temp_dir("dsh");
-        let file = dir.join("settings.yaml");
-        let cfg = tool_cfg_at("dsh", &file);
-        // dsh 自己会建好的 profile 骨架：这里刻意只建 web，验证不会写死 desktop
-        std::fs::create_dir_all(dir.join("profiles").join("web")).unwrap();
-        std::fs::write(dir.join("profiles").join("web").join("cordis.patch.yml"), "[]\n").unwrap();
-        // 用户已有的 v1 凭据库（含别人的 ref）
-        std::fs::write(
-            dir.join(".credentials.yaml"),
-            "version: 1\nrefs:\n  SOMEONE_ELSE_KEY: sk-theirs\nrecords: {}\n",
-        )
-        .unwrap();
-
-        write_for(&cfg, None, "openai", false).expect("写入应成功");
-
-        // 权威 profile：序列里应有我们那两个 section
-        let profile: serde_yaml::Value = serde_yaml::from_str(
-            &std::fs::read_to_string(dir.join("profiles").join("web").join("cordis.patch.yml"))
-                .unwrap(),
-        )
-        .unwrap();
-        let entries = profile.as_sequence().expect("必须是 YAML 序列");
-        assert_eq!(entries.len(), 2, "{entries:?}");
-        let selector = entries
-            .iter()
-            .find(|e| e["id"] == serde_yaml::Value::String("agent-default-model".into()))
-            .expect("应有 agent-default-model section");
-        assert_eq!(selector["config"]["model"], "claude-opus-4");
-        assert!(
-            !dir.join("profiles").join("desktop").exists(),
-            "不能凭空造 dsh 不读的 desktop profile"
-        );
-
-        // 凭据：在 refs 层级，且用户的其它 ref 不丢
-        let creds: serde_yaml::Value =
-            serde_yaml::from_str(&std::fs::read_to_string(dir.join(".credentials.yaml")).unwrap())
-                .unwrap();
-        assert_eq!(creds["refs"]["ANYVERSION_API_KEY"], "kira-token");
-        assert_eq!(creds["refs"]["SOMEONE_ELSE_KEY"], "sk-theirs");
-        assert_eq!(creds["version"].as_u64(), Some(1));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 
 
     /// Qwen Code：缺 `modelProviders[]` 时它找不到自定义端点，必须写成数组，

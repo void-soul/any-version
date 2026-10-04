@@ -956,6 +956,19 @@ pub fn update_tool_category(tool_id: String, category: String) -> Result<(), Str
 mod tests {
     use super::{registry, tool_kind_of, ProviderPreset, ProviderPresetDto};
 
+    /// dsh 已从 **AI 工具** 里移除（2026-10-04）。
+    ///
+    /// 它仍然作为 **Node 服务**存在（`node-projects/harness.json` + `node_manager.rs`），
+    /// 那部分不受影响 —— 这里只保证它不会再出现在 AI 工具列表里。
+    /// 删掉 `ai-tools/dsh/` 就够了：工具注册表是配置驱动的，目录没了自然读不到。
+    #[test]
+    fn dsh_is_not_an_ai_tool_anymore() {
+        assert!(
+            registry().get_tool("dsh").is_none(),
+            "dsh 不该再注册为 AI 工具（ai-tools/dsh/ 是否被加回来了？）"
+        );
+    }
+
     /// 回归：DTO 一旦被标上 `rename_all = "camelCase"`，URL 会序列化成
     /// `openaiUrl`，前端按 `openai_url` 读取全部落空 → 添加预设只剩名称/官网。
     #[test]
@@ -971,7 +984,6 @@ mod tests {
             "opencodedesktop",
             "openscience",
             "zcode",
-            "dsh",
         ] {
             let Some((config, paths)) = reg.get_tool(id) else {
                 panic!("注册表里没有桌面端工具 {}（ai-tools/{}/ 是否完整？）", id, id);

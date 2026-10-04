@@ -24,7 +24,6 @@ use std::path::Path;
 use crate::commands::ai::tool_config_restore::RestoreOutcome;
 
 pub(crate) mod codex;
-pub(crate) mod dsh;
 pub(crate) mod omp;
 pub(crate) mod zcode;
 
@@ -89,7 +88,6 @@ pub(crate) fn apply_extras(ctx: &ExtrasCtx<'_>) -> Result<Vec<String>, String> {
         "codex-cli" | "chatgptdesktop" => codex::apply(ctx),
         "zcode" => zcode::apply(ctx),
         "omp" => omp::apply(ctx),
-        "dsh" => dsh::apply(ctx),
         _ => Ok(Vec::new()),
     }
 }
@@ -98,15 +96,14 @@ pub(crate) fn apply_extras(ctx: &ExtrasCtx<'_>) -> Result<Vec<String>, String> {
 ///
 /// 通用还原删的是**声明 `write` 映射里的键**，本模块写的内容**不在那份映射里**
 /// （另一个文件、`refs` 层级、数组内条目…），所以必须单独还原。不还原的后果不是「少了点清理」，
-/// 而是「勾了『使用官方模型』之后工具仍然跑在我们的 provider 上」—— dsh 的权威 profile
-/// 就是这样：那条配置还在，dsh 就还听它的。
+/// 而是「勾了『使用官方模型』之后工具仍然跑在我们的 provider 上」—— ZCode 的 providerRules
+/// 就是这样：那条配置还在，ZCode 就还听它的。
 pub(crate) fn restore_extras(tool_id: &str, main_path: &Path) -> Result<RestoreOutcome, String> {
     match tool_id {
         // 两个工具共用 `~/.codex/config.toml`，还原也要两边都走
         "codex-cli" | "chatgptdesktop" => codex::restore(main_path),
         "zcode" => zcode::restore(main_path),
         "omp" => omp::restore(main_path),
-        "dsh" => dsh::restore(main_path),
         _ => Ok(RestoreOutcome::default()),
     }
 }
