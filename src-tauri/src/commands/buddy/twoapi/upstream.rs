@@ -16,12 +16,16 @@ pub const CATALOG_TTL: Duration = Duration::from_secs(300);
 /// 兜底列表（后端与本机清单都不可用时，保证 /v1/models 不返回空）
 pub const FALLBACK_MODELS: &[&str] = &["hy3", "hy4-preview", "kimi-k3", "glm-5.3"];
 
-const NON_CHAT_TAGS: &[&str] = &["text-to-image", "image-to-image", "text-to-video"];
-const INTERNAL_KEYWORDS: &[&str] = &["completion", "rewrite", "jump", "codewise"];
+// 过滤规则已收敛到 `proxy::convert::is_chat_model`（与 /v1/models 响应归一化共用），
+// 本文件不再自带一份，避免两处漂移。
 
 /// 解析后端目录：{"code":0,"data":{"models":[…]}}，滤掉非聊天模型并保持顺序。
 /// 结构变了就返回空（调用方回落下一级），不抛异常。
+///
+/// 过滤规则**不在这里**——统一用 `proxy::convert::is_chat_model`，与 `/v1/models`
+/// 响应归一化共用同一份。两处各写一份必然漂移（Python 版就只有一份，我们先犯了错）。
 pub fn parse_catalog(payload: &serde_json::Value) -> Vec<String> {
+    use crate::proxy::convert::is_chat_model;
     let Some(models) = payload
         .get("data")
         .and_then(|d| d.get("models"))
@@ -29,39 +33,12 @@ pub fn parse_catalog(payload: &serde_json::Value) -> Vec<String> {
     else {
         return Vec::new();
     };
-    let mut out = Vec::new();
-    for model in models {
-        let Some(id) = model
-            .get("id")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-        else {
-            continue;
-        };
-        let is_non_chat = model
-            .get("tags")
-            .and_then(|t| t.as_array())
-            .map(|tags| {
-                tags.iter().any(|t| {
-                    t.as_str()
-                        .map(|s| NON_CHAT_TAGS.iter().any(|tag| s == *tag))
-                        .unwrap_or(false)
-                })
-            })
-            .unwrap_or(false);
-        if is_non_chat {
-            continue;
-        }
-        if model.get("vendor").and_then(|v| v.as_str()) == Some("tencent") {
-            continue;
-        }
-        let lower = id.to_ascii_lowercase();
-        if INTERNAL_KEYWORDS.iter().any(|k| lower.contains(k)) {
-            continue;
-        }
-        out.push(id.to_string());
-    }
-    out
+    models
+        .iter()
+        .filter(|m| is_chat_model(m))
+        .filter_map(|m| m.get("id").and_then(|v| v.as_str()))
+        .map(str::to_string)
+        .collect()
 }
 
 /// 目录缓存。**只缓存成功结果** —— 空结果视为失败不入缓存，

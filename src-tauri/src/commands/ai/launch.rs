@@ -381,6 +381,7 @@ pub(crate) async fn start_tool_proxy_with_collab(
                         upstream_include_v1: provider_include_v1(p, &chosen_outbound),
                         upstream_is_aggregate: is_aggregate_upstream(&upstream_base_url, config.aggregate.port),
         models_path: "/models".to_string(),
+        models_filter_non_chat: false,
         force_upstream_stream: false,
                         target_model,
                         timeout_secs: timeout,

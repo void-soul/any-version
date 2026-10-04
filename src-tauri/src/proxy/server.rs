@@ -616,7 +616,7 @@ async fn models_handler(State(state): State<ProxyState>, headers: HeaderMap) -> 
             // 否则客户端按 {object:"list",data:[…]} 解析会拿到空列表。
             let normalized_bytes: Vec<u8> = match serde_json::from_slice::<Value>(&bytes) {
                 Ok(body) => {
-                    let normalized = convert::normalize_models_response(body);
+                    let normalized = convert::normalize_models_response(body, config.models_filter_non_chat);
                     serde_json::to_vec(&normalized).unwrap_or_else(|_| bytes.to_vec())
                 }
                 // 不是 JSON 就原样透传（例如上游返回纯文本错误）

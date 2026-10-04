@@ -121,6 +121,9 @@ pub fn build_proxy_config(port: u16, account: &credentials::Account) -> ProxyCon
     // 模型目录不在 OpenAI 惯例的 /models 上：后端是 /v2/enterprises/personal/models。
     // 这是客户端 UI 用的同一份数据，只有它跟得上新模型（space-bunny 等）。
     cfg.models_path = "/enterprises/personal/models".to_string();
+    // 后端目录里混着图像模型（hunyuan-image-alpha 等），不滤的话客户端会枚举到
+    // 却调不通（上游对图像模型走 vclm，直接 400）。规则与 preflight 共用 is_chat_model。
+    cfg.models_filter_non_chat = true;
     cfg.timeout_secs = 600;
     cfg.upstream_headers = workbuddy_headers(account);
     // WorkBuddy 后端只收流式：非流式请求会被拒（Non-stream chat request is currently
@@ -206,6 +209,26 @@ mod tests {
         );
         assert_eq!(url, "https://copilot.tencent.com/v2/chat/completions");
         assert_eq!(auth_name, "Authorization");
+        assert!(
+            cfg.models_filter_non_chat,
+            "后端目录混着图像模型，不过滤客户端会枚举到却调不通"
+        );
+        // 过滤规则只有一份：/v1/models 的归一化与 preflight 的 parse_catalog 必须一致
+        let raw = serde_json::json!({"data":{"models":[
+            {"id":"hy3"},
+            {"id":"hunyuan-image-alpha","tags":["text-to-image"]},
+            {"id":"space-bunny"}
+        ]}});
+        let via_proxy = crate::proxy::convert::normalize_models_response(raw.clone(), cfg.models_filter_non_chat);
+        let via_preflight = crate::commands::buddy::twoapi::upstream::parse_catalog(&raw);
+        let proxy_ids: Vec<String> = via_proxy["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["id"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(proxy_ids, via_preflight, "两条路径的过滤结果必须一致");
+        assert_eq!(proxy_ids, vec!["hy3", "space-bunny"]);
         assert!(
             cfg.force_upstream_stream,
             "WorkBuddy 后端只收流式，必须强制对上游发流式（客户端要非流式时代理侧聚合）"
@@ -626,7 +649,7 @@ mod runtime_tests {
             .expect("messages 请求失败");
         let st2 = resp2.status();
         let text2 = resp2.text().await.unwrap_or_default();
-        println!("[e2e] messages HTTP {st2}，body 前 160 字 = {:?}", &text2[..std::cmp::min(160, text2.len())]);
+        println!("[e2e] messages HTTP {st2}，body 前 160 字 = {:?}", &text2.chars().take(160).collect::<String>());
         assert_eq!(st2.as_u16(), 200, "messages 失败：{text2}");
 
         // /v1/models —— 客户端靠它枚举模型
@@ -638,7 +661,7 @@ mod runtime_tests {
             .expect("models 请求失败");
         let st3 = resp3.status();
         let text3 = resp3.text().await.unwrap_or_default();
-        println!("[e2e] models HTTP {st3}，body 前 200 字 = {:?}", &text3[..std::cmp::min(200, text3.len())]);
+        println!("[e2e] models HTTP {st3}，body 前 200 字 = {:?}", &text3.chars().take(200).collect::<String>());
 
         buddy2api_stop().expect("停止 2API");
     }

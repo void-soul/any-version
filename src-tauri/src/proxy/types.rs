@@ -67,6 +67,12 @@ pub struct ProxyConfig {
     #[serde(default = "default_models_path")]
     pub models_path: String,
 
+    /// `/v1/models` 是否滤掉非聊天模型（图像/视频/内部功能）。
+    /// 默认关（OpenAI 形状的供应商不需要）；把图像模型混在目录里的后端要开
+    /// （WorkBuddy 的 `hunyuan-image-alpha` 之类），否则客户端枚举到却调不通。
+    #[serde(default)]
+    pub models_filter_non_chat: bool,
+
     /// 强制对上游发流式请求，客户端要非流式时由代理聚合 SSE 后回一个普通 JSON。
     ///
     /// 用于「上游只收流式」的后端（如 WorkBuddy 的 `copilot.tencent.com`，非流式
@@ -181,6 +187,7 @@ impl Default for ProxyConfig {
             upstream_include_v1: None,
             upstream_is_aggregate: false,
             models_path: default_models_path(),
+            models_filter_non_chat: false,
             force_upstream_stream: false,
             target_model: "gpt-4o".to_string(),
             timeout_secs: 300,
