@@ -392,7 +392,7 @@ static SERVER_TASK: LazyLock<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>
 /// 那正是 2026-10-03 那个故障最难发现的原因（/health 等旁路全绿）。
 #[tauri::command]
 pub async fn buddy2api_start(port: Option<u16>) -> Result<TwoApiStatus, String> {
-    let port = port.unwrap_or(DEFAULT_PORT);
+    let port = port.unwrap_or_else(configured_port);
     if status().phase == "running" {
         return Ok(status());
     }
@@ -631,3 +631,75 @@ mod runtime_tests {
         );
         buddy2api_stop().expect("停止 2API");
     }
+
+// ─── 端口设置 ───
+
+/// 用户配置的监听端口（默认 8788）
+pub fn configured_port() -> u16 {
+    let p = crate::commands::config::load_config().twoapi_port;
+    if p == 0 { DEFAULT_PORT } else { p }
+}
+
+/// 把 AI 模块里指向 2API 的供应商 URL 从旧端口改到新端口，返回改了几条。
+///
+/// 判定口径：供应商 id 是 workbuddy2api，或 URL 里带旧端口 —— 后者覆盖用户
+/// 改过 id / 复制过供应商的情况。只改 URL 中的端口段，其余（路径、协议）原样保留。
+fn sync_ai_providers(old: u16, new: u16) -> Result<usize, String> {
+    if old == new {
+        return Ok(0);
+    }
+    let mut cfg = crate::commands::ai::config::load_ai_config();
+    let old_seg = format!(":{old}");
+    let new_seg = format!(":{new}");
+    let mut changed = 0usize;
+    for p in &mut cfg.providers {
+        let urls = [&p.openai_url, &p.anthropic_url, &p.google_url];
+        let is_ours = p.id == "workbuddy2api" || urls.iter().any(|u| u.contains(&old_seg));
+        if !is_ours {
+            continue;
+        }
+        for u in [&mut p.openai_url, &mut p.anthropic_url, &mut p.google_url] {
+            if u.contains(&old_seg) {
+                *u = u.replace(&old_seg, &new_seg);
+                changed += 1;
+            }
+        }
+    }
+    if changed > 0 {
+        crate::commands::ai::config::save_ai_config_to_file(&cfg)?;
+    }
+    Ok(changed)
+}
+
+/// 修改 2API 端口：保存配置 + 同步 AI 供应商 URL + 若在运行则按新端口重启。
+///
+/// 端口被占用时用户的常规出路就是改端口；但 AI 模块里那个指向 2API 的供应商
+/// 还写着旧地址，不同步的话换一个供应商就报连接被拒 —— 所以这里一并处理。
+#[tauri::command]
+pub async fn buddy2api_set_port(port: u16) -> Result<TwoApiStatus, String> {
+    if port < 1024 {
+        return Err(format!("端口 {port} 太小，请用 1024 以上的端口"));
+    }
+    if port == 8787 {
+        return Err("8787 是 Free Router 的默认端口，请换一个".to_string());
+    }
+    let old = configured_port();
+    if old != port {
+        let mut cfg = crate::commands::config::load_config();
+        cfg.twoapi_port = port;
+        crate::commands::config::save_config(&cfg)?;
+    }
+    let synced = sync_ai_providers(old, port)?;
+    set_status(|s| s.port = port);
+
+    // 已在运行：换端口必须重启（监听地址变了，无法热切）
+    let was_running = status().phase == "running";
+    if was_running {
+        let _ = buddy2api_stop();
+    }
+    if was_running {
+        return buddy2api_start(Some(port)).await;
+    }
+    eprintln!("[2api] 端口 {old} → {port}（已同步 {synced} 条 AI 供应商 URL）");
+    Ok(status())
+}

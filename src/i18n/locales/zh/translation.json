@@ -5146,6 +5146,10 @@
       "baseUrl": "服务地址",
       "endpoints": "客户端端点：",
       "copyFailed": "复制失败",
+      "port": "端口",
+      "savePort": "修改",
+      "badPort": "端口需在 1024~65535 之间",
+      "portSaved": "端口已保存，AI 模块中指向 2API 的供应商地址已同步更新",
       "hint": "把当前 WorkBuddy 账号转成本地 OpenAI / Anthropic 兼容 API，客户端填上面的地址即可用。切换 WorkBuddy 账号后本服务会自动跟随，无需重启。"
     },
     "creditNeverExpires": "永不过期",

@@ -73,6 +73,32 @@ export default function TwoApiPanel() {
     }
   };
 
+  const [portInput, setPortInput] = useState("");
+
+  // 状态里的端口是实际在用的（可能与配置不同：服务未启动时显示配置值）
+  useEffect(() => {
+    if (status?.port) setPortInput(String(status.port));
+  }, [status?.port]);
+
+  const savePort = async () => {
+    const n = Number(portInput);
+    if (!Number.isInteger(n) || n < 1024 || n > 65535) {
+      setNotice(t("buddy.twoapi.badPort"));
+      return;
+    }
+    setBusy(true);
+    setNotice("");
+    try {
+      // 后端会：保存配置 → 同步 AI 模块里指向 2API 的供应商 URL → 若在跑则按新端口重启
+      setStatus(await invoke<TwoApiStatus>("buddy2api_set_port", { port: n }));
+      setNotice(t("buddy.twoapi.portSaved"));
+    } catch (e) {
+      setNotice(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const runPreflight = useCallback(async () => {
     setBusy(true);
     try {
@@ -189,6 +215,24 @@ export default function TwoApiPanel() {
           <input type="checkbox" checked={autoStart} onChange={() => void toggleAutoStart()} />
           {t("buddy.twoapi.autoStart")}
         </label>
+        <span className="inline-flex items-center gap-1">
+          <span className="text-slate-400">{t("buddy.twoapi.port")}</span>
+          <input
+            value={portInput}
+            onChange={(e) => setPortInput(e.target.value.replace(/[^0-9]/g, ""))}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void savePort();
+            }}
+            className="w-20 px-1.5 py-0.5 rounded bg-black/40 border border-white/15 text-slate-200 outline-none focus:border-[var(--module-accent)]/50"
+          />
+          <button
+            onClick={() => void savePort()}
+            disabled={busy}
+            className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/15 disabled:opacity-50"
+          >
+            {t("buddy.twoapi.savePort")}
+          </button>
+        </span>
       </div>
 
       {/* ③ 自检结果 */}

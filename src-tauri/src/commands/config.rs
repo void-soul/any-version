@@ -76,6 +76,11 @@ fn default_false() -> bool {
     false
 }
 
+/// 2API 默认端口（避开 Free Router 的 8787，与原 Python 服务一致）
+fn default_twoapi_port() -> u16 {
+    8788
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Config {
     /// 已废弃：SDK 版本库目录（由 `sdk_dir/_versions` 取代）。保留读取兼容。
@@ -134,6 +139,10 @@ pub struct Config {
     /// 软件启动时自动拉起的服务 ID 列表，如 ["mihomo", "rtsp", "mysql", "redis", "mongodb"]
     #[serde(default)]
     pub auto_start_services: std::collections::HashSet<String>,
+    /// 2API（内嵌的 WorkBuddy → OpenAI/Anthropic 兼容 API）监听端口。
+    /// 端口被占用时用户可在 2API 面板改，改完会同步 AI 模块里指向它的供应商 URL。
+    #[serde(default = "default_twoapi_port")]
+    pub twoapi_port: u16,
     /// 顶级模块主题色：模块 id -> 主题色 hex（如 launcher -> "#8b5cf6"）
     #[serde(default)]
     pub module_theme_colors: std::collections::HashMap<String, String>,
@@ -282,6 +291,7 @@ fn merge_config(paths: ConfigPathsFile, settings: SettingsFile) -> Config {
         links_dir: String::new(),
         data_dir: paths.data_dir,
         sdk_dir: String::new(),
+        twoapi_port: default_twoapi_port(),
         managed_items: settings.managed_items,
         simple_managed_items: settings.simple_managed_items,
         custom_install_paths: settings.custom_install_paths,
@@ -476,6 +486,7 @@ fn default_config() -> Config {
         links_dir: base_dir.join("links").to_string_lossy().to_string(),
         data_dir: base_dir.to_string_lossy().to_string(),
         sdk_dir: base_dir.join("sdk").to_string_lossy().to_string(),
+        twoapi_port: default_twoapi_port(),
         managed_items: std::collections::HashSet::new(),
         simple_managed_items: std::collections::HashSet::new(),
         github_token: None,
