@@ -33,8 +33,14 @@ describe("getProxyInfo 的伪装映射条目", () => {
     expect(info!.aliasEntries).toEqual([["claude-sonnet-4-6", "space-bunny"], ["claude-haiku-4-5", "glm-5.3"]]);
   });
 
-  it("fallback 未填伪装名时用它自己的名字（既有行为）", () => {
+  it("fallback 未填伪装名时也不产生条目（与主模型同规则）", () => {
+    // 用户只填了 fallback 模型、没填伪装名 → 没发生伪装，不该显示 `glm-5.3 → glm-5.3`
     const info = getProxyInfo(TOOL, PROVIDER, false, "space-bunny", "", "glm-5.3", "");
-    expect(info!.aliasEntries).toEqual([["glm-5.3", "glm-5.3"]]);
+    expect(info!.aliasEntries).toEqual([]);
+  });
+
+  it("fallback 填了伪装名时照常显示", () => {
+    const info = getProxyInfo(TOOL, PROVIDER, false, "", "", "glm-5.3", "claude-haiku-4-5");
+    expect(info!.aliasEntries).toEqual([["claude-haiku-4-5", "glm-5.3"]]);
   });
 });

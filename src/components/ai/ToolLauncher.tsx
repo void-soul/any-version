@@ -160,7 +160,10 @@ export function getProxyInfo(
   }
   if (fallbackModel) {
     const claimedFb = fallbackMasqueradeModel || fallbackModel;
-    aliasEntries.push([claimedFb, fallbackModel]);
+    // 同主模型：别名 == 真实名 = 没发生伪装，不显示无意义的 `x → x`
+    if (claimedFb !== fallbackModel) {
+      aliasEntries.push([claimedFb, fallbackModel]);
+    }
   }
   return {
     inbound,
