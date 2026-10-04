@@ -24,9 +24,13 @@ import "./App.css";
 
 /** 模块按钮统一样式：胶囊里的模块入口、「更多」下拉里的模块条目共用同一套外观与 hover。
  *  同一种东西不该有第二种长相 —— 下拉条目原先另写了一套（字号 11 / 内边距 py-2 / 图标 3.5 /
- *  自配色 hover），悬停表现与胶囊不一致，看起来像两个不同层级的控件。 */
+ *  自配色 hover），悬停表现与胶囊不一致，看起来像两个不同层级的控件。
+ *
+ *  `whitespace-nowrap shrink-0` 是必需的：导航胶囊是 `overflow-x-auto`，模块多时靠横向滚动
+ *  兜底。flex 子项默认 `flex-shrink: 1`，缺了这两条就会先被压扁 —— 文字被迫逐字换行
+ *  （模块多时整个顶栏竖成一列），而不是撑出胶囊去滚动。 */
 const moduleTabClass = (active: boolean, extra = "") =>
-  `px-3 py-1.5 rounded-md text-tiny font-semibold flex items-center gap-1 transition-all cursor-pointer vex-nav-tab ${
+  `px-3 py-1.5 rounded-md text-tiny font-semibold flex items-center gap-1 whitespace-nowrap shrink-0 transition-all cursor-pointer vex-nav-tab ${
     active ? "vex-nav-tab-active text-white" : "text-slate-400 hover:text-slate-200"
   } ${extra}`;
 

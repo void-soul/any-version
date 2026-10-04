@@ -2030,15 +2030,16 @@ export default function BuddyPanel() {
   return (
     <div className="h-full w-full flex flex-col">
       {/* 头部 */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5 flex-shrink-0">
+      {/* 头部工具栏：窄窗口下让整行折行，而不是把按钮压到文字换行 */}
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5 flex-shrink-0 flex-wrap">
         <Users className="w-4 h-4 text-[var(--module-accent)]" />
         {/* 平台切换 */}
-        <div className="flex items-center gap-1 ml-3 bg-black/30 rounded-ctl border border-white/10 p-0.5">
+        <div className="flex items-center gap-1 ml-3 bg-black/30 rounded-ctl border border-white/10 p-0.5 shrink-0">
           {PLATFORMS.map((p) => (
             <button
               key={p.id}
               onClick={() => setPlatform(p.id)}
-              className={`px-2.5 py-1 rounded-md text-caption transition cursor-pointer ${
+              className={`px-2.5 py-1 rounded-md text-caption whitespace-nowrap shrink-0 transition cursor-pointer ${
                 platform === p.id
                   ? "bg-[var(--module-accent)]/25 text-white font-semibold"
                   : "text-slate-400 hover:text-white"
@@ -2050,12 +2051,12 @@ export default function BuddyPanel() {
           ))}
         </div>
         {/* Tab 切换 */}
-        <div className="flex items-center gap-1 ml-3 bg-black/30 rounded-ctl border border-white/10 p-0.5">
+        <div className="flex items-center gap-1 ml-3 bg-black/30 rounded-ctl border border-white/10 p-0.5 shrink-0">
           {tabs.map((tabItem) => (
             <button
               key={tabItem.id}
               onClick={() => setTab(tabItem.id)}
-              className={`px-2.5 py-1 rounded-md text-caption transition cursor-pointer flex items-center gap-1 ${
+              className={`px-2.5 py-1 rounded-md text-caption whitespace-nowrap shrink-0 transition cursor-pointer flex items-center gap-1 ${
                 tab === tabItem.id
                   ? "bg-[var(--module-accent)]/25 text-white font-semibold"
                   : "text-slate-400 hover:text-white"
@@ -2066,13 +2067,14 @@ export default function BuddyPanel() {
             </button>
           ))}
         </div>
-        <div className="flex-1" />
+        {/* 动作组：自身可收缩（不写 shrink-0），组内按钮各自 shrink-0 + nowrap，
+            这样窄窗口下按钮换行到下一行，而不是被压到文字换行或横向溢出 */}
         {tab === "accounts" && (
-          <>
+          <div className="flex items-center gap-2 ml-auto flex-wrap justify-end min-w-0">
             <button
               onClick={refreshAll}
               disabled={busy || accounts.length === 0}
-              className="px-2.5 py-1.5 rounded-ctl text-caption bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-40"
+              className="px-2.5 py-1.5 rounded-ctl text-caption whitespace-nowrap shrink-0 bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-40"
               title={t("buddy.refreshAllTitle")}
             >
               <RefreshCw className="w-3 h-3" /> {t("buddy.refreshAll")}
@@ -2080,21 +2082,21 @@ export default function BuddyPanel() {
             <button
               onClick={exportSelected}
               disabled={selectedCount === 0}
-              className="px-2.5 py-1.5 rounded-ctl text-caption bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-40"
+              className="px-2.5 py-1.5 rounded-ctl text-caption whitespace-nowrap shrink-0 bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-40"
             >
               <Upload className="w-3 h-3" /> {t("buddy.export")}
             </button>
             <button
               onClick={importFromJson}
               disabled={busy}
-              className="px-2.5 py-1.5 rounded-ctl text-caption bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-40"
+              className="px-2.5 py-1.5 rounded-ctl text-caption whitespace-nowrap shrink-0 bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-40"
             >
               <Download className="w-3 h-3" /> {t("buddy.importJson")}
             </button>
             <button
               onClick={() => selectedCount > 0 && setDeleteIds([...selectedIds])}
               disabled={selectedCount === 0}
-              className="px-2.5 py-1.5 rounded-ctl text-caption bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 flex items-center gap-1 cursor-pointer transition disabled:opacity-40"
+              className="px-2.5 py-1.5 rounded-ctl text-caption whitespace-nowrap shrink-0 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 flex items-center gap-1 cursor-pointer transition disabled:opacity-40"
             >
               <Trash2 className="w-3 h-3" /> {t("buddy.delete", { count: selectedCount })}
             </button>
@@ -2102,7 +2104,7 @@ export default function BuddyPanel() {
               <button
                 onClick={syncToOther}
                 disabled={busy || accounts.length === 0}
-                className="px-2.5 py-1.5 rounded-ctl text-caption bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+                className="px-2.5 py-1.5 rounded-ctl text-caption whitespace-nowrap shrink-0 bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
                 title={t("buddy.syncImport", { target: otherPlatform.label })}
               >
                 <Users className="w-3 h-3" /> {t("buddy.syncImport", { target: otherPlatform.label })}
@@ -2115,11 +2117,11 @@ export default function BuddyPanel() {
                 setTokenInput("");
                 setShowAdd(true);
               }}
-              className="px-2.5 py-1.5 rounded-ctl text-caption ui-btn-primary text-white font-semibold flex items-center gap-1 cursor-pointer transition"
+              className="px-2.5 py-1.5 rounded-ctl text-caption whitespace-nowrap shrink-0 ui-btn-primary text-white font-semibold flex items-center gap-1 cursor-pointer transition"
             >
               <Plus className="w-3 h-3" /> {t("buddy.addAccount")}
             </button>
-          </>
+          </div>
         )}
       </div>
 
