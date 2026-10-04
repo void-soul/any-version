@@ -298,6 +298,113 @@ pub fn set_refresh_token(
     Ok(())
 }
 
+/// 递归解密整棵 JSON 里所有 `$wbEncrypted` 字段。
+///
+/// 返回 `(明文树, 加密字段路径列表)`，路径形如 `auth.accessToken`、`accounts.0.token`。
+/// 切号写回时要用同一批路径**原样**重新加密 —— 少一个字段，那个字段就变成明文，
+/// WorkBuddy 客户端读到会报 integrity 错误甚至重置登录态。
+pub fn decrypt_tree_with_paths(
+    value: &serde_json::Value,
+    secret: &str,
+) -> Result<(serde_json::Value, Vec<String>), String> {
+    let mut paths: Vec<String> = Vec::new();
+    let mut prefix = String::new();
+    let plain = decrypt_node(value, secret, &mut prefix, &mut paths)?;
+    Ok((plain, paths))
+}
+
+fn decrypt_node(
+    value: &serde_json::Value,
+    secret: &str,
+    prefix: &mut String,
+    paths: &mut Vec<String>,
+) -> Result<serde_json::Value, String> {
+    use serde_json::Value;
+    match value {
+        Value::Object(map) => {
+            if is_encrypted(value) {
+                let text = decrypt_field(value, secret)?;
+                paths.push(prefix.clone());
+                return Ok(Value::String(text));
+            }
+            let mut out = serde_json::Map::new();
+            for (key, child) in map {
+                let saved = prefix.len();
+                if !prefix.is_empty() {
+                    prefix.push('.');
+                }
+                prefix.push_str(key);
+                out.insert(key.clone(), decrypt_node(child, secret, prefix, paths)?);
+                prefix.truncate(saved);
+            }
+            Ok(Value::Object(out))
+        }
+        Value::Array(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for (index, child) in items.iter().enumerate() {
+                let saved = prefix.len();
+                if !prefix.is_empty() {
+                    prefix.push('.');
+                }
+                prefix.push_str(&index.to_string());
+                out.push(decrypt_node(child, secret, prefix, paths)?);
+                prefix.truncate(saved);
+            }
+            Ok(Value::Array(out))
+        }
+        other => Ok(other.clone()),
+    }
+}
+
+/// 按 [`decrypt_tree_with_paths`] 记下的路径把明文字段重新加密。
+///
+/// 路径失效时**报错**而不是静默跳过：宁可切号失败，也不能写出半加密的登录态文件。
+pub fn encrypt_tree(
+    value: &serde_json::Value,
+    paths: &[String],
+    secret: &str,
+) -> Result<serde_json::Value, String> {
+    let mut out = value.clone();
+    for path in paths {
+        let slot = resolve_mut(&mut out, path)?;
+        let plain = slot
+            .as_str()
+            .ok_or_else(|| format!("路径 {path} 的值不是字符串，无法加密"))?
+            .to_string();
+        *slot = encrypt_field(&plain, secret)?;
+    }
+    Ok(out)
+}
+
+fn resolve_mut<'a>(root: &'a mut serde_json::Value, path: &str) -> Result<&'a mut serde_json::Value, String> {
+    use serde_json::Value;
+    let mut cur = root;
+    for seg in path.split('.') {
+        cur = match cur {
+            Value::Object(map) => map
+                .get_mut(seg)
+                .ok_or_else(|| format!("路径 {path} 不存在（缺 {seg}）"))?,
+            Value::Array(items) => {
+                let idx: usize = seg
+                    .parse()
+                    .map_err(|_| format!("路径 {path} 的数组下标非法：{seg}"))?;
+                items
+                    .get_mut(idx)
+                    .ok_or_else(|| format!("路径 {path} 越界（{seg}）"))?
+            }
+            _ => return Err(format!("路径 {path} 不可导航")),
+        };
+    }
+    Ok(cur)
+}
+
+/// 一步取到 at-rest 密钥（探测候选路径 → 调 loggerGet → 取出 secret）。
+///
+/// 供 Buddy 切号复用：官方加密字段必须用同一把密钥解密、再原样加密写回。
+pub fn fetch_secret() -> Result<String, String> {
+    extract_secret(&fetch_key_payload()?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -376,6 +483,70 @@ mod tests {
     }
 
     // ── 以下为 Task 2（加解密）的用例 ──
+
+    #[test]
+    fn tree_decrypt_lists_paths_and_reencrypt_restores_shape() {
+        // 切号要按**原样**把加密字段加密回去：不能多、不能少、不能换位置
+        let secret = "Sik9U5aXhCdwTVEwsEySDOmDoB9r9ntFxHF1fst9LQI=";
+        let tree = serde_json::json!({
+            "auth": {
+                "accessToken": encrypt_field("tok-a", secret).unwrap(),
+                "refreshToken": encrypt_field("ref-a", secret).unwrap(),
+                "domain": "www.workbuddy.cn",          // 明文，不动
+                "expiresAt": 123
+            },
+            "account": { "nickname": encrypt_field("小明", secret).unwrap(), "uid": "u1" },
+            "accounts": [
+                { "uid": "u1", "token": encrypt_field("t1", secret).unwrap() },
+                { "uid": "u2", "token": encrypt_field("t2", secret).unwrap() }
+            ],
+            "version": 1
+        });
+        let (plain, paths) = super::decrypt_tree_with_paths(&tree, secret).unwrap();
+        assert_eq!(plain["auth"]["accessToken"], "tok-a");
+        assert_eq!(plain["account"]["nickname"], "小明");
+        assert_eq!(plain["accounts"][1]["token"], "t2");
+        assert_eq!(plain["auth"]["domain"], "www.workbuddy.cn", "明文字段原样");
+        assert_eq!(plain["version"], 1);
+        let mut sorted = paths.clone();
+        sorted.sort();
+        assert_eq!(
+            sorted,
+            vec![
+                "account.nickname",
+                "accounts.0.token",
+                "accounts.1.token",
+                "auth.accessToken",
+                "auth.refreshToken"
+            ],
+            "要记录全部加密字段的路径"
+        );
+
+        // 按同一批路径重新加密 → 结构与原来一致，且能再解回明文
+        let back = super::encrypt_tree(&plain, &paths, secret).unwrap();
+        assert!(super::is_encrypted(&back["auth"]["accessToken"]));
+        assert!(super::is_encrypted(&back["accounts"][0]["token"]));
+        assert_eq!(back["auth"]["domain"], "www.workbuddy.cn");
+        assert_eq!(back["version"], 1);
+        let (plain2, _) = super::decrypt_tree_with_paths(&back, secret).unwrap();
+        assert_eq!(plain2, plain, "往返后明文应完全一致");
+    }
+
+    #[test]
+    fn tree_with_no_encrypted_fields_is_returned_as_is() {
+        let tree = serde_json::json!({"auth": {"accessToken": "plain"}, "v": 1});
+        let (plain, paths) = super::decrypt_tree_with_paths(&tree, "secret").unwrap();
+        assert_eq!(plain, tree);
+        assert!(paths.is_empty());
+    }
+
+    #[test]
+    fn encrypt_tree_reports_paths_that_do_not_exist() {
+        // 路径失效要报错而不是静默写出半个加密的文件（那会损坏登录态）
+        let plain = serde_json::json!({"auth": {"accessToken": "tok"}});
+        let err = super::encrypt_tree(&plain, &["auth.missing".to_string()], "s").unwrap_err();
+        assert!(err.contains("auth.missing"), "{err}");
+    }
 
     #[test]
     fn aad_frame_is_byte_exact() {

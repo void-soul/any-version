@@ -621,6 +621,54 @@ fn build_auth_session(account: &BuddyAccount, base_session: Option<&serde_json::
     serde_json::Value::Object(session)
 }
 
+/// 官方 5.6 加密格式的切号写回：解密 → 换目标账号 → 原样加密 → 原子写回。
+///
+/// 三重保护，任一环节不满足就**不写**：
+/// 1. 拿不到官方密钥 → 拒绝（写明文会破坏登录态）
+/// 2. 重新加密时若某条路径在重建后的结构里不存在 → 拒绝（宁可切不了号）
+/// 3. 写回用 hash 比对（防切号期间被官方客户端改过）+ 写后校验加密包装仍在
+fn write_encrypted_session(
+    account: &BuddyAccount,
+    auth_file: &std::path::PathBuf,
+    existing: &serde_json::Value,
+    expected_hash: &[u8; 32],
+    marker_path: &std::path::PathBuf,
+    marker_hash_before: Option<[u8; 32]>,
+) -> Result<String, String> {
+    use super::twoapi::atrest;
+    let secret = atrest::fetch_secret().map_err(|e| {
+        format!("无法取得 WorkBuddy 官方加密密钥，已停止覆盖以避免破坏登录状态：{e}")
+    })?;
+    // 1. 整棵解密，并记下哪些字段原本是加密的
+    let (plain_existing, paths) = atrest::decrypt_tree_with_paths(existing, &secret)?;
+    // 2. 用目标账号的凭据重建 session（沿用官方其余字段，如 domain / accounts / allAccounts）
+    let session = build_auth_session(account, Some(&plain_existing));
+    // 3. 按原路径重新加密；路径失效会直接报错，不会写出半加密文件
+    let encrypted = atrest::encrypt_tree(&session, &paths, &secret)?;
+    let content = serde_json::to_string_pretty(&encrypted)
+        .map_err(|e| format!("序列化登录信息失败: {}", e))?;
+    // 4. 原子写回（hash 比对防并发覆盖）
+    if !store::write_atomic_if_hash_matches(auth_file, expected_hash, &content)? {
+        return Err("WorkBuddy 登录信息在切号期间被官方客户端更新，已停止覆盖，请重试".to_string());
+    }
+    // 5. 写后校验：加密包装必须还在（否则等于把登录态写坏了）
+    let written_text = fs::read_to_string(auth_file)
+        .map_err(|e| format!("校验 WorkBuddy 登录信息失败: {e}"))?;
+    let written: serde_json::Value = serde_json::from_str(&written_text)
+        .map_err(|e| format!("校验 WorkBuddy 登录信息 JSON 失败: {e}"))?;
+    if !contains_encrypted_wrapper(&written) {
+        return Err("写回结果丢失了官方加密包装，WorkBuddy 登录态可能已损坏，请重新登录 WorkBuddy".to_string());
+    }
+    if let Some(hash) = marker_hash_before {
+        let _ = store::remove_file_if_hash_matches(marker_path, &hash);
+    }
+    Ok(format!(
+        "已切换到 {}（{}，官方加密字段已原样保留）",
+        account.display_name(),
+        auth_file.display()
+    ))
+}
+
 /// 切换默认客户端到指定账号（写回 auth 文件；无文件时按 account 重建）。
 /// 返回写入后的校验信息。
 pub fn write_account_to_default_client(
@@ -629,15 +677,6 @@ pub fn write_account_to_default_client(
 ) -> Result<String, String> {
     let auth_file = default_auth_file_path(platform)
         .ok_or_else(|| "无法定位默认 WorkBuddy 登录信息路径".to_string())?;
-
-    if let Some(raw) = account.auth_raw.as_ref() {
-        if contains_encrypted_wrapper(raw) {
-            return Err(
-                "当前 WorkBuddy 登录文件包含官方加密字段，未取得官方密钥，已停止覆盖以避免破坏登录状态"
-                    .to_string(),
-            );
-        }
-    }
 
     let marker_path = logout_marker_path(&auth_file);
     let marker_hash_before: Option<[u8; 32]> =
@@ -648,13 +687,21 @@ pub fn write_account_to_default_client(
             .map_err(|e| format!("读取现有 WorkBuddy 登录信息失败: {}", e))?;
         let existing_json: serde_json::Value = serde_json::from_slice(&existing)
             .map_err(|e| format!("现有 WorkBuddy 登录信息不是有效 JSON，已停止覆盖: {}", e))?;
+        let expected_hash: [u8; 32] = Sha256::digest(&existing).into();
+        // WorkBuddy 5.6 起 token 等字段是官方加密的（$wbEncrypted）。
+        // 这里解密 → 换目标账号 → 按**原字段路径**重新加密 → 原子写回，
+        // 加密包装一个不少，客户端读到的结构与原来一致。
+        // （早先这里是直接拒绝：那时还拿不到官方密钥；现在 twoapi::atrest 有完整能力）
         if contains_encrypted_wrapper(&existing_json) {
-            return Err(
-                "当前 WorkBuddy 登录文件包含官方加密字段，未取得官方密钥，已停止覆盖以避免破坏登录状态"
-                    .to_string(),
+            return write_encrypted_session(
+                account,
+                &auth_file,
+                &existing_json,
+                &expected_hash,
+                &marker_path,
+                marker_hash_before,
             );
         }
-        let expected_hash: [u8; 32] = Sha256::digest(&existing).into();
         let session = build_auth_session(account, Some(&existing_json));
         let content = serde_json::to_string_pretty(&session)
             .map_err(|e| format!("序列化登录信息失败: {}", e))?;
