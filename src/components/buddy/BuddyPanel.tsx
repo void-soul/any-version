@@ -2067,8 +2067,6 @@ export default function BuddyPanel() {
           ))}
         </div>
         <div className="flex-1" />
-        {tab === "twoapi" && <TwoApiPanel />}
-
         {tab === "accounts" && (
           <>
             <button
@@ -2304,6 +2302,9 @@ export default function BuddyPanel() {
           )}
         </div>
       )}
+
+      {/* ─── 2API Tab ─── */}
+      {tab === "twoapi" && <TwoApiPanel />}
 
       {/* ─── 账号 Tab ─── */}
       {tab === "accounts" && (
