@@ -291,6 +291,33 @@ fn neutral_detect_cwd() -> Option<std::path::PathBuf> {
     Some(dir)
 }
 
+/// 安装后校验的重试窗口：15 次 × 2 秒 ≈ 28 秒。
+///
+/// 依据实测（Claude Desktop 1.44121.2）：`winget install` 返回时 `claude.exe` 还没落盘，
+/// 稍后才写入（中间要解 Squirrel 包与 224MB 主程序）。慢盘 / 杀毒软件扫描会更久。
+const INSTALL_VERIFY_ATTEMPTS: u32 = 15;
+const INSTALL_VERIFY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// 在预算内反复探针，命中即返回；预算耗尽返回 `None`。
+///
+/// `attempts` 为 0 也**至少探一次** —— 否则调用方算出 0 时会一次都不查就直接报「未安装」，
+/// 那比误报「未安装」更糟（会把装好的工具说成没装）。
+fn probe_with_retry<F>(attempts: u32, interval: std::time::Duration, mut probe: F) -> Option<String>
+where
+    F: FnMut() -> Option<String>,
+{
+    let budget = attempts.max(1);
+    for i in 0..budget {
+        if let Some(v) = probe() {
+            return Some(v);
+        }
+        if i + 1 < budget {
+            std::thread::sleep(interval);
+        }
+    }
+    None
+}
+
 /// 安装后置校验（抄 EchoBird `auto_fix.rs` / `validate_install_intent`）：
 /// **安装命令返回成功 ≠ 工具真的装对了、真的能跑**。
 ///
@@ -302,22 +329,51 @@ fn neutral_detect_cwd() -> Option<std::path::PathBuf> {
 ///
 /// 因此判定口径与 `detect_single_tool` 的策略 2 / 策略 3 一致：
 /// 「版本探测成功」或「声明路径上确实有可执行文件」任一命中即算装好。
+///
+/// 磁盘判定**必须在窗口内重试**（`probe_with_retry`）：安装器是异步落盘的，命令返回
+/// 成功时文件可能还没到。改之前只查一次，于是装好的工具被报成「找不到可执行文件」。
 pub(crate) fn verify_installed(tool_id: &str, paths: &PathConfig) -> Result<String, String> {
     if !paths.detect_cmd.trim().is_empty() {
         if let Some(ver) = detect_via_cmd(&paths.detect_cmd) {
             return Ok(ver);
         }
     }
-    if let Some(exe) = super::tool_paths::find_declared_exe(tool_id, &paths.paths, &paths.command)
-        .or_else(|| super::tool_paths::find_fallback_exe(tool_id, &paths.command, &paths.paths))
-    {
-        return Ok(format!("已安装（{}）", exe.display()));
+    let found = probe_with_retry(
+        INSTALL_VERIFY_ATTEMPTS,
+        INSTALL_VERIFY_INTERVAL,
+        || {
+            super::tool_paths::find_declared_exe(tool_id, &paths.paths, &paths.command)
+                .or_else(|| {
+                    super::tool_paths::find_fallback_exe(tool_id, &paths.command, &paths.paths)
+                })
+                .map(|exe| format!("已安装（{}）", exe.display()))
+        },
+    );
+    if let Some(msg) = found {
+        return Ok(msg);
     }
-    Err(format!(
-        "安装命令已执行成功，但本机找不到 {} 的可执行文件，也没能通过 `{}` 探测到版本。\
-         可能是装成了别的包，或安装目录尚未进入 PATH —— 请重新打开本应用后再试。",
-        paths.command, paths.detect_cmd
-    ))
+    Err(describe_install_miss(paths))
+}
+
+/// 安装失败的说明。**有值才插**：桌面端的 `command` 与 `detect_cmd` 本来就是空串，
+/// 直接插进模板会得到「找不到**（空）**的可执行文件」这种读不懂的话。
+fn describe_install_miss(paths: &PathConfig) -> String {
+    let cmd = paths.command.trim();
+    let probe = paths.detect_cmd.trim();
+    let mut msg = String::from("安装命令已执行成功，但本机找不到");
+    if cmd.is_empty() {
+        msg.push_str("该工具的可执行文件");
+    } else {
+        msg.push_str(cmd);
+        msg.push_str(" 的可执行文件");
+    }
+    if probe.is_empty() {
+        msg.push_str("，也没有可用的版本探测命令");
+    } else {
+        msg.push_str(&format!("，也没能通过 `{probe}` 探测到版本"));
+    }
+    msg.push_str("。可能是装成了别的包，或安装目录尚未进入 PATH —— 请重新打开本应用后再试。");
+    msg
 }
 
 /// 通过 detect_cmd 回退检测（执行工具自身的 --version 命令）
@@ -739,7 +795,7 @@ async fn fetch_pypi_latest_version(package: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_tool_website;
+    use super::{probe_with_retry, resolve_tool_website};
 
     #[test]
     fn website_prefers_homepage_over_website_and_github() {
@@ -773,5 +829,59 @@ mod tests {
     fn website_empty_without_any_source() {
         assert_eq!(resolve_tool_website(None, None, None), "");
         assert_eq!(resolve_tool_website(None, Some(""), None), "");
+    }
+
+    // ═══════════════ 安装后校验的重试（竞态修复） ═══════════════
+
+    /// 首次就命中 → 只探一次，不浪费时间
+    #[test]
+    fn retry_stops_at_the_first_hit() {
+        let mut calls = 0;
+        let got = probe_with_retry(5, std::time::Duration::ZERO, || {
+            calls += 1;
+            Some("v1.44121.2".to_string())
+        });
+        assert_eq!(got.as_deref(), Some("v1.44121.2"));
+        assert_eq!(calls, 1, "首次命中就不该再探");
+    }
+
+    /// 前几次探不到、后来才落盘 → 必须等到它出现（这正是 Squirrel 的情形）
+    #[test]
+    fn retry_waits_for_a_slow_installer_to_finish() {
+        let mut calls = 0;
+        let got = probe_with_retry(5, std::time::Duration::ZERO, || {
+            calls += 1;
+            if calls < 3 {
+                None
+            } else {
+                Some("已安装".to_string())
+            }
+        });
+        assert_eq!(got.as_deref(), Some("已安装"));
+        assert_eq!(calls, 3, "第 3 次才落盘 → 应该探到，且不多探一次");
+    }
+
+    /// 一直探不到 → 探满次数后放弃，把错误抛给调用方（不能让安装流程卡死）
+    #[test]
+    fn retry_gives_up_after_the_attempt_budget() {
+        let mut calls = 0;
+        let got: Option<String> = probe_with_retry(4, std::time::Duration::ZERO, || {
+            calls += 1;
+            None
+        });
+        assert!(got.is_none());
+        assert_eq!(calls, 4, "探满 4 次就放弃");
+    }
+
+    /// 0 次预算 = 不探（防止调用方算出 0 导致一次都不查就报「未安装」）
+    #[test]
+    fn retry_with_zero_budget_still_probes_once() {
+        let mut calls = 0;
+        let got = probe_with_retry(0, std::time::Duration::ZERO, || {
+            calls += 1;
+            Some("x".to_string())
+        });
+        assert_eq!(got.as_deref(), Some("x"));
+        assert_eq!(calls, 1, "预算为 0 也至少探一次，否则会误报未安装");
     }
 }
