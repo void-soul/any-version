@@ -61,7 +61,7 @@ pub fn run_preflight(inputs: &PreflightInputs) -> PreflightReport {
     });
 
     let account_detail = match &inputs.account {
-        Ok(a) => format!("{} · token {} 字符", a.uid, a.access_token.len()),
+        Ok(a) => format!("{} · token {} 字符", a.display_name(), a.access_token.len()),
         Err(e) => format!("解析失败：{e}"),
     };
     checks.push(CheckResult {
@@ -152,12 +152,25 @@ mod tests {
     fn account() -> credentials::Account {
         credentials::Account {
             uid: "uid-1".into(),
+            nickname: "小明".into(),
+            email: "ming@example.com".into(),
             enterprise_id: "ent-1".into(),
             domain: "www.codebuddy.cn".into(),
             access_token: "tok-abc".into(),
             refresh_token: "ref".into(),
             expires_at_ms: 0,
         }
+    }
+
+    #[test]
+    fn display_name_prefers_nickname_then_email_then_uid() {
+        // 面板的「当前账号」给人看：昵称 → 邮箱 → uid（都没有才退 uid）
+        let mut a = account();
+        assert_eq!(a.display_name(), "小明");
+        a.nickname = "   ".into(); // 空白昵称视为没有
+        assert_eq!(a.display_name(), "ming@example.com");
+        a.email = String::new();
+        assert_eq!(a.display_name(), "uid-1", "昵称与邮箱都没有时回落 uid");
     }
 
     #[test]
@@ -411,7 +424,7 @@ pub async fn buddy2api_start(port: Option<u16>) -> Result<TwoApiStatus, String> 
         s.phase = "starting".to_string();
         s.port = port;
         s.last_error = None;
-        s.account = Some(account.uid.clone());
+        s.account = Some(account.display_name());
     });
 
     let handle = tauri::async_runtime::spawn(async move {
@@ -481,7 +494,7 @@ pub async fn on_account_switched() -> Result<bool, String> {
     let account = creds.current()?;
     let port = status().port;
     let applied = apply_account_to_running(port, &account).await;
-    set_status(|s| s.account = Some(account.uid.clone()));
+    set_status(|s| s.account = Some(account.display_name()));
     eprintln!("[2api] 凭据已同步（uid={}，服务{}）", account.uid, if applied { "已热更新" } else { "未在运行" });
     Ok(applied)
 }

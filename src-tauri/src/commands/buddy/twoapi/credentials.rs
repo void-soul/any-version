@@ -58,11 +58,31 @@ pub fn find_auth_file() -> Option<PathBuf> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Account {
     pub uid: String,
+    /// 昵称（WorkBuddy 里是 `$wbEncrypted` 加密字段，解密后可能为空）
+    pub nickname: String,
+    /// 邮箱（登录态里未必有）
+    pub email: String,
     pub enterprise_id: String,
     pub domain: String,
     pub access_token: String,
     pub refresh_token: String,
     pub expires_at_ms: i64,
+}
+
+impl Account {
+    /// 面板展示用：昵称 → 邮箱 → uid。
+    ///
+    /// 不给 uid 是因为那是一串无意义的 UUID：用户看到"当前账号"是要认人，
+    /// 不是要核对 ID（真要核对，预检结果里有）。
+    pub fn display_name(&self) -> String {
+        for candidate in [&self.nickname, &self.email] {
+            let trimmed = candidate.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+        self.uid.clone()
+    }
 }
 
 /// 读文件时留下的快照：写回前用它判断"期间有没有人改过"
@@ -207,6 +227,12 @@ fn parse_account(raw: &serde_json::Value, secret: &str) -> Result<Account, Strin
     Ok(Account {
         access_token: field(&auth, "accessToken")?,
         refresh_token: field(&auth, "refreshToken")?,
+        nickname: field(&account, "nickname")?,
+        email: account
+            .get("email")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
         domain: {
             let d = auth.get("domain").and_then(|v| v.as_str()).unwrap_or("");
             if d.is_empty() {
