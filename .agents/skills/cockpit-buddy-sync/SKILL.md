@@ -1,6 +1,6 @@
 ---
 name: cockpit-buddy-sync
-description: 把两个参考仓的 Buddy / WorkBuddy（含 CodeBuddy CN/AI）功能学习并同步到 any-version 的既定流程——主参考 WorkDaddy（E:/pro/other-sdk/buddy/WorkDaddy，Node.js + CDP 注入，专做 WorkBuddy，借语义/契约/算法/时序；其 1.2.x 起新增的自动化任务、成长计划、会话同步明细、用量统计域优先从这里学）、辅参考 cockpit-tools（E:/pro/other-sdk/buddy/cockpit-tools，Rust/Tauri，与目标同架构，只在 WorkDaddy 未覆盖的域或需要同架构移植范例时用）。当参考仓升级、用户说"学习/对齐/复刻 WorkDaddy 或 cockpit-tools""继续学习目标项目""抄 Buddy 作业"，或 WorkBuddy/CodeBuddy 的 本地导入、新增账号、切换账号、假退出登录、手动/自动签到、会话列表、会话合并、会话同步、会话归档导入导出、账号导出导入、账号互导、用量与积分统计、Token 统计、调用量统计、积分轮换建议、自动化任务、公开任务发现、安全评估、成长计划、Buddy 状态、防休眠、免打扰、自动续接、暂存提示词、快捷短语、主题、模型管理 出现功能缺失或行为不一致时使用。先跑脚本取差异、读同步点与契约清单，再按差异增量学习，不要凭记忆全量重写。
+description: 把三个参考仓的 Buddy / WorkBuddy（含 CodeBuddy CN/AI）功能学习并同步到 any-version 的既定流程——主参考 WorkDaddy（E:/pro/other-sdk/buddy/WorkDaddy，Node.js + CDP 注入，专做 WorkBuddy，借语义/契约/算法/时序；其 1.2.x 起新增的自动化任务、成长计划、会话同步明细、用量统计域优先从这里学）、辅参考 cockpit-tools（E:/pro/other-sdk/buddy/cockpit-tools，Rust/Tauri，与目标同架构，只在 WorkDaddy 未覆盖的域或需要同架构移植范例时用）、参考 C workbuddy2api（E:/pro/other-sdk/buddy/workbuddy2api，**我们自己的 fork**，2API 协议真源；用于跟进上游协议变化，保证 Rust 版 2API 与 Python 版不漂移）。当参考仓升级、用户说"学习/对齐/复刻 WorkDaddy 或 cockpit-tools""继续学习目标项目""抄 Buddy 作业""跟进 workbuddy2api 上游更新"，或 WorkBuddy/CodeBuddy 的 本地导入、新增账号、切换账号、假退出登录、手动/自动签到、会话列表、会话合并、会话同步、会话归档导入导出、账号导出导入、账号互导、用量与积分统计、Token 统计、调用量统计、积分轮换建议、自动化任务、公开任务发现、安全评估、成长计划、Buddy 状态、防休眠、免打扰、自动续接、暂存提示词、快捷短语、主题、模型管理，以及 2API / 对话接口 / 模型目录 / 聊天端点（chat completions、Anthropic messages、模型枚举、at-rest 免密登录）出现功能缺失、行为不一致或 4xx/5xx 时使用。先跑脚本取差异（`relearn.sh [cockpit|workdaddy|2api|all]`）、读同步点与契约清单，再按差异增量学习，不要凭记忆全量重写。
 ---
 
 # Buddy 参考仓增量学习（cockpit-buddy-sync）
@@ -12,6 +12,13 @@ description: 把两个参考仓的 Buddy / WorkBuddy（含 CodeBuddy CN/AI）功
 | **主参考：WorkDaddy** | `E:\pro\other-sdk\buddy\WorkDaddy` | 纯 Node.js 本地 daemon + CDP 注入（无构建管线，真源在 `scripts/`，行为规范在 `test/`） | **只借语义/格式/算法/时序**，不借架构与注入代码，按 §4.1 适配；**做 WorkBuddy 的能力优先从这里学** |
 | 辅参考：cockpit-tools | `E:\pro\other-sdk\buddy\cockpit-tools` | Rust/Tauri，与目标**同架构** | 整函数移植，按 §4.2 适配；只在 WorkDaddy 未覆盖的域、或需要"同架构怎么写"的范例时用 |
 | 目标：any-version | `E:\pro\my\any-version` | Tauri + Rust + React | 见下方文件地图 |
+| **参考 C：workbuddy2api（我们自己的 fork）** | `E:\pro\other-sdk\buddy\workbuddy2api` | Python + FastAPI，2API 协议真源 | **不是抄功能，是跟进上游协议变化** —— 保证 Rust 版 2API 与它不漂移。契约见 `references/workbuddy2api.md` |
+
+**参考 C 与 A/B 性质不同**：A/B 是别人的仓，我们学它；C 是**我们自己的 fork**（`void-soul/codebuddy2api`，fork 自 `ShouZhuo0413/codebuddy2openai`）。学它的目的是**双向**的：
+- **向下**：官方更新了 → 我们的 Rust 2API 要跟上（否则 `commands/buddy/twoapi/` 与 Python 版语义漂移）
+- **向上**：我们在 Python 侧改了协议行为（如 `/v1/models` 转发后端目录）→ Rust 侧同步，并考虑推回官方
+
+远程布局有个坑：`fork` = 我们的，`origin`/`upstream` = 官方。**判断是否落后必须看 `origin/main`（官方）**，推自己的改动用 `git push fork main`。详见 `references/workbuddy2api.md` §C.0。
 
 **为什么改为 WorkDaddy 为主**：我们的产品线以 WorkBuddy / CodeBuddy 为主，WorkDaddy 是**只做 WorkBuddy** 的深挖实现（账号/会话/用量/自动化/成长全部围绕同一客户端），语义更贴近真实协议与真实边界；cockpit-tools 是综合性工具，覆盖面广但每个域都浅。因此：**新功能先问 WorkDaddy 有没有**，没有再看 cockpit-tools。
 
@@ -23,6 +30,7 @@ description: 把两个参考仓的 Buddy / WorkBuddy（含 CodeBuddy CN/AI）功
 
 - Buddy 后端 `src-tauri/src/commands/buddy/`：`mod.rs`（命令层 + 切换编排 + 进度事件）、`models.rs`、`store.rs`、`api.rs`（官方 API / 用量 / 签到 / 成长 / 旅行）、`crypto.rs`、`workbuddy.rs`、`codebuddy_cn.rs`、`sessions.rs`、`auto_checkin.rs`、`auto_travel.rs`、`daily_history.rs`、`expiry.rs`、`action_log.rs`、`client_process.rs`、`session_transfer{.rs,/workbuddy.rs,/codebuddy.rs}`、`third_party_import.rs`（WorkDaddy / cockpit-tools **导出文件**导入）、`scrypt_kdf.rs`（WorkDaddy 加密导出包的 scrypt 派生）
 - 前端 `src/components/buddy/BuddyPanel.tsx`；i18n `src/i18n/locales/{zh,en}/translation.json`（键在 `buddy.*`）；命令注册 `src-tauri/src/lib.rs`
+- **2API 侧**（参考 C 的落点）：`src-tauri/src/commands/buddy/twoapi/{mod,atrest,credentials,upstream}.rs`、`src-tauri/src/proxy/{sse,convert}.rs`（SSE 聚合与模型目录归一化）、前端 `src/components/buddy/twoapi/*`
 - **AI/代理侧**（WorkDaddy 的用量统计、Token 统计、模型管理域对应到这里）：`src-tauri/src/commands/ai/{models.rs,provider.rs,usage.rs}`、`src-tauri/src/proxy/{mod.rs,server.rs}`、`src/components/ai/{UsageStats.tsx,ModelConfig.tsx}`
 
 ### 0.1 硬规则：WorkDaddy 只作用于 WorkBuddy 路径
@@ -41,9 +49,12 @@ WorkDaddy **只有 WorkBuddy（cn / ai）两个 profile**，没有 CodeBuddy CN 
 bash .agents/skills/cockpit-buddy-sync/scripts/relearn.sh            # 两个参考仓都跑
 bash .agents/skills/cockpit-buddy-sync/scripts/relearn.sh workdaddy  # 只跑主参考
 bash .agents/skills/cockpit-buddy-sync/scripts/relearn.sh cockpit    # 只跑辅参考
+bash .agents/skills/cockpit-buddy-sync/scripts/relearn.sh 2api       # 只跑参考 C：workbuddy2api
 ```
 
-输出 = 自上次同步以来 Buddy 相关文件的 commit 列表与 `diff --stat`（WorkDaddy 另打印当前 `DAEMON_VERSION`/`DAEMON_BUILD_ID`）。**以这个差异为学习范围**，只精读有变化的参考文件；无变化的功能域直接跳过（除非用户报告了 bug——那走 `references/pitfalls.md` 检查单）。
+输出 = 自上次同步以来 Buddy 相关文件的 commit 列表与 `diff --stat`（WorkDaddy 另打印当前 `DAEMON_VERSION`/`DAEMON_BUILD_ID`）。
+
+> 参考 C 的输出语义不同：它同时列「官方新增、我们还没有的」（**要跟进的**）与「我们领先官方的」（推 fork 前看的）。无新增时**不打印 diff** —— 两点式 diff `HEAD..origin/main` 在无新增时会显示我们自己改动的反向差异，容易误读成「官方改了这些」。**以这个差异为学习范围**，只精读有变化的参考文件；无变化的功能域直接跳过（除非用户报告了 bug——那走 `references/pitfalls.md` 检查单）。
 
 ## 2. 功能域 → 参考文件对照表
 
@@ -91,6 +102,25 @@ bash .agents/skills/cockpit-buddy-sync/scripts/relearn.sh cockpit    # 只跑辅
 
 > cockpit-tools 与 WorkDaddy 覆盖重叠的是「账号 / 会话」两域。**账号域冲突以 WorkDaddy 为准**（更贴近真实登录文件语义）；**切换时序与合并模型以 cockpit-tools 为准**（我们已按它实现，见 §4.1）。
 
+### 2.3 参考 C：workbuddy2api（2API 协议，完整契约见 `references/workbuddy2api.md`）
+
+我们已在 Kira 内嵌了 Rust 版 2API（Buddy → 2API 选项卡），Python fork 是它的**协议真源**。
+这张表回答"上游 Python 改了哪里 → Rust 侧要不要跟"。
+
+| 功能域 | Python（fork 内） | 我们的 Rust | 跟随要点 |
+|---|---|---|---|
+| 端点集合 / 请求转换 | `core/converter.py`（FastAPI 路由、a2o/o2a 转换） | `commands/buddy/twoapi/mod.rs` + `proxy/convert.rs` | 新增/改名端点要同步；转换语义以 Python 为准 |
+| 登录态读取 / token 刷新 | `core/credentials.py` | `commands/buddy/twoapi/credentials.rs` | 我们**多了** mtime 校验防 lost update，别"学回去"删掉 |
+| at-rest 加密字段 | `core/workbuddy_atrest_crypto.py` | `commands/buddy/twoapi/atrest.rs` | 依赖 WorkBuddy 桌面端 Electron 取密钥，装在非默认路径时要注入 env |
+| 上游鉴权头 | `cred.get_headers()` | `ProxyConfig.upstream_headers` | WorkBuddy 特有头（`X-User-Id` 等），通用 Bearer 跑不通 |
+| 模型目录 | `get_available_models()` | `proxy/convert.rs::normalize_models_response` | 上游目录在 `/v2/enterprises/personal/models`（**不是** `/v2/models`）；过滤规则只有一份 `is_chat_model` |
+| 只收流式约束 | 硬编码强制 `stream=true` | `ProxyConfig.force_upstream_stream` + `proxy/sse.rs::aggregate_chat_chunks` | 我们做成了可配置开关 + 代理侧聚合，比 Python 侧更通用 |
+| 多账号池（admin 模式） | `admin.pool` | 未实现（明确不做） | 用户已决定不做，勿新增 |
+
+**同步纪律**：`references/workbuddy2api.md` §C.2 的上游契约（路径、只收流式、鉴权头、
+模型目录位置）是实测确认的。**任何一条失效都是大事** —— 说明上游变了，要立刻更新该文档 +
+`references/pitfalls.md` I 节，并检查两侧实现。
+
 ## 3. 学习流程
 
 1. `relearn.sh` 拿两仓差异 → 对照 §2 圈出受影响功能域（先看主参考 §2.1）。
@@ -98,7 +128,8 @@ bash .agents/skills/cockpit-buddy-sync/scripts/relearn.sh cockpit    # 只跑辅
 3. **判可移植性三分类**：① 纯逻辑；② 官方接口/HTTP；③ 必须渲染进程注入。`inject.js` 顶部被 `test/*.test.js` 直接抽取的纯函数（文案表、分类器、状态机）属 ①，优先移植；③ 只借鉴判定规则与交互语义，并在交付说明里写清降级方案。
 4. 逐条比对：路径、常量（secret key、JSON 字段名）、时序、分支条件、错误语义。语义性差异（少做一步、条件写反、字段缺）必修；风格差异不修。
 5. 应用 §4 适配规则后移植；每个语义点配一个单元测试（可直接把参考同名 test 的用例断言转写成 Rust `#[cfg(test)]`）。
-6. 验证（§5）→ 更新**两个** sync-point 并追加学习记录 → 写 qa.db → 汇报差异清单（每条标注来源 A/B 与平台范围）。
+6. 验证（§5）→ 更新 sync-point（A/B/C 三个）并追加学习记录 → 写 qa.db → 汇报差异清单（每条标注来源 A/B/C 与平台范围）。
+7. **参考 C 额外一步**：跑 `relearn.sh 2api`。若「官方新增」非空，按 §2.3 表逐行判断 Rust 侧要不要跟；跟完更新 `sync-point.workbuddy2api.txt`。若我们在 Python 侧有领先官方的提交且值得回馈，才考虑推 PR 回官方。
 
 ## 4. 固定适配（参考侧有、我们不照搬的部分，勿"学回去"）
 
@@ -140,7 +171,7 @@ cd .. && npx tsc --noEmit
 ## 6. 收尾
 
 - qa.db：`qa-log` 技能，一条功能/修复记录（根因写"参考实现语义 vs 我们的差异"，注明来自主参考 WorkDaddy 还是辅参考 cockpit-tools，并写平台范围）。
-- `sync-point.txt` / `sync-point.workdaddy.txt`：更新 commit 与日期。
+- `sync-point.txt` / `sync-point.workdaddy.txt` / `sync-point.workbuddy2api.txt`：更新 commit 与日期。
 - 若发现新坑（移植/漂移导致的 bug），追加到 `references/pitfalls.md` 检查单；若发现 WorkDaddy 侧新语义，追加到 `references/workdaddy.md`。
 
 ## 7. 技能内文件
@@ -152,4 +183,6 @@ cd .. && npx tsc --noEmit
 | `scripts/relearn.sh` | 生成两仓自同步点以来的相关 diff |
 | `references/workdaddy.md` | **主参考**的契约清单 + 可移植性三分类 + 缺口候选 |
 | `references/contracts.md` | 辅参考（cockpit-tools）的逐字段契约（已逐字段验证） |
-| `references/pitfalls.md` | 两仓移植踩坑单（含漂移探测 grep） |
+| `sync-point.workbuddy2api.txt` | 参考 C（我们 fork 的 workbuddy2api）对齐点 |
+| `references/workbuddy2api.md` | **参考 C** 的契约：上游路径 / 只收流式约束 / at-rest 密钥来源 / 模型目录三层来源 / Python↔Rust 对照表 |
+| `references/pitfalls.md` | 三仓移植踩坑单（含漂移探测 grep） |

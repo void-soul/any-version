@@ -1,0 +1,12 @@
+[6fd292c] 2026-10-04 workbuddy2api fork（fork=void-soul/codebuddy2api，origin/upstream=ShouZhuo0413/codebuddy2openai）。基线=官方 ce26dfd（PR #28），我们领先 3 个提交，**未落后官方**。
+
+- 首次纳入本技能（成为参考仓 C）。起因：Rust 版 2API（`commands/buddy/twoapi/`）已落地，
+  必须持续跟随 Python fork 的协议语义，否则两边漂移（模型目录、at-rest、鉴权头、流式约束）。
+- 建立契约文档 `references/workbuddy2api.md`：上游路径、只收流式约束、at-rest 密钥来源、
+  三层模型目录（只有后端目录权威）、Python↔Rust 模块对照表。
+- 记录远程布局坑：`origin` 曾指向我们的 fork，导致 `git branch -vv` 的 "behind 18" 是假象；
+  判断落后必须看 `origin/main`（官方），推自己的改动用 `git push fork main`。
+- 我们的 3 个提交：a40edbd（/v1/models 转发后端权威目录）、90b92d2（该链路的测试）、
+  6fd292c（.gitignore 忽略 qa.db）。
+- 验证：any-version 侧 950 lib 测试 + 3 个 e2e 全绿（非流式/流式/messages 都 200，
+  /v1/models 30 个含 space-bunny）。**本轮无上游新增可跟**。

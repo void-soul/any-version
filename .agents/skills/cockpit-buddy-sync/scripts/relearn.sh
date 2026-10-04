@@ -2,12 +2,14 @@
 # 列出参考仓自上次 Buddy 同步点以来、影响 Buddy 功能域的改动。
 #
 # 用法：
-#   bash .agents/skills/cockpit-buddy-sync/scripts/relearn.sh              # 两个参考仓（默认）
+#   bash .agents/skills/cockpit-buddy-sync/scripts/relearn.sh              # 三个参考仓（默认）
 #   bash .agents/skills/cockpit-buddy-sync/scripts/relearn.sh cockpit      # 只跑参考 A：cockpit-tools
 #   bash .agents/skills/cockpit-buddy-sync/scripts/relearn.sh workdaddy    # 只跑参考 B：WorkDaddy
+#   bash .agents/skills/cockpit-buddy-sync/scripts/relearn.sh 2api         # 只跑参考 C：workbuddy2api
 #
 # 路径解析：本机 bash 可能是 WSL（Linux）也可能是 Git Bash，故对 Windows 风格路径自动尝试
-# 三种写法（E:/x、/e/x、/mnt/e/x）；也可用 COCKPIT_TOOLS_DIR / WORKDADDY_DIR 直接覆盖。
+# 三种写法（E:/x、/e/x、/mnt/e/x）；也可用 COCKPIT_TOOLS_DIR / WORKDADDY_DIR /
+# WORKBUDDY2API_DIR 直接覆盖。
 set -euo pipefail
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -152,9 +154,76 @@ relearn_workdaddy() {
   echo "注意 §0.1 硬规则：WorkDaddy 只作用于 WorkBuddy 路径，勿据此改 CodeBuddy CN 行为。"
 }
 
+# ─── 参考 C：workbuddy2api（我们自己的 fork，跟进上游协议变化） ───
+
+relearn_2api() {
+  local ref pin head
+  if ! ref="$(find_ref "${WORKBUDDY2API_DIR:-}" 'E:/pro/other-sdk/buddy/workbuddy2api')"; then
+    echo "== [C] workbuddy2api：未找到 fork =="
+    echo "已尝试 E:/pro/other-sdk/buddy/workbuddy2api（含 /e/、/mnt/e 变体）；可用 WORKBUDDY2API_DIR=<路径> 覆盖。"
+    return 0
+  fi
+  pin="$(sed -n '1s/.*\[\([0-9a-f]*\)\].*/\1/p' "$SKILL_DIR/sync-point.workbuddy2api.txt")"
+
+  # 只监听协议真源：转换器 / 凭据 / at-rest 加密。
+  # 排除 .deps（vendored 依赖）、日志、测试夹具 —— 它们随依赖升级刷噪音。
+  local paths=(
+    'core/*.py'
+    'README.md'
+  )
+  local excludes=(
+    ':!.deps/*'
+    ':!*.log'
+  )
+
+  cd "$ref"
+  head="$(git rev-parse --short=8 HEAD)"
+  # 官方是 origin/upstream（fork 才是我们的），见 references/workbuddy2api.md §C.0
+  if ! git rev-parse --verify --quiet origin/main >/dev/null; then
+    git fetch origin --quiet 2>/dev/null || true
+  fi
+  local official official_head
+  official="$(git rev-parse --short=8 origin/main 2>/dev/null || echo '?')"
+  official_head="$(git rev-parse --short=8 HEAD)"
+  echo "== [C] workbuddy2api（参考 C，$ref）=="
+  echo "   同步点 $pin → 本地 HEAD $head；官方 origin/main = $official"
+  echo "   remote: $(git remote -v | awk '{print $1}' | sort -u | tr '\n' ' ')"
+  echo
+  # 只在真的有新增提交时才展示 diff：两点式 `git diff HEAD..origin/main` 在无新增时
+  # 仍会打印**我们自己改动的反向差异**，会被误读成"官方改了这些"。
+  local new_commits
+  new_commits="$(git log --oneline HEAD..origin/main -- "${paths[@]}" "${excludes[@]}" 2>/dev/null)"
+  echo "== 官方新增、我们还没有的提交（要跟进的） =="
+  if [ -z "$new_commits" ]; then
+    echo "  （无）"
+  else
+    echo "$new_commits"
+    echo
+    echo "== 上述提交的文件级差异 =="
+    git diff --stat HEAD..origin/main -- "${paths[@]}" "${excludes[@]}" 2>/dev/null || true
+  fi
+  echo
+  echo "== 我们领先官方的提交（推 fork 前看这个） =="
+  git log --oneline origin/main..HEAD -- "${paths[@]}" "${excludes[@]}" 2>/dev/null || true
+  echo
+  if [ "$pin" = "$head" ] && [ -z "$(git log --oneline HEAD..origin/main 2>/dev/null)" ]; then
+    echo "（无新增可跟；若用户报 2API 异常，走 references/pitfalls.md I 节检查单 ——"
+    echo "  该域最常见的原因是上游契约变了，而非本地代码漂移。）"
+    return 0
+  fi
+  echo "下一步：读 core/converter.py 等的 diff → 对照 references/workbuddy2api.md §C.1"
+  echo "Python↔Rust 对照表 → 判断 commands/buddy/twoapi/ 是否要跟 → 跑 §5 验证协议。"
+  echo "注意 §C.2：上游只收流式、鉴权头是 WorkBuddy 特有、模型目录不在 /v2/models。"
+}
+
 case "$WHICH" in
   cockpit|a|A) relearn_cockpit ;;
   workdaddy|b|B) relearn_workdaddy ;;
-  all) relearn_cockpit; echo; echo "────────────────────────────────────────────"; echo; relearn_workdaddy ;;
-  *) echo "用法: $0 [cockpit|workdaddy|all]" >&2; exit 2 ;;
+  2api|c|C) relearn_2api ;;
+  all)
+    relearn_cockpit; echo; echo "────────────────────────────────────────────"; echo
+    relearn_workdaddy; echo; echo "────────────────────────────────────────────"; echo
+    relearn_2api
+    ;;
+  *) echo "用法: $0 [cockpit|workdaddy|2api|all]" >&2; exit 2 ;;
 esac

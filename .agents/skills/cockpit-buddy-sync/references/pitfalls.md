@@ -101,3 +101,29 @@ node --test test/*.test.js                             # 参考侧行为规范�
 ```
 
 差异出现即按 SKILL.md §2.1 圈功能域；本单 F 节若新增同类语义，直接追加。
+
+## I. 参考 C：2API / workbuddy2api 域（2026-10-04 新增）
+
+这一节的坑**全部来自真实事故**，且有一个共同特征：**症状与原因完全不在一处**。
+2API 出问题时，先跑本节检查单，别急着读代码。
+
+47. **「服务健康」≠「能用」** — `/docs` 200、`/health` 200、`/v1/models` 200 全都正常，但**每一个对话请求都 500**。这三个端点不走对话链路（models 甚至是本地生成的），通过它们判断 2API 可用是错的。检测：必须真发一次 `POST /v1/chat/completions` 看内容，不能只看状态码。
+48. **`converter.log` 只记请求体，不记响应与异常** — 上游 500 时日志里只有 REQUEST 没有任何错误记录，看起来像"什么都没发生"。检测：故障期要**手动前台复现**抓 stderr，别指望日志。Rust 版已修（异常有回传），Python 版仍如此。
+49. **at-rest 密钥只能从 WorkBuddy 桌面端拿，装在非默认路径就全挂** — `$wbEncrypted` 字段要用 at-rest 密钥解密，密钥靠 `ELECTRON_RUN_AS_NODE=1` 跑 JS 调原生 `loggerGet()`。Python 侧候选路径只有 `WORKBUDDY_ELECTRON_PATH` 与 `%LOCALAPPDATA%\Programs\WorkBuddy`，装在 D 盘时**候选列表是空的**（错误信息是"最后错误：None"——不是调用失败，是根本没尝试）。检测：确认 WorkBuddy 装在哪；解法是注入 env，不要改上游代码。
+50. **`include_v1` 自动补全会把 `/v2` 拼成 `/v2/v1` → 上游 404** — proxy 的 `resolve_url` 规则是"结尾不是 `/v1` 就补 `/v1`"，而 WorkBuddy 的 base 结尾是 **`/v2`**。症状是**所有**对话请求 404（`404 Route Not Found`），但鉴权是通的（否则会 401/403）。检测：`grep -n "needs_v1" src/proxy/upstream.rs`；修法是显式 `upstream_include_v1 = Some(false)`。**教训：base 路径里带版本号时，自动补全规则几乎必然出错。**
+51. **上游只收流式** — 非流式返回 `code 11101 Non-stream chat request is currently not supported`。检测：`curl -s -X POST .../v2/chat/completions -d '{"stream":false,...}'` 看返回码。Rust 侧解法：`force_upstream_stream` + SSE 聚合（`proxy/sse.rs`）。
+52. **模型目录在 `/v2/enterprises/personal/models`，不在 `/v2/models`** — 后者 404。且**只有这一层权威**：本机 `product.json` 与 Python 的 `DEFAULT_MODELS` 都会漏新模型（实例：`space-bunny` 两份本地清单都没有，但直接用模型名调得通）。检测：客户端报"枚举不到模型"时，先确认 `models_path` 配对没有。
+53. **目录里混着图像模型** — 后端目录含 `hunyuan-image-alpha`（`tags` 含 `text-to-image`），不过滤的话客户端枚举得到、真调却 400。检测：`/v1/models` 返回里有没有非聊天模型。
+54. **写回凭据前必须校验 mtime，否则静默回滚用户的切号** — `credentials.rs` 刷新 token 后原子写回整个 JSON，用的是**请求发起时的内存快照**。若期间 Buddy 切了号（同一文件），写回会把用户的切换**静默撤销** —— 界面显示已切换，实际登录态退回旧账号。实测可复现（三条件同时满足：token 距过期 <60s、恰好发起刷新、往返期间点了切换）。检测：`grep -n "mtime" src/commands/buddy/twoapi/credentials.rs` 应有写回前的比对。**这是我们比 Python 版多做的一步，别在"对齐上游"时删掉。**
+55. **Buddy 切号与 2API 共享同一个登录态文件** — `%LOCALAPPDATA%/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info`。切 WorkBuddy 账号 = 直接改写 2API 的登录态（下一个请求生效，无需重启）；切 CodeBuddy CN 则**完全无关**（存 `state.vscdb`）。检测：切号后拉 `/health` 看 `credential.uid` 变没变，不用真发对话。
+56. **e2e 断言里 `&body[..N]` 按字节切中文会 panic** — `&text[..min(160, text.len())]` 在中文响应（每字 3 字节）上会切在非字符边界，`panic` 而非断言失败，**看起来像功能坏了**。检测：改断言时用 `text.chars().take(N).collect::<String>()`。教训：这类 panic 具有欺骗性 —— 曾据此误判"功能回归"，实际只是测试自身 bug。
+
+### I.1 上游契约漂移探测（§C.2 失效即上游变了）
+
+```bash
+cd E:/pro/other-sdk/buddy/workbuddy2api
+git fetch upstream && git log --oneline HEAD..upstream/main   # 官方新增
+# 逐条验证 references/workbuddy2api.md §C.2 的事实
+```
+
+任一条失效 → 更新 `references/workbuddy2api.md` §C.2 + 本节，并检查 `commands/buddy/twoapi/` 与 `proxy/` 两侧实现。
