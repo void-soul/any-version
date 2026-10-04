@@ -2,45 +2,44 @@ import { describe, expect, it } from "vitest";
 import { getProxyInfo } from "../ToolLauncher";
 
 const TOOL = {
-  id: "claudedesktop",
+  id: "chatgptdesktop",
   installed: true,
   supports_model: true,
-  supports_anthropic: true,
+  supports_anthropic: false,
   supports_google: false,
 } as any;
 
-const PROVIDER = { id: "p1", anthropic_url: "https://x/anthropic" } as any;
+const PROVIDER = { id: "p1", openai_url: "https://x/v1" } as any;
 
-describe("getProxyInfo 的伪装映射条目", () => {
-  it("用外部传入的生效别名构造条目（Claude Desktop 留空时也能显示）", () => {
-    const info = getProxyInfo(TOOL, PROVIDER, false, "space-bunny", "claude-sonnet-4-6", "", "");
+describe("getProxyInfo 的模型 / 伪装信息", () => {
+  it("即使没有伪装，也返回真实模型（底部要常驻显示「用什么模型」）", () => {
+    // 这就是截图里的场景：ChatGPT Desktop + space-bunny + 没配伪装
+    const info = getProxyInfo(TOOL, PROVIDER, false, "space-bunny", "space-bunny", "", "");
     expect(info).not.toBeNull();
-    expect(info!.aliasEntries).toEqual([["claude-sonnet-4-6", "space-bunny"]]);
+    expect(info!.model).toBe("space-bunny");
+    expect(info!.alias).toBeNull();
   });
 
-  it("真实名与伪装名相同时不产生条目（避免 glm-5.3 → glm-5.3 这种无意义映射）", () => {
+  it("配了伪装时返回生效别名", () => {
+    const info = getProxyInfo(TOOL, PROVIDER, false, "space-bunny", "claude-sonnet-4-6", "", "");
+    expect(info!.model).toBe("space-bunny");
+    expect(info!.alias).toBe("claude-sonnet-4-6");
+  });
+
+  it("fallback 配了伪装才出现在 fallbackAliases 里", () => {
+    const withAlias = getProxyInfo(TOOL, PROVIDER, false, "space-bunny", "", "glm-5.3", "claude-haiku-4-5");
+    expect(withAlias!.fallbackAliases).toEqual([["claude-haiku-4-5", "glm-5.3"]]);
+    const noAlias = getProxyInfo(TOOL, PROVIDER, false, "space-bunny", "", "glm-5.3", "");
+    expect(noAlias!.fallbackAliases).toEqual([]);
+  });
+
+  it("真实名与伪装名相同时 alias 为 null（不显示无意义的 x → x）", () => {
     const info = getProxyInfo(TOOL, PROVIDER, false, "glm-5.3", "glm-5.3", "", "");
-    expect(info!.aliasEntries).toEqual([]);
+    expect(info!.alias).toBeNull();
   });
 
-  it("别名不同才显示（手填伪装名的既有行为不变）", () => {
-    const info = getProxyInfo(TOOL, PROVIDER, false, "space-bunny", "claude-opus-4", "", "");
-    expect(info!.aliasEntries).toEqual([["claude-opus-4", "space-bunny"]]);
-  });
-
-  it("fallback 小模型的条目仍然正确，且与主模型条目并存", () => {
-    const info = getProxyInfo(TOOL, PROVIDER, false, "space-bunny", "claude-sonnet-4-6", "glm-5.3", "claude-haiku-4-5");
-    expect(info!.aliasEntries).toEqual([["claude-sonnet-4-6", "space-bunny"], ["claude-haiku-4-5", "glm-5.3"]]);
-  });
-
-  it("fallback 未填伪装名时也不产生条目（与主模型同规则）", () => {
-    // 用户只填了 fallback 模型、没填伪装名 → 没发生伪装，不该显示 `glm-5.3 → glm-5.3`
-    const info = getProxyInfo(TOOL, PROVIDER, false, "space-bunny", "", "glm-5.3", "");
-    expect(info!.aliasEntries).toEqual([]);
-  });
-
-  it("fallback 填了伪装名时照常显示", () => {
-    const info = getProxyInfo(TOOL, PROVIDER, false, "", "", "glm-5.3", "claude-haiku-4-5");
-    expect(info!.aliasEntries).toEqual([["claude-haiku-4-5", "glm-5.3"]]);
+  it("官方模式 / 无供应商时仍返回 null（不启动代理就不显示）", () => {
+    expect(getProxyInfo(TOOL, PROVIDER, true, "m", "", "", "")).toBeNull();
+    expect(getProxyInfo(TOOL, null, false, "m", "", "", "")).toBeNull();
   });
 });

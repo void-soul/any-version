@@ -2892,6 +2892,8 @@
     "optimizerBadge": "Optimizer",
     "rectifierBadge": "Rectifier",
     "masqueradeLabel2": "Masquerade:",
+  "modelLabel": "Model:",
+  "masqueradeNone": "not set",
     "starting": "Starting...",
     "restoreSession": "Restore session",
     "launch": "Launch {{name}}",

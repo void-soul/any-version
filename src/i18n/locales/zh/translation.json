@@ -2898,6 +2898,8 @@
     "optimizerBadge": "优化器",
     "rectifierBadge": "整流器",
     "masqueradeLabel2": "伪装:",
+  "modelLabel": "模型:",
+  "masqueradeNone": "未设置",
     "starting": "启动中...",
     "restoreSession": "恢复会话",
     "launch": "启动 {{name}}",

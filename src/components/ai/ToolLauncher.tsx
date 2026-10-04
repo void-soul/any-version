@@ -136,7 +136,12 @@ export function getProxyInfo(
   inbound: string;
   outbound: string;
   converted: boolean;
-  aliasEntries: [string, string][];
+  /** 真实模型名（常驻显示） */
+  model: string;
+  /** 实际生效的伪装名；null = 没配伪装 / 别名与真实名相同 */
+  alias: string | null;
+  /** fallback 小模型的伪装映射，只有真发生伪装才有 */
+  fallbackAliases: [string, string][];
 } | null {
   if (!tool || !tool.installed || !tool.supports_model || useOfficial || !provider) {
     return null;
@@ -149,27 +154,29 @@ export function getProxyInfo(
     : "openai";
   // 出站协议：根据供应商已配置的协议 URL 推导（同协议优先，否则转换）
   const outbound = getOutboundProtocol(tool, provider);
-  // 伪装映射 C → B（主模型 + fallback 小模型）
-  // 主模型：别名由后端 `effective_claimed_model` 解析（Claude Desktop 留空时它会给一个
-  // 合法别名）。别名与真实名相同 = 没发生伪装，不显示 —— 否则会出现
-  // `glm-5.3 → glm-5.3` 这种无意义映射。
-  const aliasEntries: [string, string][] = [];
+  // 伪装映射 C → B。
+  //
+  // `model` / `alias` 是**常驻**的：底部要一直告诉用户「用什么模型、伪装什么模型」。
+  // 之前只渲染 `伪装映射` 徽章行，且别名等于真实名时整行隐藏 —— 于是「没配伪装」的
+  // 常见场景下底部一个字都不显示，用户完全看不出当前用的是哪个模型。
   const real = selectedModel || "";
-  if (masqueradeModel && masqueradeModel !== real) {
-    aliasEntries.push([masqueradeModel, real]);
-  }
+  // 别名由后端 `effective_claimed_model` 解析（Claude Desktop 留空时它会给一个合法别名）
+  const alias = masqueradeModel && masqueradeModel !== real ? masqueradeModel : null;
+  // fallback 小模型：只有真发生伪装才列出来，避免 `x → x` 噪音
+  const fallbackAliases: [string, string][] = [];
   if (fallbackModel) {
     const claimedFb = fallbackMasqueradeModel || fallbackModel;
-    // 同主模型：别名 == 真实名 = 没发生伪装，不显示无意义的 `x → x`
     if (claimedFb !== fallbackModel) {
-      aliasEntries.push([claimedFb, fallbackModel]);
+      fallbackAliases.push([claimedFb, fallbackModel]);
     }
   }
   return {
     inbound,
     outbound,
     converted: inbound !== outbound,
-    aliasEntries,
+    model: real,
+    alias,
+    fallbackAliases,
   };
 }
 
@@ -2390,14 +2397,27 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                           <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] text-micro font-semibold">{t("toollaunch.rectifierBadge")}</span>
                         )}
                       </div>
-                      {proxyInfo.aliasEntries.length > 0 && (
-                        <div className="flex items-center gap-1.5 flex-wrap text-slate-400">
-                          <span className="text-slate-500">{t("toollaunch.masqueradeLabel2")}</span>
-                          {proxyInfo.aliasEntries.map(([k, v]) => (
-                            <span key={k} className="font-mono text-micro bg-slate-700/40 px-1.5 py-0.5 rounded">{k} → {v}</span>
-                          ))}
-                        </div>
-                      )}
+                      {/* 模型 / 伪装：常驻显示。没配伪装时也要说清楚「未设置」——
+                          之前这一行只在有映射时才渲染，于是最常见的场景下底部什么都不显示。 */}
+                      <div className="flex items-center gap-1.5 flex-wrap text-slate-400">
+                        <span className="text-slate-500">{t("toollaunch.modelLabel")}</span>
+                        <span className="font-mono text-micro bg-slate-700/40 px-1.5 py-0.5 rounded text-slate-200">
+                          {proxyInfo.model || "—"}
+                        </span>
+                        <span className="text-slate-500 ml-1.5">{t("toollaunch.masqueradeLabel2")}</span>
+                        {proxyInfo.alias ? (
+                          <span className="font-mono text-micro bg-slate-700/40 px-1.5 py-0.5 rounded">
+                            {proxyInfo.alias}
+                          </span>
+                        ) : (
+                          <span className="text-micro text-slate-500">{t("toollaunch.masqueradeNone")}</span>
+                        )}
+                        {proxyInfo.fallbackAliases.map(([k, v]) => (
+                          <span key={k} className="font-mono text-micro bg-slate-700/40 px-1.5 py-0.5 rounded">
+                            {k} → {v}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                   );
                 })()}
