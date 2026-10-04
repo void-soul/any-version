@@ -785,6 +785,7 @@ pub fn run() {
             commands::ai::mcp::adopt_mcp_server,
             commands::ai::provider::test_model_connection,
             commands::ai::launch::launch_ai_tool,
+            commands::ai::tool_config_custom::resolve_claimed_model,
             commands::ai::config::get_last_launch_config,
             commands::ai::config::get_all_last_launch_configs,
             commands::ai::config::save_last_launch_config,

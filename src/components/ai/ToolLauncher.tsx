@@ -124,7 +124,7 @@ function providerProtocolBadges(p: AiProvider | null | undefined) {
 
 /// 计算代理启动信息条所需数据（与后端 launch.rs 逻辑对齐）。
 /// 无 Provider / 官方模式 / 不支持模型 时不启动代理，返回 null。
-function getProxyInfo(
+export function getProxyInfo(
   tool: DetectedAiTool | null,
   provider: AiProvider | null,
   useOfficial: boolean,
@@ -150,8 +150,14 @@ function getProxyInfo(
   // 出站协议：根据供应商已配置的协议 URL 推导（同协议优先，否则转换）
   const outbound = getOutboundProtocol(tool, provider);
   // 伪装映射 C → B（主模型 + fallback 小模型）
+  // 主模型：别名由后端 `effective_claimed_model` 解析（Claude Desktop 留空时它会给一个
+  // 合法别名）。别名与真实名相同 = 没发生伪装，不显示 —— 否则会出现
+  // `glm-5.3 → glm-5.3` 这种无意义映射。
   const aliasEntries: [string, string][] = [];
-  if (masqueradeModel) aliasEntries.push([masqueradeModel, selectedModel || ""]);
+  const real = selectedModel || "";
+  if (masqueradeModel && masqueradeModel !== real) {
+    aliasEntries.push([masqueradeModel, real]);
+  }
   if (fallbackModel) {
     const claimedFb = fallbackMasqueradeModel || fallbackModel;
     aliasEntries.push([claimedFb, fallbackModel]);
@@ -267,6 +273,13 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState("");
   const [selectedModelProvider, setSelectedModelProvider] = useState("");
+  // 后端解析出的**实际生效**声明名（Rust 的 effective_claimed_model）。
+  // Claude Desktop 留空伪装名时后端会自动给合法别名，前端必须显示那个而不是空 ——
+  // 别名规则只在 Rust 一处实现，前端复制就会漂移。取不到时退回手填值（旧行为）。
+  const [effectiveAlias, setEffectiveAlias] = useState("");
+  // 插件市场默认收起：它自带搜索框 + 插件清单，展开时占掉大半屏；
+  // 收起后靠 CollapsibleCard 的 summary 仍能看到「已安装 · 几个插件」。
+  const [marketOpen, setMarketOpen] = useState(false);
   // 当前模型自定义启动参数的取值（param key → 用户选的值）
   const [customParamValues, setCustomParamValues] = useState<Record<string, string>>({});
   const [projectPath, setProjectPath] = useState("");
@@ -478,6 +491,31 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
   };
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // 底部「伪装映射」要显示**实际生效**的声明名，而它由后端规则决定（Claude Desktop
+  // 留空时会给一个合法别名）。所以问后端要，不在前端复刻那份黑名单。
+  // 取不到就退回手填值 —— 展示性功能不能把面板搞挂。
+  useEffect(() => {
+    let cancelled = false;
+    const toolId = selectedTool?.id ?? "";
+    const fallback = masqueradeModel || "";
+    if (!toolId) { setEffectiveAlias(""); return; }
+    // invoke 在没有后端时是**同步抛错**（读 window.__TAURI__），`.catch()` 抓不到 ——
+    // 所以整个调用包进 async IIFE + try/catch，兑现「取不到就退回手填值」。
+    (async () => {
+      try {
+        const v = await invoke<string>("resolve_claimed_model", {
+          toolId,
+          realModel: selectedModel || "",
+          preferred: masqueradeModel || "",
+        });
+        if (!cancelled) setEffectiveAlias(v ?? fallback);
+      } catch {
+        if (!cancelled) setEffectiveAlias(fallback);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedTool?.id, selectedModel, masqueradeModel]);
 
   useEffect(() => {
     const unlisten = listen<{ default_project_path?: string; skills_dir?: string; providers_changed?: boolean }>("ai-config-changed", (event) => {
@@ -1543,48 +1581,49 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                     装/卸一律经官方 CLI —— 只有它才会落插件缓存、维护 enabled 与市场快照，
                     自己写配置文件的话插件在客户端里是「看得见、用不了」。 */}
                 {selectedTool.supports_plugin_marketplace && selectedTool.installed && (
-                  <div className="rounded-card border border-white/5 bg-slate-900/30 p-3 space-y-2">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-body font-semibold text-slate-300">{t("toollaunch.pluginMarketplace")}</span>
-                      <span className={`text-micro px-1.5 py-px rounded font-semibold ${
-                        marketReady
-                          ? "bg-emerald-500/15 text-emerald-300"
-                          : "bg-slate-500/15 text-slate-400"
-                      }`}>
-                        {marketReady ? t("toollaunch.pluginMarketplaceInstalled") : t("toollaunch.pluginMarketplaceNotInstalled")}
-                      </span>
-                      {marketReady && (
-                        <span className="text-micro text-slate-500">
-                          {marketKind === "claude" ? (
-                            <>
-                              {t("toollaunch.pluginMarketplaceMarkets", { count: claudeStatus?.marketplaces.length ?? 0 })}
-                              {` · ${t("toollaunch.pluginMarketplaceCount", { count: claudePlugins.length })}`}
-                            </>
-                          ) : (
-                            <>
-                              {t("toollaunch.pluginMarketplaceCount", { count: marketplace?.pluginCount ?? 0 })}
-                              {` · ${t("toollaunch.pluginMarketplaceEnabled", { count: marketplace?.enabledCount ?? 0 })}`}
-                              {marketplace?.registered ? "" : ` · ${t("toollaunch.pluginMarketplaceUnregistered")}`}
-                            </>
+                  <div className="rounded-card border border-white/5 bg-slate-900/30 p-3">
+                    <CollapsibleCard
+                      title={t("toollaunch.pluginMarketplace")}
+                      open={marketOpen}
+                      onToggle={() => setMarketOpen(o => !o)}
+                      summary={
+                        <span className="flex items-center gap-1.5 flex-wrap">
+                          <span className={`text-micro px-1.5 py-px rounded font-semibold ${
+                            marketReady
+                              ? "bg-emerald-500/15 text-emerald-300"
+                              : "bg-slate-500/15 text-slate-400"
+                          }`}>
+                            {marketReady ? t("toollaunch.pluginMarketplaceInstalled") : t("toollaunch.pluginMarketplaceNotInstalled")}
+                          </span>
+                          {marketReady && (
+                            <span className="text-micro text-slate-500">
+                              {marketKind === "claude"
+                                ? `${t("toollaunch.pluginMarketplaceMarkets", { count: claudeStatus?.marketplaces.length ?? 0 })} · ${t("toollaunch.pluginMarketplaceCount", { count: claudePlugins.length })}`
+                                : `${t("toollaunch.pluginMarketplaceCount", { count: marketplace?.pluginCount ?? 0 })} · ${t("toollaunch.pluginMarketplaceEnabled", { count: marketplace?.enabledCount ?? 0 })}`}
+                            </span>
                           )}
                         </span>
-                      )}
-                      <span className="flex-1" />
-                      <button onClick={() => void installMarketplace(selectedTool)} disabled={marketplaceBusy}
-                        className="px-2.5 py-1 rounded-md text-tiny bg-[var(--module-accent)]/20 hover:bg-[var(--module-accent)]/30 text-white cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                        {marketplaceBusy
-                          ? <><RefreshCw className="w-3 h-3 inline animate-spin" /> {t("toollaunch.pluginMarketplaceWorking")}</>
-                          : marketKind === "claude"
-                            ? (marketReady ? t("toollaunch.pluginMarketplaceAddAnother") : t("toollaunch.pluginMarketplaceAddOfficial"))
-                            : (marketplace?.installed ? t("toollaunch.pluginMarketplaceUpdate") : t("toollaunch.pluginMarketplaceInstall"))}
-                      </button>
-                      {marketReady && marketKind === "codex" && (
-                        <button onClick={() => void removeMarketplace(selectedTool)} disabled={marketplaceBusy}
-                          className="px-2.5 py-1 rounded-md text-tiny bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                          {t("toollaunch.pluginMarketplaceRemove")}
-                        </button>
-                      )}
-                    </div>
+                      }
+                      action={
+                        <>
+                          <button onClick={() => void installMarketplace(selectedTool)} disabled={marketplaceBusy}
+                            className="px-2.5 py-1 rounded-md text-tiny bg-[var(--module-accent)]/20 hover:bg-[var(--module-accent)]/30 text-white cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                            {marketplaceBusy
+                              ? <><RefreshCw className="w-3 h-3 inline animate-spin" /> {t("toollaunch.pluginMarketplaceWorking")}</>
+                              : marketKind === "claude"
+                                ? (marketReady ? t("toollaunch.pluginMarketplaceAddAnother") : t("toollaunch.pluginMarketplaceAddOfficial"))
+                                : (marketplace?.installed ? t("toollaunch.pluginMarketplaceUpdate") : t("toollaunch.pluginMarketplaceInstall"))}
+                          </button>
+                          {marketReady && marketKind === "codex" && (
+                            <button onClick={() => void removeMarketplace(selectedTool)} disabled={marketplaceBusy}
+                              className="px-2.5 py-1 rounded-md text-tiny bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                              {t("toollaunch.pluginMarketplaceRemove")}
+                            </button>
+                          )}
+                        </>
+                      }
+                    >
+                    <div className="space-y-2">
                     <p className="text-micro text-slate-500">{t("toollaunch.pluginMarketplaceHint")}</p>
                     {/* Claude 的市场是「一个个加进来的」，逐个列出、逐个可移除 */}
                     {marketKind === "claude" && (claudeStatus?.marketplaces.length ?? 0) > 0 && (
@@ -1674,6 +1713,8 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                         </div>
                       )
                     )}
+                    </div>
+                    </CollapsibleCard>
                   </div>
                 )}
 
@@ -2317,7 +2358,9 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                     selectedModelProvider ? config?.providers.find(p => p.id === selectedModelProvider) ?? null : null,
                     useOfficialModel,
                     selectedModel,
-                    masqueradeModel,
+                    // 用后端解析出的生效别名，不是手填的 masqueradeModel：
+                    // Claude Desktop 留空时后端会自动给别名，这里要显示的就是那个
+                    effectiveAlias,
                     selectedFallbackModel,
                     fallbackMasqueradeModel,
                   );

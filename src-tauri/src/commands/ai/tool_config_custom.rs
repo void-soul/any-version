@@ -374,6 +374,21 @@ pub fn effective_claimed_model(writer: Option<&str>, real_model: &str, preferred
     real_model.trim().to_string()
 }
 
+/// Tauri 命令：解析某个工具**实际会发出**的模型名（声明名 C）。
+///
+/// 前端底部要显示「用什么模型 / 伪装什么模型」，但别名规则（Desktop 那 50+ 项黑名单）
+/// 只在 Rust 一处实现 —— 前端复制一份就会出现第二个来源，必然漂移。所以由前端调这个
+/// 拿结果。`tool_id == "claudedesktop"` 时走别名规则，其余工具原样返回。
+#[tauri::command]
+pub fn resolve_claimed_model(tool_id: &str, real_model: &str, preferred: &str) -> String {
+    let writer = if tool_id == CLAUDESKTOP_WRITER {
+        Some(CLAUDESKTOP_WRITER)
+    } else {
+        None
+    };
+    effective_claimed_model(writer, real_model, preferred)
+}
+
 fn read_claudedesktop(_declared_path: &Path) -> Option<String> {
     let layout = claude_desktop_layout()?;
     read_json_or_empty(&layout.lib_dir.join(format!("{CLAUDE_DESKTOP_PROFILE_ID}.json")))
@@ -464,8 +479,8 @@ mod tests {
 
     use super::{
         claude_desktop_layout, claudedesktop_alias, default_claudedesktop_alias,
-        effective_claimed_model, is_legal_claudedesktop_model, write_claudedesktop_with,
-        ClaudeDesktopLayout, CLAUDE_DESKTOP_PROFILE_ID,
+        effective_claimed_model, is_legal_claudedesktop_model, resolve_claimed_model,
+        write_claudedesktop_with, ClaudeDesktopLayout, CLAUDE_DESKTOP_PROFILE_ID,
     };
     use std::path::Path;
 
@@ -825,5 +840,31 @@ mod tests {
             mapped, "space-bunny",
             "只靠 role 映射拿不到 space-bunny —— 这正是 launch.rs 必须注册精确键的原因"
         );
+    }
+
+    /// 后端命令 `resolve_claimed_model` 的行为：Claude Desktop 走别名，其余原样。
+    /// 前端用它把「实际生效的伪装名」显示到底部，所以语义必须与 profile 写入一致。
+    #[test]
+    fn resolve_claimed_model_command_matches_what_we_write_to_profile() {
+        // Claude Desktop + 真实模型不合法 → 给默认别名
+        assert_eq!(
+            resolve_claimed_model("claudedesktop", "space-bunny", ""),
+            "claude-sonnet-4-6"
+        );
+        // Claude Desktop + 手填合法声明名 → 用它
+        assert_eq!(
+            resolve_claimed_model("claudedesktop", "space-bunny", "claude-opus-4"),
+            "claude-opus-4"
+        );
+        // 其它工具 → 原样（前端据此判断「没发生伪装」，不显示映射行）
+        assert_eq!(resolve_claimed_model("claude", "glm-5.3", ""), "glm-5.3");
+        assert_eq!(resolve_claimed_model("codex-cli", "gpt-5", "my-alias"), "my-alias");
+    }
+
+    /// 未知 / 空工具 id 也不能 panic —— 前端会把各种 id 传进来
+    #[test]
+    fn resolve_claimed_model_tolerates_unknown_tool() {
+        assert_eq!(resolve_claimed_model("", "", ""), "");
+        assert_eq!(resolve_claimed_model("some-unknown-tool", "m", ""), "m");
     }
 }
