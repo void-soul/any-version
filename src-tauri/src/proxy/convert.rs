@@ -23,6 +23,38 @@ pub fn convert_request(inbound: &str, outbound: &str, body: &Value, model: &str)
     }
 }
 
+/// 把 OpenAI 形态请求里的 `developer` 角色改写成 `system`。
+///
+/// `developer` 是 OpenAI 在 GPT-5 之后给 `system` 起的**新名字**，语义完全相同；
+/// 但大量第三方兼容网关只认老的 `system`。实测 WorkBuddy（`copilot.tencent.com`）
+/// 遇到 `developer` 会直接回 400 `Illegal API invocation from an unapproved channel`
+/// （code 11128）—— 报文写着"渠道/鉴权"，实际是消息角色不认识，极难定位：
+/// 同一秒里 `favorites` 走别的路径就正常，只有 Codex 的请求被拦。
+///
+/// Codex 尤其爱用这个角色：Responses API 的 `input` 里塞的是
+/// `{"type":"message","role":"developer"}`，转换时会被原样搬进 chat 的 `messages`
+/// （见 `responses::push_input_messages`），所以这不是边缘情况。
+///
+/// 统一改写成 `system` 是安全的：认 `developer` 的上游（OpenAI 官方）也接受 `system`。
+/// 只动 `developer`，其余角色（`system` / `user` / `assistant` / `tool`）原样保留。
+///
+/// **必须在 `convert_request` 之后、优化器之前调用**：整流器要按角色判断消息块
+/// （如图片降级只看 `messages`），角色没归一化它就认不出哪条是系统提示。
+pub fn normalize_openai_message_roles(body: &mut Value) {
+    use serde_json::json;
+
+    let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) else {
+        return;
+    };
+    for msg in messages.iter_mut() {
+        if msg.get("role").and_then(|r| r.as_str()) == Some("developer") {
+            if let Some(obj) = msg.as_object_mut() {
+                obj.insert("role".into(), json!("system"));
+            }
+        }
+    }
+}
+
 /// 标识非聊天模型的 tag（图像/视频生成，客户端拿去聊天会被上游拒）
 pub const NON_CHAT_MODEL_TAGS: &[&str] = &["text-to-image", "image-to-image", "text-to-video"];
 
@@ -221,6 +253,93 @@ pub fn convert_response(outbound: &str, inbound: &str, resp: &Value, claimed: &s
         ("anthropic", "google") => crate::proxy::google::anthropic_response_to_google(resp, claimed),
         ("openai", "google") => crate::proxy::google::openai_response_to_google(resp, claimed),
         _ => resp.clone(),
+    }
+}
+
+#[cfg(test)]
+mod developer_role_tests {
+    use super::normalize_openai_message_roles;
+    use serde_json::json;
+
+    /// 只改 `developer`，其余角色一个都不许动。
+    #[test]
+    fn only_developer_becomes_system() {
+        let mut body = json!({"messages": [
+            {"role": "developer", "content": "sys1"},
+            {"role": "system", "content": "sys2"},
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "content": "a"},
+            {"role": "tool", "content": "t", "tool_call_id": "c1"},
+            {"role": "developer", "content": ""}
+        ]});
+        normalize_openai_message_roles(&mut body);
+        let roles: Vec<&str> = body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["role"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            roles,
+            vec!["system", "system", "user", "assistant", "tool", "system"]
+        );
+        // 内容必须原样保留（含那条空 developer）
+        assert_eq!(body["messages"][0]["content"], json!("sys1"));
+        assert_eq!(body["messages"][5]["content"], json!(""));
+    }
+
+    /// 结构不完整时不能 panic：没有 messages / messages 不是数组 / role 不是字符串。
+    #[test]
+    fn tolerates_bodies_without_messages() {
+        for body in [
+            json!({}),
+            json!({"messages": "nope"}),
+            json!({"messages": [{"content": "无角色"}]}),
+            json!({"messages": [{"role": 7}]}),
+        ] {
+            let mut b = body.clone();
+            normalize_openai_message_roles(&mut b);
+            assert_eq!(b, body, "不该改动任何东西：{b}");
+        }
+    }
+
+    /// **闭环**：Codex 风格的 Responses 请求（系统提示拆成多条 `developer` 塞在 input）
+    /// 走完 转换 → 归一化 之后，`messages` 里不能再有 `developer`。
+    ///
+    /// 这条锁的是实测故障（Q-0324）：WorkBuddy 收到 `developer` 会回
+    /// 400 `11128 Illegal API invocation from an unapproved channel`。
+    ///
+    /// 转换链要与 `server.rs::responses_handler` 一致：它自己先调 `responses_to_chat`
+    /// （`convert_request` **不**处理 `("responses","openai")`），再把 chat 体交给
+    /// `process_request` —— 归一化就在 `process_request` 里做。
+    #[test]
+    fn codex_responses_request_ends_up_with_no_developer_role() {
+        let codex = json!({
+            "model": "gpt-6-astra",
+            "input": [
+                {"type": "message", "role": "developer",
+                 "content": [{"type": "input_text", "text": "You are Codex."}]},
+                {"type": "message", "role": "user",
+                 "content": [{"type": "input_text", "text": "hi"}]}
+            ]
+        });
+        let mut chat = crate::proxy::responses::responses_to_chat(&codex);
+        // 转换本身就该把 input 里的角色原样搬过来（不做语义判断）——
+        // 先确认这条前提成立，免得测试因为别的原因"通过"
+        assert_eq!(chat["messages"][0]["role"], json!("developer"), "前提：转换不认 developer");
+
+        normalize_openai_message_roles(&mut chat);
+        let roles: Vec<&str> = chat["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["role"].as_str().unwrap())
+            .collect();
+        assert!(
+            !roles.contains(&"developer"),
+            "出站体里不该再有 developer：{roles:?}"
+        );
+        assert_eq!(roles, vec!["system", "user"]);
     }
 }
 

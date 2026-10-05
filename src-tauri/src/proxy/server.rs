@@ -897,6 +897,15 @@ async fn process_request(
     // ③ 协议转换：P_in → P_out（已在 body 写入 B）
     let mut out_body = convert_request(inbound, &outbound, &body, &actual_model);
 
+    // ③.5 角色归一化：出站 OpenAI 时把 `developer` 改成 `system`。
+    // Codex 的 Responses 请求把系统提示拆成多条 `role: "developer"` 塞在 input 里，
+    // 转换时会被原样搬过来；只认老角色的第三方网关（实测 WorkBuddy）会回 400
+    // `11128 Illegal API invocation from an unapproved channel`，报文像是渠道问题，
+    // 实际是角色不认。放在优化器之前，整流器看到的也是归一化后的角色。
+    if outbound == "openai" {
+        crate::proxy::convert::normalize_openai_message_roles(&mut out_body);
+    }
+
     // ④ 优化器（P_out 形态）
     optimizers::apply_optimizers(&mut out_body, &outbound, &config);
 
