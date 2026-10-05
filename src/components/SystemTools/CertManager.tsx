@@ -50,9 +50,19 @@ interface CertDetail {
   pems: Record<string, string>;
 }
 
+// ⚠️ 字段名按 Rust **序列化后的**名字写，不是 Rust 的源码字段名。
+//
+// `cert.rs` 里这两个字段带 `#[serde(rename = "type")]`：
+//   Credential.cred_type -> "type"      DeployNode.node_type -> "type"
+// 而磁盘上的 credentials.json / deploy_nodes.json 也是这个格式，所以只能改前端，
+// 不能摘掉 Rust 的 rename（摘了就读不出已有文件）。
+//
+// 之前这里写成 cred_type / node_type，读到的永远是 undefined：
+// 凭据下拉的类型显示为空；更糟的是编辑节点时 `initial?.node_type || "linux"`
+// 恒等于 "linux"，保存会把非 linux 节点**静默改成 linux**。
 interface DeployNode {
   id: string;
-  node_type: string;
+  type: string;
   name: string;
   config: Record<string, string>;
   deploy_before_days: number;
@@ -64,7 +74,7 @@ interface DeployNode {
 interface Credential {
   id: string;
   name: string;
-  cred_type: string;
+  type: string;
   data: Record<string, string>;
   note: string;
 }
@@ -600,7 +610,7 @@ function CertForm({ creds, nodes, onDone }: { creds: Credential[]; nodes: Deploy
             <select value={credentialId} onChange={(e) => setCredentialId(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none">
             <option value="">{t("certmgr.select")}</option>
             {creds.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}（{c.cred_type}）</option>
+              <option key={c.id} value={c.id}>{c.name}（{c.type}）</option>
             ))}
           </select>
         </label>
@@ -680,7 +690,7 @@ function DeployNodes() {
           <div key={n.id} className="rounded-ctl border border-white/5 bg-white/5 p-3">
             <div className="flex items-center justify-between">
               <div className="text-body font-semibold text-slate-200">{n.name}</div>
-              <span className="text-tiny px-2 py-0.5 rounded bg-sky-500/20 text-sky-300">{n.node_type}</span>
+              <span className="text-tiny px-2 py-0.5 rounded bg-sky-500/20 text-sky-300">{n.type}</span>
             </div>
             <div className="text-tiny text-slate-500 mt-1">{t("certmgr.deployInfo", { days: n.deploy_before_days, time: fmtDate(n.last_deploy_at) })}</div>
             {n.last_deploy_error && <div className="text-tiny text-rose-400 mt-1">⚠ {n.last_deploy_error}</div>}
@@ -705,10 +715,14 @@ function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDone: () 
     for (const f of fields) d[f.key] = cfg[f.key] ?? "";
     return d;
   };
-  const [nodeType, setNodeType] = useState(initial?.node_type || "linux");
+  // `type` 是 Rust 侧序列化出来的名字（cert.rs 里 node_type 带 rename = "type"）。
+  // 这里不能再写 node_type —— 那样恒为 undefined，任何非 linux 节点都会退化成 linux，
+  // 保存时还会把这个错误类型写回去。
+  const initialType = initial?.type || "linux";
+  const [nodeType, setNodeType] = useState(initialType);
   const [name, setName] = useState(initial?.name || "");
   const [data, setData] = useState<Record<string, string>>(() =>
-    makeData(initial?.config ?? {}, NODE_FIELDS[initial?.node_type || "linux"] || [])
+    makeData(initial?.config ?? {}, NODE_FIELDS[initialType] || [])
   );
   const [deployBefore, setDeployBefore] = useState(initial?.deploy_before_days || 7);
   const [note, setNote] = useState(initial?.note || "");
@@ -824,7 +838,7 @@ function Credentials() {
           <div key={c.id} className="rounded-ctl border border-white/5 bg-white/5 p-3">
             <div className="flex items-center justify-between">
               <span className="text-body font-semibold text-slate-200">{c.name}</span>
-              <span className="text-tiny px-2 py-0.5 rounded bg-amber-500/20 text-amber-300">{c.cred_type}</span>
+              <span className="text-tiny px-2 py-0.5 rounded bg-amber-500/20 text-amber-300">{c.type}</span>
             </div>
             <div className="text-tiny text-slate-500 mt-1">{t("certmgr.fieldsLabel", { names: Object.keys(c.data).join(", ") })}</div>
             <div className="mt-2 text-caption">
