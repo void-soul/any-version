@@ -325,14 +325,16 @@ export default function TranslatePopup() {
           background-color: transparent !important;
         }
       `}</style>
-      <div className="w-screen h-screen bg-transparent select-none" style={themeVars}>
+      {/* 纵向 flex 三层：标题栏 / 工具栏固定，内容区吃满剩余高度。
+          窗口可缩放，不这么写的话拉高后下方会留空白。 */}
+      <div className="w-screen h-screen flex flex-col bg-transparent select-none" style={themeVars}>
         <div
-          className="w-full h-full rounded-none border border-white/15 bg-surface-panel/95 shadow-2xl shadow-black/60 overflow-hidden"
+          className="w-full h-full flex flex-col rounded-none border border-white/15 bg-surface-panel/95 shadow-2xl shadow-black/60 overflow-hidden"
           data-tauri-drag-region
         >
         {/* 标题栏：可拖拽（原生 app-region drag，兼容透明无边框窗口） */}
         <div
-          className="flex items-center justify-between px-3 py-2 border-b border-white/10 cursor-move"
+          className="flex items-center justify-between px-3 py-2 border-b border-white/10 cursor-move shrink-0"
           data-tauri-drag-region
           style={{ WebkitAppRegion: "drag" } as any}
         >
@@ -376,7 +378,7 @@ export default function TranslatePopup() {
         </div>
 
         {/* 模型选择工具栏（默认继承全局设置，逻辑同翻译模块） */}
-        <div className="px-3 py-1.5 border-b border-white/5 flex items-center gap-1.5">
+        <div className="px-3 py-1.5 border-b border-white/5 flex items-center gap-1.5 shrink-0">
           <Languages className="w-3 h-3 text-[var(--tl-accent)] shrink-0" />
           <select
             value={provId}
@@ -427,12 +429,14 @@ export default function TranslatePopup() {
         </div>
 
         {/* 内容区：原文(可编辑) + 译文 + 翻译按钮。
+            这里只负责「吃满剩余高度」，滚动交给下面两个面板各自处理 ——
+            以前这里是 max-h-[360px] + overflow-y-auto，窗口拉高后下方会空出一大块。
             scrollbar-gutter:stable 让滚动条槽位常驻——loading 与译文高度不同时
             滚动条出现/消失不再引起内容宽度跳变（窗口元素抖动）。 */}
-        <div className="px-3 py-2.5 space-y-2.5 max-h-[360px] overflow-y-auto [scrollbar-gutter:stable]">
-          {/* 原文：可编辑 textarea */}
-          <div>
-            <div className="flex items-center justify-between mb-1">
+        <div className="flex-1 min-h-0 px-3 py-2.5 flex flex-col gap-2.5">
+          {/* 原文：可编辑 textarea（flex-1：随窗口高度一起长） */}
+          <div className="flex-1 min-h-0 flex flex-col">
+            <div className="flex items-center justify-between mb-1 shrink-0">
               <span className="text-micro text-slate-500">{t("translate.source")}</span>
               {(sourceText || result?.source) && (
                 <button
@@ -451,12 +455,12 @@ export default function TranslatePopup() {
                 setSourceText(e.target.value);
               }}
               placeholder={t("translate.phInput")}
-              className="w-full min-h-[60px] bg-white/5 border border-white/10 rounded-ctl px-2 py-1.5 text-caption text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-[var(--tl-accent)] resize-none leading-relaxed"
+              className="w-full flex-1 min-h-[60px] bg-white/5 border border-white/10 rounded-ctl px-2 py-1.5 text-caption text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-[var(--tl-accent)] resize-none leading-relaxed [scrollbar-gutter:stable]"
             />
           </div>
 
           {/* 翻译按钮 */}
-          <div className="flex items-center justify-end gap-1.5">
+          <div className="flex items-center justify-end gap-1.5 shrink-0">
             <span className="text-micro text-slate-600">
               {t("translate.target", { lang: result?.target || "中文" })}
             </span>
@@ -470,10 +474,12 @@ export default function TranslatePopup() {
             </button>
           </div>
 
-          {/* 译文：固定最小高度，loading（进度条）与结果切换时高度不变，
+          {/* 译文：同样 flex-1 吃满剩余高度；长译文在**面板内部**滚动，
+              而不是把整个内容区顶高。
+              min-h 兜住极小窗口，loading（进度条）与结果切换时高度不变，
               避免内容区高度变化引发滚动条/宽度抖动 */}
-          <div className="min-h-[46px] flex flex-col justify-start">
-            <div className="flex items-center justify-between mb-1">
+          <div className="flex-1 min-h-[46px] flex flex-col">
+            <div className="flex items-center justify-between mb-1 shrink-0">
               <span className="text-micro text-slate-500">{t("translate.translated")}</span>
               {result?.result && (
                 <button
@@ -485,17 +491,19 @@ export default function TranslatePopup() {
                 </button>
               )}
             </div>
-            {translating ? (
-              <VexBusy text={t("translate.busy")} avatarSize={32} />
-            ) : result?.error ? (
-              <div className="text-caption text-red-400 leading-relaxed whitespace-pre-wrap break-words">
-                {result.result}
-              </div>
-            ) : (
-              <div className="text-body text-slate-100 leading-relaxed whitespace-pre-wrap break-words">
-                {result?.result || (sourceText ? t("translate.waiting") : t("translate.selectFirst"))}
-              </div>
-            )}
+            <div className="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable]">
+              {translating ? (
+                <VexBusy text={t("translate.busy")} avatarSize={32} />
+              ) : result?.error ? (
+                <div className="text-caption text-red-400 leading-relaxed whitespace-pre-wrap break-words">
+                  {result.result}
+                </div>
+              ) : (
+                <div className="text-body text-slate-100 leading-relaxed whitespace-pre-wrap break-words">
+                  {result?.result || (sourceText ? t("translate.waiting") : t("translate.selectFirst"))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
