@@ -42,7 +42,17 @@ pub(crate) struct ExtrasCtx<'a> {
     /// 完整模型名（可能带声明的 provider 前缀，如 `anyversion/deepseek-v4-pro`）。
     pub model: &'a str,
     /// 去掉前缀的模型名（Ctx 里的「模型 id」）。
+    ///
+    /// 注意这是**声明名 C**：配了伪装时它是官方名（`gpt-5.1-codex`），不是真实模型。
+    /// 凡是「按模型身份判定能力」的逻辑（上下文窗口、图像支持）必须用
+    /// [`ExtrasCtx::real_model_name`]，否则查表必然落空。
     pub model_name: &'a str,
+    /// 真实模型 B 的 id（供应商模型，去掉 provider 前缀；`[1m]` 后缀由各 handler 自己剥）。
+    ///
+    /// 与 [`ExtrasCtx::model_name`] 分开是有原因的：Codex 的 `model_context_window`
+    /// 必须按**真实模型**的窗口写 —— 拿伪装名查表会把 204,800 的模型当成 1,000,000，
+    /// Codex 于是永远等不到压缩，上游直接报超长。
+    pub real_model_name: &'a str,
     /// 我们在该工具里使用的 provider 名（必须与声明里的键一致）。
     pub provider: &'a str,
     /// 实际选中的出站协议：`anthropic` / `openai`。

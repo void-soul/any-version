@@ -138,7 +138,11 @@ pub(super) fn apply(ctx: &ExtrasCtx<'_>) -> Result<Vec<String>, String> {
         crate::commands::ai::launch::parse_toml_lenient(existing.trim_start_matches('\u{feff}'));
 
     let model_id = base_model_id(ctx.model_name);
-    let window = model_context_window_for(&model_id);
+    // 窗口与图像能力**按真实模型 B 判定**：`model_id` 是声明名 C，伪装生效时它是官方名
+    // （`gpt-5.1-codex`），查表必然落空 → 204,800 的窗口被写成 1,000,000，Codex 于是
+    // 永远等不到压缩，上游直接报超长。
+    let real_id = base_model_id(ctx.real_model_name);
+    let window = model_context_window_for(&real_id);
 
     // 先清遗留键，再写规范值 —— 顺序反了的话「清理」会把刚写的那行删掉
     delete_top(&mut doc, "review_model");
@@ -182,7 +186,8 @@ pub(super) fn apply(ctx: &ExtrasCtx<'_>) -> Result<Vec<String>, String> {
             let catalog = crate::commands::ai::codex_catalog::build_catalog(
                 &template,
                 &model_id,
-                ctx.model_name,
+                &real_id,
+                ctx.real_model_name,
                 window,
             );
             // **先确认文件写成功再加这一行**：`model_catalog_json` 指向一个不存在的文件
@@ -353,5 +358,73 @@ mod tests {
         assert!(out.contains("model_context_window = 204800"), "{out}");
         // 用户自己的键一个都不能丢
         assert!(out.contains("model = \"a\""), "{out}");
+    }
+
+    // ─── 伪装：窗口 / 能力必须按真实模型判定 ───
+
+    fn temp_config(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("anyver-codex-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        // apply() 在文件为空时直接返回（不该凭空造主配置），先垫一行声明名
+        std::fs::write(&path, "model = \"gpt-5.1-codex\"\n").unwrap();
+        (dir, path)
+    }
+
+    fn ctx<'a>(
+        path: &'a Path,
+        real_model_name: &'a str,
+        upstream_url: &'a str,
+    ) -> ExtrasCtx<'a> {
+        ExtrasCtx {
+            tool_id: "chatgptdesktop",
+            main_path: path,
+            base_url: "http://127.0.0.1:15721",
+            upstream_url,
+            api_key: "kira-token",
+            model: "gpt-5.1-codex",
+            model_name: "gpt-5.1-codex",
+            real_model_name,
+            provider: "anyversion",
+            chosen_protocol: "openai",
+            web_search: false,
+        }
+    }
+
+    /// 伪装生效时，声明名 C 是官方名（`gpt-5.1-codex`），拿它查窗口表**必然落空**：
+    /// 204,800 的模型会被写成 1,000,000，Codex 于是永远等不到压缩，上游直接报超长。
+    #[test]
+    fn context_window_follows_the_real_model_not_the_claimed_alias() {
+        let (dir, path) = temp_config("window");
+        apply(&ctx(&path, "minimax-m2.7", "https://api.deepseek.com")).unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("model_context_window = 204800"),
+            "窗口必须按真实模型 minimax-m2.7 写：{text}"
+        );
+        assert!(
+            text.contains("model_auto_compact_token_limit = 184320"),
+            "{text}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 图像 / 搜索能力同样按真实模型判：收图的 `deepseek-flash` 被伪装成 `gpt-5.1-codex`
+    /// 之后不能变成「只收文本」—— 那会让 Codex 直接把图丢掉。
+    #[test]
+    fn catalog_capabilities_follow_the_real_model() {
+        let (dir, path) = temp_config("caps");
+        apply(&ctx(&path, "deepseek-flash", "https://api.deepseek.com")).unwrap();
+
+        let catalog = std::fs::read_to_string(dir.join("models.json")).expect("catalog 应生成");
+        let v: serde_json::Value = serde_json::from_str(&catalog).unwrap();
+        let entry = &v["models"][0];
+        assert_eq!(entry["slug"], "gpt-5.1-codex", "slug 用声明名，Codex 才匹配得上");
+        assert_eq!(entry["display_name"], "deepseek-flash");
+        assert_eq!(entry["input_modalities"], serde_json::json!(["text", "image"]));
+        assert_eq!(entry["supports_search_tool"], serde_json::json!(true));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

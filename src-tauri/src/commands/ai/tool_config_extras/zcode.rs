@@ -209,6 +209,7 @@ mod tests {
             api_key: "sk-test",
             model: "anyversion/glm-5.2",
             model_name: "glm-5.2",
+            real_model_name: "glm-5.2",
             provider: "anyversion",
             chosen_protocol: protocol,
             web_search: false,

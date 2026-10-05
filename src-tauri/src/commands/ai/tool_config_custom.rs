@@ -351,21 +351,134 @@ pub fn claudedesktop_alias(real_model: &str, preferred: &str) -> Result<String, 
 }
 
 /// Claude Desktop 的自定义写入器名（`ai-tools/claudedesktop/config.json` 的
-/// `configFile.custom`）。也是"这个工具需要模型伪装"的判据。
+/// `configFile.custom`）。也正好等于它的工具 id —— [`effective_claimed_model`] 按工具 id
+/// 分派，两者一致才不会分叉。
 pub const CLAUDESKTOP_WRITER: &str = "claudedesktop";
 
-/// **工具实际会发出的模型名**（声明名 C）—— 启动路径注册 `model_aliases` 与写工具配置
-/// 都必须调它，避免"profile 写 A、代理注册 B"导致 Desktop 发的名字无人认领。
+// ═══════════════ 模型伪装：ChatGPT 桌面端（Codex 内核）的模型名校验 ═══════════════
+//
+// 与 Claude Desktop 同一个道理，只是家族词换成 OpenAI 的：桌面端的模型选择器只认官方
+// 模型名，`~/.codex/config.toml` 里写 `space-bunny` 这类第三方 id 时，App 界面上显示的
+// 就是那个第三方名字；用户在 App 里改一次模型，代理这边没人认领 → 回落上游 → 404 /
+// 答非所问。所以真实模型名不是官方 OpenAI 名时，自动声明成一个官方名，由代理映射回去。
+//
+// **范围只限 ChatGPT 桌面端**：Codex CLI 那边 `builtinModels` 非空、用户可以手填，
+// 保持「不填就不伪装」的现状（`effective_claimed_model` 里没有它的分支）。
+
+/// ChatGPT/Codex 认的家族词。
+const OPENAI_FAMILY_WORDS: &[&str] = &["gpt", "codex", "chatgpt", "openai"];
+
+/// 别家模型黑名单：Claude 那张表的镜像（去掉 gpt / openai / codex 这些自家的）。
+const OPENAI_BLACKLIST: &[&str] = &[
+    "anthropic", "claude", "sonnet", "opus", "haiku", "fable", "mythos", "ark-code", "astron",
+    "command-r", "deepseek", "doubao", "gemini", "gemma", "glm", "grok", "hermes", "hy3",
+    "kimi", "lfm", "llama", "longcat", "mimo", "minimax", "mistral", "mixtral", "moonshot",
+    "nemotron", "phi-", "qianfan", "qwen", "tc-code", "yi-", "stepfun", "step-3", "seed-",
+    "bytedance", "hunyuan", "granite", "amazon.nova", "nova-", "devstral", "ministral", "ernie",
+    "arcee", "trinity", "abab", "k2.", "m2.", "jamba", "arctic", "solar", "mercury", "zamba",
+    "kat-coder", "dpsk",
+];
+
+/// 黑名单里带 `\b` 词边界的项（与 Claude 那份同源：`streaming` 里的 `ling` 不算命中）。
+const OPENAI_BLACKLIST_WORDS: &[&str] = &["ling", "unic"];
+
+/// 无伪装时的默认伪装名。取 Codex 系官方名里最稳的一个（`ai-tools/codex-cli/config.json`
+/// 的 `builtinModels` 里就有它），它自身必须是合法名字（有测试钉住）。
+const DEFAULT_CHATGPTDESKTOP_ALIAS: &str = "gpt-5.1-codex";
+
+/// ChatGPT 桌面端的工具 id。也是「这个工具需要 OpenAI 侧伪装」的判据。
+pub const CHATGPTDESKTOP_TOOL: &str = "chatgptdesktop";
+
+/// 默认伪装名（`gpt-5.1-codex`）
+pub fn default_chatgptdesktop_alias() -> &'static str {
+    DEFAULT_CHATGPTDESKTOP_ALIAS
+}
+
+/// 判断 ChatGPT 桌面端会不会认这个模型名。
 ///
-/// 只有 Claude Desktop 需要伪装（它的选择器会剔除非 Anthropic 模型名）；其余写入器
-/// **原样**返回，别让这个改动波及其它工具。
-pub fn effective_claimed_model(writer: Option<&str>, real_model: &str, preferred: &str) -> String {
-    if writer == Some(CLAUDESKTOP_WRITER) {
-        if let Ok(alias) = claudedesktop_alias(real_model, preferred) {
-            return alias;
+/// 判定顺序与 [`is_legal_claudedesktop_model`] 一致：先黑名单、再要求含 OpenAI 家族词。
+/// 顺序反过来会误放行 `gpt-5.3-claude` 这种「像 OpenAI 但命中别家」的名字。
+pub fn is_legal_openai_model(name: &str) -> bool {
+    let lower = name.trim().to_ascii_lowercase();
+    if lower.is_empty() {
+        return false;
+    }
+    if is_openai_blacklisted(&lower) {
+        return false;
+    }
+    if OPENAI_FAMILY_WORDS.iter().any(|w| lower.contains(w)) {
+        return true;
+    }
+    // 推理系列（o1 / o3 / o4…）没有 `gpt` 字样，但同样是官方名。
+    // 按整词判：`foo3`、`v3` 这类不能被当成 o3。
+    lower
+        .split(|c: char| !c.is_alphanumeric())
+        .any(is_openai_reasoning_token)
+}
+
+fn is_openai_blacklisted(lower: &str) -> bool {
+    if OPENAI_BLACKLIST.iter().any(|k| lower.contains(k)) {
+        return true;
+    }
+    OPENAI_BLACKLIST_WORDS
+        .iter()
+        .any(|w| contains_whole_word(lower, w))
+}
+
+/// `o` + 至少一位数字的整词（`o1` / `o3` / `o4-mini` 的首段）。
+fn is_openai_reasoning_token(token: &str) -> bool {
+    match token.strip_prefix('o') {
+        Some(rest) => !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()),
+        None => false,
+    }
+}
+
+/// 算出写进 `~/.codex/config.toml` 的 `model`（声明名 C）。
+///
+/// 与 [`claudedesktop_alias`] 同构，**并且同样必须是唯一来源** —— 写盘与代理注册
+/// `model_aliases` 都调 [`effective_claimed_model`]，各算一次就会「写 A、注册 B」。
+///
+/// 优先级：合法声明名 → 合法真实模型名 → 内置兜底 → 报错（兜底自身不合法属代码被改坏）。
+pub fn chatgptdesktop_alias(real_model: &str, preferred: &str) -> Result<String, String> {
+    let p = preferred.trim();
+    if !p.is_empty() && is_legal_openai_model(p) {
+        return Ok(p.to_string());
+    }
+    let real = real_model.trim();
+    if is_legal_openai_model(real) {
+        return Ok(real.to_string());
+    }
+    let fallback = default_chatgptdesktop_alias();
+    if is_legal_openai_model(fallback) {
+        return Ok(fallback.to_string());
+    }
+    Err(format!(
+        "无法为 ChatGPT 桌面端生成合法的模型名：真实模型 `{real_model}` 与声明名 `{preferred}` \
+         都不是官方 OpenAI 模型名，且内置兜底 `{fallback}` 自身也不合法 —— 这是内置常量被改坏了，请反馈"
+    ))
+}
+
+/// **工具实际会发出的模型名**（声明名 C）—— 启动路径注册 `model_aliases` 与写工具配置
+/// 都必须调它，避免"配置写 A、代理注册 B"导致工具发的名字无人认领。
+///
+/// 只有两个桌面端需要伪装（它们的选择器只认自家官方模型名）：Claude Desktop 与
+/// ChatGPT 桌面端；其余工具（Codex CLI / Claude Code / opencode …）**原样**返回，
+/// 别让这个改动波及其它工具。
+pub fn effective_claimed_model(tool_id: &str, real_model: &str, preferred: &str) -> String {
+    match tool_id {
+        CLAUDESKTOP_WRITER => {
+            if let Ok(alias) = claudedesktop_alias(real_model, preferred) {
+                return alias;
+            }
+            // 生成不出来只可能是内置兜底常量被改坏了；这里不让启动直接失败，
+            // 退回原逻辑（写盘那条路径会照实报错，见 write_claudedesktop_with）
         }
-        // 生成不出来只可能是内置兜底常量被改坏了；这里不让启动直接失败，
-        // 退回原逻辑（写盘那条路径会照实报错，见 write_claudedesktop_with）
+        CHATGPTDESKTOP_TOOL => {
+            if let Ok(alias) = chatgptdesktop_alias(real_model, preferred) {
+                return alias;
+            }
+        }
+        _ => {}
     }
     let p = preferred.trim();
     if !p.is_empty() {
@@ -374,19 +487,13 @@ pub fn effective_claimed_model(writer: Option<&str>, real_model: &str, preferred
     real_model.trim().to_string()
 }
 
-/// Tauri 命令：解析某个工具**实际会发出**的模型名（声明名 C）。
+/// Tauri 命令：解析某个工具**实际会发出的**模型名（声明名 C）。
 ///
-/// 前端底部要显示「用什么模型 / 伪装什么模型」，但别名规则（Desktop 那 50+ 项黑名单）
-/// 只在 Rust 一处实现 —— 前端复制一份就会出现第二个来源，必然漂移。所以由前端调这个
-/// 拿结果。`tool_id == "claudedesktop"` 时走别名规则，其余工具原样返回。
+/// 前端底部要显示「用什么模型 / 伪装什么模型」，但别名规则（两套黑名单）只在 Rust 一处
+/// 实现 —— 前端复制一份就会出现第二个来源，必然漂移。所以由前端调这个拿结果。
 #[tauri::command]
 pub fn resolve_claimed_model(tool_id: &str, real_model: &str, preferred: &str) -> String {
-    let writer = if tool_id == CLAUDESKTOP_WRITER {
-        Some(CLAUDESKTOP_WRITER)
-    } else {
-        None
-    };
-    effective_claimed_model(writer, real_model, preferred)
+    effective_claimed_model(tool_id, real_model, preferred)
 }
 
 fn read_claudedesktop(_declared_path: &Path) -> Option<String> {
@@ -478,8 +585,9 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        claude_desktop_layout, claudedesktop_alias, default_claudedesktop_alias,
-        effective_claimed_model, is_legal_claudedesktop_model, resolve_claimed_model,
+        chatgptdesktop_alias, claude_desktop_layout, claudedesktop_alias,
+        default_chatgptdesktop_alias, default_claudedesktop_alias, effective_claimed_model,
+        is_legal_claudedesktop_model, is_legal_openai_model, resolve_claimed_model,
         write_claudedesktop_with, ClaudeDesktopLayout, CLAUDE_DESKTOP_PROFILE_ID,
     };
     use std::path::Path;
@@ -723,23 +831,30 @@ mod tests {
         assert!(is_legal_claudedesktop_model(d), "默认别名自身必须合法，否则兜底也是空的");
     }
 
-    /// 启动路径与 profile 写入**共用**同一个接缝：Claude Desktop 走别名规则，其余工具原样
+    /// 启动路径与写盘**共用**同一个接缝：两个桌面端走别名规则，其余工具原样
     #[test]
-    fn effective_claimed_model_only_masquerades_for_claudedesktop() {
+    fn effective_claimed_model_only_masquerades_for_desktop_apps() {
         // Claude Desktop：space-bunny 会被换成默认别名
         assert_eq!(
-            effective_claimed_model(Some("claudedesktop"), "space-bunny", ""),
+            effective_claimed_model("claudedesktop", "space-bunny", ""),
             "claude-sonnet-4-6"
         );
-        // 其余写入器必须**原样**（别让这次改动波及其它工具）
-        assert_eq!(effective_claimed_model(None, "space-bunny", ""), "space-bunny");
+        // ChatGPT 桌面端：非官方名 → 默认官方别名
         assert_eq!(
-            effective_claimed_model(Some("codebuddy"), "space-bunny", ""),
+            effective_claimed_model("chatgptdesktop", "space-bunny", ""),
+            "gpt-5.1-codex"
+        );
+        // 其余工具必须**原样**（别让这次改动波及其它工具）
+        assert_eq!(effective_claimed_model("claude", "space-bunny", ""), "space-bunny");
+        assert_eq!(
+            effective_claimed_model("codebuddy", "space-bunny", ""),
             "space-bunny"
         );
-        // 非 Claude Desktop 工具：声明名照旧优先
+        // Codex CLI 有手填伪装框，没填就不伪装（保持原行为）
+        assert_eq!(effective_claimed_model("codex-cli", "space-bunny", ""), "space-bunny");
+        // 非桌面端工具：声明名照旧优先
         assert_eq!(
-            effective_claimed_model(None, "space-bunny", "my-alias"),
+            effective_claimed_model("codex-cli", "space-bunny", "my-alias"),
             "my-alias"
         );
     }
@@ -777,7 +892,7 @@ mod tests {
                 .as_str()
                 .unwrap_or_default();
 
-            let registered = effective_claimed_model(Some("claudedesktop"), real, preferred);
+            let registered = effective_claimed_model("claudedesktop", real, preferred);
             assert_eq!(
                 written, registered,
                 "real={real} preferred={preferred:?}：profile 写的与代理注册的必须一致"
@@ -866,5 +981,103 @@ mod tests {
     fn resolve_claimed_model_tolerates_unknown_tool() {
         assert_eq!(resolve_claimed_model("", "", ""), "");
         assert_eq!(resolve_claimed_model("some-unknown-tool", "m", ""), "m");
+    }
+
+    // ═══════════════ ChatGPT 桌面端（OpenAI 侧）═══════════════
+
+    /// 官方名判定：家族词命中且不沾别家 → 合法。
+    ///
+    /// 黑名单**优先于**家族词，所以 `gpt-5.3-claude` 这种「像 OpenAI 但命中 Anthropic」
+    /// 必须判非法 —— 否则会把别家模型伪装成 OpenAI 名写进 App，出了错极难查。
+    #[test]
+    fn openai_legality_accepts_official_names_only() {
+        for ok in [
+            "gpt-5.1-codex",
+            "gpt-4o",
+            "GPT-5.5",
+            "gpt-6-astra",
+            "codex-mini-latest",
+            "o3",
+            "o4-mini",
+        ] {
+            assert!(is_legal_openai_model(ok), "{ok} 应判为官方名");
+        }
+        for bad in [
+            "",
+            "space-bunny",     // 自家/自定义名
+            "glm-5.3",         // 别家
+            "claude-sonnet-4-6",
+            "gpt-5.3-claude",  // 沾别家 → 黑名单优先
+            "qwen3-max-codex", // 沾别家
+            "foo3",            // o3 必须整词，foo3 不算
+            "v3",
+        ] {
+            assert!(!is_legal_openai_model(bad), "{bad} 不该判为官方名");
+        }
+    }
+
+    /// 默认别名自身必须合法（有测试钉住，否则兜底也是空的）
+    #[test]
+    fn openai_default_alias_is_itself_legal() {
+        let d = default_chatgptdesktop_alias();
+        assert!(is_legal_openai_model(d), "默认别名自身必须合法：{d}");
+    }
+
+    #[test]
+    fn chatgpt_alias_prefers_legal_claimed_then_legal_real_then_default() {
+        // 真实名不是官方名 → 默认别名
+        assert_eq!(
+            chatgptdesktop_alias("space-bunny", "").unwrap(),
+            "gpt-5.1-codex"
+        );
+        // 真实名本来就是官方名 → 不伪装（写出去的与真实一致，代理也不必注册映射）
+        assert_eq!(chatgptdesktop_alias("gpt-4o", "").unwrap(), "gpt-4o");
+        // 手填了合法声明名 → 用它
+        assert_eq!(
+            chatgptdesktop_alias("space-bunny", "gpt-5.5").unwrap(),
+            "gpt-5.5"
+        );
+        // 手填了**非法**声明名 → 不能照抄（那正是模型选择器要剔掉的），回落默认别名
+        assert_eq!(
+            chatgptdesktop_alias("space-bunny", "glm-5.3").unwrap(),
+            "gpt-5.1-codex"
+        );
+    }
+
+    /// **闭环**：OpenAI 别名经 `map_model_name` 必须精确映射回真实模型。
+    ///
+    /// `map_model_name` 内置的 role 表只认 sonnet/opus/haiku/fable，理论上劫持不了
+    /// `gpt-*`；但这条是「别名注册漏了就会静默路由到 default_model」的护栏，
+    /// 与 Claude 那条同源。
+    #[test]
+    fn openai_alias_round_trips_through_map_model_name() {
+        use crate::proxy::transform::{map_model_name, ModelAliases};
+        use std::collections::HashMap;
+
+        for real in ["space-bunny", "glm-5.3", "minimax-m3"] {
+            let alias = chatgptdesktop_alias(real, "").unwrap();
+            let mut role_map = HashMap::new();
+            role_map.insert(alias.clone(), real.to_string());
+            let aliases = ModelAliases {
+                default_model: None,
+                role_map,
+            };
+            assert_eq!(
+                map_model_name(&alias, &aliases),
+                real,
+                "别名 {alias} 必须精确映射回 {real}"
+            );
+        }
+    }
+
+    /// 命令层（前端底部显示用的那个）必须与写盘用的是同一套规则。
+    #[test]
+    fn resolve_claimed_model_gives_chatgpt_desktop_an_official_name() {
+        assert_eq!(
+            resolve_claimed_model("chatgptdesktop", "space-bunny", ""),
+            "gpt-5.1-codex"
+        );
+        // 已经是官方名 → 原样，前端就不会显示「伪装」
+        assert_eq!(resolve_claimed_model("chatgptdesktop", "gpt-5.1", ""), "gpt-5.1");
     }
 }

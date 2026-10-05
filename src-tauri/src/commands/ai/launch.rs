@@ -254,15 +254,11 @@ pub(crate) async fn start_tool_proxy_with_collab(
             // 模型伪装：声明名 C → 实际模型 B；masquerade_model 为空表示不伪装。
             let target_model = req.model_id.clone().unwrap_or_default();
             let mut model_aliases: HashMap<String, String> = HashMap::new();
-            // 声明名 C 的唯一来源：Claude Desktop 需要伪装（它的选择器会剔除非 Anthropic
-            // 模型名），其余工具原样。**必须与写 profile 那条路径调同一个函数** ——
-            // 否则会出现「profile 写 A、这里注册 B」，Desktop 发的名字无人认领 → 400。
-            let tool_writer = tool_config
-                .config_file
-                .as_ref()
-                .and_then(|c| c.custom_writer(&tool_config.id));
+            // 声明名 C 的唯一来源：Claude Desktop 与 ChatGPT 桌面端需要伪装（它们的选择器
+            // 只认自家官方模型名），其余工具原样。**必须与写工具配置那条路径调同一个
+            // 函数** —— 否则会出现「配置写 A、这里注册 B」，工具发的名字无人认领 → 400。
             let effective_claimed = crate::commands::ai::tool_config_custom::effective_claimed_model(
-                tool_writer.as_deref(),
+                &tool_config.id,
                 &target_model,
                 req.masquerade_model.as_deref().unwrap_or(""),
             );
@@ -732,15 +728,11 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
 
                 // 声明模型名 C（工具以为自己调用的模型）：
                 // 若配置了伪装则是 masquerade_model，否则直接是所选取的供应商模型 B。
-                // Claude Desktop 由 `effective_claimed_model` 自动补一个合法别名 ——
-                // 与上面注册 `model_aliases` 用的是同一个函数，两边必然一致。
-                let cfg_writer = tool_config
-                    .config_file
-                    .as_ref()
-                    .and_then(|c| c.custom_writer(&tool_config.id));
+                // Claude Desktop / ChatGPT 桌面端由 `effective_claimed_model` 自动补一个
+                // 合法官方别名 —— 与上面注册 `model_aliases` 用的是同一个函数，两边必然一致。
                 let claimed_model = Some(
                     crate::commands::ai::tool_config_custom::effective_claimed_model(
-                        cfg_writer.as_deref(),
+                        &tool_config.id,
                         req.model_id.as_deref().unwrap_or(""),
                         req.masquerade_model.as_deref().unwrap_or(""),
                     ),
@@ -1276,6 +1268,16 @@ fn write_tool_config_generic(
         .map(|m| format_model_name_with_ctx(m, tool_config, apply_one_m))
         .unwrap_or_default();
     let model_name = model.split('/').next_back().unwrap_or(&model).to_string();
+    // 真实模型 B 的 id（去前缀）：**窗口 / 能力判定必须按它来**，不能按上面的声明名 C ——
+    // 伪装生效时 C 是官方名（如 `gpt-5.1-codex`），拿它查表必然落空（见 ExtrasCtx 文档）。
+    let real_model = model_id
+        .map(|m| format_model_name_with_ctx(m, tool_config, apply_one_m))
+        .unwrap_or_default();
+    let real_model_name = real_model
+        .split('/')
+        .next_back()
+        .unwrap_or(&real_model)
+        .to_string();
     // fallback/小模型：声明名（伪装优先，否则实际模型 B）。无 fallback 时为 None。
     let fallback_claimed = fallback_model_id.and_then(|fm| {
         if fm.is_empty() { return None; }
@@ -1495,6 +1497,7 @@ fn write_tool_config_generic(
             api_key,
             model: &model,
             model_name: &model_name,
+            real_model_name: &real_model_name,
             provider: crate::commands::ai::tool_config_extras::provider_for(&tool_config.id),
             chosen_protocol,
             web_search,
@@ -2448,6 +2451,66 @@ name = "personal"
             serde_json::from_str(&std::fs::read_to_string(&auth).expect("auth.json 应被创建"))
                 .expect("auth.json 必须是 JSON（不能按 toml 写）");
         assert_eq!(doc["OPENAI_API_KEY"], "kira-token");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ChatGPT 桌面端：**自动伪装**。真实模型不是官方 OpenAI 名时，`config.toml` 里
+    /// 写下的 `model` 必须是官方名，且与启动时注册进 `model_aliases` 的键**完全一致**
+    /// （同一个 `effective_claimed_model`）。
+    ///
+    /// 这条锁的是「写 A、注册 B」这个坑：两侧只要有一侧改了来源，App 发出的名字就无人
+    /// 认领 → 代理回落上游 → 404 / 答非所问，而且日志里看不出任何异常。
+    #[test]
+    #[allow(clippy::too_many_arguments)]
+    fn chatgptdesktop_declares_an_official_name_the_proxy_also_registers() {
+        let dir = temp_dir("chatgptdesktop-alias");
+        let file = dir.join("config.toml");
+        let cfg = tool_cfg_at("chatgptdesktop", &file);
+
+        // 真实模型不是官方 OpenAI 名（界面截图里的那个场景）
+        let real = "space-bunny";
+        let claimed = crate::commands::ai::tool_config_custom::effective_claimed_model(
+            "chatgptdesktop",
+            real,
+            "",
+        );
+        assert_eq!(claimed, "gpt-5.1-codex");
+        assert!(
+            crate::commands::ai::tool_config_custom::is_legal_openai_model(&claimed),
+            "声明名必须是 App 认的官方名，否则伪装等于没做"
+        );
+
+        write_tool_config_from_spec(
+            &cfg,
+            Some(real),
+            Some(&claimed),
+            "http://127.0.0.1:15721",
+            "kira-token",
+            "https://api.deepseek.com",
+            None,
+            None,
+            false,
+            false,
+            true,
+            &[],
+            &HashMap::new(),
+            false,
+            "openai",
+        )
+        .expect("写入应成功");
+
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(
+            text.contains(&format!("model = \"{claimed}\"")),
+            "config.toml 里写的必须就是代理注册的那个声明名：{text}"
+        );
+        // 窗口 / 模型目录按**真实模型**判定：slug 是声明名，窗口与显示名是真实模型
+        let catalog = std::fs::read_to_string(dir.join("models.json")).expect("catalog 应生成");
+        assert!(catalog.contains(&format!("\"slug\": \"{claimed}\"")), "{catalog}");
+        assert!(
+            catalog.contains(&format!("\"display_name\": \"{real}\"")),
+            "catalog 显示名应是真实模型：{catalog}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

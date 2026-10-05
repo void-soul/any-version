@@ -77,14 +77,21 @@ pub fn template_for_url(base_url: &str) -> Option<&'static str> {
 ///
 /// 模板里与模型无关的字段（提示框架、工具类型、reasoning 档位、截断策略）原样保留，
 /// 只戳入身份与窗口大小。
+///
+/// `slug` 与 `real_model_id` **刻意分开**：
+/// - `slug` = 写进 `config.toml` 的 `model`（声明名 C）。Codex 按 `model` 找条目，
+///   这里必须用声明名，否则伪装时条目匹配不上、Codex 回落默认模型；
+/// - `real_model_id` = 真实模型 B 的 id。图像/搜索能力是**厂商逐模型**的，只能按它判
+///   —— 拿 `gpt-5.1-codex` 这种伪装名去判，会把收图的 DeepSeek Flash 判成不收图。
 pub fn build_catalog(
     template: &Value,
-    model_id: &str,
+    slug: &str,
+    real_model_id: &str,
     display_name: &str,
     context_window: u64,
 ) -> Value {
     let mut entry = template.clone();
-    entry["slug"] = json!(model_id);
+    entry["slug"] = json!(slug);
     entry["display_name"] = json!(display_name);
     entry["description"] = json!(format!("{display_name} via AnyVersion"));
     entry["context_window"] = json!(context_window);
@@ -94,8 +101,8 @@ pub fn build_catalog(
     // 图像能力是**逐模型**的：DeepSeek Flash 与 MiMo v2.5 收图，DeepSeek V4 Pro 与
     // MiMo v2.5 Pro 只收文本。模板保持保守默认，只对厂商文档明确支持的 id 开启，
     // 免得给只收文本的模型声明成能收图（那会让 Codex 直接发图过去报错）。
-    let supports_image = matches!(model_id, "deepseek-flash" | "mimo-v2.5");
-    if model_id.starts_with("deepseek-") || model_id.starts_with("mimo-") {
+    let supports_image = matches!(real_model_id, "deepseek-flash" | "mimo-v2.5");
+    if real_model_id.starts_with("deepseek-") || real_model_id.starts_with("mimo-") {
         entry["input_modalities"] = if supports_image {
             json!(["text", "image"])
         } else {
@@ -103,8 +110,8 @@ pub fn build_catalog(
         };
         entry["supports_image_detail_original"] = json!(supports_image);
     }
-    if model_id.starts_with("deepseek-") {
-        entry["supports_search_tool"] = json!(model_id == "deepseek-flash");
+    if real_model_id.starts_with("deepseek-") {
+        entry["supports_search_tool"] = json!(real_model_id == "deepseek-flash");
     }
     // MiniMax 的 base_instructions 里带 `{model}` 占位符，替换成实际显示名，
     // 让提示词里出现的模型名是真的；DeepSeek 的提示框架与模型无关，不受影响。
@@ -212,7 +219,13 @@ mod tests {
     #[test]
     fn build_catalog_stamps_identity_and_window() {
         let tpl: Value = serde_json::from_str(DEEPSEEK_TEMPLATE).unwrap();
-        let catalog = build_catalog(&tpl, "deepseek-v4-pro", "DeepSeek V4 Pro", 204_800);
+        let catalog = build_catalog(
+            &tpl,
+            "deepseek-v4-pro",
+            "deepseek-v4-pro",
+            "DeepSeek V4 Pro",
+            204_800,
+        );
         let entry = &catalog["models"][0];
         assert_eq!(entry["slug"], "deepseek-v4-pro");
         assert_eq!(entry["display_name"], "DeepSeek V4 Pro");
@@ -224,15 +237,47 @@ mod tests {
         assert_eq!(catalog["models"].as_array().unwrap().len(), 1);
     }
 
+    /// 伪装生效时：`slug` 是**声明名**（Codex 按 `config.toml` 的 `model` 找条目），
+    /// 而图像 / 搜索能力仍按**真实模型**判。否则一个收图的 DeepSeek Flash 被伪装成
+    /// `gpt-5.1-codex` 后就会被判成「只收文本」，Codex 直接把图丢掉。
+    #[test]
+    fn build_catalog_uses_claimed_slug_but_real_capabilities() {
+        let tpl: Value = serde_json::from_str(DEEPSEEK_TEMPLATE).unwrap();
+        let c = build_catalog(
+            &tpl,
+            "gpt-5.1-codex",
+            "deepseek-flash",
+            "DeepSeek Flash",
+            1_000_000,
+        );
+        let entry = &c["models"][0];
+        assert_eq!(entry["slug"], "gpt-5.1-codex", "slug 必须是声明名，否则 Codex 匹配不上");
+        assert_eq!(entry["display_name"], "DeepSeek Flash");
+        assert_eq!(entry["input_modalities"], json!(["text", "image"]));
+        assert_eq!(entry["supports_search_tool"], json!(true));
+    }
+
     #[test]
     fn build_catalog_opts_in_documented_image_models() {
         let tpl: Value = serde_json::from_str(DEEPSEEK_TEMPLATE).unwrap();
-        let flash = build_catalog(&tpl, "deepseek-flash", "DeepSeek Flash", 1_000_000);
+        let flash = build_catalog(
+            &tpl,
+            "deepseek-flash",
+            "deepseek-flash",
+            "DeepSeek Flash",
+            1_000_000,
+        );
         assert_eq!(flash["models"][0]["input_modalities"], json!(["text", "image"]));
         assert_eq!(flash["models"][0]["supports_search_tool"], json!(true));
 
         let mimo_tpl: Value = serde_json::from_str(MIMO_TEMPLATE).unwrap();
-        let mimo = build_catalog(&mimo_tpl, "mimo-v2.5", "MiMo v2.5", 1_000_000);
+        let mimo = build_catalog(
+            &mimo_tpl,
+            "mimo-v2.5",
+            "mimo-v2.5",
+            "MiMo v2.5",
+            1_000_000,
+        );
         assert_eq!(mimo["models"][0]["input_modalities"], json!(["text", "image"]));
     }
 
@@ -243,7 +288,13 @@ mod tests {
             MINIMAX_TEMPLATE.contains("{model}"),
             "前提：MiniMax 模板带占位符"
         );
-        let catalog = build_catalog(&tpl, "MiniMax-M3", "MiniMax M3", 1_000_000);
+        let catalog = build_catalog(
+            &tpl,
+            "MiniMax-M3",
+            "MiniMax-M3",
+            "MiniMax M3",
+            1_000_000,
+        );
         let bi = catalog["models"][0]["base_instructions"].as_str().unwrap();
         assert!(!bi.contains("{model}"), "占位符必须被替换掉");
         assert!(bi.contains("MiniMax M3"), "应替换成实际显示名: {bi}");

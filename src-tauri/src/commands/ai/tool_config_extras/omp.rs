@@ -193,6 +193,7 @@ mod tests {
             api_key: "sk-test",
             model,
             model_name: model,
+            real_model_name: model,
             provider: "echobird",
             chosen_protocol: "openai",
             web_search: false,
