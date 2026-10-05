@@ -15,6 +15,7 @@ import { useTranslation } from "react-i18next";
 import {
   ArrowRight,
   Download,
+  FolderOpen,
   FolderPlus,
   ListMusic,
   Loader2,
@@ -345,6 +346,20 @@ export default function MusicPanel() {
     }
   };
 
+  /// 定位文件：在资源管理器里**选中**该曲目文件。
+  ///
+  /// 复用 launcher 的 `launcher_reveal_file`，不另起一个 music 命令：定位这事与音乐无关，
+  /// 而那条实现已经踩过坑（管理员降权时 `/select,"path"` 会被已运行的 explorer 误判，
+  /// 退化成打开「我的文档」），重复实现只会把坑再踩一遍。
+  /// 文件在曲库之外被移走/删掉时后端会报错 —— 照实提示，让用户知道曲库已经过期。
+  const revealTrack = async (track: MusicTrack) => {
+    try {
+      await invoke("launcher_reveal_file", { path: track.path });
+    } catch (e) {
+      toast(t("music.revealFail", { err: String(e) }), "err");
+    }
+  };
+
   const removeTrack = (track: MusicTrack) => {
     setConfirmRequest({
       title: t("music.deleteTrack"),
@@ -610,7 +625,7 @@ export default function MusicPanel() {
                     <td className="py-2 text-right font-mono text-slate-400">
                       {formatTime(track.duration_ms)}
                     </td>
-                    {/* 单曲操作：播放 / 重命名（改磁盘文件名）/ 删除（移入回收站）。
+                    {/* 单曲操作：播放 / 定位文件 / 重命名（改磁盘文件名）/ 删除（移入回收站）。
                         stopPropagation：避免触发行级选中与双击播放。 */}
                     <td className="py-1.5 text-center">
                       <div className="flex items-center justify-center gap-0.5">
@@ -623,6 +638,16 @@ export default function MusicPanel() {
                           className="p-1 rounded text-slate-500 hover:text-[var(--module-accent)] hover:bg-white/10 cursor-pointer transition-all"
                         >
                           <Play className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void revealTrack(track);
+                          }}
+                          title={t("music.revealTrack")}
+                          className="p-1 rounded text-slate-500 hover:text-[var(--module-accent)] hover:bg-amber-500/10 cursor-pointer transition-all"
+                        >
+                          <FolderOpen className="w-3 h-3" />
                         </button>
                         <button
                           onClick={(e) => {
