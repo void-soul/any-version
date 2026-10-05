@@ -65,6 +65,7 @@
     "onlineSearchMore": "加载更多",
     "onlineSearchEnd": "已到末页",
     "onlineSearchSummary": "共 {{count}} 条，来自 {{sources}} 个音源",
+    "onlineDoubleClickHint": "双击任意一行即可播放",
     "onlineSourceAll": "全部",
     "onlineSearchPartial": "{{count}} 个音源出错",
     "onlineSourceFailures": "出错的音源",
@@ -199,6 +200,8 @@
     "deleteTrackConfirm": "把「{{name}}」移入系统回收站？曲目会从曲库中移除（可从回收站还原）。",
     "deleted": "已移入回收站",
     "deleteFail": "删除失败: {{err}}",
+    "revealTrack": "定位文件位置",
+    "revealFail": "定位文件失败: {{err}}",
     "preset": {
       "flat": "平坦",
       "pop": "流行",

@@ -1,6 +1,6 @@
 // 在线搜索视图（音乐模块内的一个视图）。
 //
-// 搜索 → 结果列表 → 每行「播放 / 下载」。
+// 搜索 → 结果列表 → 每行「播放 / 下载」，双击整行也可播放。
 // - 播放：后端取流后落到缓存再交给同一个播放引擎（因此队列 / 均衡器照旧生效）
 // - 下载：落到用户设置的下载目录，并自动登记进曲库
 //
@@ -253,6 +253,10 @@ export default function OnlineSearch({ onPlayer, onLibrary }: Props) {
           <span className="text-tiny text-slate-500">
             {t("music.onlineSearchSummary", { count: hits.length, sources: sourceGroups.size })}
           </span>
+          {/* 双击播放没有视觉入口（没有按钮），只能靠这行提示说出来 */}
+          {hits.length > 0 && (
+            <span className="text-tiny text-slate-600">{t("music.onlineDoubleClickHint")}</span>
+          )}
           {failures.length > 0 && (
             <span
               className="text-tiny text-amber-400 flex items-center gap-1"
@@ -289,7 +293,15 @@ export default function OnlineSearch({ onPlayer, onLibrary }: Props) {
                   ? Math.min(100, Math.round((progress.received / progress.total) * 100))
                   : null;
               return (
-                <div key={key} className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/[0.03]">
+                <div
+                  key={key}
+                  // 双击整行播放：行本身没有别的操作，双击是比瞄准小按钮省事的入口。
+                  // isPlaying 期间忽略（按钮此时已禁用），避免双击按钮再冒泡触发第二次播放。
+                  onDoubleClick={() => {
+                    if (!isPlaying) void play(hit);
+                  }}
+                  className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/[0.03] cursor-pointer select-none"
+                >
                   {item.artwork ? (
                     <img
                       src={String(item.artwork)}
@@ -323,6 +335,8 @@ export default function OnlineSearch({ onPlayer, onLibrary }: Props) {
                   <div className="flex items-center gap-0.5 flex-shrink-0">
                     <button
                       onClick={() => void play(hit)}
+                      // 双击按钮不该再冒泡成「双击行」，否则会触发第二次播放
+                      onDoubleClick={(e) => e.stopPropagation()}
                       disabled={isPlaying}
                       title={t("music.onlinePlay")}
                       className="p-1 rounded text-slate-500 hover:text-[var(--module-accent)] hover:bg-white/10 cursor-pointer disabled:opacity-40"
@@ -335,6 +349,8 @@ export default function OnlineSearch({ onPlayer, onLibrary }: Props) {
                     </button>
                     <button
                       onClick={() => void download(hit)}
+                      // 同上：连点下载也不该顺带把这首歌播了
+                      onDoubleClick={(e) => e.stopPropagation()}
                       disabled={isDownloading}
                       title={t("music.onlineDownload")}
                       className="p-1 rounded text-slate-500 hover:text-emerald-400 hover:bg-emerald-500/10 cursor-pointer disabled:opacity-40"

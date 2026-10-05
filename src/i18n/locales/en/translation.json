@@ -65,6 +65,7 @@
     "onlineSearchMore": "Load more",
     "onlineSearchEnd": "End of results",
     "onlineSearchSummary": "{{count}} results from {{sources}} sources",
+    "onlineDoubleClickHint": "Double-click any row to play",
     "onlineSourceAll": "All",
     "onlineSearchPartial": "{{count}} sources failed",
     "onlineSourceFailures": "Failed sources",
@@ -199,6 +200,8 @@
     "deleteTrackConfirm": "Move \"{{name}}\" to the system recycle bin? It will be removed from the library (you can restore it from the bin).",
     "deleted": "Moved to the recycle bin",
     "deleteFail": "Delete failed: {{err}}",
+    "revealTrack": "Reveal file location",
+    "revealFail": "Could not reveal file: {{err}}",
     "preset": {
       "flat": "Flat",
       "pop": "Pop",
