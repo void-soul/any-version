@@ -1,7 +1,8 @@
 // Buddy → 2API 选项卡：启停 / 三项自检 / 客户端接入 / 端点自检
 //
 // 后端是内嵌在 kira 主进程的 axum 服务（buddy/twoapi），协议转换复用 src-tauri/src/proxy。
-// 这里只做控制与展示；账号联动由后端在 switch_account 里自动完成。
+// 这里只做控制与展示；账号联动由后端两处完成：Buddy 面板切号时 `on_account_switched`
+// 立刻热更新，在 WorkBuddy 客户端里自己切号则由服务运行期间的凭据巡查兜住（最坏 30s）。
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";

@@ -766,6 +766,8 @@ pub fn switch_account(platform: BuddyPlatform, account_id: &str) -> Result<Strin
         tauri::async_runtime::spawn(async move {
             if let Err(e) = crate::commands::buddy::twoapi::on_account_switched().await {
                 eprintln!("[buddy] 2API 凭据同步失败：{e}");
+                // 记进服务状态：只打日志的话用户看不到，而服务会继续用旧账号发请求
+                crate::commands::buddy::twoapi::note_sync_error(&e);
             }
         });
     }

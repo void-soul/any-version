@@ -96,7 +96,9 @@ pub struct Snapshot {
 /// 凭据状态机。
 ///
 /// 两条刷新路径都收敛到这里：
-/// - [`reload_if_changed`]：文件 mtime/len 变了就重读（用户在 WorkBuddy 客户端里切号）
+/// - [`reload_if_changed`]：文件 mtime/len 变了就重读（用户在 WorkBuddy 客户端里切号）。
+///   由 `mod.rs` 的凭据巡查间接驱动（每轮 `ensure_fresh` → `current` → 它），
+///   **不是**每个请求前调用 —— proxy 请求路径不碰 `Credentials`，那条是死路。
 /// - [`reload_from_buddy`]：Buddy 面板切号成功后主动调用，同进程内无需等 mtime
 pub struct Credentials {
     path: PathBuf,
@@ -141,7 +143,7 @@ impl Credentials {
         Ok(())
     }
 
-    /// 文件被外部改过就重读（每个请求前调用）
+    /// 文件被外部改过就重读（由凭据巡查调用，见 mod.rs 的 `start_credentials_watcher`）
     pub fn reload_if_changed(&self) -> Result<(), String> {
         let (mtime, len) = self.stamp();
         let stale = match &*self.state.lock().map_err(|_| "凭据锁已中毒".to_string())? {

@@ -502,6 +502,9 @@ pub async fn buddy2api_start(port: Option<u16>) -> Result<TwoApiStatus, String> 
                 .unwrap_or(0),
         );
     });
+    // 巡查只在服务运行期间有意义：它热更新的就是这份运行中的配置。
+    // 客户端里切号（不会通知我们）与 token 过期，都靠它兜住。
+    start_credentials_watcher(creds, (account.uid.clone(), account.access_token.clone()));
     Ok(status())
 }
 
@@ -509,6 +512,11 @@ pub async fn buddy2api_start(port: Option<u16>) -> Result<TwoApiStatus, String> 
 #[tauri::command]
 pub fn buddy2api_stop() -> Result<TwoApiStatus, String> {
     if let Ok(mut guard) = SERVER_TASK.lock() {
+        if let Some(handle) = guard.take() {
+            handle.abort();
+        }
+    }
+    if let Ok(mut guard) = WATCHER_TASK.lock() {
         if let Some(handle) = guard.take() {
             handle.abort();
         }
@@ -548,9 +556,98 @@ pub async fn on_account_switched() -> Result<bool, String> {
     let account = creds.current()?;
     let port = status().port;
     let applied = apply_account_to_running(port, &account).await;
-    set_status(|s| s.account = Some(account.display_name()));
+    set_status(|s| {
+        s.account = Some(account.display_name());
+        if applied {
+            s.last_error = None;
+        }
+    });
     eprintln!("[2api] 凭据已同步（uid={}，服务{}）", account.uid, if applied { "已热更新" } else { "未在运行" });
     Ok(applied)
+}
+
+/// 把「凭据同步失败」记进状态，让面板能看见。
+///
+/// 只 `eprintln` 等于没报错：服务会继续用旧账号的鉴权头发请求，而旧账号**仍然有效**时
+/// 请求一切正常 —— 只是额度和身份记在别人头上，界面上完全看不出来。
+pub fn note_sync_error(err: &str) {
+    set_status(|s| {
+        s.last_error = Some(format!(
+            "2API 凭据同步失败：{err}（服务仍在用旧账号的凭据，可尝试重启 2API）"
+        ));
+    });
+}
+
+// ─── 凭据巡查 ───
+
+/// 巡查间隔（ms）。
+///
+/// 30s 是权衡：最坏情况是切号后半分钟才生效，而 2API 请求本来就走网络，
+/// 用户不会盯着这半分钟；再密就是白白 stat 文件。
+pub const WATCH_INTERVAL_MS: u64 = 30_000;
+
+/// 巡查任务句柄（停止服务时 abort，避免残留一轮）
+static WATCHER_TASK: LazyLock<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+/// 巡查的纯判定：这份凭据是否与上次写进服务的那份不同。
+///
+/// 抽成纯函数是为了能单测 —— 巡查本体要起异步任务、依赖运行中的服务，测不动。
+fn identity_changed(previous: Option<&(String, String)>, uid: &str, token: &str) -> bool {
+    match previous {
+        None => true,
+        Some((u, t)) => u != uid || t != token,
+    }
+}
+
+/// 起凭据巡查：**用户在 WorkBuddy 客户端里自己切号**这条路径靠它兜住。
+///
+/// 启动时的鉴权头是**快照**进 `ProxyConfig` 的（见 [`buddy2api_start`]），而客户端切号
+/// 不会通知我们，也没有人会来调 [`on_account_switched`] —— 不巡查的话服务会一直用旧
+/// 账号发请求。`credentials::Credentials::reload_if_changed` 注释里写的"每个请求前调用"
+/// 是**不成立的**：proxy 请求路径根本不碰 `Credentials`，那条路径实际上是死的。
+///
+/// 顺带解决长期运行的 token 过期：`ensure_fresh` 原先只在启动时调一次，
+/// 现在每轮都过一遍（临近过期才真发请求）。
+///
+/// `initial` = 启动时写进服务的那份凭据，避免第一轮就无谓地重写一次。
+fn start_credentials_watcher(
+    creds: std::sync::Arc<credentials::Credentials>,
+    initial: (String, String),
+) {
+    let mut applied: Option<(String, String)> = Some(initial);
+    let handle = tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(WATCH_INTERVAL_MS)).await;
+            // ensure_fresh 内部先走 current()（含 reload_if_changed），所以客户端切号
+            // 在这一步被读到；写回仍受 mtime 保护，不会覆盖用户刚做的切换。
+            let account = match creds.ensure_fresh().await {
+                Ok(a) => a,
+                Err(e) => {
+                    eprintln!("[2api] 巡查：读取/刷新凭据失败：{e}");
+                    continue;
+                }
+            };
+            if !identity_changed(applied.as_ref(), &account.uid, &account.access_token) {
+                continue;
+            }
+            // 每轮重新取端口：改端口会重启服务，写死启动时的端口会打空
+            let updated = apply_account_to_running(status().port, &account).await;
+            if !updated {
+                // 服务没在跑（或重启中间态）：不记进 applied，下一轮再试
+                continue;
+            }
+            set_status(|s| {
+                s.account = Some(account.display_name());
+                s.last_error = None;
+            });
+            applied = Some((account.uid.clone(), account.access_token.clone()));
+            eprintln!("[2api] 巡查：账号已变，鉴权头热更新（uid={}）", account.uid);
+        }
+    });
+    if let Ok(mut guard) = WATCHER_TASK.lock() {
+        *guard = Some(handle);
+    }
 }
 
 #[cfg(test)]
@@ -564,6 +661,35 @@ mod runtime_tests {
         let ok = crate::proxy::server::update_running_config(59999, |_| touched = true).await;
         assert!(!ok, "未注册的端口应返回 false");
         assert!(!touched, "不应执行修改");
+    }
+
+    #[test]
+    fn watcher_applies_only_when_uid_or_token_moves() {
+        let prev = ("uid-a".to_string(), "tok-1".to_string());
+        assert!(identity_changed(None, "uid-a", "tok-1"), "首轮必须写进服务");
+        assert!(
+            !identity_changed(Some(&prev), "uid-a", "tok-1"),
+            "没变就别反复写（每 30s 一次的无谓重写）"
+        );
+        assert!(
+            identity_changed(Some(&prev), "uid-b", "tok-1"),
+            "客户端切号 → uid 变了，必须更新"
+        );
+        assert!(
+            identity_changed(Some(&prev), "uid-a", "tok-2"),
+            "token 刷新 → 同一个 uid 也要更新（否则长期运行会撞上过期 token）"
+        );
+    }
+
+    #[test]
+    fn sync_failure_reaches_the_panel_not_only_stderr() {
+        // 同步失败若只 eprintln，用户永远看不到：旧账号仍有效时请求照样 200，
+        // 只是额度记在别人头上
+        note_sync_error("读取登录态失败");
+        let err = status().last_error.unwrap_or_default();
+        assert!(err.contains("读取登录态失败"), "{err}");
+        assert!(err.contains("旧账号"), "要说清服务仍在用旧凭据：{err}");
+        set_status(|s| s.last_error = None);
     }
 }
 
