@@ -122,6 +122,15 @@ function providerProtocolBadges(p: AiProvider | null | undefined) {
   ));
 }
 
+/// 哪些工具的伪装名会被后端按「官方模型名校验」过滤。
+///
+/// 与 Rust `tool_config_custom::effective_claimed_model` 的分派保持一致：只有这两个
+/// 桌面端（模型选择器只认自家官方名）会把手填的非法声明名**自动替换**成 `builtinModels`
+/// 清单里第一个合法项；其余工具原样使用用户填的名字。
+export function isStrictMasqueradeTool(toolId: string | undefined | null): boolean {
+  return toolId === "claudedesktop" || toolId === "chatgptdesktop";
+}
+
 /// 计算代理启动信息条所需数据（与后端 launch.rs 逻辑对齐）。
 /// 无 Provider / 官方模式 / 不支持模型 时不启动代理，返回 null。
 export function getProxyInfo(
@@ -210,6 +219,27 @@ function findModelRef(
     }
   }
   return null;
+}
+
+/** 工具配置文件里回读到的模型，要不要拿去回填「供应商 + 模型」选择。
+ *
+ * **只有「没有上次启动记录」时才回填。**
+ *
+ * 伪装生效时，工具配置文件里写的是**声明名 C** 而不是真实模型 —— ChatGPT 桌面端写
+ * `gpt-6-astra`，真实模型是 `space-bunny`。拿 C 去供应商列表里 [`findModelRef`] 反查，
+ * 会命中**另一个供应商的同名模型**：实测把「WorkBuddy2API / space-bunny」顶成
+ * 「OpenCode / gpt-6-astra」，伪装输入框也跟着被清空，看起来像「伪装值变成了原始模型」。
+ *
+ * 「上次启动记录」才是「用户选了哪个供应商+模型」的权威来源；配置文件那一路仍然始终
+ * 回读（用于提示当前实际生效的是什么），只是不再夺走选择权。
+ */
+export function resolveAppliedModelRef(
+  providers: AiProvider[],
+  appliedModel: string | null | undefined,
+  hasLastSelection: boolean,
+): { providerId: string; modelId: string } | null {
+  if (hasLastSelection) return null;
+  return findModelRef(providers, appliedModel);
 }
 
 /** 未安装区的形态筛选：全部 / CLI / 桌面端（抄 EchoBird 的分组维度）。
@@ -655,22 +685,22 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
         // 保存本次启动配置
         const providerName = config?.providers.find(p => p.id === selectedModelProvider)?.name || null;
         const lc: LastLaunchConfig = {
-          provider_id: useOfficialModel ? null : (selectedModelProvider || null),
-          provider_name: providerName,
-          model_id: useOfficialModel ? null : (selectedModel || null),
-          fallback_model_id: useOfficialModel ? null : (selectedFallbackModel || null),
-          fallback_provider_id: useOfficialModel ? null : (selectedFallbackProvider || null),
-          fallback_masquerade_model: useOfficialModel ? null : (fallbackMasqueradeModel || null),
-          use_official_model: useOfficialModel,
-          terminal_id: selectedTerminal,
-          one_m_context: selectedTool.support_one_m_context ? oneMContext : false,
-          fallback_one_m_context: selectedTool.support_one_m_context ? (selectedFallbackModel ? fallbackOneMContext : false) : false,
-          masquerade_model: useOfficialModel ? null : (masqueradeModel || null),
-          optimizer_enabled: useOfficialModel ? null : optimizerEnabled,
-          rectifier_enabled: useOfficialModel ? null : rectifierEnabled,
-          custom_param_values: useOfficialModel ? {} : customParamValues,
-          project_path: (sessionMode === "resume" || sessionMode === "fork") && selectedSession ? selectedSession.project_path : projectPath,
-          last_launched_at: new Date().toISOString(),
+          providerId: useOfficialModel ? null : (selectedModelProvider || null),
+          providerName: providerName,
+          modelId: useOfficialModel ? null : (selectedModel || null),
+          fallbackModelId: useOfficialModel ? null : (selectedFallbackModel || null),
+          fallbackProviderId: useOfficialModel ? null : (selectedFallbackProvider || null),
+          fallbackMasqueradeModel: useOfficialModel ? null : (fallbackMasqueradeModel || null),
+          useOfficialModel: useOfficialModel,
+          terminalId: selectedTerminal,
+          oneMContext: selectedTool.support_one_m_context ? oneMContext : false,
+          fallbackOneMContext: selectedTool.support_one_m_context ? (selectedFallbackModel ? fallbackOneMContext : false) : false,
+          masqueradeModel: useOfficialModel ? null : (masqueradeModel || null),
+          optimizerEnabled: useOfficialModel ? null : optimizerEnabled,
+          rectifierEnabled: useOfficialModel ? null : rectifierEnabled,
+          customParamValues: useOfficialModel ? {} : customParamValues,
+          projectPath: (sessionMode === "resume" || sessionMode === "fork") && selectedSession ? selectedSession.project_path : projectPath,
+          lastLaunchedAt: new Date().toISOString(),
         };
         await invoke("save_last_launch_config", { toolId: selectedTool.id, config: lc }).catch(() => {});
         setLastLaunchConfigs(prev => ({ ...prev, [selectedTool.id]: lc }));
@@ -1186,37 +1216,46 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                 setSelectedTerminal("cmd");
                 setUseOfficialModel(tool.api_protocol === "none");
                 // 加载上次启动配置并恢复 UI 状态
+                let hasLastSelection = false;
                 try {
                   const last = await invoke<LastLaunchConfig | null>("get_last_launch_config", { toolId: tool.id });
                   if (last) {
                     setLastLaunchConfigs(prev => ({ ...prev, [tool.id]: last }));
-                    if (last.use_official_model) {
+                    if (last.useOfficialModel) {
                       setUseOfficialModel(true);
                     } else {
                       // 先设置 provider，触发模型列表更新
-                      if (last.provider_id) {
-                        setSelectedModelProvider(last.provider_id);
+                      if (last.providerId) {
+                        setSelectedModelProvider(last.providerId);
                       }
                       // 再设置 model（React 会批量更新，下次渲染时模型列表已更新）
-                      if (last.model_id) setSelectedModel(last.model_id);
-                      if (last.custom_param_values) setCustomParamValues(last.custom_param_values);
-                      if (last.fallback_model_id) setSelectedFallbackModel(last.fallback_model_id);
-                      if (last.fallback_provider_id) setSelectedFallbackProvider(last.fallback_provider_id);
-                      if (last.fallback_masquerade_model) setFallbackMasqueradeModel(last.fallback_masquerade_model);
+                      if (last.modelId) setSelectedModel(last.modelId);
+                      hasLastSelection = !!(last.providerId && last.modelId);
+                      if (last.customParamValues) setCustomParamValues(last.customParamValues);
+                      if (last.fallbackModelId) setSelectedFallbackModel(last.fallbackModelId);
+                      if (last.fallbackProviderId) setSelectedFallbackProvider(last.fallbackProviderId);
+                      if (last.fallbackMasqueradeModel) setFallbackMasqueradeModel(last.fallbackMasqueradeModel);
                     }
-                    if (last.terminal_id && last.terminal_id !== "cmd") setSelectedTerminal(last.terminal_id);
-                    if (last.one_m_context) setOneMContext(true);
-                    if (last.fallback_one_m_context) setFallbackOneMContext(true);
-                    if (last.masquerade_model) setMasqueradeModel(last.masquerade_model);
-                    if (last.optimizer_enabled !== null && last.optimizer_enabled !== undefined) setOptimizerEnabled(last.optimizer_enabled);
-                    if (last.rectifier_enabled !== null && last.rectifier_enabled !== undefined) setRectifierEnabled(last.rectifier_enabled);
-                    if (last.project_path) setProjectPath(last.project_path);
+                    if (last.terminalId && last.terminalId !== "cmd") setSelectedTerminal(last.terminalId);
+                    if (last.oneMContext) setOneMContext(true);
+                    if (last.fallbackOneMContext) setFallbackOneMContext(true);
+                    if (last.masqueradeModel) setMasqueradeModel(last.masqueradeModel);
+                    if (last.optimizerEnabled !== null && last.optimizerEnabled !== undefined) setOptimizerEnabled(last.optimizerEnabled);
+                    if (last.rectifierEnabled !== null && last.rectifierEnabled !== undefined) setRectifierEnabled(last.rectifierEnabled);
+                    if (last.projectPath) setProjectPath(last.projectPath);
                   }
                 } catch { /* 无历史记录 */
                 }
-                // 再以**工具配置文件**为准回显一次：它比「上次启动配置」权威 ——
-                // 工具真正读的是自己的配置文件，用户也可能在别处改过它。
-                // 只信自己的记录会出现「看着像用官方配置、实际还在用自定义模型」。
+                // 再以**工具配置文件**为准回显一次。
+                //
+                // ⚠️ 只能用于「没有上次启动记录」的情况。**伪装生效时配置文件里写的是声明名**
+                // （ChatGPT 桌面端写 `gpt-6-astra`，真实模型是 `space-bunny`），拿它去供应商
+                // 列表里 `findModelRef` 反查会命中**另一个供应商的同名模型** —— 实测就撞上了
+                // OpenCode 的 `gpt-6-astra`，把刚恢复好的「WorkBuddy2API / space-bunny」
+                // 顶成了「OpenCode / gpt-6-astra」，伪装输入框也跟着清空。
+                //
+                // 「上次启动记录」才是「用户选了哪个供应商与模型」的权威来源；配置文件这一路
+                // 仍然**始终**回读（`configAppliedModel`），用于提示当前实际生效的是什么。
                 setConfigAppliedModel(null);
                 setConfigAppliedFallback(null);
                 if (tool.config_file) {
@@ -1225,13 +1264,13 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                     setConfigAppliedModel(applied.model ?? null);
                     setConfigAppliedFallback(applied.fallback_model ?? null);
                     const providers = config?.providers ?? [];
-                    const mainRef = findModelRef(providers, applied.model);
+                    const mainRef = resolveAppliedModelRef(providers, applied.model, hasLastSelection);
                     if (mainRef) {
                       setUseOfficialModel(false);
                       setSelectedModelProvider(mainRef.providerId);
                       setSelectedModel(mainRef.modelId);
                     }
-                    const fbRef = findModelRef(providers, applied.fallback_model);
+                    const fbRef = resolveAppliedModelRef(providers, applied.fallback_model, hasLastSelection);
                     if (fbRef) {
                       setSelectedFallbackProvider(fbRef.providerId);
                       setSelectedFallbackModel(fbRef.modelId);
@@ -1346,28 +1385,28 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                 )}
                 {lastLaunchConfigs[tool.id] && tool.installed && (
                   <div className={`flex items-center gap-1 mt-0.5 ml-5.5 flex-wrap ${selectedToolId === tool.id ? "text-white/70" : "text-slate-600"}`}>
-                    {lastLaunchConfigs[tool.id].use_official_model ? (
+                    {lastLaunchConfigs[tool.id].useOfficialModel ? (
                       <span className="text-micro">{t("toollaunch.official")}</span>
                     ) : (
                       <>
                         <span className="text-micro truncate max-w-[60px]">
-                          {lastLaunchConfigs[tool.id].provider_name || lastLaunchConfigs[tool.id].provider_id || "-"}
+                          {lastLaunchConfigs[tool.id].providerName || lastLaunchConfigs[tool.id].providerId || "-"}
                         </span>
-                        {lastLaunchConfigs[tool.id].model_id && (
+                        {lastLaunchConfigs[tool.id].modelId && (
                           <span className="text-micro truncate max-w-[50px] opacity-70">
-                            · {lastLaunchConfigs[tool.id].model_id}
+                            · {lastLaunchConfigs[tool.id].modelId}
                           </span>
                         )}
-                        {lastLaunchConfigs[tool.id].fallback_model_id && (
+                        {lastLaunchConfigs[tool.id].fallbackModelId && (
                           <span className="text-micro text-amber-400/80 truncate max-w-[50px]">
-                            ※ {lastLaunchConfigs[tool.id].fallback_model_id}
+                            ※ {lastLaunchConfigs[tool.id].fallbackModelId}
                           </span>
                         )}
                       </>
                     )}
-                    {lastLaunchConfigs[tool.id].last_launched_at && (
+                    {lastLaunchConfigs[tool.id].lastLaunchedAt && (
                       <span className="text-micro opacity-50 ml-auto">
-                        {formatRelativeTime(lastLaunchConfigs[tool.id].last_launched_at, t)}
+                        {formatRelativeTime(lastLaunchConfigs[tool.id].lastLaunchedAt, t)}
                       </span>
                     )}
                   </div>
@@ -1467,38 +1506,38 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                   <div className="flex items-center gap-1 mb-1">
                     <History className="w-3 h-3 text-slate-500" />
                     <span className="text-micro text-slate-500 font-semibold">{t("toollaunch.lastLaunch")}</span>
-                    {lastLaunchConfigs[selectedTool.id].last_launched_at && (
+                    {lastLaunchConfigs[selectedTool.id].lastLaunchedAt && (
                       <span className="text-micro text-slate-600 ml-auto">
-                        {formatRelativeTime(lastLaunchConfigs[selectedTool.id].last_launched_at, t)}
+                        {formatRelativeTime(lastLaunchConfigs[selectedTool.id].lastLaunchedAt, t)}
                       </span>
                     )}
                   </div>
                   <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-micro">
-                    {lastLaunchConfigs[selectedTool.id].use_official_model ? (
+                    {lastLaunchConfigs[selectedTool.id].useOfficialModel ? (
                       <span className="text-slate-400">{t("toollaunch.officialModel")}</span>
                     ) : (
                       <>
                         <span className="text-slate-400">
-                          {lastLaunchConfigs[selectedTool.id].provider_name || lastLaunchConfigs[selectedTool.id].provider_id || "-"}
+                          {lastLaunchConfigs[selectedTool.id].providerName || lastLaunchConfigs[selectedTool.id].providerId || "-"}
                         </span>
-                        {lastLaunchConfigs[selectedTool.id].model_id && (
-                          <span className="text-[color-mix(in_srgb,var(--module-accent)_80%,transparent)] truncate max-w-[120px]" title={lastLaunchConfigs[selectedTool.id].model_id ?? undefined}>
-                            {lastLaunchConfigs[selectedTool.id].model_id}
+                        {lastLaunchConfigs[selectedTool.id].modelId && (
+                          <span className="text-[color-mix(in_srgb,var(--module-accent)_80%,transparent)] truncate max-w-[120px]" title={lastLaunchConfigs[selectedTool.id].modelId ?? undefined}>
+                            {lastLaunchConfigs[selectedTool.id].modelId}
                           </span>
                         )}
-                        {lastLaunchConfigs[selectedTool.id].fallback_model_id && (
-                          <span className="text-amber-400/80 truncate max-w-[120px]" title={t("toollaunch.fallbackModel", { name: lastLaunchConfigs[selectedTool.id].fallback_model_id })}>
-                            ※ {lastLaunchConfigs[selectedTool.id].fallback_model_id}
+                        {lastLaunchConfigs[selectedTool.id].fallbackModelId && (
+                          <span className="text-amber-400/80 truncate max-w-[120px]" title={t("toollaunch.fallbackModel", { name: lastLaunchConfigs[selectedTool.id].fallbackModelId })}>
+                            ※ {lastLaunchConfigs[selectedTool.id].fallbackModelId}
                           </span>
                         )}
                       </>
                     )}
-                    {lastLaunchConfigs[selectedTool.id].masquerade_model && (
+                    {lastLaunchConfigs[selectedTool.id].masqueradeModel && (
                       <span className="text-cyan-400/60" title={t("toollaunch.masquerade")}>
-                        🎭 {lastLaunchConfigs[selectedTool.id].masquerade_model}
+                        🎭 {lastLaunchConfigs[selectedTool.id].masqueradeModel}
                       </span>
                     )}
-                    {lastLaunchConfigs[selectedTool.id].one_m_context && (
+                    {lastLaunchConfigs[selectedTool.id].oneMContext && (
                       <span className="text-emerald-400/60" title={t("toollaunch.oneM")}>1M</span>
                     )}
                   </div>
@@ -1840,6 +1879,13 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                         {t("toollaunch.configFallbackFromFile", { model: configAppliedFallback })}
                       </Note>
                     )}
+                    {/* 有上次记录、但配置文件里的值与面板选择不一致：多半是伪装名（声明名）。
+                        说清楚「谁在生效」，别让面板与工具实际状态悄悄分叉。 */}
+                    {configAppliedModel && selectedModel && configAppliedModel !== selectedModel && (
+                      <Note tone="warn">
+                        {t("toollaunch.configModelDiffers", { model: configAppliedModel, selected: selectedModel })}
+                      </Note>
+                    )}
 
                     {/* 模型供应商 — 统一列表（代理自动转换协议，任意供应商可选） */}
                     {eligibleProviders.length > 0 && (
@@ -1949,7 +1995,11 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                     {selectedModel && selectedTool.builtin_models.length > 0 && (
                       <div className="mt-3">
                         <label className="text-body font-bold text-slate-300 mb-1.5 block">{t("toollaunch.masqueradeLabel")} <span className="text-micro text-slate-500 font-normal">{t("toollaunch.optional")}</span></label>
-                        <p className="text-micro text-slate-500 mb-1.5">{t("toollaunch.masqueradeHint", { model: selectedModel })}</p>
+                        <p className="text-micro text-slate-500 mb-1.5">
+                          {/* 桌面端的声明名会被后端按「官方名校验」过滤，填非法名是无效的 ——
+                              提示语必须说实话，不能沿用「任意模型名」那句。 */}
+                          {t(isStrictMasqueradeTool(selectedTool.id) ? "toollaunch.masqueradeHintStrict" : "toollaunch.masqueradeHint", { model: selectedModel })}
+                        </p>
                         <input type="text" list={`masq-list-${selectedTool.id}`} value={masqueradeModel}
                           onChange={e => setMasqueradeModel(e.target.value)}
                           placeholder={t("toollaunch.noMasqueradePh", { model: selectedModel })}

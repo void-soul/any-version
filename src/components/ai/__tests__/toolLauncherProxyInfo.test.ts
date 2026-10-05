@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getProxyInfo } from "../ToolLauncher";
+import { getProxyInfo, isStrictMasqueradeTool } from "../ToolLauncher";
 
 const TOOL = {
   id: "chatgptdesktop",
@@ -50,5 +50,19 @@ describe("getProxyInfo 的模型 / 伪装信息", () => {
   it("官方模式 / 无供应商时仍返回 null（不启动代理就不显示）", () => {
     expect(getProxyInfo(TOOL, PROVIDER, true, "m", "", "", "")).toBeNull();
     expect(getProxyInfo(TOOL, null, false, "m", "", "", "")).toBeNull();
+  });
+});
+
+describe("isStrictMasqueradeTool（哪些工具会自动替换非法声明名）", () => {
+  it("两个桌面端：后端会按官方名校验过滤手填的名字", () => {
+    expect(isStrictMasqueradeTool("claudedesktop")).toBe(true);
+    expect(isStrictMasqueradeTool("chatgptdesktop")).toBe(true);
+  });
+
+  it("其余工具原样使用用户填的名字，提示语不能写成会被替换", () => {
+    // 与 Rust effective_claimed_model 的分派保持一致；多算一个工具就会让提示语说谎
+    for (const id of ["codex-cli", "claude-code", "gemini-cli", "opencode", "", undefined]) {
+      expect(isStrictMasqueradeTool(id)).toBe(false);
+    }
   });
 });

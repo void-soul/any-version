@@ -160,10 +160,14 @@ pub fn write_claudedesktop_with(
     //
     // 声明名必须**过 Desktop 的校验**：它会拿 `qa(name)` 剔掉非 Anthropic 模型名，
     // 剔完选择器就空了，而提示只有一句含糊的 warning（实测见 design 文档）。
-    // 所以这里统一走 `claudedesktop_alias`：声明名合法就用它，否则自动回落默认别名；
-    // 连兜底都不合法（内置常量被改坏）时**报错不写盘** —— 写一个 Desktop 必然剔除的
+    // 所以这里统一走 `claudedesktop_alias`：声明名合法就用它，否则取 builtinModels
+    // 清单里第一个合法项；清单里也没有合法项时**报错不写盘** —— 写一个 Desktop 必然剔除的
     // profile 进去，只会把问题拖到启动时才发现。
-    let sent_model = claudedesktop_alias(&real_model, m.claimed)?;
+    let sent_model = claudedesktop_alias(
+        &real_model,
+        m.claimed,
+        builtin_candidates(CLAUDESKTOP_WRITER),
+    )?;
 
     set_deployment_mode(&layout.official_cfg, "3p")?;
     set_deployment_mode(&layout.threep_cfg, "3p")?;
@@ -274,14 +278,6 @@ const CLAUDE_DESKTOP_BLACKLIST: &[&str] = &[
 /// 黑名单里带 `\b` 词边界的项：必须**整词**匹配，否则 "streaming" 里的 "ling" 会误伤
 const CLAUDE_DESKTOP_BLACKLIST_WORDS: &[&str] = &["ling", "unic"];
 
-/// 无伪装时的默认伪装名。它自身必须是合法名字（有测试钉住）。
-const DEFAULT_CLAUDESKTOP_ALIAS: &str = "claude-sonnet-4-6";
-
-/// 默认伪装名（`claude-sonnet-4-6`；这个版本里 Desktop 的定价示例就用 4-6）
-pub fn default_claudedesktop_alias() -> &'static str {
-    DEFAULT_CLAUDESKTOP_ALIAS
-}
-
 /// 判断 Claude Desktop 会不会接受这个模型名。
 ///
 /// 判定顺序**必须**与 `qa()` 一致：先黑名单、再要求含 Anthropic 家族词。
@@ -330,8 +326,17 @@ fn contains_whole_word(haystack: &str, word: &str) -> bool {
 /// **这是唯一的别名来源** —— profile 写入与代理的 `model_aliases` 注册都必须调它。
 /// 各算一次会出现「profile 写 A、代理注册 B」，Desktop 发的名字无人认领 → 400。
 ///
-/// 优先级：合法声明名 → 合法真实模型名 → 内置兜底 → 报错（兜底自身不合法属代码被改坏）。
-pub fn claudedesktop_alias(real_model: &str, preferred: &str) -> Result<String, String> {
+/// `candidates` = 该工具 `builtinModels` 清单（按**新 → 旧**维护，退役的删掉、新款加前面）。
+/// 兜底取清单里第一个合法项 —— **刻意不在代码里写死模型名**：写死的那个迟早会变成
+/// 已废弃的名字，而用户看不出任何异常（只会发现「怎么突然开始用回官方模型了」）。
+/// 清单为空或全不合法时返回 `Err`，由 [`effective_claimed_model`] 退化成「不伪装」。
+///
+/// 优先级：合法声明名 → 合法真实模型名 → 清单里第一个合法项 → Err（退化成不伪装）。
+pub fn claudedesktop_alias(
+    real_model: &str,
+    preferred: &str,
+    candidates: &[String],
+) -> Result<String, String> {
     let p = preferred.trim();
     if !p.is_empty() && is_legal_claudedesktop_model(p) {
         return Ok(p.to_string());
@@ -340,13 +345,14 @@ pub fn claudedesktop_alias(real_model: &str, preferred: &str) -> Result<String, 
     if is_legal_claudedesktop_model(real) {
         return Ok(real.to_string());
     }
-    let fallback = default_claudedesktop_alias();
-    if is_legal_claudedesktop_model(fallback) {
-        return Ok(fallback.to_string());
+    if let Some(ok) = first_legal(candidates, is_legal_claudedesktop_model) {
+        return Ok(ok);
     }
     Err(format!(
         "无法为 Claude Desktop 生成合法的模型名：真实模型 `{real_model}` 与声明名 `{preferred}` \
-         都不被 Desktop 接受，且内置兜底 `{fallback}` 自身也不合法 —— 这是内置常量被改坏了，请反馈"
+         都不被 Desktop 接受，且 builtinModels 清单里也没有合法项（当前 {} 项）—— \
+         清单按「新 → 旧」维护，退役的型号要删掉、补上在售的新型号",
+        candidates.len()
     ))
 }
 
@@ -382,17 +388,8 @@ const OPENAI_BLACKLIST: &[&str] = &[
 /// 黑名单里带 `\b` 词边界的项（与 Claude 那份同源：`streaming` 里的 `ling` 不算命中）。
 const OPENAI_BLACKLIST_WORDS: &[&str] = &["ling", "unic"];
 
-/// 无伪装时的默认伪装名。取 Codex 系官方名里最稳的一个（`ai-tools/codex-cli/config.json`
-/// 的 `builtinModels` 里就有它），它自身必须是合法名字（有测试钉住）。
-const DEFAULT_CHATGPTDESKTOP_ALIAS: &str = "gpt-5.1-codex";
-
 /// ChatGPT 桌面端的工具 id。也是「这个工具需要 OpenAI 侧伪装」的判据。
 pub const CHATGPTDESKTOP_TOOL: &str = "chatgptdesktop";
-
-/// 默认伪装名（`gpt-5.1-codex`）
-pub fn default_chatgptdesktop_alias() -> &'static str {
-    DEFAULT_CHATGPTDESKTOP_ALIAS
-}
 
 /// 判断 ChatGPT 桌面端会不会认这个模型名。
 ///
@@ -433,13 +430,39 @@ fn is_openai_reasoning_token(token: &str) -> bool {
     }
 }
 
+/// 清单里第一个合法项（清单按「新 → 旧」维护，所以第一项就是当前在售最新的那个）。
+///
+/// 跳过非法项而不是只看第一项：清单是手写的，保不齐每一项都合法（复制粘贴、手抖）。
+fn first_legal(candidates: &[String], is_legal: fn(&str) -> bool) -> Option<String> {
+    candidates
+        .iter()
+        .map(|c| c.trim())
+        .find(|c| !c.is_empty() && is_legal(c))
+        .map(str::to_string)
+}
+
+/// 该工具声明的官方名候选（`ai-tools/<id>/config.json` 的 `builtinModels`）。
+///
+/// 读不到工具声明时返回空切片 → 别名函数返回 `Err` → 退化成「不伪装」。
+/// **刻意不兜一个硬编码模型名**：那正是这次要消灭的东西。
+fn builtin_candidates(tool_id: &str) -> &[String] {
+    crate::commands::ai_registry::registry()
+        .get_tool_config(tool_id)
+        .map(|c| c.builtin_models.as_slice())
+        .unwrap_or(&[])
+}
+
 /// 算出写进 `~/.codex/config.toml` 的 `model`（声明名 C）。
 ///
 /// 与 [`claudedesktop_alias`] 同构，**并且同样必须是唯一来源** —— 写盘与代理注册
 /// `model_aliases` 都调 [`effective_claimed_model`]，各算一次就会「写 A、注册 B」。
 ///
-/// 优先级：合法声明名 → 合法真实模型名 → 内置兜底 → 报错（兜底自身不合法属代码被改坏）。
-pub fn chatgptdesktop_alias(real_model: &str, preferred: &str) -> Result<String, String> {
+/// `candidates` / 兜底取值的理由见 [`claudedesktop_alias`]：模型名来自清单，不写死在代码里。
+pub fn chatgptdesktop_alias(
+    real_model: &str,
+    preferred: &str,
+    candidates: &[String],
+) -> Result<String, String> {
     let p = preferred.trim();
     if !p.is_empty() && is_legal_openai_model(p) {
         return Ok(p.to_string());
@@ -448,13 +471,14 @@ pub fn chatgptdesktop_alias(real_model: &str, preferred: &str) -> Result<String,
     if is_legal_openai_model(real) {
         return Ok(real.to_string());
     }
-    let fallback = default_chatgptdesktop_alias();
-    if is_legal_openai_model(fallback) {
-        return Ok(fallback.to_string());
+    if let Some(ok) = first_legal(candidates, is_legal_openai_model) {
+        return Ok(ok);
     }
     Err(format!(
         "无法为 ChatGPT 桌面端生成合法的模型名：真实模型 `{real_model}` 与声明名 `{preferred}` \
-         都不是官方 OpenAI 模型名，且内置兜底 `{fallback}` 自身也不合法 —— 这是内置常量被改坏了，请反馈"
+         都不是官方 OpenAI 模型名，且 builtinModels 清单里也没有合法项（当前 {} 项）—— \
+         清单按「新 → 旧」维护，退役的型号要删掉、补上在售的新型号",
+        candidates.len()
     ))
 }
 
@@ -465,16 +489,17 @@ pub fn chatgptdesktop_alias(real_model: &str, preferred: &str) -> Result<String,
 /// ChatGPT 桌面端；其余工具（Codex CLI / Claude Code / opencode …）**原样**返回，
 /// 别让这个改动波及其它工具。
 pub fn effective_claimed_model(tool_id: &str, real_model: &str, preferred: &str) -> String {
+    let candidates = builtin_candidates(tool_id);
     match tool_id {
         CLAUDESKTOP_WRITER => {
-            if let Ok(alias) = claudedesktop_alias(real_model, preferred) {
+            if let Ok(alias) = claudedesktop_alias(real_model, preferred, candidates) {
                 return alias;
             }
-            // 生成不出来只可能是内置兜底常量被改坏了；这里不让启动直接失败，
-            // 退回原逻辑（写盘那条路径会照实报错，见 write_claudedesktop_with）
+            // 清单里没有合法项（工具声明缺失 / 清单被清空）→ 退化成「不伪装」，
+            // 宁可让 Desktop 看到真实名字，也不要伪装成一个可能已废弃的官方名。
         }
         CHATGPTDESKTOP_TOOL => {
-            if let Ok(alias) = chatgptdesktop_alias(real_model, preferred) {
+            if let Ok(alias) = chatgptdesktop_alias(real_model, preferred, candidates) {
                 return alias;
             }
         }
@@ -585,10 +610,10 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        chatgptdesktop_alias, claude_desktop_layout, claudedesktop_alias,
-        default_chatgptdesktop_alias, default_claudedesktop_alias, effective_claimed_model,
-        is_legal_claudedesktop_model, is_legal_openai_model, resolve_claimed_model,
-        write_claudedesktop_with, ClaudeDesktopLayout, CLAUDE_DESKTOP_PROFILE_ID,
+        builtin_candidates, chatgptdesktop_alias, claude_desktop_layout, claudedesktop_alias,
+        effective_claimed_model, first_legal, is_legal_claudedesktop_model, is_legal_openai_model,
+        resolve_claimed_model, write_claudedesktop_with, ClaudeDesktopLayout,
+        CLAUDE_DESKTOP_PROFILE_ID, CLAUDESKTOP_WRITER,
     };
     use std::path::Path;
 
@@ -781,37 +806,49 @@ mod tests {
     //   qa(name) = !Kge.test(name) && (Wge.test(name) || Gge.some(t => name.includes(t)))
     // 下面把原文的关键片段原样搬成 Rust 用例 —— 这是 Desktop 会不会接受某个名字的**唯一判据**。
 
+    /// 清单（按「新 → 旧」维护）。测试自己给，不读注册表 —— 这样「清单顺序决定兜底」
+    /// 这条契约能被独立验证，不受 `ai-tools/*.json` 改动影响。
+    fn cands(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// 与 `ai-tools/claudedesktop/config.json` 当前清单一致（仅测试用；真实来源是那个 JSON）
+    const CLAUDE_LIST: &[&str] = &["claude-opus-5-5", "claude-sonnet-4-6"];
+
     /// 合法的伪装名原样使用（不改动用户填的声明名）
     #[test]
     fn alias_keeps_a_legal_preferred_name() {
-        assert_eq!(claudedesktop_alias("space-bunny", "claude-sonnet-4-6").unwrap(), "claude-sonnet-4-6");
-        assert_eq!(claudedesktop_alias("space-bunny", "anthropic/claude-opus-4").unwrap(), "anthropic/claude-opus-4");
+        let c = cands(CLAUDE_LIST);
+        assert_eq!(claudedesktop_alias("space-bunny", "claude-sonnet-4-6", &c).unwrap(), "claude-sonnet-4-6");
+        assert_eq!(claudedesktop_alias("space-bunny", "anthropic/claude-opus-4", &c).unwrap(), "anthropic/claude-opus-4");
         // Wge：纯家族名也合法（`^(sonnet|opus|haiku|fable|mythos)(-[0-9.]+)?$`）
-        assert_eq!(claudedesktop_alias("space-bunny", "sonnet").unwrap(), "sonnet");
-        assert_eq!(claudedesktop_alias("space-bunny", "opus-4-5").unwrap(), "opus-4-5");
+        assert_eq!(claudedesktop_alias("space-bunny", "sonnet", &c).unwrap(), "sonnet");
+        assert_eq!(claudedesktop_alias("space-bunny", "opus-4-5", &c).unwrap(), "opus-4-5");
     }
 
-    /// 没配声明名 → 回落默认别名，且**不依赖真实模型名长什么样**
+    /// 没配声明名 → 取清单里**第一个**合法项（= 按新→旧维护时的最新在售型号）
     #[test]
-    fn alias_falls_back_when_preferred_is_absent_or_illegal() {
-        let fallback = "claude-sonnet-4-6";
+    fn alias_falls_back_to_the_newest_candidate() {
+        let fallback = "claude-opus-5-5";
+        let c = cands(CLAUDE_LIST);
         // 没填
-        assert_eq!(claudedesktop_alias("space-bunny", "").unwrap(), fallback);
-        assert_eq!(claudedesktop_alias("space-bunny", "   ").unwrap(), fallback);
+        assert_eq!(claudedesktop_alias("space-bunny", "", &c).unwrap(), fallback);
+        assert_eq!(claudedesktop_alias("space-bunny", "   ", &c).unwrap(), fallback);
         // 填了但 Desktop 会剔除的：真实模型名、别家模型名
-        assert_eq!(claudedesktop_alias("space-bunny", "space-bunny").unwrap(), fallback);
-        assert_eq!(claudedesktop_alias("glm-5.3", "glm-5.3").unwrap(), fallback);
-        assert_eq!(claudedesktop_alias("hy3", "hy3").unwrap(), fallback);
+        assert_eq!(claudedesktop_alias("space-bunny", "space-bunny", &c).unwrap(), fallback);
+        assert_eq!(claudedesktop_alias("glm-5.3", "glm-5.3", &c).unwrap(), fallback);
+        assert_eq!(claudedesktop_alias("hy3", "hy3", &c).unwrap(), fallback);
     }
 
     /// 易错反例：**黑名单先判**，所以「含 claude 但也含别家词」依然被拒
     #[test]
     fn alias_rejects_names_the_desktop_blacklists_even_with_anthropic_words() {
+        let c = cands(CLAUDE_LIST);
         // 这三个如果实现成「只检查含不含 claude」就会误判成合法
         for illegal in ["glm-5.3-claude", "qwen-claude-sonnet", "deepseek-v4-opus"] {
             assert_eq!(
-                claudedesktop_alias("x", illegal).unwrap(),
-                "claude-sonnet-4-6",
+                claudedesktop_alias("x", illegal, &c).unwrap(),
+                "claude-opus-5-5",
                 "{illegal} 含 Anthropic 词但也命中黑名单，必须回落"
             );
         }
@@ -820,30 +857,65 @@ mod tests {
     /// 真实模型名本身合法时也不该被改写（用户就是在用 Anthropic 模型）
     #[test]
     fn alias_is_identity_when_real_model_is_already_anthropic() {
-        assert_eq!(claudedesktop_alias("claude-sonnet-4-5", "").unwrap(), "claude-sonnet-4-5");
-        assert_eq!(claudedesktop_alias("sonnet", "").unwrap(), "sonnet");
+        let c = cands(CLAUDE_LIST);
+        assert_eq!(claudedesktop_alias("claude-sonnet-4-5", "", &c).unwrap(), "claude-sonnet-4-5");
+        assert_eq!(claudedesktop_alias("sonnet", "", &c).unwrap(), "sonnet");
     }
 
-    /// 自身是 `claude-sonnet-4-6` 之类的默认别名 → 直接用（自指不能算成需要回落）
+    /// **退役即失效**：兜底名只能来自清单，清单改了立刻生效 —— 代码里不许再写死一个模型名。
+    ///
+    /// 这条是「伪装成已废弃模型」的唯一护栏：早先版本把 `claude-sonnet-4-6` 硬编码成
+    /// 兜底，官方一旦退役该型号，Desktop 就会剔除这个名字，而用户完全看不出原因。
     #[test]
-    fn alias_default_is_itself_a_legal_name() {
-        let d = default_claudedesktop_alias();
-        assert!(is_legal_claudedesktop_model(d), "默认别名自身必须合法，否则兜底也是空的");
-    }
-
-    /// 启动路径与写盘**共用**同一个接缝：两个桌面端走别名规则，其余工具原样
-    #[test]
-    fn effective_claimed_model_only_masquerades_for_desktop_apps() {
-        // Claude Desktop：space-bunny 会被换成默认别名
+    fn fallback_follows_the_list_instead_of_a_hardcoded_name() {
+        let old = cands(&["claude-sonnet-4-6"]);
         assert_eq!(
-            effective_claimed_model("claudedesktop", "space-bunny", ""),
+            claudedesktop_alias("space-bunny", "", &old).unwrap(),
             "claude-sonnet-4-6"
         );
-        // ChatGPT 桌面端：非官方名 → 默认官方别名
+        // 清单换新 → 兜底跟着换，代码一行不改
+        let new = cands(&["claude-opus-5-5", "claude-sonnet-4-6"]);
         assert_eq!(
-            effective_claimed_model("chatgptdesktop", "space-bunny", ""),
-            "gpt-5.1-codex"
+            claudedesktop_alias("space-bunny", "", &new).unwrap(),
+            "claude-opus-5-5"
         );
+        // 清单里第一个不合法时**跳过**它取下一个，而不是整个失败
+        let dirty = cands(&["glm-5.3", "claude-opus-5-5"]);
+        assert_eq!(
+            claudedesktop_alias("space-bunny", "", &dirty).unwrap(),
+            "claude-opus-5-5"
+        );
+        // 清单空了 / 全不合法 → 报错（调用方退化成「不伪装」），绝不猜一个名字
+        assert!(claudedesktop_alias("space-bunny", "", &[]).is_err());
+        assert!(claudedesktop_alias("space-bunny", "", &cands(&["glm-5.3"])).is_err());
+    }
+
+    /// 启动路径与写盘**共用**同一个接缝：两个桌面端走别名规则，其余工具原样。
+    ///
+    /// 断言写成「等于清单里第一个合法项」而不是钉死某个具体型号 —— 清单本来就是
+    /// 要随官方在售型号变的数据，测试钉死型号等于给「加新模型」设一个隐形地雷。
+    #[test]
+    fn effective_claimed_model_only_masquerades_for_desktop_apps() {
+        for (tool, is_legal) in [
+            ("claudedesktop", is_legal_claudedesktop_model as fn(&str) -> bool),
+            ("chatgptdesktop", is_legal_openai_model as fn(&str) -> bool),
+        ] {
+            let got = effective_claimed_model(tool, "space-bunny", "");
+            let want = first_legal(builtin_candidates(tool), is_legal)
+                .unwrap_or_else(|| panic!("{tool} 的 builtinModels 清单里应有合法项"));
+            assert_eq!(got, want, "{tool} 的兜底名必须取清单第一项");
+            assert!(is_legal(&got), "{tool} 兜底名 {got} 必须合法");
+            // 手填的声明名合法时优先用它
+            let preferred = if tool == "claudedesktop" {
+                "claude-opus-4"
+            } else {
+                "gpt-4o"
+            };
+            assert_eq!(
+                effective_claimed_model(tool, "space-bunny", preferred),
+                preferred
+            );
+        }
         // 其余工具必须**原样**（别让这次改动波及其它工具）
         assert_eq!(effective_claimed_model("claude", "space-bunny", ""), "space-bunny");
         assert_eq!(
@@ -864,8 +936,8 @@ mod tests {
     #[test]
     fn profile_name_matches_the_alias_the_proxy_registers() {
         for (real, preferred) in [
-            ("space-bunny", ""),   // 没配声明名 → 走默认别名
-            ("glm-5.3", ""),       // 别家模型 → 走默认别名
+            ("space-bunny", ""),   // 没配声明名 → 取清单第一项
+            ("glm-5.3", ""),       // 别家模型 → 取清单第一项
             ("space-bunny", "sonnet"),          // 合法声明名 → 用它
             ("claude-opus-4", ""), // 真实名本来就合法 → 用它
         ] {
@@ -878,6 +950,13 @@ mod tests {
                 upstream_url: "",
                 one_m: false,
             };
+            // 写盘这条路径会读注册表取清单；清单读不到就该在这里报出人能看懂的话，
+            // 而不是后面一个莫名的 unwrap panic
+            let candidates = builtin_candidates(CLAUDESKTOP_WRITER);
+            assert!(
+                !candidates.is_empty(),
+                "读不到 claudedesktop 的 builtinModels（ai-tools 目录没找到？清单被清空了？）"
+            );
             write_claudedesktop_with(&layout, &m).unwrap();
 
             // 直接读 profile JSON 的 `name`（不能用 read_claudedesktop —— 它读的是
@@ -919,7 +998,7 @@ mod tests {
         use std::collections::HashMap;
 
         for real in ["space-bunny", "glm-5.3", "hy3", "kimi-k3"] {
-            let alias = claudedesktop_alias(real, "").unwrap();
+            let alias = claudedesktop_alias(real, "", &cands(CLAUDE_LIST)).unwrap();
             // 模拟 launch.rs 注册：model_aliases[别名] = 真实模型
             let mut role_map = HashMap::new();
             role_map.insert(alias.clone(), real.to_string());
@@ -942,7 +1021,7 @@ mod tests {
         use crate::proxy::transform::{map_model_name, ModelAliases};
         use std::collections::HashMap;
 
-        let alias = claudedesktop_alias("space-bunny", "").unwrap();
+        let alias = claudedesktop_alias("space-bunny", "", &cands(CLAUDE_LIST)).unwrap();
         // 只有 role 键，没有别名精确键
         let mut role_map = HashMap::new();
         role_map.insert("sonnet".to_string(), "some-other-model".to_string());
@@ -957,14 +1036,14 @@ mod tests {
         );
     }
 
-    /// 后端命令 `resolve_claimed_model` 的行为：Claude Desktop 走别名，其余原样。
+    /// 后端命令 `resolve_claimed_model` 的行为：桌面端走别名，其余原样。
     /// 前端用它把「实际生效的伪装名」显示到底部，所以语义必须与 profile 写入一致。
     #[test]
     fn resolve_claimed_model_command_matches_what_we_write_to_profile() {
-        // Claude Desktop + 真实模型不合法 → 给默认别名
+        // Claude Desktop + 真实模型不合法 → 取清单第一项
         assert_eq!(
             resolve_claimed_model("claudedesktop", "space-bunny", ""),
-            "claude-sonnet-4-6"
+            first_legal(builtin_candidates("claudedesktop"), is_legal_claudedesktop_model).unwrap()
         );
         // Claude Desktop + 手填合法声明名 → 用它
         assert_eq!(
@@ -1016,32 +1095,36 @@ mod tests {
         }
     }
 
-    /// 默认别名自身必须合法（有测试钉住，否则兜底也是空的）
+    /// 兜底名的取值顺序：合法声明名 → 合法真实名 → 清单第一项 → Err。
+    /// 清单内容与 `ai-tools/chatgptdesktop/config.json` 一致即可，不必与它同步维护。
     #[test]
-    fn openai_default_alias_is_itself_legal() {
-        let d = default_chatgptdesktop_alias();
-        assert!(is_legal_openai_model(d), "默认别名自身必须合法：{d}");
-    }
-
-    #[test]
-    fn chatgpt_alias_prefers_legal_claimed_then_legal_real_then_default() {
-        // 真实名不是官方名 → 默认别名
+    fn chatgpt_alias_prefers_legal_claimed_then_legal_real_then_candidates() {
+        let c = cands(&["gpt-6-astra", "gpt-5.1-codex"]);
+        // 真实名不是官方名 → 取清单第一项（最新在售）
         assert_eq!(
-            chatgptdesktop_alias("space-bunny", "").unwrap(),
-            "gpt-5.1-codex"
+            chatgptdesktop_alias("space-bunny", "", &c).unwrap(),
+            "gpt-6-astra"
         );
         // 真实名本来就是官方名 → 不伪装（写出去的与真实一致，代理也不必注册映射）
-        assert_eq!(chatgptdesktop_alias("gpt-4o", "").unwrap(), "gpt-4o");
+        assert_eq!(chatgptdesktop_alias("gpt-4o", "", &c).unwrap(), "gpt-4o");
         // 手填了合法声明名 → 用它
         assert_eq!(
-            chatgptdesktop_alias("space-bunny", "gpt-5.5").unwrap(),
+            chatgptdesktop_alias("space-bunny", "gpt-5.5", &c).unwrap(),
             "gpt-5.5"
         );
-        // 手填了**非法**声明名 → 不能照抄（那正是模型选择器要剔掉的），回落默认别名
+        // 手填了**非法**声明名 → 不能照抄（那正是模型选择器要剔掉的），回落清单第一项
         assert_eq!(
-            chatgptdesktop_alias("space-bunny", "glm-5.3").unwrap(),
+            chatgptdesktop_alias("space-bunny", "glm-5.3", &c).unwrap(),
+            "gpt-6-astra"
+        );
+        // 清单退役后兜底跟着变：代码里没有写死任何型号
+        assert_eq!(
+            chatgptdesktop_alias("space-bunny", "", &cands(&["gpt-5.1-codex"])).unwrap(),
             "gpt-5.1-codex"
         );
+        // 清单空 / 全不合法 → Err（调用方退化成不伪装）
+        assert!(chatgptdesktop_alias("space-bunny", "", &[]).is_err());
+        assert!(chatgptdesktop_alias("space-bunny", "", &cands(&["glm-5.3"])).is_err());
     }
 
     /// **闭环**：OpenAI 别名经 `map_model_name` 必须精确映射回真实模型。
@@ -1055,7 +1138,7 @@ mod tests {
         use std::collections::HashMap;
 
         for real in ["space-bunny", "glm-5.3", "minimax-m3"] {
-            let alias = chatgptdesktop_alias(real, "").unwrap();
+            let alias = chatgptdesktop_alias(real, "", &cands(&["gpt-6-astra"])).unwrap();
             let mut role_map = HashMap::new();
             role_map.insert(alias.clone(), real.to_string());
             let aliases = ModelAliases {
@@ -1073,9 +1156,10 @@ mod tests {
     /// 命令层（前端底部显示用的那个）必须与写盘用的是同一套规则。
     #[test]
     fn resolve_claimed_model_gives_chatgpt_desktop_an_official_name() {
-        assert_eq!(
-            resolve_claimed_model("chatgptdesktop", "space-bunny", ""),
-            "gpt-5.1-codex"
+        let got = resolve_claimed_model("chatgptdesktop", "space-bunny", "");
+        assert!(
+            is_legal_openai_model(&got),
+            "兜底必须是自己清单里的官方名，拿到 {got}"
         );
         // 已经是官方名 → 原样，前端就不会显示「伪装」
         assert_eq!(resolve_claimed_model("chatgptdesktop", "gpt-5.1", ""), "gpt-5.1");

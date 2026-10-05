@@ -904,5 +904,64 @@ pub struct LastLaunchConfigsFile {
     pub configs: std::collections::HashMap<String, LastLaunchConfig>,
 }
 
+#[cfg(test)]
+mod last_launch_wire_format_tests {
+    use super::LastLaunchConfig;
+
+    /// `LastLaunchConfig` 的字段名是**跨语言契约**：前端 `types.ts` 的
+    /// `LastLaunchConfig` 按同样的名字读 `get_last_launch_config` 的返回值。
+    ///
+    /// 之前前端声明成 snake_case，而这里带 `rename_all = "camelCase"` → 前端读到的
+    /// 每个字段都是 `undefined`，「恢复上次启动」**静默失效**（没有任何报错）：供应商、
+    /// 模型、伪装名、终端、项目路径全都恢复不了；界面退回用工具配置文件反查，而那里
+    /// 写的是伪装名，反查会命中别家同名模型（见 Q-0325）。
+    ///
+    /// 同一个坑在 `ai_registry.rs` 的 `ProviderPresetDto` 上已经栽过一次（那边还专门留了
+    /// 回归测试）。这里再钉一条：改这个结构体的 `rename_all` 之前，先看前端。
+    #[test]
+    fn serializes_as_camel_case_keys() {
+        let lc = LastLaunchConfig {
+            provider_id: Some("workbuddy2api".into()),
+            provider_name: Some("WorkBuddy2API".into()),
+            model_id: Some("space-bunny".into()),
+            fallback_model_id: None,
+            fallback_provider_id: None,
+            fallback_masquerade_model: None,
+            use_official_model: false,
+            terminal_id: "cmd".into(),
+            one_m_context: false,
+            fallback_one_m_context: false,
+            project_path: "E:\\pro".into(),
+            masquerade_model: Some("gpt-6-astra".into()),
+            optimizer_enabled: Some(true),
+            rectifier_enabled: Some(true),
+            custom_param_values: Default::default(),
+            last_launched_at: "2026-10-05T11:56:04".into(),
+        };
+        let v = serde_json::to_value(&lc).expect("序列化不应失败");
+
+        for key in [
+            "providerId",
+            "modelId",
+            "masqueradeModel",
+            "useOfficialModel",
+            "terminalId",
+            "oneMContext",
+            "projectPath",
+            "lastLaunchedAt",
+        ] {
+            assert!(v.get(key).is_some(), "响应里必须有 camelCase 键 {key}：{v}");
+        }
+        // 反向断言：snake_case 键不允许出现，否则前端很容易照着字段名写错
+        for key in ["provider_id", "model_id", "masquerade_model", "use_official_model"] {
+            assert!(v.get(key).is_none(), "不该出现 snake_case 键 {key}：{v}");
+        }
+        // 往返一次，证明读回来（磁盘上的旧文件也是这个格式）不会丢字段
+        let back: LastLaunchConfig = serde_json::from_value(v).expect("反序列化不应失败");
+        assert_eq!(back.model_id.as_deref(), Some("space-bunny"));
+        assert_eq!(back.masquerade_model.as_deref(), Some("gpt-6-astra"));
+    }
+}
+
 // ─── 文件路径 ───
 

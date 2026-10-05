@@ -50,6 +50,11 @@ pub struct ToolConfig {
     pub supports_google: bool,
     /// 内置模型名称列表（伪装模型名的预设值 C）。
     /// 非空时用户可把所选取的供应商模型 B「伪装」成其中某项 C。
+    ///
+    /// **必须按「新 → 旧」排序**：两个桌面端（Claude Desktop / ChatGPT 桌面端）在
+    /// 「用户没填伪装名」时，会自动拿**清单第一项**当兜底声明名 —— 写死的兜底名迟早
+    /// 会变成已废弃的型号，而用户看不出任何异常。清单是唯一的退役入口：官方下架一个
+    /// 型号就从这里删掉，新型号加在最前面。
     #[serde(default)]
     pub builtin_models: Vec<String>,
     /// 该工具是否支持请求优化（启动页可开关）
@@ -1002,6 +1007,44 @@ mod tests {
                 "{} 的 configFile 与 supportModel 不一致（会成为点了没效果的假入口）",
                 id
             );
+        }
+    }
+
+    /// **数据契约**：两个桌面端的 `builtinModels` 就是它们伪装名的**唯一来源**。
+    ///
+    /// 用户没填伪装名时，`tool_config_custom::effective_claimed_model` 会拿清单第一项
+    /// 当兜底声明名（写死的兜底名迟早变成已废弃型号，而用户看不出异常）。所以：
+    ///
+    /// 1. 清单不能空 —— 空了这两个工具就退化成「不伪装」，等于功能没上线；
+    /// 2. 每一项都必须**通过该工具的合法性校验** —— 不合法的项会被跳过，
+    ///    排在它后面的型号才会被选中，清单就白维护了；
+    /// 3. 清单按「新 → 旧」排序（第一项 = 当前在售最新），退役的型号要删掉。
+    #[test]
+    fn desktop_masquerade_lists_are_usable_as_fallback_source() {
+        use crate::commands::ai::tool_config_custom::{
+            is_legal_claudedesktop_model, is_legal_openai_model,
+        };
+
+        let reg = registry();
+        for (id, is_legal) in [
+            ("claudedesktop", is_legal_claudedesktop_model as fn(&str) -> bool),
+            ("chatgptdesktop", is_legal_openai_model as fn(&str) -> bool),
+        ] {
+            let cfg = reg
+                .get_tool_config(id)
+                .unwrap_or_else(|| panic!("注册表里没有 {id}"));
+            assert!(
+                !cfg.builtin_models.is_empty(),
+                "{id} 的 builtinModels 是空的：它在用户没填伪装名时拿不到兜底声明名，\
+                 自动伪装等于没上线（ai-tools/{id}/config.json）"
+            );
+            for (i, name) in cfg.builtin_models.iter().enumerate() {
+                assert!(
+                    is_legal(name),
+                    "{id} 的 builtinModels[{i}] = `{name}` 会被该工具的模型名校验剔除，\
+                     兜底时会跳过它 —— 清单里不该留这种项"
+                );
+            }
         }
     }
 

@@ -526,27 +526,39 @@ export interface ProxyErrorPayload {
   error: string;
 }
 
+/** ⚠️ 字段名必须与 Rust 侧序列化结果一致，**不能**按惯例写 snake_case。
+ *
+ * `models.rs::LastLaunchConfig` 带 `#[serde(rename_all = "camelCase")]`，所以
+ * 命令返回与磁盘落盘都是 camelCase。Tauri v2 只转换**命令参数**的命名，**响应字段名
+ * 就是 Rust 序列化的结果** —— 这里写 snake_case 的话，前端读到的每个字段都是
+ * `undefined`，「恢复上次启动」会**静默失效**（没有报错，只是全都不生效）。
+ * 踩过一次：provider/model/伪装/终端/项目路径全都恢复不了，界面退回由
+ * 工具配置文件反查，而那里面写的是伪装名，反查会命中别家同名模型。
+ *
+ * 改动前先确认 Rust 侧有没有 `rename_all`；`AiConfig` / `AppliedModelsDto` 没有，
+ * 它们才是 snake_case。同类坑见 ai_registry.rs 里 ProviderPresetDto 的回归测试。
+ */
 export interface LastLaunchConfig {
-  provider_id: string | null;
-  provider_name: string | null;
-  model_id: string | null;
-  fallback_model_id: string | null;
-  fallback_provider_id: string | null;
+  providerId: string | null;
+  providerName: string | null;
+  modelId: string | null;
+  fallbackModelId: string | null;
+  fallbackProviderId: string | null;
   /** fallback/小模型的伪装声明名 C，空表示不伪装 */
-  fallback_masquerade_model: string | null;
-  use_official_model: boolean;
-  terminal_id: string;
-  one_m_context: boolean;
+  fallbackMasqueradeModel: string | null;
+  useOfficialModel: boolean;
+  terminalId: string;
+  oneMContext: boolean;
   /** fallback/小模型是否同样追加 [1m] */
-  fallback_one_m_context: boolean;
-  project_path: string;
+  fallbackOneMContext: boolean;
+  projectPath: string;
   /** 模型伪装：工具以为自己调用的模型名 C，空表示不伪装 */
-  masquerade_model: string | null;
+  masqueradeModel: string | null;
   /** 本次启动是否启用优化器 */
-  optimizer_enabled: boolean | null;
+  optimizerEnabled: boolean | null;
   /** 本次启动是否启用整流器 */
-  rectifier_enabled: boolean | null;
+  rectifierEnabled: boolean | null;
   /** 本次启动的自定义参数取值 */
-  custom_param_values?: Record<string, string>;
-  last_launched_at: string;
+  customParamValues?: Record<string, string>;
+  lastLaunchedAt: string;
 }

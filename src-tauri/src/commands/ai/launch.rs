@@ -2460,6 +2460,9 @@ name = "personal"
     ///
     /// 这条锁的是「写 A、注册 B」这个坑：两侧只要有一侧改了来源，App 发出的名字就无人
     /// 认领 → 代理回落上游 → 404 / 答非所问，而且日志里看不出任何异常。
+    ///
+    /// **刻意不钉死具体型号**：兜底名来自 `builtinModels` 清单第一项，官方上新/下架时
+    /// 清单会变，那属于数据维护，不该让这条测试变红。
     #[test]
     #[allow(clippy::too_many_arguments)]
     fn chatgptdesktop_declares_an_official_name_the_proxy_also_registers() {
@@ -2474,7 +2477,18 @@ name = "personal"
             real,
             "",
         );
-        assert_eq!(claimed, "gpt-5.1-codex");
+        let listed = registry()
+            .get_tool_config("chatgptdesktop")
+            .map(|c| c.builtin_models.clone())
+            .unwrap_or_default();
+        assert!(
+            !listed.is_empty(),
+            "chatgptdesktop 的 builtinModels 是空的，自动伪装拿不到兜底名"
+        );
+        assert_eq!(
+            claimed, listed[0],
+            "兜底名必须取清单第一项（清单按新→旧维护）"
+        );
         assert!(
             crate::commands::ai::tool_config_custom::is_legal_openai_model(&claimed),
             "声明名必须是 App 认的官方名，否则伪装等于没做"

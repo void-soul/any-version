@@ -455,8 +455,9 @@ export default function CollabRoom() {
     try {
       const lc = await invoke<LastLaunchConfig | null>("get_last_launch_config", { toolId });
       if (lc) {
-        if (lc.fallback_model_id) setFallbackModelId(lc.fallback_model_id);
-        if (lc.fallback_provider_id) setFallbackProviderId(lc.fallback_provider_id);
+        // camelCase：Rust 侧 LastLaunchConfig 带 rename_all = camelCase
+        if (lc.fallbackModelId) setFallbackModelId(lc.fallbackModelId);
+        if (lc.fallbackProviderId) setFallbackProviderId(lc.fallbackProviderId);
       }
     } catch {
       // 忽略错误
