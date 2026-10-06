@@ -14,6 +14,7 @@ import {
   MessageCircle, Pencil, Plus, RotateCcw, Search, Send, Sparkles, Square, Terminal, Trash2, Wrench,
 } from "lucide-react";
 import type { AiConfig } from "../ai/types";
+import { ModelSelector } from "../ai/ModelSelector";
 import type { AgentSessionRow, AiImportResult } from "./types";
 import { createEventBuffer, useEventBufferSnapshot, type EventBuffer } from "../../utils/eventBuffer";
 import { matchProjectFiles } from "./atFiles";
@@ -298,8 +299,8 @@ export interface AgentWorkbenchProps {
   providers: AiConfig["providers"];
   providerId: string;
   modelId: string;
-  onProviderChange: (pid: string) => void;
-  onModelChange: (mid: string) => void;
+  /** 合并选择回调：一次确定供应商 + 模型（ModelSelector 用，避免两步回调的闭包旧值） */
+  onSelectModel: (pid: string, mid: string) => void;
   // 项目模式
   projectPath: string;
   onPickProject: () => void;
@@ -657,7 +658,7 @@ function AskForm({ ask, onSubmit, t }: {
 export function AgentWorkbench(props: AgentWorkbenchProps) {
   const {
     mode, onModeChange, documents, targetDocumentId, onTargetDocumentChange,
-    providers, providerId, modelId, onProviderChange, onModelChange,
+    providers, providerId, modelId, onSelectModel,
     projectPath, onPickProject, aiDepth, onDepthChange, aiViews, onViewsChange,
     textTitle, onTextTitleChange, loading, onRun, onStop, onAnswer, result, runError,
     onShowReport, onNewSession, projectRoot, projectDir, projectFiles, onBindProjectDir,
@@ -759,8 +760,6 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
     }
     return out;
   }, [entries]);
-
-  const providerModels = useMemo(() => providers.find((p) => p.id === providerId)?.models ?? [], [providers, providerId]);
 
   // @ 候选：按光标前的 @ 关键词匹配绑定目录文件清单（排序与上限见 atFiles.ts）
   const atMatches = useMemo(
@@ -946,7 +945,7 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
         </button>
         {cfgOpen && (
           <div className="space-y-2 border-t border-white/5 p-2.5">
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               <select className={wbSelect} value={mode} onChange={(e) => onModeChange(e.target.value as AgentWorkbenchMode)} disabled={loading}>
                 <option value="chat">{t("mindmap.aiTaskChat")}</option>
                 <option value="text">{t("mindmap.aiTaskText")}</option>
@@ -956,18 +955,18 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
                 <option value="">{t("mindmap.aiTargetDocument")}</option>
                 {documents.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
-              <select className={wbSelect} value={providerId}
-                onChange={(e) => { const pid = e.target.value; onProviderChange(pid); const p = providers.find((x) => x.id === pid); onModelChange(p?.active_model_id ?? p?.models[0]?.id ?? ""); }}>
-                <option value="">{t("mindmap.pickProvider")}</option>
-                {providers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <select className={wbSelect} value={modelId} onChange={(e) => onModelChange(e.target.value)} disabled={!providerId}>
-                <option value="">{t("mindmap.pickModel")}</option>
-                {providerModels.map((m) => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}
-              </select>
-            </div>
+            <ModelSelector
+              providers={providers}
+              providerId={providerId}
+              modelId={modelId}
+              onSelect={(pid, mid) => onSelectModel(pid, mid)}
+              disabled={loading}
+              compact
+              placeholder={t("mindmap.pickProvider")}
+              emptyText={t("mindmap.pickProvider")}
+              title={t("mindmap.pickModel")}
+            />
             {mode === "chat" ? (
               // 绑定项目目录：@ 引用与对话上下文固定来自它（一个导图至多绑定一个）
               <div className="flex items-center gap-2">

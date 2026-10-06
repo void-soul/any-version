@@ -2967,16 +2967,10 @@ export default function MindmapPanel() {
                   providers={providers}
                   providerId={providerId}
                   modelId={modelId}
-                  onProviderChange={(pid) => {
+                  onSelectModel={(pid, mid) => {
                     setProviderId(pid);
-                    const p = providers.find(x => x.id === pid);
-                    const mid = p?.active_model_id ?? p?.models[0]?.id ?? "";
                     setModelId(mid);
                     void rememberModel(pid, mid);
-                  }}
-                  onModelChange={(mid) => {
-                    setModelId(mid);
-                    void rememberModel(providerId, mid);
                   }}
                   projectPath={projectPath}
                   onPickProject={() => void (async () => { const d = await openDialog({ directory: true, multiple: false, title: t("mindmap.pickDir") }); if (typeof d === "string") setProjectPath(d); })()}
