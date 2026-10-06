@@ -26,6 +26,7 @@ import {
   Cable,
   UserRoundCog,
   Music,
+  Music2,
   Star,
   CalendarDays,
 } from "lucide-react";
@@ -295,6 +296,15 @@ export const MODULES: ModuleDef[] = [
     color: "#f59e0b",
     defaultToolbar: false,
     Component: lazyLoad(() => import("./components/favorites/FavoritesPanel")),
+  },
+  // —— Suno 音频下载（解析用户主页 → 下载 m4a → 转 mp3）——
+  {
+    id: "suno",
+    label: "Suno 下载",
+    icon: Music2,
+    color: "#ec4899",
+    defaultToolbar: false,
+    Component: lazyLoad(() => import("./components/suno/SunoPanel")),
   },
   // —— 任务计划（全屏日历；独立库 tasks.db，与思维导图解耦）——
   {

@@ -38,7 +38,28 @@
     "buddy": "Buddy",
     "music": "Music Player",
     "favorites": "Favorites",
-    "tasks": "Task Planner"
+    "tasks": "Task Planner",
+    "suno": "Suno Download"
+  },
+  "suno": {
+    "urlPlaceholder": "Paste a Suno profile URL (e.g. https://suno.com/@username)",
+    "parse": "Parse",
+    "parsed": "Parsed {{count}} songs",
+    "emptyUrl": "Paste a profile URL first",
+    "empty": "Nothing yet. Paste a profile URL and click Parse.",
+    "selectAll": "Select all",
+    "selectAllUnDownloaded": "Select un-downloaded",
+    "selectedCount": "Selected {{count}}/{{total}}",
+    "noneSelected": "Select songs to download first",
+    "download": "Download",
+    "pickDirTitle": "Choose a folder",
+    "progressDownload": "[{{current}}/{{total}}] Downloading · {{title}}",
+    "progressTranscode": "[{{current}}/{{total}}] Transcoding · {{title}}",
+    "done": "Done: {{count}} songs",
+    "donePartial": "Done: {{ok}} ok, {{fail}} failed",
+    "playCount": "{{count}} plays",
+    "downloaded": "Downloaded",
+    "transcodeHint": "Downloading and transcoding (mp4 to 320k mp3 per song, please wait)"
   },
   "music": {
     "importFolder": "Import folder",

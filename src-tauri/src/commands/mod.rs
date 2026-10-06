@@ -38,4 +38,5 @@ pub mod serialtool;
 pub mod wstool;
 pub mod music;
 pub mod favorites;
+pub mod suno;
 

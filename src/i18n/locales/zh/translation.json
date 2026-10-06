@@ -38,7 +38,28 @@
     "buddy": "Buddy",
     "music": "音乐播放器",
     "favorites": "收藏",
-    "tasks": "任务计划"
+    "tasks": "任务计划",
+    "suno": "Suno 下载"
+  },
+  "suno": {
+    "urlPlaceholder": "粘贴 Suno 用户主页 URL（如 https://suno.com/@用户名）",
+    "parse": "解析",
+    "parsed": "解析到 {{count}} 首歌曲",
+    "emptyUrl": "请先粘贴主页 URL",
+    "empty": "还没解析，粘贴主页 URL 后点「解析」",
+    "selectAll": "全选",
+    "selectAllUnDownloaded": "全选未下载",
+    "selectedCount": "已选 {{count}}/{{total}}",
+    "noneSelected": "请先勾选要下载的歌曲",
+    "download": "下载选中",
+    "pickDirTitle": "选择保存目录",
+    "progressDownload": "[{{current}}/{{total}}] 下载中 · {{title}}",
+    "progressTranscode": "[{{current}}/{{total}}] 转码中 · {{title}}",
+    "done": "下载完成：{{count}} 首",
+    "donePartial": "下载完成：成功 {{ok}} 首，失败 {{fail}} 首",
+    "playCount": "播放 {{count}} 次",
+    "downloaded": "已下载",
+    "transcodeHint": "正在下载并转码（每首下载 mp4 再提音轨转 320k mp3，请稍候）"
   },
   "music": {
     "importFolder": "导入文件夹",
