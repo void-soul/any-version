@@ -767,6 +767,13 @@ function formatRelative(t: number | null | undefined): string {
 // 账号行右侧小图标按钮统一样式
 const ACC_BTN = "ui-btn px-1.5 py-1 disabled:opacity-40";
 
+// 账号 tab 工具栏行按钮（与「加列」按钮同尺寸）：刷新/导出/导入/删除/全选都在这一行。
+// 这些是给 code/work 账号库用的专用操作，不是通用按钮，所以收进 tab 内而不是面板顶栏。
+const TOOL_BTN =
+  "inline-flex items-center gap-0.5 px-1.5 py-1 rounded-md border border-white/10 text-slate-400 hover:text-white hover:border-white/25 cursor-pointer transition disabled:opacity-40 disabled:cursor-not-allowed";
+const TOOL_BTN_DANGER =
+  "inline-flex items-center gap-0.5 px-1.5 py-1 rounded-md border border-rose-500/20 text-rose-300 hover:text-rose-200 hover:border-rose-500/40 cursor-pointer transition disabled:opacity-40 disabled:cursor-not-allowed";
+
 // 额度余量进度条：宽 = 剩余占比，色 = 剩余多少（≥50 绿 / ≥20 黄 / <20 红）
 function QuotaBar({
   remain,
@@ -802,9 +809,9 @@ const COL_INFO = 240;
 const COL_CREDITS_MIN = 240;
 /** 时间列（内置「到期」+ 每个自定义列）：只要放得下 `55.21` 这种紧凑写法 */
 const COL_W = 72;
-/** 操作列：5 个图标按钮，按实际按钮宽度收死（不再靠 `pl-9` 把按钮顶到右边，
-    那样按钮会被挤在一半列宽里） */
-const COL_ACTIONS = 144;
+/** 操作列：切换 + 用量 2 个图标按钮，按实际按钮宽度收死（不再靠 `pl-9` 把按钮顶到右边，
+    那样按钮会被挤在一半列宽里）。刷新/导出/删除已收进 tab 工具栏行，按勾选批量操作。 */
+const COL_ACTIONS = 64;
 
 // 时间标签 chip 配色（sky=等待恢复 / amber=即将恢复 / emerald=已恢复可用）
 const LABEL_TONE: Record<LabelState["tone"], { chip: string; bar: string; text: string }> = {
@@ -1874,6 +1881,15 @@ export default function BuddyPanel() {
     });
   };
 
+  // 全选 / 取消全选：已全选则清空，否则勾上当前全部账号
+  const toggleSelectAll = () => {
+    setSelectedIds((prev) =>
+      accounts.length > 0 && prev.size === accounts.length
+        ? new Set()
+        : new Set(accounts.map((a) => a.id)),
+    );
+  };
+
   // ─── 自动签到 ───
 
   const saveAutoConfig = async () => {
@@ -2071,35 +2087,6 @@ export default function BuddyPanel() {
             这样窄窗口下按钮换行到下一行，而不是被压到文字换行或横向溢出 */}
         {tab === "accounts" && (
           <div className="flex items-center gap-2 ml-auto flex-wrap justify-end min-w-0">
-            <button
-              onClick={refreshAll}
-              disabled={busy || accounts.length === 0}
-              className="px-2.5 py-1.5 rounded-ctl text-caption whitespace-nowrap shrink-0 bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-40"
-              title={t("buddy.refreshAllTitle")}
-            >
-              <RefreshCw className="w-3 h-3" /> {t("buddy.refreshAll")}
-            </button>
-            <button
-              onClick={exportSelected}
-              disabled={selectedCount === 0}
-              className="px-2.5 py-1.5 rounded-ctl text-caption whitespace-nowrap shrink-0 bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-40"
-            >
-              <Upload className="w-3 h-3" /> {t("buddy.export")}
-            </button>
-            <button
-              onClick={importFromJson}
-              disabled={busy}
-              className="px-2.5 py-1.5 rounded-ctl text-caption whitespace-nowrap shrink-0 bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-40"
-            >
-              <Download className="w-3 h-3" /> {t("buddy.importJson")}
-            </button>
-            <button
-              onClick={() => selectedCount > 0 && setDeleteIds([...selectedIds])}
-              disabled={selectedCount === 0}
-              className="px-2.5 py-1.5 rounded-ctl text-caption whitespace-nowrap shrink-0 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 flex items-center gap-1 cursor-pointer transition disabled:opacity-40"
-            >
-              <Trash2 className="w-3 h-3" /> {t("buddy.delete", { count: selectedCount })}
-            </button>
             {otherPlatform && (
               <button
                 onClick={syncToOther}
@@ -2342,6 +2329,52 @@ export default function BuddyPanel() {
               <option value="expiry">{t("buddy.sortExpiry")}</option>
             </select>
             <div className="flex-1" />
+            {/* 账号库专用批量操作（与「加列」同尺寸）：
+                全选/取消全选 + 刷新 + 导出/导入 + 删除。
+                原先摆在面板顶栏与每行操作列，顶栏按钮是全局位置但操作只对这个账号库有意义；
+                行内按钮则每行重复一整套 —— 统一收进这一行，按勾选批量执行。 */}
+            <button
+              onClick={toggleSelectAll}
+              disabled={accounts.length === 0}
+              className={TOOL_BTN}
+              title={t("buddy.selectAll")}
+            >
+              {selectedCount > 0 && selectedCount === accounts.length
+                ? t("buddy.selectAllClear")
+                : t("buddy.selectAll")}
+            </button>
+            <button
+              onClick={refreshAll}
+              disabled={busy || accounts.length === 0}
+              className={TOOL_BTN}
+              title={t("buddy.refreshAllTitle")}
+            >
+              <RefreshCw className="w-3 h-3" /> {t("buddy.refreshAll")}
+            </button>
+            <button
+              onClick={exportSelected}
+              disabled={selectedCount === 0}
+              className={TOOL_BTN}
+              title={t("buddy.export")}
+            >
+              <Upload className="w-3 h-3" /> {t("buddy.export")}
+            </button>
+            <button
+              onClick={importFromJson}
+              disabled={busy}
+              className={TOOL_BTN}
+              title={t("buddy.importJson")}
+            >
+              <Download className="w-3 h-3" /> {t("buddy.importJson")}
+            </button>
+            <button
+              onClick={() => selectedCount > 0 && setDeleteIds([...selectedIds])}
+              disabled={selectedCount === 0}
+              className={TOOL_BTN_DANGER}
+              title={t("buddy.delete")}
+            >
+              <Trash2 className="w-3 h-3" /> {t("buddy.delete")}
+            </button>
             {addingColumn ? (
               <div className="flex items-center gap-1">
                 <input
@@ -2641,9 +2674,6 @@ export default function BuddyPanel() {
                       {/* 操作 */}
                       <div style={{ width: COL_ACTIONS }} className="flex items-center justify-end gap-1 px-1 flex-shrink-0 border-l border-white/5">
                         <button onClick={() => switchAccount(acc.id)} disabled={busy || isCurrent} className={ACC_BTN} title={t("buddy.switch")}><LogIn className="w-3 h-3" /></button>
-                        <button onClick={() => refreshAccount(acc.id)} disabled={busy} className={ACC_BTN} title={t("buddy.refreshToken")}><RefreshCw className="w-3 h-3" /></button>
-                        <button onClick={() => void exportByIds([acc.id])} disabled={busy} className={ACC_BTN} title={t("buddy.exportOne")}><Upload className="w-3 h-3" /></button>
-                        <button onClick={() => setDeleteIds([acc.id])} className={`${ACC_BTN} text-rose-300 hover:text-rose-200`} title={t("buddy.deleteOne")}><Trash2 className="w-3 h-3" /></button>
                         <button onClick={() => setUsageAccountId(acc.id)} className={ACC_BTN} title={t("buddy.usage")}><Gauge className="w-3 h-3" /></button>
                       </div>
                     </div>
@@ -3778,7 +3808,17 @@ export default function BuddyPanel() {
                       name: target ? displayName(target) : deleteIds[0],
                     });
                   })()
-                : t("buddy.delMsg", { count: deleteIds.length, platform: platformLabel })}
+                : (() => {
+                    // 按用户要求列出账号名让用户确认删的是哪些；超过 8 个截断（全列会撑爆弹窗）
+                    const names = deleteIds
+                      .map((id) => accounts.find((a) => a.id === id))
+                      .filter((a): a is BuddyAccount => !!a)
+                      .map((a) => displayName(a));
+                    const shown = names.slice(0, 8).join("、");
+                    return t("buddy.delMsg", {
+                      names: names.length > 8 ? `${shown} 等 ${names.length} 个` : shown,
+                    });
+                  })()}
             </p>
             <div className="flex justify-end gap-2">
               <button onClick={() => setDeleteIds(null)} className="px-3 py-1.5 rounded-ctl text-caption text-slate-400 hover:bg-white/5 cursor-pointer">
