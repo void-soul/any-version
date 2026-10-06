@@ -267,9 +267,24 @@ pub fn normalize_zhihu_url(url: &str) -> String {
 ///
 /// 标题三级回退：`title` → `excerpt_title` → 正文纯文本首段。`pin` 没有 `title`
 /// （实测），只靠 `title` 会让所有想法都变成「无标题」。
+/// 解析外层 `created`（**收藏时间**）：老接口返回 unix 秒（int），新接口返回 RFC3339
+/// 字符串（带时区，如 `2026-10-02T00:45:27+08:00`）。两种都兼容，统一转成本地时间字符串。
+///
+/// 注意：`content` 里的 `created` 是**内容发布时间**，这里读的是收藏条目外层那个字段，
+/// 不能混——用 `as_i64` 读字符串会得到 None，导致收藏时间静默丢失。
+fn parse_favored_at(value: &Value) -> Option<String> {
+    if let Some(secs) = value.as_i64() {
+        return super::db::unix_to_local_str(secs);
+    }
+    if let Some(s) = value.as_str() {
+        return super::db::rfc3339_to_local_str(s);
+    }
+    None
+}
+
 pub fn item_to_cookie_favorite(
     content: &Value,
-    favored_at: Option<i64>,
+    favored_at: Option<String>,
     collection: &CookieCollection,
 ) -> Option<NewFavorite> {
     let kind = content.get("type").and_then(|v| v.as_str())?;
@@ -352,8 +367,8 @@ pub fn item_to_cookie_favorite(
         subtitle: author,
         description,
         extra_json: Some(extra.to_string()),
-        // 外层 `created` 就是收藏时间（unix 秒）：单独存一列，供按收藏时间排序/过滤
-        favorited_at: favored_at.and_then(super::db::unix_to_local_str),
+        // 外层 `created` 就是收藏时间，已在 parse_cookie_items_page 里统一转成本地时间串
+        favorited_at: favored_at,
         // 收藏接口返回的条目本身就存在，无需预置失效状态
         initial_status: None,
     })
@@ -393,8 +408,9 @@ pub fn parse_cookie_items_page(
         .map(|list| {
             list.iter()
                 .filter_map(|entry| {
-                    // 外层 `created` 是**收藏时间**，内容自己的 `created` 是发布时间
-                    let favored_at = entry.get("created").and_then(|v| v.as_i64());
+                    // 外层 `created` 是**收藏时间**，内容自己的 `created` 是发布时间；
+                    // 兼容 unix 秒（int）与 RFC3339 字符串两种返回格式
+                    let favored_at = entry.get("created").and_then(parse_favored_at);
                     let content = entry.get("content")?;
                     let favorite = item_to_cookie_favorite(content, favored_at, collection)?;
                     let html = content
@@ -499,7 +515,7 @@ mod tests {
             "content": "<p>正文<strong>加粗</strong>内容</p>",
             "author": { "name": "someone", "url_token": "someone-1" }
         });
-        let fav = item_to_cookie_favorite(&content, Some(1790124359), &collection).unwrap();
+        let fav = item_to_cookie_favorite(&content, Some("2021-01-01T00:00:00".to_string()), &collection).unwrap();
         assert_eq!(fav.title, "它教你从头训一个超小语言模型");
         assert_eq!(fav.external_id, "https://www.zhihu.com/pin/2077691230142649695");
         assert!(fav.extra_json.as_deref().unwrap().contains("pin:2077691230142649695"));
@@ -563,25 +579,38 @@ mod tests {
         .is_none());
     }
 
-    /// 收藏内容解析：外层 `created` 是**收藏时间**，要写进 extra。
+    /// 收藏内容解析：外层 `created` 是**收藏时间**。新接口返回 RFC3339 字符串（带时区），
+    /// 必须能解析出来，不能因为 `as_i64` 读不到字符串就丢成 None 回退到入库时间。
     #[test]
-    fn cookie_items_page_reads_shape_and_favored_at() {
+    fn cookie_items_page_reads_rfc3339_favored_at() {
         let collection = sample_collection();
         let body = r#"{"paging":{"is_end":false,"totals":2032},"data":[
-            {"created":1740533662,"content":{"id":"26425730763","type":"article",
+            {"created":"2026-10-02T00:45:27+08:00","content":{"id":"26425730763","type":"article",
              "title":"标题","url":"https://zhuanlan.zhihu.com/p/26425730763",
              "author":{"name":"游戏茶馆"}}},
-            {"created":1790084038,"content":{"id":"999","type":"pin","url":"",
+            {"created":"2026-10-02T00:45:27+08:00","content":{"id":"999","type":"pin","url":"",
              "excerpt_title":"想法"}}]}"#;
         let (items, is_end) = parse_cookie_items_page(body, &collection).unwrap();
         assert!(!is_end);
         assert_eq!(items.len(), 1, "url 为空的条目要跳过");
-        assert!(items[0]
-            .favorite
-            .extra_json
-            .as_deref()
-            .unwrap()
-            .contains("1740533662"));
+        assert!(
+            items[0].favorite.favorited_at.is_some(),
+            "外层 created 是字符串时要解析出收藏时间，不能丢成 None"
+        );
+    }
+
+    /// 老接口：外层 `created` 是 unix 秒（int），也要兼容解析。
+    #[test]
+    fn cookie_items_page_reads_unix_seconds_favored_at() {
+        let collection = sample_collection();
+        let body = r#"{"paging":{"is_end":true},"data":[
+            {"created":1740533662,"content":{"id":"26425730763","type":"article",
+             "title":"标题","url":"https://zhuanlan.zhihu.com/p/26425730763"}}]}"#;
+        let (items, _) = parse_cookie_items_page(body, &collection).unwrap();
+        assert!(
+            items[0].favorite.favorited_at.is_some(),
+            "外层 created 是 int（unix 秒）时也要解析出收藏时间"
+        );
     }
 
     /// 正文要一起带出来（列表展开直接看，不用二次请求）。
