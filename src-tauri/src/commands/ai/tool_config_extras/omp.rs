@@ -185,6 +185,8 @@ mod tests {
     }
 
     fn ctx<'a>(main: &'a Path, model: &'a str) -> ExtrasCtx<'a> {
+        static EMPTY: std::sync::OnceLock<std::collections::HashSet<String>> =
+            std::sync::OnceLock::new();
         ExtrasCtx {
             tool_id: "omp",
             main_path: main,
@@ -197,6 +199,7 @@ mod tests {
             provider: "echobird",
             chosen_protocol: "openai",
             web_search: false,
+            user_configured_paths: EMPTY.get_or_init(std::collections::HashSet::new),
         }
     }
 

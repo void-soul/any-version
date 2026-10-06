@@ -201,6 +201,8 @@ mod tests {
     }
 
     fn ctx<'a>(main: &'a Path, protocol: &'a str) -> ExtrasCtx<'a> {
+        static EMPTY: std::sync::OnceLock<std::collections::HashSet<String>> =
+            std::sync::OnceLock::new();
         ExtrasCtx {
             tool_id: "zcode",
             main_path: main,
@@ -213,6 +215,7 @@ mod tests {
             provider: "anyversion",
             chosen_protocol: protocol,
             web_search: false,
+            user_configured_paths: EMPTY.get_or_init(std::collections::HashSet::new),
         }
     }
 

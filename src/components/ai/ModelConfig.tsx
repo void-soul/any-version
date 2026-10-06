@@ -25,6 +25,7 @@ import {
 import type { ModelEntry, AiProvider, AiConfig, ModelCustomParam, UpstreamHeader, ProviderPromotion } from "./types";
 import { filterProviders } from "./providerSearch";
 import { promotionCountdown, promotionState, prunePromotions } from "./promotions";
+import { PARAM_PRESETS } from "./paramPresets";
 import { theamedAlert } from "../shared/ThemedAlert";
 
 type Preset = {
@@ -327,6 +328,18 @@ export default function ModelConfig() {
     setModelParams(prev => ({
       ...prev,
       [mid]: [...(prev[mid] || []), { key: "", label: "", paramType: "enum", options: [], target: "env", envKey: "" }],
+    }));
+  };
+  // 从预设库添加：预设模板是共享常量，浅拷贝一份再放进去（options 数组单独复制），
+  // 避免用户后续编辑某一条时改到别的模型共享的那份。
+  const addModelParamFromPreset = (mid: string, preset: ModelCustomParam) => {
+    const clone: ModelCustomParam = {
+      ...preset,
+      options: preset.options ? [...preset.options] : undefined,
+    };
+    setModelParams(prev => ({
+      ...prev,
+      [mid]: [...(prev[mid] || []), clone],
     }));
   };
   const updateModelParam = (mid: string, idx: number, patch: Partial<ModelCustomParam>) => {
@@ -1104,8 +1117,26 @@ export default function ModelConfig() {
                           </div>
                         </div>
                       ))}
-                      <button onClick={() => addModelParam(mid)}
-                        className="text-tiny text-[var(--module-accent)] hover:text-[var(--module-accent-strong)] cursor-pointer">{t("modelcfg.addParam")}</button>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => addModelParam(mid)}
+                          className="text-tiny text-[var(--module-accent)] hover:text-[var(--module-accent-strong)] cursor-pointer">{t("modelcfg.addParam")}</button>
+                        {/* 从预设添加：把高频参数做成模板，选中即生成一条完整参数（见 paramPresets.ts） */}
+                        <select
+                          value=""
+                          onChange={(e) => {
+                            const id = e.target.value;
+                            if (!id) return;
+                            const preset = PARAM_PRESETS.find(p => p.id === id);
+                            if (preset) addModelParamFromPreset(mid, preset.param);
+                          }}
+                          className="text-tiny text-slate-400 bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
+                        >
+                          <option value="">{t("modelcfg.presetAdd")}</option>
+                          {PARAM_PRESETS.map(p => (
+                            <option key={p.id} value={p.id}>{t(p.nameKey)}（{t(p.scopeKey)}）</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
                   ))}
                 </div>

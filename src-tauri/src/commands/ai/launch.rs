@@ -1529,6 +1529,15 @@ fn write_tool_config_generic(
     // 按上游域名决定写哪个值、逐角色重定向、顺手生成被引用的附属文件（见 tool_config_extras）。
     // 没选模型时不跑：这些语义全都以「当前选的是哪个模型」为前提，空模型名会写出坏值。
     if has_model {
+        // 用户显式声明要写的 config 路径（target=config 的 configPath）：附加写入器对这些
+        // 键让位，否则写死值会覆盖用户的选择（「界面上填了、启动时被改回去」= 摆设）。
+        let user_configured_paths: std::collections::HashSet<String> = custom_params
+            .iter()
+            .filter(|cp| cp.target == "config")
+            .filter_map(|cp| cp.config_path.as_deref())
+            .map(|p| p.to_string())
+            .filter(|p| !p.is_empty())
+            .collect();
         let extras_ctx = crate::commands::ai::tool_config_extras::ExtrasCtx {
             tool_id: &tool_config.id,
             main_path: &main_config_path,
@@ -1542,6 +1551,7 @@ fn write_tool_config_generic(
             provider: crate::commands::ai::tool_config_extras::provider_for(&tool_config.id),
             chosen_protocol,
             web_search,
+            user_configured_paths: &user_configured_paths,
         };
         for file in crate::commands::ai::tool_config_extras::apply_extras(&extras_ctx)? {
             eprintln!("[config_file] ✓ 附加写入: {file}");

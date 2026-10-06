@@ -152,18 +152,30 @@ pub(super) fn apply(ctx: &ExtrasCtx<'_>) -> Result<Vec<String>, String> {
     delete_top(&mut doc, "model_supports_reasoning_summaries");
     delete_top(&mut doc, "model_reasoning_summary");
 
-    set_str(&mut doc, &["model_reasoning_effort"], "high");
-    set_int(&mut doc, &["model_context_window"], window as i64);
-    set_int(
-        &mut doc,
-        &["model_auto_compact_token_limit"],
-        compact_limit_for(window) as i64,
-    );
-    set_str(
-        &mut doc,
-        &["web_search"],
-        web_search_mode(ctx.web_search, ctx.vendor_url()),
-    );
+    // 用户通过「模型自定义参数」显式声明了这些 config 键时，这里**让位**：写死会覆盖
+    // 用户的选择（「界面上填了、启动时被我们改回去」= 摆设）。见 `ExtrasCtx::user_configured_paths`。
+    // 注意关联关系：窗口与压缩上限原本按真实模型查表成对写；用户只覆盖其中一个时，
+    // 另一个仍按查表值 —— 这是用户自己的取舍，不替用户猜。
+    if !ctx.user_configured_paths.contains("model_reasoning_effort") {
+        set_str(&mut doc, &["model_reasoning_effort"], "high");
+    }
+    if !ctx.user_configured_paths.contains("model_context_window") {
+        set_int(&mut doc, &["model_context_window"], window as i64);
+    }
+    if !ctx.user_configured_paths.contains("model_auto_compact_token_limit") {
+        set_int(
+            &mut doc,
+            &["model_auto_compact_token_limit"],
+            compact_limit_for(window) as i64,
+        );
+    }
+    if !ctx.user_configured_paths.contains("web_search") {
+        set_str(
+            &mut doc,
+            &["web_search"],
+            web_search_mode(ctx.web_search, ctx.vendor_url()),
+        );
+    }
 
     // **刻意不动 `model_providers.<p>` 表**（`name` / `base_url` / `env_key` / `wire_api`）。
     // EchoBird 会写 `wire_api = "responses"` + `requires_openai_auth = true`（它走的是
@@ -377,6 +389,9 @@ mod tests {
         real_model_name: &'a str,
         upstream_url: &'a str,
     ) -> ExtrasCtx<'a> {
+        // 空集合：默认不覆盖任何键（保持原有写死行为）
+        static EMPTY: std::sync::OnceLock<std::collections::HashSet<String>> =
+            std::sync::OnceLock::new();
         ExtrasCtx {
             tool_id: "chatgptdesktop",
             main_path: path,
@@ -389,6 +404,7 @@ mod tests {
             provider: "anyversion",
             chosen_protocol: "openai",
             web_search: false,
+            user_configured_paths: EMPTY.get_or_init(std::collections::HashSet::new),
         }
     }
 
@@ -425,6 +441,51 @@ mod tests {
         assert_eq!(entry["display_name"], "deepseek-flash");
         assert_eq!(entry["input_modalities"], serde_json::json!(["text", "image"]));
         assert_eq!(entry["supports_search_tool"], serde_json::json!(true));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 用户通过「模型自定义参数」显式覆盖了 config 键时，apply 必须**让位**：
+    /// 写死会把用户的值改回去（「界面上填了、启动时被改回去」= 摆设）。
+    #[test]
+    fn apply_yields_to_user_configured_keys() {
+        let (dir, path) = temp_config("yield");
+        let configured: std::collections::HashSet<String> = [
+            "model_reasoning_effort".to_string(),
+            "model_context_window".to_string(),
+        ]
+        .into_iter()
+        .collect();
+        let c = ExtrasCtx {
+            tool_id: "chatgptdesktop",
+            main_path: &path,
+            base_url: "http://127.0.0.1:15721",
+            upstream_url: "https://api.deepseek.com",
+            api_key: "kira-token",
+            model: "gpt-5.1-codex",
+            model_name: "gpt-5.1-codex",
+            real_model_name: "minimax-m2.7",
+            provider: "anyversion",
+            chosen_protocol: "openai",
+            web_search: false,
+            user_configured_paths: &configured,
+        };
+        apply(&c).unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        // 让位的键：不再被写死值覆盖（用户值已由通用写入先落盘）
+        assert!(
+            !text.contains("model_reasoning_effort"),
+            "用户自定义思考强度不该被写死覆盖：{text}"
+        );
+        assert!(
+            !text.contains("model_context_window"),
+            "用户自定义窗口不该被写死覆盖：{text}"
+        );
+        // 没让位的键：照常按查表写（minimax-m2.7 → 窗口 204800 → 压缩 184320）
+        assert!(
+            text.contains("model_auto_compact_token_limit = 184320"),
+            "未自定义的压缩上限照常写：{text}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -59,6 +59,11 @@ pub(crate) struct ExtrasCtx<'a> {
     pub chosen_protocol: &'a str,
     /// 用户是否开启了「联网搜索」开关。
     pub web_search: bool,
+    /// 用户通过「模型自定义参数」显式声明要写的 config 路径（target=config 的 configPath）。
+    ///
+    /// 附加写入器对这些路径**让位**：用户已经明确要自己控制这个键，写死值会覆盖用户的
+    /// 选择，结果是「界面上填了、启动时被我们改回去」—— 摆设。见 `codex::apply`。
+    pub user_configured_paths: &'a std::collections::HashSet<String>,
 }
 
 impl ExtrasCtx<'_> {
