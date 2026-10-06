@@ -449,52 +449,89 @@ pub(crate) fn npm_global_prefix() -> Option<&'static PathBuf> {
         .as_ref()
 }
 
-/// 注册表卸载项里「exe 文件名（小写）→ 完整路径」的索引，进程内只建一次。
+/// 注册表卸载项里「exe 文件名（小写）→ 完整路径」的索引，带**有效期**缓存。
 ///
 /// 两条来源：`DisplayIcon`（通常是 exe 全路径，末尾可能带 `,0`）与 `InstallLocation`
 /// （安装目录，扫第一层的 `*.exe`）。卸载项里的路径就是安装器写下的真实位置，
 /// 与「装在哪个盘」无关。
-#[cfg(windows)]
-fn uninstall_registry_index() -> &'static HashMap<String, PathBuf> {
-    static INDEX: std::sync::OnceLock<HashMap<String, PathBuf>> = std::sync::OnceLock::new();
-    INDEX.get_or_init(|| {
-        use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ};
-        use winreg::RegKey;
+///
+/// **为什么必须带 TTL（不能 OnceLock 一辈子只用一次）**：Kira 是常驻托盘应用，一开就是
+/// 好几天。这期间用户把应用卸了/重装了，缓存里那条 `DisplayIcon` 指向的 exe **已经被删掉**，
+/// 而查找方还会照样把它当成「装好的应用」返回。实测症状（Claude 桌面端从 Squirrel 版
+/// 换成 MSIX/Store 版）：
+/// - 检测：策略 3 误判「已安装」，界面上「检测到的路径」是一条**死路径**；
+/// - 启动：`CreateProcess` 直接报 `os error 3`（系统找不到指定的路径），窗口永不出现。
+/// 重启应用能绕过，但用户不会知道该重启，所以索引必须会过期。
+const UNINSTALL_INDEX_TTL: std::time::Duration = std::time::Duration::from_secs(60);
 
-        let mut map: HashMap<String, PathBuf> = HashMap::new();
-        let roots = [
-            (HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
-            (HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
-            // 64 位系统上 32 位程序的卸载项在这个分支下
-            (HKEY_LOCAL_MACHINE, r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
-        ];
-        for (root, sub) in roots {
-            let Ok(key) = RegKey::predef(root).open_subkey_with_flags(sub, KEY_READ) else {
+/// 索引缓存：`None` = 还没建过；`Some((建表时刻, 索引))`。
+#[cfg(windows)]
+type UninstallIndex = Option<(std::time::Instant, HashMap<String, PathBuf>)>;
+
+#[cfg(windows)]
+fn uninstall_index_cache() -> &'static std::sync::Mutex<UninstallIndex> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<UninstallIndex>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// 扫一遍三个卸载项分支，建「exe 小写名 → 路径」索引。
+#[cfg(windows)]
+fn build_uninstall_index() -> HashMap<String, PathBuf> {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ};
+    use winreg::RegKey;
+
+    let mut map: HashMap<String, PathBuf> = HashMap::new();
+    let roots = [
+        (HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+        // 64 位系统上 32 位程序的卸载项在这个分支下
+        (HKEY_LOCAL_MACHINE, r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+    ];
+    for (root, sub) in roots {
+        let Ok(key) = RegKey::predef(root).open_subkey_with_flags(sub, KEY_READ) else {
+            continue;
+        };
+        for entry_name in key.enum_keys().flatten() {
+            let Ok(entry) = key.open_subkey_with_flags(&entry_name, KEY_READ) else {
                 continue;
             };
-            for entry_name in key.enum_keys().flatten() {
-                let Ok(entry) = key.open_subkey_with_flags(&entry_name, KEY_READ) else {
-                    continue;
-                };
-                if let Ok(icon) = entry.get_value::<String, _>("DisplayIcon") {
-                    // 形如 `"C:\path\App.exe",0`
-                    let cleaned = icon.split(',').next().unwrap_or("").trim().trim_matches('"');
-                    record_registry_exe(&mut map, Path::new(cleaned));
-                }
-                if let Ok(location) = entry.get_value::<String, _>("InstallLocation") {
-                    let location = location.trim().trim_matches('"');
-                    if !location.is_empty() {
-                        if let Ok(entries) = std::fs::read_dir(location) {
-                            for file in entries.flatten() {
-                                record_registry_exe(&mut map, &file.path());
-                            }
+            if let Ok(icon) = entry.get_value::<String, _>("DisplayIcon") {
+                // 形如 `"C:\path\App.exe",0`
+                let cleaned = icon.split(',').next().unwrap_or("").trim().trim_matches('"');
+                record_registry_exe(&mut map, Path::new(cleaned));
+            }
+            if let Ok(location) = entry.get_value::<String, _>("InstallLocation") {
+                let location = location.trim().trim_matches('"');
+                if !location.is_empty() {
+                    if let Ok(entries) = std::fs::read_dir(location) {
+                        for file in entries.flatten() {
+                            record_registry_exe(&mut map, &file.path());
                         }
                     }
                 }
             }
         }
-        map
-    })
+    }
+    map
+}
+
+/// 按 exe 文件名（小写）反查注册表卸载项里的真实安装路径。
+///
+/// **命中后必须再确认文件还在**：索引是缓存的，而卸载/重装随时会让它过期（见
+/// [`UNINSTALL_INDEX_TTL`] 的说明）。拿一条死路径去 `CreateProcess` 只会得到
+/// 「系统找不到指定的路径」，用户看到的就是「点启动没反应 / 报 os error 3」。
+#[cfg(windows)]
+fn lookup_uninstall_exe(name: &str) -> Option<PathBuf> {
+    let cached = {
+        let mut guard = uninstall_index_cache().lock().ok()?;
+        let fresh = matches!(*guard, Some((at, _)) if at.elapsed() < UNINSTALL_INDEX_TTL);
+        if !fresh {
+            *guard = Some((std::time::Instant::now(), build_uninstall_index()));
+        }
+        guard.as_ref()?.1.get(name).cloned()
+    }?;
+    // 缓存里可能有已删除的路径（应用刚被卸/重装）——不落到磁盘上就不算数
+    cached.is_file().then_some(cached)
 }
 
 #[cfg(windows)]
@@ -557,8 +594,8 @@ pub fn find_fallback_exe(
     #[cfg(windows)]
     {
         for name in declared_exe_names(tool_id, declared) {
-            if let Some(found) = uninstall_registry_index().get(&name) {
-                return Some(found.clone());
+            if let Some(found) = lookup_uninstall_exe(&name) {
+                return Some(found);
             }
         }
     }

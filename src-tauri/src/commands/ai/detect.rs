@@ -165,9 +165,18 @@ fn detect_single_tool(config: &ToolConfig, paths: &PathConfig) -> DetectedAiTool
     // ChatGPT.exe 在 Store 版里根本不存在），只能问系统：包注册了没有。
     if let Some(ver) = detect_via_store_package(paths.launch_uri.as_deref()) {
         eprintln!("[detect]   [策略 4] ✓ Store 包已注册 → version={}", ver);
+        // Store 应用没有可声明的 exe 路径（WindowsApps 目录名带版本号，装一次变一次），
+        // 「检测到的路径」只能取包的 InstallLocation，否则界面上这条永远是空的，
+        // 用户会以为检测失灵了。
+        let install_location = store_install_location(paths.launch_uri.as_deref());
+        eprintln!(
+            "[detect]   [策略 4]   安装目录={}",
+            install_location.as_deref().unwrap_or("(取不到)")
+        );
         return DetectedAiTool {
             installed: true,
             version: Some(ver),
+            detected_path: install_location,
             ..not_found
         };
     }
@@ -208,6 +217,26 @@ fn detect_via_store_package(launch_uri: Option<&str>) -> Option<String> {
     {
         let pkg = package_name_from_launch_uri(launch_uri?)?;
         crate::commands::project::scanner::msix_package_version(&pkg)
+            .ok()
+            .flatten()
+    }
+}
+
+/// Store（MSIX）应用的安装目录（`C:\Program Files\WindowsApps\<名>_<版本>_<架构>__<发布者>`）。
+///
+/// 用途只有一个：填界面上的「检测到的路径」。这类路径**不能**写进 `paths.json`（版本号
+/// 每次更新都变），所以只能现查。取不到就返回 `None`，让界面保持空白而不是显示假路径。
+fn store_install_location(launch_uri: Option<&str>) -> Option<String> {
+    #[cfg(not(windows))]
+    {
+        let _ = launch_uri;
+        None
+    }
+
+    #[cfg(windows)]
+    {
+        let pkg = package_name_from_launch_uri(launch_uri?)?;
+        crate::commands::project::scanner::msix_package_install_location(&pkg)
             .ok()
             .flatten()
     }

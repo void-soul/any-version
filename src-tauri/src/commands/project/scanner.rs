@@ -692,13 +692,21 @@ fn which_in_path(name: &str) -> bool {
     false
 }
 
-/// MSIX 版本查询结果缓存：起一次 PowerShell 进程约 1~2 秒，而 SDK 列表每 4 秒
+/// MSIX 版本 + 安装目录查询结果缓存：起一次 PowerShell 进程约 1~2 秒，而 SDK 列表每 4 秒
 /// 刷新一次全部项目状态，不能每次都查。安装 / 卸载成功后由 `invalidate_msix_version_cache`
 /// 立即失效，避免装完还显示旧的「未安装」。
 const MSIX_VERSION_TTL: std::time::Duration = std::time::Duration::from_secs(15);
 
-fn msix_version_cache() -> &'static std::sync::Mutex<HashMap<String, (Instant, Option<String>)>> {
-    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<String, (Instant, Option<String>)>>> =
+/// 一次查回来的两项信息：`(版本, InstallLocation)`。
+///
+/// 为什么连安装目录一起查：Store / MSIX 版应用（ChatGPT、Claude 桌面端的新版）**没有**
+/// 常规 exe 安装路径，`paths.json` 里也没法声明（`C:\Program Files\WindowsApps\<名>_<版本>_<架构>__<发布者>`
+/// 里带版本号，装一次就变）。界面上的「检测到的路径」只能从这里取，否则 Store 应用永远显示不出
+/// 装在哪 —— 用户看到的现象就是「路径是空的 / 说不清装哪了」。
+type MsixInfo = (Option<String>, Option<String>);
+
+fn msix_version_cache() -> &'static std::sync::Mutex<HashMap<String, (Instant, MsixInfo)>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<String, (Instant, MsixInfo)>>> =
         std::sync::OnceLock::new();
     CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
 }
@@ -715,11 +723,11 @@ pub(crate) fn invalidate_msix_version_cache(package_name: &str) {
     }
 }
 
-/// 查询系统里已注册的 MSIX 包版本。`Ok(None)` = 确实没装，`Err` = 查询失败（无法判定）。
+/// 查询系统里已注册的 MSIX 包信息：`Ok((None, _))` = 确实没装，`Err` = 查询失败（无法判定）。
 ///
 /// AI 工具模块也用它判定 Store 应用（ChatGPT / Claude 桌面端）有没有装上 ——
 /// 这类应用没有普通 exe 安装路径，只能问系统包注册。
-pub(crate) fn msix_package_version(package_name: &str) -> Result<Option<String>, String> {
+pub(crate) fn msix_package_info(package_name: &str) -> Result<MsixInfo, String> {
     {
         let cache = msix_version_cache().lock().map_err(|e| format!("MSIX 缓存锁失败: {}", e))?;
         if let Some((at, value)) = cache.get(package_name) {
@@ -730,19 +738,32 @@ pub(crate) fn msix_package_version(package_name: &str) -> Result<Option<String>,
     }
 
     let script = format!(
-        "(Get-AppxPackage -Name '{}' | Select-Object -First 1).Version",
+        "(Get-AppxPackage -Name '{}' | Sort-Object Version -Descending | Select-Object -First 1 \
+         | ForEach-Object {{ \"$($_.Version)|$($_.InstallLocation)\" }})",
         package_name.replace('\'', "''")
     );
     let out = crate::commands::hidden_cmd::hidden_cmd("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
         .output()
         .map_err(|e| format!("查询 MSIX 包 {} 失败: {}", package_name, e))?;
-    let value = parse_msix_version(&String::from_utf8_lossy(&out.stdout));
+    let value = parse_msix_info(&String::from_utf8_lossy(&out.stdout));
 
     if let Ok(mut cache) = msix_version_cache().lock() {
         cache.insert(package_name.to_string(), (Instant::now(), value.clone()));
     }
     Ok(value)
+}
+
+/// 查询系统里已注册的 MSIX 包版本。`Ok(None)` = 确实没装，`Err` = 查询失败（无法判定）。
+pub(crate) fn msix_package_version(package_name: &str) -> Result<Option<String>, String> {
+    msix_package_info(package_name).map(|(version, _)| version)
+}
+
+/// 查询 MSIX 包的 `InstallLocation`（`C:\Program Files\WindowsApps\<…>`）。
+///
+/// 给 AI 工具模块填「检测到的路径」用：Store 应用只有包注册，没有可声明的 exe 路径。
+pub(crate) fn msix_package_install_location(package_name: &str) -> Result<Option<String>, String> {
+    msix_package_info(package_name).map(|(_, location)| location)
 }
 
 /// PackageFamilyName 查询结果缓存（与版本缓存同理：一次 PowerShell 约 1~2 秒）。
@@ -825,18 +846,72 @@ fn parse_msix_family_name(stdout: &str) -> Option<String> {
     }
 }
 
-/// 从 `(Get-AppxPackage …).Version` 的输出里取版本号（可能带 BOM / 空行 / 多行）。
-fn parse_msix_version(stdout: &str) -> Option<String> {
-    stdout
+/// 从 `Get-AppxPackage … | ForEach-Object { "$($_.Version)|$($_.InstallLocation)" }` 的输出里
+/// 取 `(版本, 安装目录)`（可能带 BOM / 空行）。
+///
+/// 没装时输出为空 → `(None, None)`；版本与路径之间用 `|` 分隔，安装目录为空（异常情况）
+/// 也不能把空串当成路径 —— 那会让界面显示一个空的「检测到的路径」。
+fn parse_msix_info(stdout: &str) -> MsixInfo {
+    let Some(line) = stdout
         .lines()
         .map(|l| l.trim().trim_matches('\u{feff}'))
         .find(|l| !l.is_empty())
-        .map(|s| s.to_string())
+    else {
+        return (None, None);
+    };
+    let (version, location) = match line.split_once('|') {
+        Some((v, l)) => (v.trim(), l.trim()),
+        // 没有分隔符（脚本被截断 / PowerShell 报错）→ 只当版本，路径不认
+        None => (line, ""),
+    };
+    let version = (!version.is_empty()).then(|| version.to_string());
+    let location = (!location.is_empty()).then(|| location.to_string());
+    (version, location)
+}
+
+/// 只取版本（历史调用点与测试都按这个语义）。
+fn parse_msix_version(stdout: &str) -> Option<String> {
+    parse_msix_info(stdout).0
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{build_family_name_script, parse_msix_family_name, parse_msix_version};
+    use super::{build_family_name_script, parse_msix_family_name, parse_msix_info, parse_msix_version};
+
+    /// `<版本>|<InstallLocation>` 一次拿全：版本与安装目录都要，BOM / CRLF / 空行都要扛住。
+    ///
+    /// 安装目录是界面「检测到的路径」的唯一来源（Store 应用没法在 `paths.json` 里声明
+    /// WindowsApps 路径），所以不能因为分隔符位置不理想就整条丢掉。
+    #[test]
+    fn msix_info_parses_version_and_install_location() {
+        assert_eq!(
+            parse_msix_info("2.19675.0.0|C:\\Program Files\\WindowsApps\\Claude_2.19675.0.0_x64__pzs8sxrjxfjjc\r\n"),
+            (
+                Some("2.19675.0.0".to_string()),
+                Some("C:\\Program Files\\WindowsApps\\Claude_2.19675.0.0_x64__pzs8sxrjxfjjc".to_string())
+            )
+        );
+        assert_eq!(
+            parse_msix_info("\u{feff}1.29.380.0|C:\\Program Files\\WindowsApps\\Codex\r\n"),
+            (
+                Some("1.29.380.0".to_string()),
+                Some("C:\\Program Files\\WindowsApps\\Codex".to_string())
+            ),
+            "BOM 要剥掉"
+        );
+        // 没装 → 两项都没有（绝不能把空串当成路径显示出去）
+        assert_eq!(parse_msix_info("\r\n\r\n"), (None, None));
+        assert_eq!(parse_msix_info(""), (None, None));
+        // 路径为空（异常输出）→ 只认版本
+        assert_eq!(parse_msix_info("1.2.3.4|\r\n"), (Some("1.2.3.4".to_string()), None));
+        // 没有 `|`（脚本被截断）→ 版本仍可用，路径不猜
+        assert_eq!(parse_msix_info("1.2.3.4"), (Some("1.2.3.4".to_string()), None));
+        // WindowsApps 路径里本来就有 `|` 之外的字符，用 split_once 只切第一个分隔符
+        assert_eq!(
+            parse_msix_info("1.0.0.0|D:\\a\\b|c\r\n").1.as_deref(),
+            Some("D:\\a\\b|c")
+        );
+    }
 
     /// PowerShell 的输出形态：CRLF、前导空行、可能有 BOM；没装时只有空行。
     #[test]
