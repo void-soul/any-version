@@ -123,15 +123,13 @@ pub struct ProxyConfig {
     /// 协议不匹配整流：剥离转换后仍残留的协议专有字段（如 Anthropic thinking 落到 OpenAI 上游）
     #[serde(default = "proxy_default_true")]
     pub rectifier_protocol_mismatch: bool,
-    /// 工具调用方言还原（围栏 JSON）—— 见 `proxy::xml_tools`
+    /// 工具调用方言优化 —— 见 `proxy::xml_tools`。上游不把工具调用翻回标准 `tool_calls` 时
+    /// （模型把调用当正文文本吐回来），自动还原成客户端能执行的结构；内部自动试全部方言。
     ///
-    /// **为什么默认开**：上游不翻回 `tool_calls` 时，客户端看到的是「模型说了段计划就停住」，
-    /// 一次工具都不执行，而且界面上看不出发生过什么。
+    /// **默认开**：对正常模型无害（它们返回标准 `tool_calls`，解析器直接跳过），
+    /// 对特殊模型是雪中送炭。
     #[serde(default = "proxy_default_true")]
-    pub rectifier_toolcall_dialect_json: bool,
-    /// 工具调用方言还原（XML invoke）
-    #[serde(default = "proxy_default_true")]
-    pub rectifier_toolcall_dialect_xml: bool,
+    pub rectifier_toolcall_dialect: bool,
 
     // ─── 优化器开关 ───
     #[serde(default)]
@@ -218,8 +216,7 @@ impl Default for ProxyConfig {
             rectifier_media_fallback: true,
             rectifier_media_heuristic: true,
             rectifier_protocol_mismatch: true,
-            rectifier_toolcall_dialect_json: true,
-            rectifier_toolcall_dialect_xml: true,
+            rectifier_toolcall_dialect: true,
             optimizer_enabled: true,
             optimizer_cache_injection: true,
             optimizer_thinking: true,

@@ -562,7 +562,7 @@ pub struct ResponsesStreamConverter {
 impl ResponsesStreamConverter {
     /// `dialects`：启用哪些工具调用方言（由 ProxyConfig 的整流器开关决定，见 `proxy::xml_tools`）
     pub fn new(model: &str) -> Self {
-        Self::with_dialects(model, &crate::proxy::xml_tools::dialects_from(true, true))
+        Self::with_dialects(model, &crate::proxy::xml_tools::dialects_from(true))
     }
 
     pub fn with_dialects(model: &str, dialects: &[crate::proxy::xml_tools::Dialect]) -> Self {

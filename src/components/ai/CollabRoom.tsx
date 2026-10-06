@@ -785,8 +785,7 @@ export default function CollabRoom() {
       rectifier_media_fallback: null,
       rectifier_media_heuristic: null,
       rectifier_protocol_mismatch: null,
-      rectifier_toolcall_dialect_json: null,
-      rectifier_toolcall_dialect_xml: null,
+      rectifier_toolcall_dialect: null,
       custom_params: supportsModel ? currentModelCustomParams : [],
       custom_param_values: supportsModel ? customParamValues : {},
     };

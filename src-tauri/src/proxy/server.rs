@@ -734,8 +734,7 @@ async fn responses_handler(
     let dialects = {
         let cfg = state.config.read().await;
         crate::proxy::xml_tools::dialects_from(
-            cfg.rectifier_enabled && cfg.rectifier_toolcall_dialect_json,
-            cfg.rectifier_enabled && cfg.rectifier_toolcall_dialect_xml,
+            cfg.rectifier_enabled && cfg.rectifier_toolcall_dialect,
         )
     };
     let upstream = process_request(&state, &headers, "openai", claimed, false, chat_body).await;
@@ -1142,8 +1141,7 @@ async fn process_response(
     let mut resp_json = resp_json;
     if outbound == "openai" {
         let dialects = crate::proxy::xml_tools::dialects_from(
-            config.rectifier_enabled && config.rectifier_toolcall_dialect_json,
-            config.rectifier_enabled && config.rectifier_toolcall_dialect_xml,
+            config.rectifier_enabled && config.rectifier_toolcall_dialect,
         );
         if crate::proxy::xml_tools::apply_tool_calls(&mut resp_json, &dialects)
             && proxy_debug_enabled()
@@ -1279,8 +1277,7 @@ async fn aggregate_upstream_stream(
     let mut aggregated = sse::aggregate_chat_chunks(&chunks, actual_model);
     if outbound == "openai" {
         let dialects = crate::proxy::xml_tools::dialects_from(
-            config.rectifier_enabled && config.rectifier_toolcall_dialect_json,
-            config.rectifier_enabled && config.rectifier_toolcall_dialect_xml,
+            config.rectifier_enabled && config.rectifier_toolcall_dialect,
         );
         crate::proxy::xml_tools::apply_tool_calls(&mut aggregated, &dialects);
     }

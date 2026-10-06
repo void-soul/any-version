@@ -28,9 +28,9 @@
 //!
 //! # 方言开关
 //!
-//! 由 `ProxyConfig` 的两个开关决定（UI 上在「协议整流器」分组里，与其他整流项并列）：
-//! `rectifier_toolcall_dialect_json` / `rectifier_toolcall_dialect_xml`。
-//! 两个都关 = 完全不介入，原样透传 —— 出问题时用它对照「是不是我们改坏的」。
+//! 由 `ProxyConfig.rectifier_toolcall_dialect` 一个开关决定（UI 上在「协议整流器」分组里，
+//! 文案叫「工具调用方言优化」，与其它整流项并列）。关掉 = 完全不介入、原样透传 ——
+//! 出问题时用它对照「是不是我们改坏的」。开 = 内部自动尝试全部方言，用户不用关心是 JSON 还是 XML。
 
 use serde_json::{json, Value};
 
@@ -86,16 +86,15 @@ pub struct Split {
 /// 最长标记长度：流式场景要按它决定「末尾扣住多少字符等标签成形」
 pub const MAX_MARKER_LEN: usize = 17;
 
-/// 按配置决定启用哪些方言
-pub fn dialects_from(json_on: bool, xml_on: bool) -> Vec<Dialect> {
-    let mut out = Vec::new();
-    if json_on {
-        out.push(Dialect::Json);
+/// 按开关决定启用哪些方言。开 = 全部方言（顺序即试探顺序），关 = 空（完全不介入）。
+///
+/// 不提供「只开某一种」：那是实现细节，用户只关心「要不要帮我还原方言」。
+pub fn dialects_from(enabled: bool) -> Vec<Dialect> {
+    if enabled {
+        vec![Dialect::Json, Dialect::XmlInvoke]
+    } else {
+        Vec::new()
     }
-    if xml_on {
-        out.push(Dialect::XmlInvoke);
-    }
-    out
 }
 
 /// 零宽字符：标记里混着它们（实测 U+200B），按字面匹配一定失败
@@ -685,7 +684,7 @@ mod tests {
     }
 
     fn both() -> Vec<Dialect> {
-        dialects_from(true, true)
+        dialects_from(true)
     }
 
     #[test]
@@ -721,12 +720,10 @@ mod tests {
     #[test]
     fn dialect_switch_disables_conversion() {
         let sample = real_log_sample();
-        // 两个开关都关 = 完全不介入，原样透传
+        // 开关关 = 完全不介入，原样透传（诊断「是不是我们改坏的」用）
         assert!(split_tool_calls(&sample, &[]).is_none());
-        // 只开 XML：JSON 方言不认（标记不同）→ 不转换，不误伤
-        assert!(split_tool_calls(&sample, &dialects_from(false, true)).is_none());
-        // 只开 JSON：命中
-        assert!(split_tool_calls(&sample, &dialects_from(true, false)).is_some());
+        // 开关开 = 全部方言一起试，命中
+        assert!(split_tool_calls(&sample, &dialects_from(true)).is_some());
     }
 
     #[test]
@@ -737,7 +734,7 @@ mod tests {
             (r#"{"tool_calls":[{"name":"c","arguments":{}}]}"#, "c"),
         ] {
             let body = format!("前缀<tool_call>```json\n{text}\n```");
-            let split = split_tool_calls(&body, &dialects_from(true, false))
+            let split = split_tool_calls(&body, &dialects_from(true))
                 .unwrap_or_else(|| panic!("应识别 {text}"));
             assert_eq!(split.calls[0].name, want);
         }
@@ -747,7 +744,7 @@ mod tests {
     fn js_code_with_braces_does_not_confuse_the_scanner() {
         // arguments.code 里全是花括号，不能被当成多个调用
         let body = "<tool_call>```json\n{\"name\":\"x\",\"arguments\":{\"code\":\"if (a) { b(); }\"}}\n```";
-        let split = split_tool_calls(body, &dialects_from(true, false)).unwrap();
+        let split = split_tool_calls(body, &dialects_from(true)).unwrap();
         assert_eq!(split.calls.len(), 1);
         assert!(split.calls[0].arguments.contains("if (a) { b(); }"));
     }
@@ -765,7 +762,7 @@ mod tests {
     fn text_after_the_last_call_is_kept() {
         // 模型完全可能「调完工具又补一句话」，只取前段会把后半截吞掉
         let body = "<tool_call>```json\n{\"name\":\"a\",\"arguments\":{}}\n```读完了，继续。";
-        let split = split_tool_calls(body, &dialects_from(true, false)).unwrap();
+        let split = split_tool_calls(body, &dialects_from(true)).unwrap();
         assert_eq!(split.prose_after, "读完了，继续。");
     }
 
@@ -774,7 +771,7 @@ mod tests {
         // qwen3.8-flash / 阶跃 / 基元律动 三家实测同款：`<function=NAME>` + `<parameter=key>value</parameter>`
         let sample = "<tool_call>\n<function=functions.exec>\n<parameter=cmd>\nGet-ChildItem -Force -Name\n\
             </parameter>\n</function>\n</tool_call>";
-        let split = split_tool_calls(sample, &dialects_from(false, true))
+        let split = split_tool_calls(sample, &dialects_from(true))
             .expect("function= 写法应被识别为工具调用");
         assert_eq!(split.calls.len(), 1, "{:?}", split.calls);
         assert_eq!(split.calls[0].name, "functions.exec");
@@ -787,7 +784,7 @@ mod tests {
         // 顺序很关键：`<function=functions.exec>` 若被当「标签名=function」，会造出一个
         // 叫 function 的假工具。shape 2 必须先于 shape 3。
         let sample = "<tool_call><function=functions.exec><parameter=cmd>ls</parameter></function></tool_call>";
-        let split = split_tool_calls(sample, &dialects_from(false, true)).unwrap();
+        let split = split_tool_calls(sample, &dialects_from(true)).unwrap();
         assert_eq!(split.calls[0].name, "functions.exec", "不能被当成名为 function 的工具");
         let args: Value = serde_json::from_str(&split.calls[0].arguments).unwrap();
         assert_eq!(args["cmd"], json!("ls"));
@@ -809,7 +806,7 @@ mod tests {
             ),
             zw = zw
         );
-        let split = split_tool_calls(&sample, &dialects_from(false, true))
+        let split = split_tool_calls(&sample, &dialects_from(true))
             .expect("标签名写法应被识别为工具调用");
         assert_eq!(split.calls.len(), 1, "{:?}", split.calls);
         assert_eq!(split.calls[0].name, "codex_app__read_thread_terminal");
@@ -830,13 +827,13 @@ mod tests {
     fn tag_name_style_reads_json_arguments_and_xml_params() {
         // 裸 JSON 参数
         let json_args = "<tool_call><shell_command>{\"command\":\"dir\"}</shell_command></tool_call>";
-        let split = split_tool_calls(json_args, &dialects_from(false, true)).unwrap();
+        let split = split_tool_calls(json_args, &dialects_from(true)).unwrap();
         assert_eq!(split.calls[0].name, "shell_command");
         assert_eq!(split.calls[0].arguments, json!({"command": "dir"}).to_string());
 
         // 子标签参数（同一形状的另一种参数写法）
         let xml_args = "<tool_call><read_file><path>a.txt</path></read_file></tool_call>";
-        let split = split_tool_calls(xml_args, &dialects_from(false, true)).unwrap();
+        let split = split_tool_calls(xml_args, &dialects_from(true)).unwrap();
         assert_eq!(split.calls[0].name, "read_file");
         assert_eq!(split.calls[0].arguments, json!({"path": "a.txt"}).to_string());
     }
@@ -849,7 +846,7 @@ mod tests {
             "<tool_call><div>没有参数也没有 JSON</div></tool_call>",
         ] {
             assert!(
-                split_tool_calls(text, &dialects_from(false, true)).is_none(),
+                split_tool_calls(text, &dialects_from(true)).is_none(),
                 "不该把普通标记当调用：{text}"
             );
         }
@@ -858,7 +855,7 @@ mod tests {
     #[test]
     fn xml_invoke_dialect_still_supported() {
         let body = "先查天气。<invoke name=\"get_weather\"><location>Beijing</location></invoke>";
-        let split = split_tool_calls(body, &dialects_from(false, true)).unwrap();
+        let split = split_tool_calls(body, &dialects_from(true)).unwrap();
         assert_eq!(split.prose_before, "先查天气。");
         assert_eq!(split.calls[0].name, "get_weather");
         assert_eq!(split.calls[0].dialect, Dialect::XmlInvoke);

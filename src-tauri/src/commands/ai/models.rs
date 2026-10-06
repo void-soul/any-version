@@ -25,14 +25,12 @@ pub struct RectifierConfig {
     /// 协议不匹配整流器：剥离转换后残留的协议专有字段
     #[serde(default = "default_true")]
     pub protocol_mismatch: bool,
-    /// 工具调用方言还原（围栏 JSON）：上游把 `tools` 翻成自家协议后**没翻回来**，
-    /// 模型的工具调用以正文文本流回。开启后把它还原成标准 `tool_calls`。
-    /// 实测样本：WorkBuddy `space-bunny`（背后 MiniMax）——见 `proxy::xml_tools`。
+    /// 工具调用方言优化：上游把 `tools` 翻成自家协议后**没翻回来**，模型的工具调用以正文
+    /// 文本流回（各家原生格式：JSON 围栏 / `<invoke>` / `<function=NAME>` / 标签名）。
+    /// 开启后自动还原成标准 `tool_calls`，内部自动试全部方言。实测：WorkBuddy `space-bunny`
+    /// （MiniMax）、阶跃、云知声、基元律动 —— 见 `proxy::xml_tools`。
     #[serde(default = "default_true")]
-    pub toolcall_dialect_json: bool,
-    /// 工具调用方言还原（XML invoke）：`<invoke name="X"><k>v</k></invoke>` 这种写法
-    #[serde(default = "default_true")]
-    pub toolcall_dialect_xml: bool,
+    pub toolcall_dialect: bool,
 }
 
 impl Default for RectifierConfig {
@@ -44,8 +42,7 @@ impl Default for RectifierConfig {
             media_fallback: true,
             media_heuristic: true,
             protocol_mismatch: true,
-            toolcall_dialect_json: true,
-            toolcall_dialect_xml: true,
+            toolcall_dialect: true,
         }
     }
 }
@@ -844,12 +841,9 @@ pub struct LaunchAiToolRequest {
     pub rectifier_media_heuristic: Option<bool>,
     #[serde(default)]
     pub rectifier_protocol_mismatch: Option<bool>,
-    /// 工具调用方言还原（围栏 JSON），None = 沿用全局配置
+    /// 工具调用方言优化，None = 沿用全局配置
     #[serde(default)]
-    pub rectifier_toolcall_dialect_json: Option<bool>,
-    /// 工具调用方言还原（XML invoke），None = 沿用全局配置
-    #[serde(default)]
-    pub rectifier_toolcall_dialect_xml: Option<bool>,
+    pub rectifier_toolcall_dialect: Option<bool>,
     /// 优化器各策略开关（None = 沿用全局配置 AiConfig.optimizer.*）
     #[serde(default)]
     pub optimizer_cache_injection: Option<bool>,
