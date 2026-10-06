@@ -226,6 +226,14 @@ export interface AiConfig {
     /** 纯文本模型预判：按已确认的纯文本注册表，发送前就剥掉图片块 */
     media_heuristic: boolean;
     protocol_mismatch: boolean;
+    /**
+     * 工具调用方言还原（围栏 JSON）：上游把 `tools` 翻成自家协议后没翻回来时，
+     * 模型的工具调用会以正文文本流回，客户端看不到 function_call 就判定本轮结束。
+     * 开启后还原成标准 `tool_calls`（实测：WorkBuddy `space-bunny` 背后是 MiniMax）。
+     */
+    toolcall_dialect_json: boolean;
+    /** 工具调用方言还原（`<invoke name=…>` 这种 XML 写法） */
+    toolcall_dialect_xml: boolean;
   };
   headroom: HeadroomConfig;
   optimizer: {
@@ -456,6 +464,8 @@ export interface CollabDispatchOptions {
   rectifier_media_fallback: boolean | null;
   rectifier_media_heuristic: boolean | null;
   rectifier_protocol_mismatch: boolean | null;
+  rectifier_toolcall_dialect_json: boolean | null;
+  rectifier_toolcall_dialect_xml: boolean | null;
   /** 模型自定义启动参数模板 */
   custom_params?: ModelCustomParam[];
   /** 用户为模型自定义参数选中的取值（key → 值） */

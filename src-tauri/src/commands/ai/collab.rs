@@ -1153,6 +1153,12 @@ pub struct CollabDispatchOptions {
     pub rectifier_media_heuristic: Option<bool>,
     #[serde(default)]
     pub rectifier_protocol_mismatch: Option<bool>,
+    /// 工具调用方言还原（围栏 JSON），None = 沿用全局配置
+    #[serde(default)]
+    pub rectifier_toolcall_dialect_json: Option<bool>,
+    /// 工具调用方言还原（XML invoke），None = 沿用全局配置
+    #[serde(default)]
+    pub rectifier_toolcall_dialect_xml: Option<bool>,
     /// 模型自定义启动参数模板（决定如何传参）
     #[serde(default)]
     pub custom_params: Vec<ModelCustomParam>,
@@ -1624,6 +1630,8 @@ async fn ensure_room_proxy(
             rectifier_media_fallback: options.rectifier_media_fallback,
             rectifier_media_heuristic: options.rectifier_media_heuristic,
             rectifier_protocol_mismatch: options.rectifier_protocol_mismatch,
+            rectifier_toolcall_dialect_json: options.rectifier_toolcall_dialect_json,
+            rectifier_toolcall_dialect_xml: options.rectifier_toolcall_dialect_xml,
             optimizer_cache_injection: options.optimizer_cache_injection,
             optimizer_thinking: options.optimizer_thinking,
             optimizer_deepseek: options.optimizer_deepseek,

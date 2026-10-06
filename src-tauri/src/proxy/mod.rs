@@ -8,6 +8,7 @@ pub mod sse;
 pub mod transform;
 pub mod types;
 pub mod upstream;
+pub mod xml_tools;
 
 /// 归一化函数参数的 JSON Schema，确保 `type` 始终为 "object"。
 ///

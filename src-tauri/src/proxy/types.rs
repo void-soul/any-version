@@ -1,6 +1,14 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// 整流器类开关的 serde 默认值：**开**。
+///
+/// 不能用裸 `#[serde(default)]`（那等于 false）：这些开关缺失时应当按「启用」处理，
+/// 否则老配置反序列化出来会静默把整流行为关掉。
+fn proxy_default_true() -> bool {
+    true
+}
+
 /// 代理服务器配置
 ///
 /// 纯供应商模型下：供应商只讲一种协议（ProxyConfig.outbound_protocol），
@@ -113,8 +121,17 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub rectifier_media_heuristic: bool,
     /// 协议不匹配整流：剥离转换后仍残留的协议专有字段（如 Anthropic thinking 落到 OpenAI 上游）
-    #[serde(default)]
+    #[serde(default = "proxy_default_true")]
     pub rectifier_protocol_mismatch: bool,
+    /// 工具调用方言还原（围栏 JSON）—— 见 `proxy::xml_tools`
+    ///
+    /// **为什么默认开**：上游不翻回 `tool_calls` 时，客户端看到的是「模型说了段计划就停住」，
+    /// 一次工具都不执行，而且界面上看不出发生过什么。
+    #[serde(default = "proxy_default_true")]
+    pub rectifier_toolcall_dialect_json: bool,
+    /// 工具调用方言还原（XML invoke）
+    #[serde(default = "proxy_default_true")]
+    pub rectifier_toolcall_dialect_xml: bool,
 
     // ─── 优化器开关 ───
     #[serde(default)]
@@ -201,6 +218,8 @@ impl Default for ProxyConfig {
             rectifier_media_fallback: true,
             rectifier_media_heuristic: true,
             rectifier_protocol_mismatch: true,
+            rectifier_toolcall_dialect_json: true,
+            rectifier_toolcall_dialect_xml: true,
             optimizer_enabled: true,
             optimizer_cache_injection: true,
             optimizer_thinking: true,

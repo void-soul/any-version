@@ -40,9 +40,21 @@ pub(crate) fn resolve_start_command(
     }
     // 声明路径 → 兜底（npm 实际前缀 / 注册表卸载项）。两者都不接的话会出现
     //「检测到了（策略 3 用兜底命中）但启动找不到命令」，等于白检测。
-    if let Some(exe) = super::tool_paths::find_declared_exe(tool_id, &paths.paths, "")
-        .or_else(|| super::tool_paths::find_fallback_exe(tool_id, &paths.command, &paths.paths))
-    {
+    //
+    // **必须再确认一次文件还在**：兜底来源是带缓存的（注册表卸载项索引 / npm 前缀），
+    // 应用被卸载/重装后缓存里留着的是**已删除的旧路径**。拿它去 spawn 只会得到
+    // `os error 3`（系统找不到指定的路径），点启动毫无反应 —— 实测：Claude 桌面端
+    // 从 Squirrel 版换成 MSIX(Store) 版后就是这个症状。所以只认真存在的文件，
+    // 不存在就继续往下走，最终落到 Store 包 URI 那条路。
+    let resolved_exe = live_exe(super::tool_paths::find_declared_exe(
+        tool_id,
+        &paths.paths,
+        "",
+    )
+    .or_else(|| {
+        super::tool_paths::find_fallback_exe(tool_id, &paths.command, &paths.paths)
+    }));
+    if let Some(exe) = resolved_exe {
         return Some(exe.to_string_lossy().to_string());
     }
     let fallback = paths.detect_cmd.split_whitespace().next().unwrap_or("").trim();
@@ -58,6 +70,25 @@ pub(crate) fn resolve_start_command(
             }
         }
     }
+    None
+}
+
+/// 只接受**当前确实存在**的exe 路径（`None` 透传）。
+///
+/// 存在的理由：启动命令有两级来源，第二级（`find_fallback_exe`：npm 实际全局前缀 +
+/// 注册表卸载项索引）读的是**带缓存**的外部状态。Kira 常驻托盘，应用在那期间被
+/// 卸载/重装是常事，缓存里那条路径就变成了死路。实测症状：Claude 桌面端从
+/// Squirrel 版换成 MSIX(Store) 版后，检测显示「已安装（死路径）」，点启动报
+/// `os error 3`（系统找不到指定的路径），窗口永不出现。
+fn live_exe(exe: Option<PathBuf>) -> Option<PathBuf> {
+    let exe = exe?;
+    if exe.is_file() {
+        return Some(exe);
+    }
+    eprintln!(
+        "[cli] 检测到的可执行文件已不存在（多半是应用被重装过），改走后续策略: {}",
+        exe.display()
+    );
     None
 }
 
@@ -405,6 +436,8 @@ pub(crate) async fn start_tool_proxy_with_collab(
                         rectifier_media_fallback: req.rectifier_media_fallback.unwrap_or(config.rectifier.media_fallback),
                         rectifier_media_heuristic: req.rectifier_media_heuristic.unwrap_or(config.rectifier.media_heuristic),
                         rectifier_protocol_mismatch: req.rectifier_protocol_mismatch.unwrap_or(config.rectifier.protocol_mismatch),
+                        rectifier_toolcall_dialect_json: req.rectifier_toolcall_dialect_json.unwrap_or(config.rectifier.toolcall_dialect_json),
+                        rectifier_toolcall_dialect_xml: req.rectifier_toolcall_dialect_xml.unwrap_or(config.rectifier.toolcall_dialect_xml),
                         optimizer_enabled: optimizer_on,
                         optimizer_cache_injection: req.optimizer_cache_injection.unwrap_or(config.optimizer.cache_injection),
                         optimizer_thinking: req.optimizer_thinking.unwrap_or(config.optimizer.thinking_optimizer),
@@ -911,7 +944,12 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
     } else {
         hidden_cmd::hidden_cmd(&terminal_exe)
     };
-    cmd.current_dir(&work_dir);
+    // GUI 应用与 Store 包 URI 不需要工作目录，而设一个**已不存在**的目录会让
+    // `CreateProcess` 直接失败（os error 267 目录名称无效）——桌面端与项目目录本来
+    // 就无关（界面上也不要求选），所以这两类干脆不设，别让一个无关目录卡住启动。
+    if !is_launch_uri && !is_desktop_tool {
+        cmd.current_dir(&work_dir);
+    }
 
     // 装了但不在 PATH 里也要能启动：curl/scoop/choco 安装完的 `setx` 只对**之后**启动的
     // 进程生效，本进程 PATH 里没有该目录，裸命令在新终端里会「不是内部或外部命令」。
@@ -1026,7 +1064,11 @@ pub async fn launch_ai_tool(req: LaunchAiToolRequest) -> Result<serde_json::Valu
         cmd.env(env_key, value);
     }
 
-    cmd.spawn().map_err(|e| format!("启动失败: {}", e))?;
+    // 启动失败时把**实际执行的程序/命令**一起报出来：光一句「系统找不到指定的路径」根本
+// 定位不到问题（曾经据此排查过一次：真实原因是从注册表缓存里取到一条已删除的旧安装
+    // 路径，而报错文案里没有任何路径可看）。
+    cmd.spawn()
+        .map_err(|e| format!("启动失败: {}｜实际执行的命令: {}", e, start_cmd))?;
 
     eprintln!("[spawn] ✓ 进程已启动");
 
@@ -2806,6 +2848,33 @@ name = "personal"
         assert_eq!(quoted["m"], "weird\"name");
 
         assert!(render_json_template("{not json", "", "", "", "").is_err());
+    }
+
+    /// 死路径绝不能被当成启动命令（`os error 3` 的根因）。
+    ///
+    /// 回归场景（2026-10-05 实测）：Claude 桌面端从 Squirrel 版换成 MSIX/Store 版，
+    /// `%LOCALAPPDATA%\AnthropicClaude\Claude.exe` 整个目录被卸载器删掉，但注册表
+    /// 卸载项索引（进程级缓存）里还留着它 → 启动直接 `os error 3`，点启动毫无反应。
+    #[test]
+    fn live_exe_rejects_a_deleted_path() {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("anyver-live-exe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("gone.exe");
+        std::fs::write(&exe, "").unwrap();
+
+        // 文件在 → 认
+        assert_eq!(super::live_exe(Some(exe.clone())), Some(exe.clone()));
+
+        // 文件被删（重装/卸载）→ 丢掉，让上层继续走下一条策略（最终落到包 URI）
+        std::fs::remove_file(&exe).unwrap();
+        assert!(super::live_exe(Some(exe.clone())).is_none());
+        // 目录不算可执行文件：CreateProcess 同样起不来
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(super::live_exe(Some(dir.clone())).is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 桌面应用（startCommand 为空）要靠「检测到的 exe 绝对路径」启动。

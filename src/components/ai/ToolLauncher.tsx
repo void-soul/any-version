@@ -346,6 +346,9 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
   const [rectifierStrategies, setRectifierStrategies] = useState({
     thinking_signature: true, thinking_budget: true, media_fallback: true,
     media_heuristic: true, protocol_mismatch: true,
+    // 工具调用方言还原：上游不把 tools 翻回标准 tool_calls 时，模型会把自己的写法当正文吐回来，
+    // 客户端看不到 function_call → 判定本轮结束 → 「说了段计划就停住」。详见 proxy/xml_tools.rs。
+    toolcall_dialect_json: true, toolcall_dialect_xml: true,
   });
   const [optimizerStrategies, setOptimizerStrategies] = useState({
     cache_injection: true, thinking_optimizer: true, deepseek_normalize: true,
@@ -458,7 +461,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
     try {
       const [t, c, term, lcs] = await Promise.all([
         invoke<DetectedAiTool[]>("detect_ai_tools").catch(() => []),
-        invoke<AiConfig>("get_ai_config").catch(() => ({ providers: [], proxy_port: 15721, default_project_path: "", rectifier: { enabled: false, thinking_signature: false, thinking_budget: false, media_fallback: false, media_heuristic: false, protocol_mismatch: false }, headroom: { enabled: false, port: 8791, on_unavailable: "failOpen", disable_kompress: false, timeout_ms: 1500 }, optimizer: { enabled: false, cache_injection: false, thinking_optimizer: false, deepseek_normalize: false }, skills_dir: "" })),
+        invoke<AiConfig>("get_ai_config").catch(() => ({ providers: [], proxy_port: 15721, default_project_path: "", rectifier: { enabled: false, thinking_signature: false, thinking_budget: false, media_fallback: false, media_heuristic: false, protocol_mismatch: false, toolcall_dialect_json: false, toolcall_dialect_xml: false }, headroom: { enabled: false, port: 8791, on_unavailable: "failOpen", disable_kompress: false, timeout_ms: 1500 }, optimizer: { enabled: false, cache_injection: false, thinking_optimizer: false, deepseek_normalize: false }, skills_dir: "" })),
         invoke<TerminalInfo[]>("detect_terminals").catch(() => []),
         invoke<Record<string, LastLaunchConfig>>("get_all_last_launch_configs").catch(() => ({})),
       ]);
@@ -481,6 +484,8 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
         media_fallback: c.rectifier?.media_fallback !== false,
         media_heuristic: c.rectifier?.media_heuristic !== false,
         protocol_mismatch: c.rectifier?.protocol_mismatch !== false,
+        toolcall_dialect_json: c.rectifier?.toolcall_dialect_json !== false,
+        toolcall_dialect_xml: c.rectifier?.toolcall_dialect_xml !== false,
       });
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -673,6 +678,8 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
           rectifier_media_fallback: useOfficialModel ? null : rectifierStrategies.media_fallback,
           rectifier_media_heuristic: useOfficialModel ? null : rectifierStrategies.media_heuristic,
           rectifier_protocol_mismatch: useOfficialModel ? null : rectifierStrategies.protocol_mismatch,
+          rectifier_toolcall_dialect_json: useOfficialModel ? null : rectifierStrategies.toolcall_dialect_json,
+          rectifier_toolcall_dialect_xml: useOfficialModel ? null : rectifierStrategies.toolcall_dialect_xml,
           web_search_enabled: useOfficialModel ? false : webSearchEnabled,
           custom_params: useOfficialModel ? [] : currentModelCustomParams,
           custom_param_values: useOfficialModel ? {} : customParamValues,
@@ -1212,6 +1219,8 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                   media_fallback: config?.rectifier?.media_fallback !== false,
                   media_heuristic: config?.rectifier?.media_heuristic !== false,
                   protocol_mismatch: config?.rectifier?.protocol_mismatch !== false,
+                  toolcall_dialect_json: config?.rectifier?.toolcall_dialect_json !== false,
+                  toolcall_dialect_xml: config?.rectifier?.toolcall_dialect_xml !== false,
                 });
                 setSelectedTerminal("cmd");
                 setUseOfficialModel(tool.api_protocol === "none");
@@ -2205,6 +2214,8 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                               { key: "media_fallback" as const, label: t("toollaunch.recMedia"), desc: t("toollaunch.recMediaDesc") },
                               { key: "media_heuristic" as const, label: t("toollaunch.recMediaHeuristic"), desc: t("toollaunch.recMediaHeuristicDesc") },
                               { key: "protocol_mismatch" as const, label: t("toollaunch.recProtocol"), desc: t("toollaunch.recProtocolDesc") },
+                              { key: "toolcall_dialect_json" as const, label: t("toollaunch.recToolcallJson"), desc: t("toollaunch.recToolcallJsonDesc") },
+                              { key: "toolcall_dialect_xml" as const, label: t("toollaunch.recToolcallXml"), desc: t("toollaunch.recToolcallXmlDesc") },
                             ].map(item => (
                               <label key={item.key} className="flex items-center gap-2 cursor-pointer">
                                 <input

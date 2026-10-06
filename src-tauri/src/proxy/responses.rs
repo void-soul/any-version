@@ -546,13 +546,26 @@ pub struct ResponsesStreamConverter {
     reasoning_text: String,
     /// tool_call 序号 → (output_index, item_id, call_id, name, arguments)
     tools: Vec<(usize, String, String, String, String)>,
+    /// 正文里已出现工具标记，之后的文本都进 `xml_buf` 而不发给客户端
+    xml_mode: bool,
+    /// 启用的工具调用方言（整流器开关决定）
+    dialects: Vec<crate::proxy::xml_tools::Dialect>,
+    /// 末尾可能是标记前缀、先扣住不发的一小段（见 [`Self::absorb_text`]）
+    xml_hold: String,
+    /// 进入标记之后累积的原始 XML，流末一次性解析
+    xml_buf: String,
     usage: Option<Value>,
     finish_reason: Option<String>,
     failed: bool,
 }
 
 impl ResponsesStreamConverter {
+    /// `dialects`：启用哪些工具调用方言（由 ProxyConfig 的整流器开关决定，见 `proxy::xml_tools`）
     pub fn new(model: &str) -> Self {
+        Self::with_dialects(model, &crate::proxy::xml_tools::dialects_from(true, true))
+    }
+
+    pub fn with_dialects(model: &str, dialects: &[crate::proxy::xml_tools::Dialect]) -> Self {
         Self {
             response_id: "resp_stream".to_string(),
             model: model.to_string(),
@@ -566,10 +579,136 @@ impl ResponsesStreamConverter {
             reasoning_id: String::new(),
             reasoning_text: String::new(),
             tools: Vec::new(),
+            dialects: dialects.to_vec(),
+            xml_mode: false,
+            xml_hold: String::new(),
+            xml_buf: String::new(),
             usage: None,
             finish_reason: None,
             failed: false,
         }
+    }
+
+    /// 吸收一段正文增量，返回**可以发给客户端**的那部分。
+    ///
+    /// 上游把工具调用写成 XML 方言时（见 `proxy::xml_tools`），整段 XML 只能等收全了才能解析，
+    /// 但标记**之前**的正文必须照常逐字发出去 —— 否则用户会盯着空白等到整轮结束。
+    /// 因此：
+    /// - 没见到标记：正常转发，只把末尾「可能还是标记前缀」的一小段扣住（最多
+    ///   `MAX_MARKER_LEN` 个字符），避免把半个 `<tool_call` 显示出来；
+    /// - 见到标记：切到 xml_mode，之后的文本全部扣下，流末再解析成 function_call。
+    fn absorb_text(&mut self, text: &str) -> String {
+        if self.xml_mode {
+            self.xml_buf.push_str(text);
+            return String::new();
+        }
+        // 先归一化再去掉零宽字符：标记里混着 U+200B，不归一化永远匹配不上
+        let (norm, _) = crate::proxy::xml_tools::normalize(text);
+        let combined = format!("{}{}", self.xml_hold, norm);
+        self.xml_hold.clear();
+        let Some(pos) = crate::proxy::xml_tools::find_marker(&combined, &self.dialects) else {
+            return self.hold_tail(&combined);
+        };
+        self.xml_mode = true;
+        self.xml_buf.push_str(&combined[pos.0..]);
+        combined[..pos.0].to_string()
+    }
+
+    /// 扣住末尾可能还是标记前缀的一段，其余原样发出
+    fn hold_tail(&mut self, s: &str) -> String {
+        let max = crate::proxy::xml_tools::MAX_MARKER_LEN;
+        let from = s.len().saturating_sub(max);
+        for k in (from..s.len()).rev() {
+            if !s.is_char_boundary(k) {
+                continue;
+            }
+            if crate::proxy::xml_tools::could_be_marker_prefix(&s[k..], &self.dialects) {
+                self.xml_hold = s[k..].to_string();
+                return s[..k].to_string();
+            }
+        }
+        s.to_string()
+    }
+
+    /// 流末：把扣下的 XML 解析成标准 function_call。
+    ///
+    /// **解析不成也必须把原文还给客户端** —— 扣住是为了还原，不是为了吞掉内容：
+    /// 误判成工具调用的普通文本（用户在问 `<invoke>` 语法之类）会原样出现，
+    /// 而不是凭空消失。
+    fn flush_xml_tools(&mut self) -> Vec<String> {
+        let mut events = Vec::new();
+        let mut push_text = |events: &mut Vec<String>, text: &str, this: &mut Self| {
+            if text.is_empty() {
+                return;
+            }
+            events.extend(this.ensure_message_block());
+            this.msg_text.push_str(text);
+            events.push(sse(
+                "response.output_text.delta",
+                json!({
+                    "type": "response.output_text.delta",
+                    "item_id": this.msg_id,
+                    "output_index": this.msg_index.unwrap_or(0),
+                    "content_index": 0,
+                    "delta": text
+                }),
+            ));
+        };
+
+        if self.xml_mode && !self.xml_buf.is_empty() {
+            let buf = std::mem::take(&mut self.xml_buf);
+            self.xml_mode = false;
+            match crate::proxy::xml_tools::split_tool_calls(&buf, &self.dialects) {
+                Some(split) => {
+                    // 工具调用之后模型可能又说了话，那段也要给客户端
+                    push_text(&mut events, &split.prose_after, self);
+                    for (i, call) in split.calls.iter().enumerate() {
+                        let index = self.take_index();
+                        let call_id = format!("call_xml_{i}");
+                        let item_id = format!("fc_{call_id}");
+                        events.push(sse(
+                            "response.output_item.added",
+                            json!({
+                                "type": "response.output_item.added",
+                                "output_index": index,
+                                "item": {
+                                    "id": item_id,
+                                    "type": "function_call",
+                                    "status": "in_progress",
+                                    "call_id": call_id,
+                                    "name": call.name,
+                                    "arguments": ""
+                                }
+                            }),
+                        ));
+                        events.push(sse(
+                            "response.function_call_arguments.delta",
+                            json!({
+                                "type": "response.function_call_arguments.delta",
+                                "item_id": item_id,
+                                "output_index": index,
+                                "delta": call.arguments
+                            }),
+                        ));
+                        self.tools.push((
+                            index,
+                            item_id,
+                            call_id,
+                            call.name.clone(),
+                            call.arguments.clone(),
+                        ));
+                    }
+                }
+                // 没能还原（标记误判 / 上游格式又变了）：一个字都不丢，原样发回去
+                None => push_text(&mut events, &buf, self),
+            }
+        }
+        // 流结束时还扣着的那一小段：它没能长成标记，就是普通正文，补发出来
+        if !self.xml_hold.is_empty() {
+            let tail = std::mem::take(&mut self.xml_hold);
+            push_text(&mut events, &tail, self);
+        }
+        events
     }
 
     fn base_response(&self, status: &str) -> Value {
@@ -691,6 +830,24 @@ impl ResponsesStreamConverter {
         ]
     }
 
+    /// 诊断用（仅 `ANY_VERSION_PROXY_DEBUG=1` 时打印）：这一轮上游到底给了什么。
+    ///
+    /// 「模型只吐了一段计划就停」这类问题分不清是「上游没给工具调用」还是
+    /// 「给了但被我们丢了」，没有这段日志就只能靠猜。
+    pub fn upstream_debug(&self) -> String {
+        let head = |s: &str| s.chars().take(400).collect::<String>();
+        format!(
+            "finish={:?} tools={} xml_mode={} 正文({}字)={:?} 扣留({}字)={:?}",
+            self.finish_reason,
+            self.tools.len(),
+            self.xml_mode,
+            self.msg_text.chars().count(),
+            head(&self.msg_text),
+            self.xml_buf.chars().count(),
+            head(&self.xml_buf),
+        )
+    }
+
     /// 处理一个 Chat SSE chunk（已解析的 JSON），返回要写回客户端的事件文本。
     pub fn push_chunk(&mut self, chunk: &Value) -> Vec<String> {
         if self.failed {
@@ -754,18 +911,22 @@ impl ResponsesStreamConverter {
 
         if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
             if !text.is_empty() {
-                events.extend(self.ensure_message_block());
-                self.msg_text.push_str(text);
-                events.push(sse(
-                    "response.output_text.delta",
-                    json!({
-                        "type": "response.output_text.delta",
-                        "item_id": self.msg_id,
-                        "output_index": self.msg_index.unwrap_or(0),
-                        "content_index": 0,
-                        "delta": text
-                    }),
-                ));
+                // 走 absorb_text：标记之前的正文照常逐字发，标记（及其后的 XML）扣到流末解析
+                let emit = self.absorb_text(text);
+                if !emit.is_empty() {
+                    events.extend(self.ensure_message_block());
+                    self.msg_text.push_str(&emit);
+                    events.push(sse(
+                        "response.output_text.delta",
+                        json!({
+                            "type": "response.output_text.delta",
+                            "item_id": self.msg_id,
+                            "output_index": self.msg_index.unwrap_or(0),
+                            "content_index": 0,
+                            "delta": emit
+                        }),
+                    ));
+                }
             }
         }
 
@@ -858,6 +1019,9 @@ impl ResponsesStreamConverter {
             let placeholder = json!({});
             events.extend(self.ensure_started(&placeholder));
         }
+
+        // XML 方言的工具调用在这里还原：正文已发完，补上 function_call 与扣住的尾巴
+        events.extend(self.flush_xml_tools());
 
         if let Some(index) = self.reasoning_index {
             events.push(sse(
@@ -1132,6 +1296,90 @@ mod tests {
         assert!(joined.contains(r#""input_tokens":7"#), "usage 要落到 completed: {joined}");
         // message item id 用上游 id 去掉 resp_ 前缀
         assert!(joined.contains(r#""id":"msg_chatcmpl-abc""#), "{joined}");
+    }
+
+    /// 上游把工具调用写成 XML 方言时（见 `proxy::xml_tools`）：标记之前的正文照常逐字
+    /// 流出，XML 本身扣到流末还原成 function_call —— 否则 Codex 会判定轮次结束而停住。
+    #[test]
+    fn stream_recovers_xml_dialect_tool_calls() {
+        let sample = "先梳理结构。]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"shell_command\">\
+            <workdir>E:\\x</workdir><command>dir</command></invoke>\n]<]minimax[>[</tool_call>";
+        let mut conv = ResponsesStreamConverter::new("gpt-5");
+        let mut out = Vec::new();
+        // 切成 7 字一片喂进去：真实流里标记会被拆散在各个 delta 中
+        let chars: Vec<char> = sample.chars().collect();
+        for piece in chars.chunks(7) {
+            let piece: String = piece.iter().collect();
+            out.extend(conv.push_chunk(&json!({
+                "id": "c1",
+                "choices": [{ "delta": { "content": piece } }]
+            })));
+        }
+        out.extend(conv.finish());
+        let joined = out.join("");
+
+        assert!(joined.contains("先梳理结构。"), "正文要照常发出来：{joined}");
+        assert!(!joined.contains("<invoke"), "原始 XML 不该透传给客户端：{joined}");
+        assert!(!joined.contains("minimax"), "上游塞的分隔符要剥掉：{joined}");
+        assert!(joined.contains("\"type\":\"function_call\""), "要还原成 function_call：{joined}");
+        assert!(joined.contains("\"name\":\"shell_command\""), "{joined}");
+        // 参数在 SSE 里是 JSON 字符串内嵌，直接查会被转义干扰，改查转换器的结果
+        assert_eq!(conv.tools.len(), 1, "应还原出 1 个工具调用：{:?}", conv.tools);
+        assert_eq!(conv.tools[0].3, "shell_command");
+        assert!(
+            conv.tools[0].4.contains("\"command\":\"dir\""),
+            "参数要还原：{}",
+            conv.tools[0].4
+        );
+        assert!(!conv.msg_text.contains("minimax"), "正文里不该留 XML：{}", conv.msg_text);
+    }
+
+    /// 反向护栏：普通正文里的尖括号不能被扣住不发（hold 只保留「可能还是标记前缀」的一小段）
+    #[test]
+    fn stream_does_not_swallow_plain_angle_brackets() {
+        let mut conv = ResponsesStreamConverter::new("gpt-5");
+        let out = conv.push_chunk(&json!({
+            "id": "c1",
+            "choices": [{ "delta": { "content": "比较 a < b 且 c > d 的大小" } }]
+        }));
+        let joined = out.join("");
+        assert!(joined.contains("比较 a < b 且 c > d 的大小"), "正文不能被吞：{joined}");
+    }
+
+    /// 扣住是为了还原，不是为了吞：出现工具标记但**解析不出** invoke 时，
+    /// 原文必须原样回到客户端（否则用户在问 `<invoke>` 语法时内容会凭空消失）
+    #[test]
+    fn stream_returns_unparsable_xml_text_to_the_client() {
+        let mut conv = ResponsesStreamConverter::new("gpt-5");
+        let text = "讲一下 <tool_call> 这个标签怎么用";
+        let mut out = conv.push_chunk(&json!({
+            "id": "c1",
+            "choices": [{ "delta": { "content": text } }]
+        }));
+        out.extend(conv.finish());
+        let joined = out.join("");
+        assert!(joined.contains("<tool_call>"), "原文要还回来：{joined}");
+        assert!(!joined.contains("function_call"), "没解析出工具就不该造 function_call：{joined}");
+    }
+
+    /// 模型「调完工具又补一句话」时，那句话不能被吞
+    #[test]
+    fn stream_keeps_text_emitted_after_the_tool_call() {
+        let mut conv = ResponsesStreamConverter::new("gpt-5");
+        let sample = "先读。<tool_call><invoke name=\"read_file\"><path>a.txt</path></invoke></tool_call>读完继续。";
+        let chars: Vec<char> = sample.chars().collect();
+        let mut out = Vec::new();
+        for piece in chars.chunks(9) {
+            let piece: String = piece.iter().collect();
+            out.extend(conv.push_chunk(&json!({
+                "id": "c1",
+                "choices": [{ "delta": { "content": piece } }]
+            })));
+        }
+        out.extend(conv.finish());
+        let joined = out.join("");
+        assert!(joined.contains("读完继续。"), "工具调用之后的正文要发出来：{joined}");
+        assert_eq!(conv.tools.len(), 1);
     }
 
     #[test]

@@ -61,10 +61,15 @@ fn record_proxy_usage(
     }
 }
 
-/// 打印代理网络请求日志（统一前缀，不打印任何敏感头/密钥）
+/// 打印代理网络请求日志（统一前缀，不打印任何敏感头/密钥）。
+///
+/// **同时落一份到滚动日志文件**（`<数据目录>/logs/any-version.log.<日期>`，走 tracing）：
+/// 控制台会被顶掉，排查「注入是否发生」这类问题时只能靠文件回溯
+/// —— 2026-10-06 排查方言提示注入时，用户手动复制控制台只能拿到尾部，现场全丢。
 fn log_proxy(msg: &str) {
     let ts = chrono::Local::now().format("%H:%M:%S%.3f");
     println!("[proxy] {} {}", ts, msg);
+    tracing::info!("[proxy] {} {}", ts, msg);
 }
 
 /// 是否启用代理「完整日志」。
@@ -725,6 +730,14 @@ async fn responses_handler(
         .unwrap_or("unknown")
         .to_string();
     let chat_body = crate::proxy::responses::responses_to_chat(&body);
+    // 工具调用方言还原的开关来自整流器配置（与「协议整流器」分组里的两个勾选对应）
+    let dialects = {
+        let cfg = state.config.read().await;
+        crate::proxy::xml_tools::dialects_from(
+            cfg.rectifier_enabled && cfg.rectifier_toolcall_dialect_json,
+            cfg.rectifier_enabled && cfg.rectifier_toolcall_dialect_xml,
+        )
+    };
     let upstream = process_request(&state, &headers, "openai", claimed, false, chat_body).await;
 
     // 非 2xx 原样透传：Chat 的错误体 `{"error":{message,type,code}}` 正是 Codex 期望的形状，
@@ -733,14 +746,18 @@ async fn responses_handler(
         return upstream;
     }
     if is_stream {
-        wrap_chat_stream_as_responses(upstream, &body)
+        wrap_chat_stream_as_responses(upstream, &body, &dialects)
     } else {
-        wrap_chat_json_as_responses(upstream, &body).await
+        wrap_chat_json_as_responses(upstream, &body, &dialects).await
     }
 }
 
 /// 非流式：Chat 响应体 → Responses 响应体。
-async fn wrap_chat_json_as_responses(upstream: Response, request: &Value) -> Response {
+async fn wrap_chat_json_as_responses(
+    upstream: Response,
+    request: &Value,
+    dialects: &[crate::proxy::xml_tools::Dialect],
+) -> Response {
     let status = upstream.status();
     let bytes = match axum::body::to_bytes(upstream.into_body(), 32 * 1024 * 1024).await {
         Ok(b) => b,
@@ -762,12 +779,20 @@ async fn wrap_chat_json_as_responses(upstream: Response, request: &Value) -> Res
             .body(Body::from(bytes))
             .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response());
     };
+    // 上游可能不把工具调用翻回标准 `tool_calls`（实测：WorkBuddy space-bunny 背后是
+    // MiniMax），那样 content 里只有文本，Codex 会判定轮次结束而不再执行工具。
+    let mut chat = chat;
+    crate::proxy::xml_tools::apply_tool_calls(&mut chat, &dialects);
     let responses = crate::proxy::responses::chat_to_responses(&chat, request);
     (status, Json(responses)).into_response()
 }
 
 /// 流式：把上游的 Chat SSE 逐帧翻译成 Responses 事件流。
-fn wrap_chat_stream_as_responses(upstream: Response, request: &Value) -> Response {
+fn wrap_chat_stream_as_responses(
+    upstream: Response,
+    request: &Value,
+    dialects: &[crate::proxy::xml_tools::Dialect],
+) -> Response {
     use axum::body::Bytes;
     use futures_util::StreamExt;
     let model = request
@@ -776,9 +801,12 @@ fn wrap_chat_stream_as_responses(upstream: Response, request: &Value) -> Respons
         .unwrap_or("")
         .to_string();
     let stream = upstream.into_body().into_data_stream();
+    // 复制一份所有权：async_stream 生成的流会 move 住捕获的量，不能借用入参
+    let dialects = dialects.to_vec();
     let sse = async_stream::stream! {
         tokio::pin!(stream);
-        let mut conv = crate::proxy::responses::ResponsesStreamConverter::new(&model);
+        let mut conv =
+            crate::proxy::responses::ResponsesStreamConverter::with_dialects(&model, &dialects);
         let mut buffer = String::new();
         while let Some(item) = stream.next().await {
             let Ok(bytes) = item else { break };
@@ -803,6 +831,10 @@ fn wrap_chat_stream_as_responses(upstream: Response, request: &Value) -> Respons
         }
         for ev in conv.finish() {
             yield Ok::<_, std::convert::Infallible>(Bytes::from(ev));
+        }
+        // 「模型只吐计划就停」这类问题要分清是上游没给工具调用、还是给了被我们丢了
+        if proxy_debug_enabled() {
+            log_proxy(&format!("  ↩ 上游流式汇总: {}", conv.upstream_debug()));
         }
     };
     Response::builder()
@@ -1106,6 +1138,19 @@ async fn process_response(
     };
 
     // ⑧ 协议转换响应：P_out → P_in
+    // 先把上游可能写进 content 的方言工具调用还原成 tool_calls（见 xml_tools 文档）
+    let mut resp_json = resp_json;
+    if outbound == "openai" {
+        let dialects = crate::proxy::xml_tools::dialects_from(
+            config.rectifier_enabled && config.rectifier_toolcall_dialect_json,
+            config.rectifier_enabled && config.rectifier_toolcall_dialect_xml,
+        );
+        if crate::proxy::xml_tools::apply_tool_calls(&mut resp_json, &dialects)
+            && proxy_debug_enabled()
+        {
+            log_proxy("  ↩ 已把正文里的工具调用还原成 tool_calls（方言适配层）");
+        }
+    }
     let mut in_resp = convert_response(outbound, inbound, &resp_json, claimed_model);
 
     // ⑨ 模型伪装回填：响应 model 字段写回声明名 C
@@ -1231,7 +1276,14 @@ async fn aggregate_upstream_stream(
     }
 
     // 聚合成单个 chat.completion，再按入站协议回填
-    let aggregated = sse::aggregate_chat_chunks(&chunks, actual_model);
+    let mut aggregated = sse::aggregate_chat_chunks(&chunks, actual_model);
+    if outbound == "openai" {
+        let dialects = crate::proxy::xml_tools::dialects_from(
+            config.rectifier_enabled && config.rectifier_toolcall_dialect_json,
+            config.rectifier_enabled && config.rectifier_toolcall_dialect_xml,
+        );
+        crate::proxy::xml_tools::apply_tool_calls(&mut aggregated, &dialects);
+    }
     let mut in_resp = convert_response(outbound, inbound, &aggregated, claimed_model);
     set_response_model(&mut in_resp, claimed_model, inbound);
 

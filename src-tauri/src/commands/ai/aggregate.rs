@@ -361,6 +361,8 @@ fn candidate_proxy_config(candidate: &AggCandidate, cfg: &AiConfig) -> ProxyConf
         rectifier_media_fallback: r.media_fallback,
         rectifier_media_heuristic: r.media_heuristic,
         rectifier_protocol_mismatch: r.protocol_mismatch,
+        rectifier_toolcall_dialect_json: r.toolcall_dialect_json,
+        rectifier_toolcall_dialect_xml: r.toolcall_dialect_xml,
         optimizer_enabled: o.enabled,
         optimizer_cache_injection: o.cache_injection,
         optimizer_thinking: o.thinking_optimizer,

@@ -482,3 +482,15 @@ document-skills@… installed=true enabled=true version="8a1541c4a3ff"
 - **orca**（1bfbc155 → 3f37fcc42，367 提交）：只有 3 条属学习目标 4（orchestration：agent 自带编排地址、orca_session_id 统一、worker-abandon 清理卡住 worker）；其余是 native-chat 行为修复、SSH relay、worktree 性能、大量测试基建 —— 都是 orca 自身产品能力，与我们的多 agent 协同（CollabRoom + 任务流）不同形态 → **不抄**。
 
 **本轮未改动任何产品代码**（仅回写同步点与 qa.db）。
+
+2026-10-06 已知边界（原创补丁，非抄作业；结论见 Q-0333）：参考仓都不处理「上游把模型原生
+工具调用当正文文本吐回」这个问题 —— cc-switch / CodexPlusPlus 只做 openai↔anthropic↔gemini
+的结构化字段互转，且对接的上游都返回标准 `tool_calls`。我们撞到的是他们**规避掉**的坑：
+LongCat / 阶跃 / 云知声 / 基元律动等端点的 OpenAI 兼容层只实现了 function calling 的一半
+（请求方向翻译 tools、响应方向不翻回 tool_calls），且各家原生格式互不相同、标记里还混着
+U+200B 零宽字符。any-version 已加原创方言层 `proxy/xml_tools.rs`（JSON 围栏 / `<invoke name=>` /
+`<function=NAME>` / 名字即标签名，零宽归一化 + 逐个试探 + 解析不出就放行），由「协议整流器」
+里两个开关门控。**判定**：方言层能救「格式」，救不了「模型不会用工具」—— 网关不传工具 schema
+时模型连工具名/参数都瞎猜，Codex 执行即拒。故 ChatGPT Desktop 要稳走 DeepSeek/GLM/Moonshot
+官方；国产轻量模型（qwen3.8-flash/LongCat/阶跃）留给 CodeBuddy 面板（非流式路径已覆盖）。
+**不要**再把「方言还原」当成参考仓漏抄的能力。

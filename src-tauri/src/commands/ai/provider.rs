@@ -260,6 +260,8 @@ pub async fn start_proxy(port: u16) -> Result<(), String> {
         rectifier_media_fallback: config.rectifier.media_fallback,
         rectifier_media_heuristic: config.rectifier.media_heuristic,
         rectifier_protocol_mismatch: config.rectifier.protocol_mismatch,
+        rectifier_toolcall_dialect_json: config.rectifier.toolcall_dialect_json,
+        rectifier_toolcall_dialect_xml: config.rectifier.toolcall_dialect_xml,
         optimizer_enabled: config.optimizer.enabled,
         optimizer_cache_injection: config.optimizer.cache_injection,
         optimizer_thinking: config.optimizer.thinking_optimizer,

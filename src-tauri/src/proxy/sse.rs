@@ -87,6 +87,13 @@ pub fn aggregate_chat_chunks(
     let mut finish_reason = Value::Null;
     let mut usage: Option<Value> = None;
     let mut role = String::from("assistant");
+    // 工具调用：index → (id, type, name, arguments)
+    //
+    // **必须聚合**：这条路径（上游只收流式 → 代理聚合成非流式）原先只收 content 与
+    // reasoning，工具调用被静默丢掉 —— 客户端看到的就是「模型说了段计划然后停住」，
+    // 一次工具都不执行。两种来源都认：标准 `delta.tool_calls`（分段增量），
+    // 以及少数上游在流中间用 `message.tool_calls` 一次给全。
+    let mut tools: Vec<(u64, String, String, String, String)> = Vec::new();
 
     for chunk in chunks {
         if id.is_none() {
@@ -134,6 +141,21 @@ pub fn aggregate_chat_chunks(
                     break;
                 }
             }
+            if let Some(calls) = delta.get("tool_calls").and_then(|c| c.as_array()) {
+                for call in calls {
+                    push_tool_call(&mut tools, call, true);
+                }
+            }
+        }
+        // 非标准但存在的写法：工具调用放在流中间的 message 里
+        if let Some(calls) = first
+            .get("message")
+            .and_then(|m| m.get("tool_calls"))
+            .and_then(|c| c.as_array())
+        {
+            for call in calls {
+                push_tool_call(&mut tools, call, false);
+            }
         }
         if let Some(fr) = first.get("finish_reason") {
             if !fr.is_null() {
@@ -145,6 +167,23 @@ pub fn aggregate_chat_chunks(
     let mut message = json!({ "role": role, "content": content });
     if !reasoning.is_empty() {
         message["reasoning_content"] = json!(reasoning);
+    }
+    if !tools.is_empty() {
+        let calls: Vec<Value> = tools
+            .iter()
+            .map(|(_, id, kind, name, args)| {
+                json!({
+                    "id": id,
+                    "type": kind,
+                    "function": { "name": name, "arguments": args }
+                })
+            })
+            .collect();
+        message["tool_calls"] = json!(calls);
+        // 上游没给 finish_reason 时补上：客户端（如 Codex）只认 tool_calls 才会去执行
+        if finish_reason.is_null() {
+            finish_reason = json!("tool_calls");
+        }
     }
     let mut out = json!({
         "id": id.unwrap_or_else(|| "gen-aggregated".to_string()),
@@ -163,10 +202,116 @@ pub fn aggregate_chat_chunks(
     out
 }
 
+/// 把一帧里的 tool_calls 条目并进聚合表。
+///
+/// `incremental = true`（标准 `delta.tool_calls`）时 `arguments` 是**增量片段**，要接在
+/// 已有片段之后；`false`（`message.tool_calls` 一次给全）时直接覆盖。
+fn push_tool_call(
+    tools: &mut Vec<(u64, String, String, String, String)>,
+    call: &serde_json::Value,
+    incremental: bool,
+) {
+    let index = call.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+    let id = call
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let kind = call
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("function")
+        .to_string();
+    let func = call.get("function");
+    let name = func
+        .and_then(|f| f.get("name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let args = func
+        .and_then(|f| f.get("arguments"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    match tools.iter_mut().find(|(i, _, _, _, _)| *i == index) {
+        Some(entry) => {
+            if !id.is_empty() {
+                entry.1 = id;
+            }
+            if !name.is_empty() {
+                entry.3 = name;
+            }
+            if incremental {
+                entry.4.push_str(&args);
+            } else if !args.is_empty() {
+                entry.4 = args;
+            }
+        }
+        None => tools.push((index, id, kind, name, args)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn aggregate_keeps_streamed_tool_calls() {
+        // 这条路径（上游只收流式 → 聚合成非流式）原先**完全丢弃** tool_calls，
+        // 客户端表现为「模型说了段计划然后停住」，一次工具都不执行
+        let chunks = vec![
+            json!({"id": "c1", "model": "m", "choices": [
+                {"index": 0, "delta": {"role": "assistant", "content": "我先读文件。"}}]}),
+            json!({"choices": [{"index": 0, "delta": {"tool_calls": [
+                {"index": 0, "id": "call_1", "type": "function",
+                 "function": {"name": "read_file", "arguments": ""}}]}}]}),
+            json!({"choices": [{"index": 0, "delta": {"tool_calls": [
+                {"index": 0, "function": {"arguments": "{\"path\":"}}]}}]}),
+            json!({"choices": [{"index": 0, "delta": {"tool_calls": [
+                {"index": 0, "function": {"arguments": "\"a.txt\"}"}}]}}]}),
+            json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}),
+        ];
+        let out = aggregate_chat_chunks(&chunks, "m");
+        let msg = &out["choices"][0]["message"];
+        assert_eq!(msg["content"], json!("我先读文件。"));
+        assert_eq!(msg["tool_calls"].as_array().unwrap().len(), 1, "{msg}");
+        assert_eq!(msg["tool_calls"][0]["id"], json!("call_1"));
+        assert_eq!(msg["tool_calls"][0]["function"]["name"], json!("read_file"));
+        // arguments 分三段送来，必须拼回完整 JSON
+        assert_eq!(
+            msg["tool_calls"][0]["function"]["arguments"],
+            json!("{\"path\":\"a.txt\"}")
+        );
+        assert_eq!(out["choices"][0]["finish_reason"], json!("tool_calls"));
+    }
+
+    #[test]
+    fn aggregate_picks_up_tool_calls_sent_as_message() {
+        // 少数上游在流中间用 message.tool_calls 一次给全（arguments 不是增量）
+        let chunks = vec![
+            json!({"id": "c2", "choices": [{"index": 0, "delta": {"content": "改首页。"}}]}),
+            json!({"choices": [{"index": 0, "delta": {},
+                "message": {"tool_calls": [
+                    {"index": 0, "id": "call_x", "type": "function",
+                     "function": {"name": "edit", "arguments": "{\"file\":\"a\"}"}}]}}]}),
+        ];
+        let out = aggregate_chat_chunks(&chunks, "m");
+        let msg = &out["choices"][0]["message"];
+        assert_eq!(msg["tool_calls"][0]["function"]["name"], json!("edit"));
+        assert_eq!(msg["tool_calls"][0]["function"]["arguments"], json!("{\"file\":\"a\"}"));
+        // 上游没给 finish_reason 时补 tool_calls，客户端才会去执行
+        assert_eq!(out["choices"][0]["finish_reason"], json!("tool_calls"));
+    }
+
+    #[test]
+    fn aggregate_leaves_finish_reason_alone_without_tool_calls() {
+        let chunks = vec![json!({"choices": [{"index": 0, "delta": {"content": "hi"}}]})];
+        let out = aggregate_chat_chunks(&chunks, "m");
+        assert!(out["choices"][0]["finish_reason"].is_null());
+        assert!(out["choices"][0]["message"].get("tool_calls").is_none());
+    }
 
     #[test]
     fn aggregate_concatenates_content_and_keeps_last_finish_reason() {
