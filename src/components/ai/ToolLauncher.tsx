@@ -53,7 +53,7 @@ import type {
   ClaudePluginStatus,
 } from "./types";
 import { alertError } from "../shared/ThemedAlert";
-import { ProviderProtocolBadges, ProviderPromotionTags, CustomParamControls } from "./ModelSelector";
+import { ModelSelector, CustomParamControls } from "./ModelSelector";
 
 /**
  * 插件列表的统一行结构。
@@ -604,25 +604,16 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
     return groups;
   }, [config, selectedTool]);
 
-  // 全部模型（含任意供应商），用于 Fallback 选择 — 按供应商分组
-  const fallbackGroups = React.useMemo(() => {
-    if (!config || !selectedTool) return [];
-    if (!selectedTool.supports_fallback_model) return [];
-    const groups: { provider_name: string; provider_id: string; models: ModelEntry[] }[] = [];
-    for (const p of config.providers) {
-      if (p.models.length === 0) continue;
-      const filteredModels = selectedModel ? p.models.filter(m => m.id !== selectedModel) : p.models;
-      if (filteredModels.length === 0) continue;
-      groups.push({ provider_name: p.name, provider_id: p.id, models: filteredModels });
-    }
-    return groups;
-  }, [config, selectedTool, selectedModel]);
-
-  // fallback 的折叠状态
-  const [expandedFallbackGroups, setExpandedFallbackGroups] = useState<Set<string>>(new Set());
-
-  // 模型供应商折叠状态
-  const [expandedModelGroups, setExpandedModelGroups] = useState<Set<string>>(new Set());
+  // Fallback 可选供应商：排除已选的主模型（副模型不能与主模型重复），供 ModelSelector 用
+  const fallbackProviders = React.useMemo(() => {
+    if (!config) return [];
+    return config.providers
+      .map((p) => ({
+        ...p,
+        models: selectedModel ? p.models.filter((m) => m.id !== selectedModel) : p.models,
+      }))
+      .filter((p) => p.models.length > 0);
+  }, [config, selectedModel]);
 
   const handleBrowse = async () => {
     try {
@@ -1185,8 +1176,6 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                 setSelectedFallbackModel("");
                 setSelectedFallbackProvider("");
                 setFallbackMasqueradeModel("");
-                setExpandedModelGroups(new Set());
-                setExpandedFallbackGroups(new Set());
                 setSessionMode("new");
                 setSelectedSession(null);
                 setShowSessionPicker(false);
@@ -1894,57 +1883,24 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                           ? `${selectedModel}（${config?.providers.find(p => p.id === selectedModelProvider)?.name ?? "—"}）`
                           : t("toollaunch.noModelSelected")}
                       >
-                        <div className="rounded-ctl border border-white/5 bg-slate-900/30">
-                          {eligibleProviders.map(group => {
-                            const isSelected = selectedModelProvider === group.provider_id;
-                            const expanded = expandedModelGroups.has(group.provider_id);
-                            return (
-                              <div key={group.provider_id}>
-                                <button
-                                  onClick={() => {
-                                    const next = new Set(expandedModelGroups);
-                                    if (expanded) next.delete(group.provider_id); else next.add(group.provider_id);
-                                    setExpandedModelGroups(next);
-                                  }}
-                                  className="w-full flex items-center justify-between px-3 py-2 text-tiny hover:bg-white/[0.02] cursor-pointer transition-all"
-                                >
-                                  <div className="flex items-center gap-2 min-w-0">
-                                    <ChevronRight className={`w-3 h-3 text-slate-500 transition-transform ${expanded ? "rotate-90" : ""}`} />
-                                    <span className="font-semibold text-slate-400">{group.provider_name}</span>
-                                    <span className="text-[8px] text-slate-600">{t("toollaunch.modelsCount", { count: group.models.length })}</span>
-                                    <ProviderProtocolBadges provider={config?.providers.find(p => p.id === group.provider_id)} />
-                                    <ProviderPromotionTags promotions={config?.providers.find(p => p.id === group.provider_id)?.promotions} />
-                                  </div>
-                                  {isSelected && selectedModel && (
-                                    <span className="text-micro text-[var(--module-accent)] font-mono truncate ml-2">{selectedModel}</span>
-                                  )}
-                                </button>
-                                {expanded && (
-                                  <div className="border-t border-white/[0.03]">
-                                    {group.models.map(m => {
-                                      const isSelModel = selectedModel === m.id && selectedModelProvider === group.provider_id;
-                                      return (
-                                        <button key={`${group.provider_id}:${m.id}`}
-                                          onClick={() => {
-                                            if (isSelModel) { setSelectedModel(""); setSelectedModelProvider(""); resetCustomParamValues([]); }
-                                            else { setSelectedModel(m.id); setSelectedModelProvider(group.provider_id); resetCustomParamValues(m.customParams || []); }
-                                          }}
-                                          className={`w-full text-left px-5 py-1.5 text-caption transition-all cursor-pointer flex items-center gap-2 ${
-                                            isSelModel
-                                              ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)] font-semibold"
-                                              : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
-                                          }`}>
-                                          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: isSelModel ? "#a78bfa" : "#334155" }} />
-                                          <span className="font-mono">{m.id}</span>
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
+                        <ModelSelector
+                          providers={config?.providers ?? []}
+                          providerId={selectedModelProvider}
+                          modelId={selectedModel}
+                          onSelect={(pid, mid) => {
+                            if (!mid) {
+                              setSelectedModel("");
+                              setSelectedModelProvider("");
+                              resetCustomParamValues([]);
+                            } else {
+                              setSelectedModel(mid);
+                              setSelectedModelProvider(pid);
+                              const m = config?.providers.find(p => p.id === pid)?.models.find(x => x.id === mid);
+                              resetCustomParamValues(m?.customParams || []);
+                            }
+                          }}
+                          allowClear
+                        />
                         {selectedModel && (
                           <div className="mt-1 text-tiny text-[var(--module-accent)]">{t("toollaunch.selected")}<span className="font-mono">{selectedModel}</span> <span className="text-slate-500">（{config?.providers.find(p => p.id === selectedModelProvider)?.name}）</span></div>
                         )}
@@ -1995,7 +1951,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                 {/* Fallback 模型 — 按供应商分组，可折叠。
                     与优化器 / 整流器同理：没选主模型时等于还是官方配置，
                     fallback 也不会生效，摆出来是误导。 */}
-                {selectedTool.supports_fallback_model && selectedTool.installed && usingThirdPartyModel && fallbackGroups.length > 0 && (
+                {selectedTool.supports_fallback_model && selectedTool.installed && usingThirdPartyModel && fallbackProviders.length > 0 && (
                   <CollapsibleCard
                     title={t("toollaunch.fallbackLabel")}
                     hint={t("toollaunch.fallbackHint")}
@@ -2003,57 +1959,22 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                     onToggle={() => setFallbackOpen(!fallbackOpen)}
                     summary={selectedFallbackModel || t("toollaunch.noFallbackShort")}
                   >
-                    <div className="rounded-ctl border border-white/5 bg-slate-900/30 overflow-hidden">
-                      <div className="px-3 py-1.5 text-micro text-slate-600 font-mono cursor-pointer hover:bg-white/[0.05] border-b border-white/[0.03]"
-                        onClick={() => { setSelectedFallbackModel(""); setSelectedFallbackProvider(""); setFallbackOneMContext(false); }}>
-                        {t("toollaunch.noFallback")}
-                      </div>
-                      {fallbackGroups.map(group => {
-                        const expanded = expandedFallbackGroups.has(group.provider_id);
-                        const selectedInGroup = selectedFallbackProvider === group.provider_id && selectedFallbackModel !== "";
-                        return (
-                          <div key={`fbg:${group.provider_id}`}>
-                            <button
-                              onClick={() => {
-                                const next = new Set(expandedFallbackGroups);
-                                if (expanded) next.delete(group.provider_id); else next.add(group.provider_id);
-                                setExpandedFallbackGroups(next);
-                              }}
-                              className="w-full flex items-center justify-between px-3 py-1.5 text-tiny hover:bg-white/[0.02] cursor-pointer transition-all border-b border-white/[0.03]"
-                            >
-                              <div className="flex items-center gap-2">
-                                <ChevronRight className={`w-3 h-3 text-slate-500 transition-transform ${expanded ? "rotate-90" : ""}`} />
-                                <span className="font-semibold text-slate-400">{group.provider_name}</span>
-                                <span className="text-[8px] text-slate-600">{t("toollaunch.itemsCount", { count: group.models.length })}</span>
-                              </div>
-                              {selectedInGroup && (
-                                <span className="text-micro text-amber-400 font-mono truncate ml-2">{selectedFallbackModel}</span>
-                              )}
-                            </button>
-                            {expanded && (
-                              <div className="border-t border-white/[0.03]">
-                                {group.models.map(m => {
-                                  const isSelected = selectedFallbackModel === m.id && selectedFallbackProvider === group.provider_id;
-                                  return (
-                                    <button key={`fb:${group.provider_id}:${m.id}`}
-                                      onClick={() => {
-                                        if (isSelected) { setSelectedFallbackModel(""); setSelectedFallbackProvider(""); setFallbackOneMContext(false); }
-                                        else { setSelectedFallbackModel(m.id); setSelectedFallbackProvider(group.provider_id); }
-                                      }}
-                                      className={`w-full text-left px-5 py-1.5 text-tiny transition-all cursor-pointer flex items-center gap-2 ${
-                                        isSelected ? "bg-amber-500/10 text-amber-300 font-semibold" : "text-slate-400 hover:bg-white/5 hover:text-slate-300"
-                                      }`}>
-                                      <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: isSelected ? "#f59e0b" : "#334155" }} />
-                                      <span className="font-mono">{m.id}</span>
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
+                    <ModelSelector
+                      providers={fallbackProviders}
+                      providerId={selectedFallbackProvider}
+                      modelId={selectedFallbackModel}
+                      onSelect={(pid, mid) => {
+                        if (!mid) {
+                          setSelectedFallbackModel("");
+                          setSelectedFallbackProvider("");
+                          setFallbackOneMContext(false);
+                        } else {
+                          setSelectedFallbackModel(mid);
+                          setSelectedFallbackProvider(pid);
+                        }
+                      }}
+                      allowClear
+                    />
                     {selectedFallbackModel && selectedTool.builtin_models.length > 0 && (
                       <div className="mt-3">
                         <label className="text-caption font-bold text-slate-300 mb-1.5 block">{t("toollaunch.fallbackMqLabel")} <span className="text-micro text-slate-500 font-normal">{t("toollaunch.optional")}</span></label>

@@ -10,7 +10,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import type { ModelCustomParam, ProviderPromotion } from "./types";
 import { promotionCountdown, promotionState, prunePromotions } from "./promotions";
 
@@ -176,6 +176,8 @@ export interface ModelSelectorProps {
   filterProvider?: (p: ProviderLike) => boolean;
   /** 面板最小宽度（避免紧凑场景下太窄） */
   panelMinWidth?: string;
+  /** 允许取消选择：点击当前已选模型时以 modelId="" 回调（工具启动页需要） */
+  allowClear?: boolean;
 }
 
 export function ModelSelector({
@@ -189,8 +191,11 @@ export function ModelSelector({
   emptyText,
   filterProvider,
   panelMinWidth = "240px",
+  allowClear = false,
 }: ModelSelectorProps) {
   const [open, setOpen] = useState(false);
+  // 面板里展开的供应商 id 集合：默认只展开当前选中的供应商，其余折叠，点分组头切换
+  const [openProviders, setOpenProviders] = useState<Set<string>>(new Set());
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -201,6 +206,23 @@ export function ModelSelector({
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
+
+  const togglePanel = () => {
+    if (disabled) return;
+    if (!open) {
+      // 每次打开时默认只展开当前选中的供应商
+      setOpenProviders(new Set(providerId ? [providerId] : []));
+    }
+    setOpen(!open);
+  };
+
+  const toggleProvider = (id: string) => {
+    setOpenProviders((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   const eligible = providers.filter((p) => (filterProvider ? filterProvider(p) : p.models.length > 0));
   const currentProvider = providers.find((p) => p.id === providerId);
@@ -213,7 +235,7 @@ export function ModelSelector({
     <div ref={rootRef} className="relative">
       <button
         type="button"
-        onClick={() => !disabled && setOpen(!open)}
+        onClick={togglePanel}
         disabled={disabled}
         className={`${compact ? "h-7 px-2 text-tiny" : "px-3 py-2 text-body"} w-full flex items-center justify-between gap-2 rounded-ctl bg-white/5 border border-white/10 text-slate-200 hover:border-white/20 focus:outline-none focus:border-[var(--module-accent)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-all`}
       >
@@ -229,39 +251,51 @@ export function ModelSelector({
           {eligible.length === 0 ? (
             <div className="px-3 py-3 text-tiny text-slate-500 text-center">{emptyText || placeholder || ""}</div>
           ) : (
-            eligible.map((p) => (
-              <div key={p.id}>
-                {/* 供应商分组头：名称 + 协议徽标 + 活动标签（纯展示，不可点） */}
-                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white/[0.02] border-b border-white/[0.04] sticky top-0 bg-slate-900">
-                  <span className="font-semibold text-tiny text-slate-400 truncate">{p.name}</span>
-                  <ProviderProtocolBadges provider={p} />
-                  <ProviderPromotionTags promotions={p.promotions} />
+            eligible.map((p) => {
+              const expanded = openProviders.has(p.id);
+              return (
+                <div key={p.id}>
+                  {/* 供应商分组头：可点击展开/收缩，含名称 + 协议徽标 + 活动标签 */}
+                  <button
+                    type="button"
+                    onClick={() => toggleProvider(p.id)}
+                    className="w-full flex items-center gap-1.5 px-3 py-1.5 bg-white/[0.02] border-b border-white/[0.04] hover:bg-white/[0.04] cursor-pointer transition-all"
+                  >
+                    <ChevronRight className={`w-3 h-3 text-slate-500 flex-shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`} />
+                    <span className="font-semibold text-tiny text-slate-400 truncate">{p.name}</span>
+                    <ProviderProtocolBadges provider={p} />
+                    <ProviderPromotionTags promotions={p.promotions} />
+                    {providerId === p.id && modelId && (
+                      <span className="ml-auto text-[9px] text-[var(--module-accent)] font-mono truncate">{modelId}</span>
+                    )}
+                  </button>
+                  {expanded && p.models.map((m) => {
+                    const isSel = providerId === p.id && modelId === m.id;
+                    const tags = modelParamTags(m.customParams);
+                    return (
+                      <button
+                        key={`${p.id}:${m.id}`}
+                        type="button"
+                        onClick={() => {
+                          // allowClear 时点当前已选模型 = 取消选择（工具启动页需要「未选择」态）
+                          onSelect(p.id, allowClear && isSel ? "" : m.id);
+                          setOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-1.5 text-tiny transition-all cursor-pointer flex items-center gap-2 ${
+                          isSel
+                            ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)] font-semibold"
+                            : "text-slate-300 hover:bg-white/5 hover:text-slate-100"
+                        }`}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isSel ? "bg-[var(--module-accent)]" : "bg-slate-600"}`} />
+                        <span className="font-mono truncate min-w-0">{m.name || m.id}</span>
+                        {tags && <span className="text-[9px] text-slate-500 truncate flex-shrink-0">{tags}</span>}
+                      </button>
+                    );
+                  })}
                 </div>
-                {p.models.map((m) => {
-                  const isSel = providerId === p.id && modelId === m.id;
-                  const tags = modelParamTags(m.customParams);
-                  return (
-                    <button
-                      key={`${p.id}:${m.id}`}
-                      type="button"
-                      onClick={() => {
-                        onSelect(p.id, m.id);
-                        setOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-1.5 text-tiny transition-all cursor-pointer flex items-center gap-2 ${
-                        isSel
-                          ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)] font-semibold"
-                          : "text-slate-300 hover:bg-white/5 hover:text-slate-100"
-                      }`}
-                    >
-                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isSel ? "bg-[var(--module-accent)]" : "bg-slate-600"}`} />
-                      <span className="font-mono truncate min-w-0">{m.name || m.id}</span>
-                      {tags && <span className="text-[9px] text-slate-500 truncate flex-shrink-0">{tags}</span>}
-                    </button>
-                  );
-                })}
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       )}
