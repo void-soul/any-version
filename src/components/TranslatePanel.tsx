@@ -19,6 +19,7 @@ import { useTranslation } from "react-i18next";
 import { HotkeyRecorder } from "./shared/HotkeyRecorder";
 import { ModuleSettingsButton, SettingsGroup, SettingsRow } from "./shared/ModuleSettings";
 import type { LauncherSetting } from "./launcher/types";
+import { ModelSelector } from "./ai/ModelSelector";
 
 // ─── 类型 ───
 
@@ -209,22 +210,6 @@ export default function TranslatePanel() {
     };
   }, []);
 
-  // 切换供应商时联动模型
-  const changeProvider = (pid: string) => {
-    setProviderId(pid);
-    const p = providers.find((x) => x.id === pid);
-    const m =
-      (p?.active_model_id && p.models.some((mm) => mm.id === p.active_model_id) ? p.active_model_id : p?.models[0]?.id) ||
-      "";
-    setModelId(m);
-    saveTranslateConfig({ providerId: pid, modelId: m || null, targetLang: target });
-  };
-
-  const changeModel = (mid: string) => {
-    setModelId(mid);
-    saveTranslateConfig({ providerId: providerId, modelId: mid, targetLang: target });
-  };
-
   // 目标语言：既用于本面板翻译，也作为划词翻译默认值持久化
   const changeTarget = (t: string) => {
     setTarget(t);
@@ -329,39 +314,21 @@ export default function TranslatePanel() {
         </ModuleSettingsButton>
       </div>
 
-      {/* 模型选择 */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div>
-          <label className="text-tiny text-slate-400 mb-1 block">{t("tranpanel.provider")}</label>
-          <select
-            value={providerId}
-            onChange={(e) => changeProvider(e.target.value)}
-            disabled={!modelInitialized || providers.length === 0}
-            className="w-full bg-white/5 border border-white/10 rounded-ctl px-3 py-2 text-body text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60 disabled:opacity-50"
-          >
-            {providers.length === 0 && <option value="">{t("tranpanel.noProviderCfg")}</option>}
-            {providers.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="text-tiny text-slate-400 mb-1 block">{t("tranpanel.model")}</label>
-          <select
-            value={modelId}
-            onChange={(e) => changeModel(e.target.value)}
-            disabled={!modelInitialized || !selectedProvider}
-            className="w-full bg-white/5 border border-white/10 rounded-ctl px-3 py-2 text-body text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60 disabled:opacity-50"
-          >
-            {(selectedProvider?.models || []).map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name || m.id}
-              </option>
-            ))}
-          </select>
-        </div>
+      {/* 模型选择（供应商 + 模型合并为一个选择器） */}
+      <div>
+        <label className="text-tiny text-slate-400 mb-1 block">{t("tranpanel.model")}</label>
+        <ModelSelector
+          providers={providers}
+          providerId={providerId}
+          modelId={modelId}
+          onSelect={(pid, mid) => {
+            setProviderId(pid);
+            setModelId(mid);
+            saveTranslateConfig({ providerId: pid, modelId: mid, targetLang: target });
+          }}
+          disabled={!modelInitialized || providers.length === 0}
+          emptyText={t("tranpanel.noProviderCfg")}
+        />
       </div>
 
       {/* 翻译输入 / 结果 */}

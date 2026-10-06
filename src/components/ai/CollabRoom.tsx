@@ -59,6 +59,7 @@ import type {
   CollabAgentStatus,
 } from "./types";
 import { alertError, theamedAlert, theamedConfirm } from "../shared/ThemedAlert";
+import { ModelSelector, CustomParamControls } from "./ModelSelector";
 
 const DYNAMIC_COLOR_PALETTE = [
   "bg-orange-500", "bg-emerald-500", "bg-violet-500",
@@ -759,12 +760,6 @@ export default function CollabRoom() {
     ]);
   };
 
-  const onProviderChange = (pid: string) => {
-    setProviderId(pid);
-    const p = providers.find((x) => x.id === pid);
-    setModelId(p?.active_model_id || p?.models[0]?.id || "");
-  };
-
   const buildDispatchOptions = (): CollabDispatchOptions => {
     const selectedToolObj = tools.find((t) => t.id === selectedTool);
     const supportsModel = selectedToolObj?.supports_model ?? false;
@@ -881,7 +876,6 @@ export default function CollabRoom() {
     }
   };
 
-  const activeProvider = providers.find((p) => p.id === providerId);
   const selectedToolObj = tools.find((t) => t.id === selectedTool);
   const showModelSettings = !!selectedToolObj && selectedToolObj.supports_model;
 
@@ -1129,29 +1123,19 @@ export default function CollabRoom() {
               {(() => {
                 if (!showModelSettings) return null;
                 return (
-                  <div className="flex flex-wrap gap-2 items-center">
-                    <select
-                      value={providerId}
-                      onChange={(e) => onProviderChange(e.target.value)}
-                      className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-tiny text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
-                    >
-                      {providers.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      value={modelId}
-                      onChange={(e) => { setModelId(e.target.value); const m = activeProvider?.models.find(x => x.id === e.target.value); resetCustomParamValues(m?.customParams || []); }}
-                      className="bg-slate-800 border border-white/10 rounded px-2 py-1 text-tiny text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
-                    >
-                      {activeProvider?.models.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.name}
-                        </option>
-                      ))}
-                    </select>
+                  <div className="w-full max-w-[300px]">
+                    <ModelSelector
+                      providers={providers}
+                      providerId={providerId}
+                      modelId={modelId}
+                      onSelect={(pid, mid) => {
+                        setProviderId(pid);
+                        setModelId(mid);
+                        const m = providers.find((p) => p.id === pid)?.models.find((x) => x.id === mid);
+                        resetCustomParamValues(m?.customParams || []);
+                      }}
+                      compact
+                    />
                   </div>
                 );
               })()}
@@ -1176,32 +1160,12 @@ export default function CollabRoom() {
                         {currentModelCustomParams.length > 0 && (
                           <div className="space-y-1.5 pt-0.5">
                             <div className="text-micro text-slate-500 font-semibold">{t("collab.customParams")}</div>
-                            {currentModelCustomParams.map(cp => (
-                              <div key={cp.key} className="flex items-center gap-2">
-                                <label className="text-micro text-slate-400 w-20 flex-shrink-0 truncate" title={cp.key}>{cp.label || cp.key}</label>
-                                {cp.paramType === "bool" ? (
-                                  <input type="checkbox" checked={customParamValues[cp.key] !== "false"}
-                                    onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.checked ? "true" : "false" }))}
-                                    className="w-3.5 h-3.5 accent-[var(--module-accent)]" />
-                                ) : cp.paramType === "text" ? (
-                                  <input type="text" value={customParamValues[cp.key] || ""}
-                                    onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.value }))}
-                                    placeholder={cp.defaultValue || ""}
-                                    className="flex-1 min-w-0 bg-slate-800 border border-white/10 rounded px-1.5 py-0.5 text-micro text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
-                                ) : (
-                                  <select value={customParamValues[cp.key] || cp.defaultValue || ""}
-                                    onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.value }))}
-                                    className="flex-1 min-w-0 bg-slate-800 border border-white/10 rounded px-1.5 py-0.5 text-micro text-slate-200 focus:outline-none focus:border-[var(--module-accent)]">
-                                    {(cp.options && cp.options.length > 0 ? cp.options : [cp.defaultValue || ""]).filter(Boolean).map(o => (
-                                      <option key={o} value={o}>{o}</option>
-                                    ))}
-                                  </select>
-                                )}
-                                <span className="text-[8px] text-slate-600 font-mono flex-shrink-0 w-14 text-right">
-                                  {cp.target === "config" ? (cp.configPath || "config") : (cp.envKey || "env")}
-                                </span>
-                              </div>
-                            ))}
+                            <CustomParamControls
+                              params={currentModelCustomParams}
+                              values={customParamValues}
+                              onChange={(key, value) => setCustomParamValues(prev => ({ ...prev, [key]: value }))}
+                              compact
+                            />
                           </div>
                         )}
                         {/* 模型伪装 */}

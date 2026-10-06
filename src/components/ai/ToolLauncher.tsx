@@ -53,6 +53,7 @@ import type {
   ClaudePluginStatus,
 } from "./types";
 import { alertError } from "../shared/ThemedAlert";
+import { ProviderProtocolBadges, ProviderPromotionTags, CustomParamControls } from "./ModelSelector";
 
 /**
  * 插件列表的统一行结构。
@@ -110,17 +111,7 @@ function formatRelativeTime(isoString: string, t: (k: string, o?: any) => string
   }
 }
 
-/// 渲染供应商已配置协议的徽标（与模型配置页一致）
-function providerProtocolBadges(p: AiProvider | null | undefined) {
-  if (!p) return null;
-  const items: { key: string; label: string; cls: string }[] = [];
-  if (p.openai_url) items.push({ key: "openai", label: "OpenAI", cls: "bg-blue-500/20 text-blue-300" });
-  if (p.anthropic_url) items.push({ key: "anthropic", label: "Anthropic", cls: "bg-amber-500/20 text-amber-300" });
-  if (p.google_url) items.push({ key: "google", label: "Google", cls: "bg-green-500/20 text-green-300" });
-  return items.map(i => (
-    <span key={i.key} className={`text-[8px] text-slate-600 px-1.5 py-0.5 rounded ${i.cls}`}>{i.label}</span>
-  ));
-}
+
 
 /// 哪些工具的伪装名会被后端按「官方模型名校验」过滤。
 ///
@@ -1921,7 +1912,8 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                                     <ChevronRight className={`w-3 h-3 text-slate-500 transition-transform ${expanded ? "rotate-90" : ""}`} />
                                     <span className="font-semibold text-slate-400">{group.provider_name}</span>
                                     <span className="text-[8px] text-slate-600">{t("toollaunch.modelsCount", { count: group.models.length })}</span>
-                                    {providerProtocolBadges(config?.providers.find(p => p.id === group.provider_id))}
+                                    <ProviderProtocolBadges provider={config?.providers.find(p => p.id === group.provider_id)} />
+                                    <ProviderPromotionTags promotions={config?.providers.find(p => p.id === group.provider_id)?.promotions} />
                                   </div>
                                   {isSelected && selectedModel && (
                                     <span className="text-micro text-[var(--module-accent)] font-mono truncate ml-2">{selectedModel}</span>
@@ -1961,32 +1953,11 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
                         {currentModelCustomParams.length > 0 && (
                           <div className="mt-3 space-y-2">
                             <div className="text-tiny text-slate-500 font-semibold">{t("toollaunch.customParams")}</div>
-                            {currentModelCustomParams.map(cp => (
-                              <div key={cp.key} className="flex items-center gap-2">
-                                <label className="text-tiny text-slate-400 w-28 flex-shrink-0 truncate" title={cp.key}>{cp.label || cp.key}</label>
-                                {cp.paramType === "bool" ? (
-                                  <input type="checkbox" checked={customParamValues[cp.key] !== "false"}
-                                    onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.checked ? "true" : "false" }))}
-                                    className="w-4 h-4 accent-[var(--module-accent)]" />
-                                ) : cp.paramType === "text" ? (
-                                  <input type="text" value={customParamValues[cp.key] || ""}
-                                    onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.value }))}
-                                    placeholder={cp.defaultValue || ""}
-                                    className="flex-1 min-w-0 ui-input rounded px-2 py-1 text-tiny text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
-                                ) : (
-                                  <select value={customParamValues[cp.key] || cp.defaultValue || ""}
-                                    onChange={e => setCustomParamValues(prev => ({ ...prev, [cp.key]: e.target.value }))}
-                                    className="flex-1 min-w-0 ui-input rounded px-2 py-1 text-tiny text-slate-200 focus:outline-none focus:border-[var(--module-accent)]">
-                                    {(cp.options && cp.options.length > 0 ? cp.options : [cp.defaultValue || ""]).filter(Boolean).map(o => (
-                                      <option key={o} value={o}>{o}</option>
-                                    ))}
-                                  </select>
-                                )}
-                                <span className="text-[8px] text-slate-600 font-mono flex-shrink-0 w-16 text-right">
-                                  {cp.target === "config" ? (cp.configPath || "config") : (cp.envKey || "env")}
-                                </span>
-                              </div>
-                            ))}
+                            <CustomParamControls
+                              params={currentModelCustomParams}
+                              values={customParamValues}
+                              onChange={(key, value) => setCustomParamValues(prev => ({ ...prev, [key]: value }))}
+                            />
                           </div>
                         )}
                       </CollapsibleCard>

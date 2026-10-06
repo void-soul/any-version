@@ -8,7 +8,6 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
@@ -47,6 +46,7 @@ import { GithubTokenDialog } from "../project/GithubTokenDialog";
 import { MarkdownRenderer } from "../ai/MarkdownRenderer";
 import { CredentialDialog } from "./CredentialDialog";
 import type { AiConfig, AiProvider } from "../ai/types";
+import { ModelSelector } from "../ai/ModelSelector";
 import {
   SOURCE_LABELS,
   expiringInDays,
@@ -237,10 +237,6 @@ export default function FavoritesPanel() {
     // 未测量前的估计值：标题 + 描述两行 + 标签行 ≈ 76px
     estimateHeight: 76,
   });
-
-  // AI 归类的模型选择：配置里没存模型列表的供应商，现拉一次并按 provider 缓存
-  const [fetchedModels, setFetchedModels] = useState<Record<string, string[]>>({});
-  const [modelsLoading, setModelsLoading] = useState(false);
 
   // B站：需要 Cookie（含 SESSDATA）才能读自己的收藏；配过就不再每次问
   const [biliConfigured, setBiliConfigured] = useState(false);
@@ -534,37 +530,6 @@ export default function FavoritesPanel() {
       alive = false;
     };
   }, []);
-
-  const activeProvider = useMemo(
-    () => providers.find((p) => p.id === providerId) ?? null,
-    [providers, providerId],
-  );
-
-  /** 当前可选的模型：优先用配置里存的，没有就现拉（有些供应商配置里 models 是空的） */
-  const modelOptions = useMemo<string[]>(() => {
-    if (!activeProvider) return [];
-    if (activeProvider.models.length > 0) {
-      return activeProvider.models.map((m) => m.id);
-    }
-    return fetchedModels[activeProvider.id] ?? [];
-  }, [activeProvider, fetchedModels]);
-
-  // 模型列表为空时自动补拉一次（失败静默：用户仍可用「默认」让后端自己选）
-  useEffect(() => {
-    if (!activeProvider || activeProvider.models.length > 0) return;
-    const pid = activeProvider.id;
-    if (fetchedModels[pid]) return;
-    setModelsLoading(true);
-    invoke<string[]>("fetch_provider_models", {
-      baseUrl: activeProvider.openai_url,
-      apiKey: activeProvider.api_key,
-      headers: activeProvider.custom_headers ?? [],
-    })
-      .then((models) => setFetchedModels((prev) => ({ ...prev, [pid]: models })))
-      .catch(() => setFetchedModels((prev) => ({ ...prev, [pid]: [] })))
-      .finally(() => setModelsLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeProvider?.id]);
 
   /** 拖动分类栏右侧分隔条：拖动过程只改内存宽度，松手才落盘（免得拖一次写几十遍文件）。 */
   const startLeftResize = (e: ReactMouseEvent) => {
@@ -1030,43 +995,21 @@ export default function FavoritesPanel() {
         {/* 归类用的供应商 / 模型：收藏模块**自己的**选项，直接摆在顶栏。
             两处都不设「跟随 AI 模块默认」——归类跑在哪个账号、哪个模型上必须一眼可辨，
             后端也不再兜底（缺任一项直接报错，见 pick_explicit_provider/model）。 */}
-        <select
-          value={providerId}
-          onChange={(e) => {
-            const pid = e.target.value;
-            setProviderId(pid);
-            const p = providers.find((x) => x.id === pid);
-            const list = p?.models.map((m) => m.id) ?? [];
-            const mid = p?.active_model_id && list.includes(p.active_model_id)
-              ? p.active_model_id
-              : list[0] ?? "";
-            setModelId(mid);
-            void persistSettings({ providerId: pid || null, modelId: mid || null });
-          }}
-          className="glass-input px-2 h-6 text-caption cursor-pointer max-w-[140px]"
-          title={t("favorites.providerHint")}
-        >
-          <option value="" disabled>{t("favorites.providerPick")}</option>
-          {providers.map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
-        <select
-          value={modelId}
-          onChange={(e) => {
-            setModelId(e.target.value);
-            void persistSettings({ providerId: providerId || null, modelId: e.target.value || null });
-          }}
-          className="glass-input px-2 h-6 text-caption cursor-pointer max-w-[170px]"
-          title={t("favorites.modelHint")}
-          disabled={!activeProvider}
-        >
-          <option value="" disabled>{t("favorites.modelPick")}</option>
-          {modelsLoading && <option disabled>{t("favorites.modelLoading")}</option>}
-          {modelOptions.map((id) => (
-            <option key={id} value={id}>{id}</option>
-          ))}
-        </select>
+        <div className="w-[210px] max-w-[210px]">
+          <ModelSelector
+            providers={providers}
+            providerId={providerId}
+            modelId={modelId}
+            onSelect={(pid, mid) => {
+              setProviderId(pid);
+              setModelId(mid);
+              void persistSettings({ providerId: pid || null, modelId: mid || null });
+            }}
+            placeholder={t("favorites.providerPick")}
+            emptyText={t("favorites.providerPick")}
+            compact
+          />
+        </div>
 
         {/* 检索 Agent 轮数：只影响「AI 检索」，归类不走这个循环 */}
         <input

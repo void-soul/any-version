@@ -11,6 +11,7 @@ import type { ApiEndpoint, ApiModule, UnitTest, UnitTestRunOutput } from "./type
 import { ASSERTION_TYPES } from "./types";
 import { methodIcon, fmtTime } from "./panelParts";
 import type { AiProvider } from "../ai/types";
+import { ModelSelector } from "../ai/ModelSelector";
 import { theamedAlert } from "../shared/ThemedAlert";
 
 // ─── 接口树行（方法图标 + 名称） ───
@@ -525,33 +526,14 @@ export function ImportModal({ projectId, modules, onClose, onImported }: {
                 <button onClick={pickAiDir} className="px-2.5 py-1.5 text-body rounded-md bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">{t("apisubs.choose")}</button>
               </div>
             </label>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="block">
-                <span className="text-tiny text-slate-500">{t("apisubs.aiProvider")}</span>
-                <select
-                  value={aiProviderId}
-                  onChange={(e) => {
-                    const p = aiProviders.find((x) => x.id === e.target.value);
-                    setAiProviderId(e.target.value);
-                    setAiModelId(p?.models[0]?.id ?? p?.active_model_id ?? "");
-                  }}
-                  className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200 cursor-pointer"
-                >
-                  {aiProviders.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-              </label>
-              <label className="block">
-                <span className="text-tiny text-slate-500">{t("apisubs.model")}</span>
-                <select
-                  value={aiModelId}
-                  onChange={(e) => setAiModelId(e.target.value)}
-                  className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200 cursor-pointer"
-                >
-                  {(aiProviders.find((p) => p.id === aiProviderId)?.models ?? []).map((m) => (
-                    <option key={m.id} value={m.id}>{m.name}</option>
-                  ))}
-                </select>
-              </label>
+            <div>
+              <span className="text-tiny text-slate-500 block mb-1">{t("apisubs.model")}</span>
+              <ModelSelector
+                providers={aiProviders}
+                providerId={aiProviderId}
+                modelId={aiModelId}
+                onSelect={(pid, mid) => { setAiProviderId(pid); setAiModelId(mid); }}
+              />
             </div>
             <div className="text-tiny text-slate-500 space-y-0.5">
               <p>{t("apisubs.importAiHint")}</p>

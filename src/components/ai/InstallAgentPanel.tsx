@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Bot, Send, Sparkles, Wrench, CheckCircle, AlertTriangle } from "lucide-react";
 import type { AiConfig } from "./types";
+import { ModelSelector } from "./ModelSelector";
 
 /** 后端 install_agent::InstallAgentStep */
 interface AgentStep {
@@ -77,7 +78,6 @@ export default function InstallAgentPanel({ seed }: { seed?: string } = {}) {
   const usableProviders = (config?.providers ?? []).filter(
     (p) => p.api_key.trim() !== "" && p.models.length > 0,
   );
-  const models = config?.providers.find((p) => p.id === providerId)?.models ?? [];
 
   const send = async () => {
     const text = input.trim();
@@ -111,29 +111,17 @@ export default function InstallAgentPanel({ seed }: { seed?: string } = {}) {
           <p className="text-tiny text-slate-500">{t("installagent.hint")}</p>
         </div>
         {/* 模型可自由选择：默认取第一个可用供应商，随时可换 */}
-        <select
-          value={providerId}
-          onChange={(e) => {
-            setProviderId(e.target.value);
-            const p = config?.providers.find((x) => x.id === e.target.value);
-            setModelId(p?.active_model_id || p?.models[0]?.id || "");
-          }}
-          className="glass-input px-2 h-7 text-tiny cursor-pointer max-w-[140px]"
-        >
-          {usableProviders.length === 0 && <option value="">{t("installagent.noProvider")}</option>}
-          {usableProviders.map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
-        <select
-          value={modelId}
-          onChange={(e) => setModelId(e.target.value)}
-          className="glass-input px-2 h-7 text-tiny cursor-pointer max-w-[160px]"
-        >
-          {models.map((m) => (
-            <option key={m.id} value={m.id}>{m.id}</option>
-          ))}
-        </select>
+        <div className="w-[230px] max-w-[230px]">
+          <ModelSelector
+            providers={usableProviders}
+            providerId={providerId}
+            modelId={modelId}
+            onSelect={(pid, mid) => { setProviderId(pid); setModelId(mid); }}
+            disabled={usableProviders.length === 0}
+            emptyText={t("installagent.noProvider")}
+            compact
+          />
+        </div>
       </div>
 
       <div

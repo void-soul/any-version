@@ -8,6 +8,7 @@ import VexGreeting from "./VexGreeting";
 import VexBusy from "./VexBusy";
 import { VEX_CYBER_ACCENT, resolveThemeAccent, themeAccentVars } from "../utils/brand";
 import { useTranslation } from "react-i18next";
+import { ModelSelector } from "./ai/ModelSelector";
 
 interface TranslateResult {
   source?: string;
@@ -152,24 +153,6 @@ export default function TranslatePopup() {
 
   // 切换目标语言
   const changeTarget = (lang: string) => retranslate({ lang });
-
-  // 切换供应商（联动模型）并保存，随后重新翻译
-  const changeProvider = (pid: string) => {
-    if (!providers.length) return;
-    setProvId(pid);
-    const p = providers.find((x) => x.id === pid);
-    const m = p?.models[0]?.id || "";
-    setModelId(m);
-    saveTranslateModel(pid, m);
-    if (sourceText) retranslate({ provId: pid, modelId: m });
-  };
-
-  // 切换模型并保存，随后重新翻译
-  const changeModel = (mid: string) => {
-    setModelId(mid);
-    saveTranslateModel(provId, mid);
-    if (sourceText) retranslate({ modelId: mid });
-  };
 
   // 保存模型选择（全局默认 AI 模型；专用命令不触碰划词目标语言配置）
   const saveTranslateModel = (pid: string, mid: string) => {
@@ -380,37 +363,22 @@ export default function TranslatePopup() {
         {/* 模型选择工具栏（默认继承全局设置，逻辑同翻译模块） */}
         <div className="px-3 py-1.5 border-b border-white/5 flex items-center gap-1.5 shrink-0">
           <Languages className="w-3 h-3 text-[var(--tl-accent)] shrink-0" />
-          <select
-            value={provId}
-            onMouseDown={onSelectOpen}
-            onFocus={onSelectOpen}
-            onChange={(e) => changeProvider(e.target.value)}
-            disabled={translating || providers.length === 0}
-            className="text-micro px-1.5 py-0.5 rounded bg-white/10 text-slate-300 border border-white/10 focus:outline-none disabled:opacity-50 cursor-pointer min-w-0 flex-1"
-            title={t("translate.provider")}
-          >
-            {providers.length === 0 && <option value="">{t("translate.noProvider")}</option>}
-            {providers.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-          <select
-            value={modelId}
-            onMouseDown={onSelectOpen}
-            onFocus={onSelectOpen}
-            onChange={(e) => changeModel(e.target.value)}
-            disabled={translating || !provId}
-            className="text-micro px-1.5 py-0.5 rounded bg-white/10 text-slate-300 border border-white/10 focus:outline-none disabled:opacity-50 cursor-pointer min-w-0 flex-1"
-            title={t("translate.model")}
-          >
-            {(providers.find((p) => p.id === provId)?.models || []).map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name || m.id}
-              </option>
-            ))}
-          </select>
+          <div className="min-w-0 flex-1">
+            <ModelSelector
+              providers={providers}
+              providerId={provId}
+              modelId={modelId}
+              onSelect={(pid, mid) => {
+                setProvId(pid);
+                setModelId(mid);
+                saveTranslateModel(pid, mid);
+                if (sourceText) retranslate({ provId: pid, modelId: mid });
+              }}
+              disabled={translating || providers.length === 0}
+              compact
+              panelMinWidth="220px"
+            />
+          </div>
           <select
             value={result?.target || "中文"}
             onMouseDown={onSelectOpen}
