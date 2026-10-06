@@ -1612,16 +1612,17 @@ export default function BuddyPanel() {
     }
   };
 
-  // 账号互导：把当前平台全部账号导入到另一平台（目标侧按 uid/email 去重）
-  const syncToOther = async () => {
+  // 账号互导：把勾选的账号导入到另一平台（目标侧按 uid/email 去重）
+  const syncSelected = async () => {
     const other = PLATFORMS.find((p) => p.id !== platform);
-    if (!other) return;
+    if (!other || selectedIds.size === 0) return;
     setBusy(true);
     setMessage(null);
     try {
       const count = await invoke<number>("buddy_sync_accounts", {
         fromPlatform: platform,
         toPlatform: other.id,
+        accountIds: [...selectedIds],
       });
       showMsg(true, t("buddy.syncImported", { count, target: other.label }));
     } catch (e) {
@@ -1721,11 +1722,15 @@ export default function BuddyPanel() {
     }
   };
 
-  const refreshAll = async () => {
+  const refreshSelected = async () => {
+    if (selectedIds.size === 0) return;
     setBusy(true);
     setMessage(null);
     try {
-      const count = await invoke<number>("buddy_refresh_all_tokens", { platform });
+      const count = await invoke<number>("buddy_refresh_tokens", {
+        platform,
+        accountIds: [...selectedIds],
+      });
       showMsg(true, t("buddy.refreshedAll", { count }));
       await load();
     } catch (e) {
@@ -2319,8 +2324,8 @@ export default function BuddyPanel() {
                 : t("buddy.selectAll")}
             </button>
             <button
-              onClick={refreshAll}
-              disabled={busy || accounts.length === 0}
+              onClick={refreshSelected}
+              disabled={busy || selectedCount === 0}
               className={TOOL_BTN}
               title={t("buddy.refreshAllTitle")}
             >
@@ -2352,8 +2357,8 @@ export default function BuddyPanel() {
             </button>
             {otherPlatform && (
               <button
-                onClick={syncToOther}
-                disabled={busy || accounts.length === 0}
+                onClick={syncSelected}
+                disabled={busy || selectedCount === 0}
                 className={TOOL_BTN}
                 title={t("buddy.syncImport", { target: otherPlatform.label })}
               >

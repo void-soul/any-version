@@ -347,13 +347,18 @@ pub fn delete_accounts(platform: BuddyPlatform, account_ids: &[String]) -> Resul
 }
 
 /// 账号跨平台互导（复刻 cockpit-tools `sync_accounts_to_codebuddy_cn` /
-/// `sync_accounts_to_workbuddy`）：全量复制，目标平台 upsert 按 uid/email 去重；
-/// 签到状态与标签属于单平台数据，不跨平台携带。返回成功数量。
-pub fn sync_accounts(from: BuddyPlatform, to: BuddyPlatform) -> Result<usize, String> {
+/// `sync_accounts_to_workbuddy`）：复制指定账号（`account_ids` 为空 = 全部），
+/// 目标平台 upsert 按 uid/email 去重；签到状态与标签属于单平台数据，不跨平台携带。返回成功数量。
+pub fn sync_accounts(from: BuddyPlatform, to: BuddyPlatform, account_ids: &[String]) -> Result<usize, String> {
     if from == to {
         return Err("来源与目标平台相同".to_string());
     }
-    let accounts = list_accounts(from);
+    // 空列表 = 全部账号；非空则只同步勾选的
+    let accounts: Vec<BuddyAccount> = if account_ids.is_empty() {
+        list_accounts(from)
+    } else {
+        account_ids.iter().filter_map(|id| load_account(from, id)).collect()
+    };
     let mut synced = 0usize;
     for source in accounts {
         let mut target = source.clone();
@@ -958,7 +963,7 @@ mod tests {
         upsert_account(test_platform(), wb).unwrap();
 
         // WB -> CN：复制成功，签数字段清零，id 按目标平台重新生成
-        let n = sync_accounts(BuddyPlatform::Workbuddy, BuddyPlatform::CodebuddyCn).unwrap();
+        let n = sync_accounts(BuddyPlatform::Workbuddy, BuddyPlatform::CodebuddyCn, &[]).unwrap();
         assert_eq!(n, 1);
         let cn = list_accounts(BuddyPlatform::CodebuddyCn);
         assert_eq!(cn.len(), 1);
@@ -970,17 +975,17 @@ mod tests {
         assert_eq!(cn[0].access_token, "token-sync1");
 
         // 幂等：再次同步按 uid/email 去重，不新增
-        let n2 = sync_accounts(BuddyPlatform::Workbuddy, BuddyPlatform::CodebuddyCn).unwrap();
+        let n2 = sync_accounts(BuddyPlatform::Workbuddy, BuddyPlatform::CodebuddyCn, &[]).unwrap();
         assert_eq!(n2, 1);
         assert_eq!(list_accounts(BuddyPlatform::CodebuddyCn).len(), 1);
 
         // 反向同步回 WB：uid 相同命中已有账号
-        let n3 = sync_accounts(BuddyPlatform::CodebuddyCn, test_platform()).unwrap();
+        let n3 = sync_accounts(BuddyPlatform::CodebuddyCn, test_platform(), &[]).unwrap();
         assert_eq!(n3, 1);
         assert_eq!(list_accounts(test_platform()).len(), 1);
 
         // 自同步被拒绝
-        assert!(sync_accounts(test_platform(), test_platform()).is_err());
+        assert!(sync_accounts(test_platform(), test_platform(), &[]).is_err());
 
         delete_account(test_platform(), "sync1").unwrap();
         for account in list_accounts(BuddyPlatform::CodebuddyCn) {

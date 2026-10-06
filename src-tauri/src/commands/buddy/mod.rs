@@ -350,10 +350,14 @@ pub fn buddy_import_third_party(
 // ─── 账号跨平台互导（复刻 sync_workbuddy_to_codebuddy_cn / sync_codebuddy_cn_to_workbuddy） ───
 
 #[tauri::command]
-pub fn buddy_sync_accounts(from_platform: String, to_platform: String) -> Result<i32, String> {
+pub fn buddy_sync_accounts(
+    from_platform: String,
+    to_platform: String,
+    account_ids: Vec<String>,
+) -> Result<i32, String> {
     let from = platform_from_str(&from_platform)?;
     let to = platform_from_str(&to_platform)?;
-    let synced = store::sync_accounts(from, to)?;
+    let synced = store::sync_accounts(from, to, &account_ids)?;
     Ok(synced as i32)
 }
 
@@ -590,9 +594,14 @@ pub async fn buddy_refresh_token(
 }
 
 #[tauri::command]
-pub async fn buddy_refresh_all_tokens(platform: String) -> Result<i32, String> {
+pub async fn buddy_refresh_tokens(platform: String, account_ids: Vec<String>) -> Result<i32, String> {
     let platform = platform_from_str(&platform)?;
-    let accounts = store::list_accounts(platform);
+    // 空列表 = 全部账号（兼容旧「刷新全部」语义）；非空则只刷新勾选的
+    let accounts: Vec<BuddyAccount> = if account_ids.is_empty() {
+        store::list_accounts(platform)
+    } else {
+        account_ids.iter().filter_map(|id| store::load_account(platform, id)).collect()
+    };
     let mut success = 0;
     for account in accounts {
         match api::refresh_payload_for_account(platform, &account).await {
