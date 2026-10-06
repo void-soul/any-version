@@ -773,6 +773,8 @@ const TOOL_BTN =
   "inline-flex items-center gap-0.5 px-1.5 py-1 rounded-md border border-white/10 text-slate-400 hover:text-white hover:border-white/25 cursor-pointer transition disabled:opacity-40 disabled:cursor-not-allowed";
 const TOOL_BTN_DANGER =
   "inline-flex items-center gap-0.5 px-1.5 py-1 rounded-md border border-rose-500/20 text-rose-300 hover:text-rose-200 hover:border-rose-500/40 cursor-pointer transition disabled:opacity-40 disabled:cursor-not-allowed";
+const TOOL_BTN_PRIMARY =
+  "inline-flex items-center gap-0.5 px-1.5 py-1 rounded-md border border-transparent bg-[var(--module-accent)]/20 text-[var(--module-accent)] hover:bg-[var(--module-accent)]/30 font-semibold cursor-pointer transition disabled:opacity-40 disabled:cursor-not-allowed";
 
 // 额度余量进度条：宽 = 剩余占比，色 = 剩余多少（≥50 绿 / ≥20 黄 / <20 红）
 function QuotaBar({
@@ -2083,33 +2085,6 @@ export default function BuddyPanel() {
             </button>
           ))}
         </div>
-        {/* 动作组：自身可收缩（不写 shrink-0），组内按钮各自 shrink-0 + nowrap，
-            这样窄窗口下按钮换行到下一行，而不是被压到文字换行或横向溢出 */}
-        {tab === "accounts" && (
-          <div className="flex items-center gap-2 ml-auto flex-wrap justify-end min-w-0">
-            {otherPlatform && (
-              <button
-                onClick={syncToOther}
-                disabled={busy || accounts.length === 0}
-                className="px-2.5 py-1.5 rounded-ctl text-caption whitespace-nowrap shrink-0 bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
-                title={t("buddy.syncImport", { target: otherPlatform.label })}
-              >
-                <Users className="w-3 h-3" /> {t("buddy.syncImport", { target: otherPlatform.label })}
-              </button>
-            )}
-            <button
-              onClick={() => {
-                setAddMode("oauth");
-                setOauth(null);
-                setTokenInput("");
-                setShowAdd(true);
-              }}
-              className="px-2.5 py-1.5 rounded-ctl text-caption whitespace-nowrap shrink-0 ui-btn-primary text-white font-semibold flex items-center gap-1 cursor-pointer transition"
-            >
-              <Plus className="w-3 h-3" /> {t("buddy.addAccount")}
-            </button>
-          </div>
-        )}
       </div>
 
       {/* 切换进度（关闭 → 合并 → 写入 → 启动） */}
@@ -2374,6 +2349,27 @@ export default function BuddyPanel() {
               title={t("buddy.delete")}
             >
               <Trash2 className="w-3 h-3" /> {t("buddy.delete")}
+            </button>
+            {otherPlatform && (
+              <button
+                onClick={syncToOther}
+                disabled={busy || accounts.length === 0}
+                className={TOOL_BTN}
+                title={t("buddy.syncImport", { target: otherPlatform.label })}
+              >
+                <Users className="w-3 h-3" /> {t("buddy.syncImport", { target: otherPlatform.label })}
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setAddMode("oauth");
+                setOauth(null);
+                setTokenInput("");
+                setShowAdd(true);
+              }}
+              className={TOOL_BTN_PRIMARY}
+            >
+              <Plus className="w-3 h-3" /> {t("buddy.addAccount")}
             </button>
             {addingColumn ? (
               <div className="flex items-center gap-1">
