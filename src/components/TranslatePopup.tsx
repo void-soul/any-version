@@ -376,7 +376,6 @@ export default function TranslatePopup() {
               }}
               disabled={translating || providers.length === 0}
               compact
-              panelMinWidth="220px"
             />
           </div>
           <select

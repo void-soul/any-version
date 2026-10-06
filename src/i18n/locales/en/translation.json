@@ -2643,6 +2643,7 @@
     "presetContextWindow": "Context window",
     "presetAutoCompact": "Auto-compact token limit",
     "presetScopeCodex": "Codex / ChatGPT Desktop",
+    "selectModel": "Select model",
     "cancel": "Cancel",
     "confirm": "OK",
     "deleteTitle": "Confirm deletion",

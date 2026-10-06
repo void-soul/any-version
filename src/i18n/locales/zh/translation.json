@@ -2649,6 +2649,7 @@
     "presetContextWindow": "上下文窗口",
     "presetAutoCompact": "自动压缩 token 上限",
     "presetScopeCodex": "Codex / ChatGPT Desktop",
+    "selectModel": "选择模型",
     "cancel": "取消",
     "confirm": "确定",
     "deleteTitle": "确认删除",

@@ -8,11 +8,12 @@
 // 另有三个可独立复用的子组件（ToolLauncher 等内联场景直接 import 用）：
 //   ProviderProtocolBadges / ProviderPromotionTags / CustomParamControls
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { ModelCustomParam, ProviderPromotion } from "./types";
 import { promotionCountdown, promotionState, prunePromotions } from "./promotions";
+import { SharedModal } from "../shared/Modal";
 
 /// 选择器只依赖供应商/模型的这些字段 —— 用结构子集，好让完整 `AiProvider`
 /// 与各处（翻译 / 收藏 / API 等）声明的简化版 `AiProvider` 都能直接传入。
@@ -174,8 +175,8 @@ export interface ModelSelectorProps {
   emptyText?: string;
   /** 供应商过滤（可选，默认仅保留有模型的供应商） */
   filterProvider?: (p: ProviderLike) => boolean;
-  /** 面板最小宽度（避免紧凑场景下太窄） */
-  panelMinWidth?: string;
+  /** 弹框标题（默认 i18n「选择模型」） */
+  title?: string;
   /** 允许取消选择：点击当前已选模型时以 modelId="" 回调（工具启动页需要） */
   allowClear?: boolean;
 }
@@ -190,30 +191,19 @@ export function ModelSelector({
   placeholder,
   emptyText,
   filterProvider,
-  panelMinWidth = "240px",
+  title,
   allowClear = false,
 }: ModelSelectorProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  // 面板里展开的供应商 id 集合：默认只展开当前选中的供应商，其余折叠，点分组头切换
+  // 弹框里展开的供应商 id 集合：默认只展开当前选中的供应商，其余折叠，点分组头切换
   const [openProviders, setOpenProviders] = useState<Set<string>>(new Set());
-  const rootRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open]);
-
-  const togglePanel = () => {
+  const openModal = () => {
     if (disabled) return;
-    if (!open) {
-      // 每次打开时默认只展开当前选中的供应商
-      setOpenProviders(new Set(providerId ? [providerId] : []));
-    }
-    setOpen(!open);
+    // 每次打开时默认只展开当前选中的供应商
+    setOpenProviders(new Set(providerId ? [providerId] : []));
+    setOpen(true);
   };
 
   const toggleProvider = (id: string) => {
@@ -232,24 +222,27 @@ export function ModelSelector({
     : placeholder || "";
 
   return (
-    <div ref={rootRef} className="relative">
+    <>
       <button
         type="button"
-        onClick={togglePanel}
+        onClick={openModal}
         disabled={disabled}
         className={`${compact ? "h-7 px-2 text-tiny" : "px-3 py-2 text-body"} w-full flex items-center justify-between gap-2 rounded-ctl bg-white/5 border border-white/10 text-slate-200 hover:border-white/20 focus:outline-none focus:border-[var(--module-accent)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-all`}
       >
         <span className="truncate min-w-0 text-left">{label}</span>
-        <ChevronDown className={`w-3.5 h-3.5 flex-shrink-0 text-slate-500 transition-transform ${open ? "rotate-180" : ""}`} />
+        <ChevronDown className="w-3.5 h-3.5 flex-shrink-0 text-slate-500" />
       </button>
 
-      {open && !disabled && (
-        <div
-          className="absolute z-50 mt-1 rounded-ctl border border-white/10 bg-slate-900 shadow-2xl overflow-hidden max-h-72 overflow-y-auto"
-          style={{ minWidth: panelMinWidth, right: 0 }}
-        >
+      <SharedModal
+        open={open}
+        onClose={() => setOpen(false)}
+        title={title || t("modelcfg.selectModel")}
+        width={460}
+        bodyClass="space-y-0"
+      >
+        <div className="rounded-ctl border border-white/5 bg-slate-900/30 overflow-hidden">
           {eligible.length === 0 ? (
-            <div className="px-3 py-3 text-tiny text-slate-500 text-center">{emptyText || placeholder || ""}</div>
+            <div className="px-3 py-4 text-tiny text-slate-500 text-center">{emptyText || placeholder || ""}</div>
           ) : (
             eligible.map((p) => {
               const expanded = openProviders.has(p.id);
@@ -298,7 +291,7 @@ export function ModelSelector({
             })
           )}
         </div>
-      )}
-    </div>
+      </SharedModal>
+    </>
   );
 }
