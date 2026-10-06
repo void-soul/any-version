@@ -250,6 +250,7 @@ pub async fn start_proxy(port: u16) -> Result<(), String> {
         fallback_api_key: String::new(),
         target_model: String::new(),
         timeout_secs: 300,
+        source: "ai".to_string(),
         model_aliases: std::collections::HashMap::new(),
         default_model: None,
         tool_id: String::new(),

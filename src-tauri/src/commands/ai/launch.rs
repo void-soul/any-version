@@ -409,6 +409,7 @@ pub(crate) async fn start_tool_proxy_with_collab(
                     let proxy_config = crate::proxy::types::ProxyConfig {
                         listen_address: listen_addr,
                         listen_port: port,
+                        source: "ai".to_string(),
                         auth_token: auth_token.clone(),
                         inbound_protocols: inbound_protocols.clone(),
                         outbound_protocol: outbound_protocol.clone(),

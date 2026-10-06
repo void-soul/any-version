@@ -5239,7 +5239,10 @@
       "savePort": "Apply",
       "badPort": "Port must be between 1024 and 65535",
       "portSaved": "Port saved; provider addresses pointing at 2API were updated too",
-      "hint": "Turns the current WorkBuddy account into a local OpenAI / Anthropic compatible API — point your client at the address above. Switching WorkBuddy accounts is picked up automatically; no restart needed."
+      "hint": "Turns the current WorkBuddy account into a local OpenAI / Anthropic compatible API — point your client at the address above. Switching WorkBuddy accounts is picked up automatically; no restart needed.",
+      "requestLog": "Request log",
+      "clearLogs": "Clear",
+      "noRequestLog": "No request log yet"
     },
     "creditNeverExpires": "Never expires",
     "creditDaysLeft": "{{days}} days left",

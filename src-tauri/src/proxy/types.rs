@@ -20,6 +20,10 @@ pub struct ProxyConfig {
     pub listen_address: String,
     /// 监听端口
     pub listen_port: u16,
+    /// 日志来源标识：区分「2API 服务」与「AI 工具模型代理」的请求日志。
+    /// 2API 传 `"2api"`、AI 工具代理传 `"ai"`，面板按它过滤。默认空串（老调用方）。
+    #[serde(default)]
+    pub source: String,
     /// 本地代理鉴权 token（每次启动随机生成；工具通过 Authorization: Bearer /
     /// x-api-key / x-goog-api-key 携带。空串 = 不鉴权，用于启动早期/协同等旧路径）。
     #[serde(default)]
@@ -189,6 +193,7 @@ impl Default for ProxyConfig {
         Self {
             listen_address: "127.0.0.1".to_string(),
             listen_port: 15721,
+            source: String::new(),
             auth_token: String::new(),
             inbound_protocols: vec!["openai".to_string()],
             outbound_protocol: "openai".to_string(),

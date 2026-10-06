@@ -3,10 +3,10 @@
 // 后端是内嵌在 kira 主进程的 axum 服务（buddy/twoapi），协议转换复用 src-tauri/src/proxy。
 // 这里只做控制与展示；账号联动由后端两处完成：Buddy 面板切号时 `on_account_switched`
 // 立刻热更新，在 WorkBuddy 客户端里自己切号则由服务运行期间的凭据巡查兜住（最坏 30s）。
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
-import { Check, Copy, Play, RefreshCw, Square } from "lucide-react";
+import { Check, Copy, Play, RefreshCw, Square, Trash2 } from "lucide-react";
 
 type Phase = "stopped" | "starting" | "running" | "failed";
 
@@ -29,6 +29,12 @@ interface TwoApiCheck {
 interface TwoApiReport {
   ok: boolean;
   checks: TwoApiCheck[];
+  message: string;
+}
+
+interface RequestLogEntry {
+  ts: string;
+  source: string;
   message: string;
 }
 
@@ -56,6 +62,37 @@ export default function TwoApiPanel() {
     const id = window.setInterval(refresh, 2000);
     return () => window.clearInterval(id);
   }, [refresh]);
+
+  // ─── 请求日志 ───
+  const [logs, setLogs] = useState<RequestLogEntry[]>([]);
+  const logsEndRef = useRef<HTMLDivElement>(null);
+
+  const refreshLogs = useCallback(() => {
+    invoke<RequestLogEntry[]>("buddy2api_request_logs")
+      .then(setLogs)
+      .catch(() => {});
+  }, []);
+
+  // 日志轮询（与状态轮询同频；请求日志是内存环形缓冲，轮询拿全量）
+  useEffect(() => {
+    refreshLogs();
+    const id = window.setInterval(refreshLogs, 2000);
+    return () => window.clearInterval(id);
+  }, [refreshLogs]);
+
+  // 有新日志时滚到底部
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ block: "nearest" });
+  }, [logs]);
+
+  const clearLogs = async () => {
+    try {
+      await invoke("buddy2api_clear_request_logs");
+      setLogs([]);
+    } catch (e) {
+      setNotice(String(e));
+    }
+  };
 
   useEffect(() => {
     void invoke<string[]>("get_auto_start_services")
@@ -275,6 +312,42 @@ export default function TwoApiPanel() {
               {p}
             </code>
           ))}
+        </div>
+      </div>
+
+      {/* ⑤ 请求日志（2API 服务转发的请求，可清空） */}
+      <div className="flex flex-col rounded bg-black/20 border border-white/8">
+        <div className="flex items-center gap-2 px-2 py-1.5 border-b border-white/8">
+          <span className="text-slate-300 font-semibold">{t("buddy.twoapi.requestLog")}</span>
+          <span className="text-slate-600 tabular-nums">({logs.length})</span>
+          <div className="flex-1" />
+          <button
+            onClick={() => void refreshLogs()}
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer transition"
+            title={t("buddy.refresh")}
+          >
+            <RefreshCw className="w-3 h-3" />
+          </button>
+          <button
+            onClick={() => void clearLogs()}
+            disabled={logs.length === 0}
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 hover:text-rose-300 cursor-pointer transition disabled:opacity-40 disabled:cursor-not-allowed"
+            title={t("buddy.twoapi.clearLogs")}
+          >
+            <Trash2 className="w-3 h-3" /> {t("buddy.twoapi.clearLogs")}
+          </button>
+        </div>
+        <div className="px-2 py-1.5 font-mono text-[10px] leading-relaxed max-h-48 overflow-y-auto">
+          {logs.length === 0 ? (
+            <div className="text-slate-600">{t("buddy.twoapi.noRequestLog")}</div>
+          ) : (
+            logs.map((l, i) => (
+              <div key={i} className="text-slate-400 whitespace-pre-wrap break-all">
+                <span className="text-slate-600">{l.ts}</span> {l.message}
+              </div>
+            ))
+          )}
+          <div ref={logsEndRef} />
         </div>
       </div>
 

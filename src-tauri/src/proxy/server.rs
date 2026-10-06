@@ -25,8 +25,8 @@ use axum::{
 };
 use serde_json::{json, Value};
 use std::convert::Infallible;
-use std::sync::{Arc, OnceLock};
-use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 use tauri::Emitter;
 use tokio::sync::RwLock;
@@ -72,6 +72,50 @@ fn log_proxy(msg: &str) {
     tracing::info!("[proxy] {} {}", ts, msg);
 }
 
+// ─── 请求日志（供 Buddy/2API 面板展示） ───
+
+/// 一条请求日志。`source` 区分代理来源（`2api` = 2API 服务 / `ai` = AI 工具模型代理），
+/// 面板按来源过滤展示。
+#[derive(Clone, serde::Serialize)]
+pub struct RequestLogEntry {
+    pub ts: String,
+    pub source: String,
+    pub message: String,
+}
+
+/// 请求日志内存环形缓冲：UI 轮询读取；上限 1000 条，超出时丢最旧的。
+static REQUEST_LOG: Mutex<VecDeque<RequestLogEntry>> = Mutex::new(VecDeque::new());
+const REQUEST_LOG_CAP: usize = 1000;
+
+/// 追加一条请求日志到内存缓冲。`source` 取自 `ProxyConfig.source`。
+pub fn push_request_log(source: &str, message: impl Into<String>) {
+    let mut q = REQUEST_LOG.lock().unwrap();
+    if q.len() >= REQUEST_LOG_CAP {
+        q.pop_front();
+    }
+    q.push_back(RequestLogEntry {
+        ts: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+        source: source.to_string(),
+        message: message.into(),
+    });
+}
+
+/// 读取请求日志；`source_filter` 非空时只返回匹配来源的。
+pub fn get_request_logs(source_filter: &str) -> Vec<RequestLogEntry> {
+    REQUEST_LOG
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|e| source_filter.is_empty() || e.source == source_filter)
+        .cloned()
+        .collect()
+}
+
+/// 清空请求日志缓冲。
+pub fn clear_request_logs() {
+    REQUEST_LOG.lock().unwrap().clear();
+}
+
 /// 是否启用代理「完整日志」。
 /// 设置环境变量 ANY_VERSION_PROXY_DEBUG=1 开启后，会把入站/出站的完整请求体、
 /// 上游完整响应体、流式完整文本打印到控制台，便于排查配置与模型生效问题。
@@ -108,12 +152,23 @@ fn log_proxy_raw(msg: &str, s: &str) {
 
 /// 全局请求日志中间件：记录每一个进入代理的请求（方法 + 路径）与最终响应状态。
 /// 即使路径未匹配（axum 返回 404）也会被记录，便于排查「not found」等静默失败。
-async fn log_requests_mw(req: Request, next: axum::middleware::Next) -> Response {
+/// 同时写进内存缓冲（带 `ProxyConfig.source` 来源标识），供 Buddy/2API 面板展示。
+async fn log_requests_mw(
+    State(state): State<ProxyState>,
+    req: Request,
+    next: axum::middleware::Next,
+) -> Response {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
+    let source = state.config.read().await.source.clone();
     log_proxy(&format!("→ 收到请求: {} {}", method, path));
+    push_request_log(&source, format!("→ {} {}", method, path));
+    let start = Instant::now();
     let resp = next.run(req).await;
-    log_proxy(&format!("← 响应: {} {}", resp.status().as_u16(), path));
+    let status = resp.status().as_u16();
+    let ms = start.elapsed().as_millis();
+    log_proxy(&format!("← 响应: {} {} ({}ms)", status, path, ms));
+    push_request_log(&source, format!("← {} {} ({}ms)", status, path, ms));
     resp
 }
 
@@ -453,7 +508,7 @@ pub async fn serve_proxy(config: ProxyConfig, listener: std::net::TcpListener) -
         .route("/collab/agent/message", post(collab_agent_message_handler))
         .route("/collab/agent/task", post(collab_agent_task_handler))
         .layer(middleware::from_fn_with_state(state.clone(), require_proxy_token_mw))
-        .layer(middleware::from_fn(log_requests_mw))
+        .layer(middleware::from_fn_with_state(state.clone(), log_requests_mw))
         .fallback(catch_all_handler)
         .with_state(state.clone());
 
@@ -886,11 +941,16 @@ async fn process_request(
     let config = state.config.read().await.clone();
     let outbound = config.outbound_protocol.clone();
     let aliases = build_aliases(&config);
+    let log_source = config.source.clone();
 
     log_proxy(&format!(
         "← IN   [{}] model={}  → OUT [{}]  (转换: {})",
         inbound, claimed_model, outbound, config.conversion_mode
     ));
+    push_request_log(
+        &log_source,
+        format!("IN [{}] model={} → OUT [{}]", inbound, claimed_model, outbound),
+    );
 
     // ─── 详细请求日志 ───
     let is_stream = if inbound == "google" {
@@ -983,6 +1043,7 @@ async fn process_request(
             let mut stats = state.stats.write().await;
             stats.failed_requests += 1;
             log_proxy(&format!("✗ OUT  POST {} 请求失败: {}  ({}ms)", upstream_url, e, start.elapsed().as_millis()));
+            push_request_log(&log_source, format!("✗ 上游请求失败: {e}"));
             return (
                 StatusCode::BAD_GATEWAY,
                 Json(json!({"error": {"message": format!("上游请求失败: {}", e)}})),
@@ -993,6 +1054,7 @@ async fn process_request(
 
     let status = upstream_resp.status();
     log_proxy(&format!("← UPSTREAM {}  ({}ms)", status.as_u16(), start.elapsed().as_millis()));
+    push_request_log(&log_source, format!("← 上游 {} ({}ms)", status.as_u16(), start.elapsed().as_millis()));
 
     // ─── emit collab:proxy-response-start ───
     emit_proxy_event(&state, "collab:proxy-response-start", json!({
@@ -1851,5 +1913,35 @@ mod tests {
         if std::env::var(crate::proxy::PROXY_PORT_ENV).is_err() {
             assert_eq!(crate::proxy::resolve_proxy_port(15721), 15721);
         }
+    }
+
+    #[test]
+    fn request_log_buffer_filters_caps_and_clears() {
+        // 全局缓冲在测试间共享（Rust 测试多线程并行），所以把三段断言放进同一个测试顺序跑，
+        // 用唯一 source 前缀避免与其他测试串扰。
+        const SRC: &str = "2api-unit-test";
+
+        super::clear_request_logs();
+        super::push_request_log(SRC, "→ GET /v1/models");
+        super::push_request_log("ai-other", "→ POST /v1/chat/completions");
+        super::push_request_log(SRC, "← 200 /v1/models");
+
+        // 来源过滤：面板只拿自己来源的，别的来源不混入
+        let mine = super::get_request_logs(SRC);
+        assert!(mine.iter().all(|e| e.source == SRC));
+
+        // 清空
+        super::clear_request_logs();
+        assert!(super::get_request_logs(SRC).is_empty());
+
+        // 上限：超出后丢最旧的
+        for i in 0..(super::REQUEST_LOG_CAP + 10) {
+            super::push_request_log(SRC, format!("msg {i}"));
+        }
+        let all = super::get_request_logs(SRC);
+        assert_eq!(all.len(), super::REQUEST_LOG_CAP);
+        assert!(all[0].message.contains("msg 10"), "{}", all[0].message);
+
+        super::clear_request_logs();
     }
 }

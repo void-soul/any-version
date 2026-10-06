@@ -129,6 +129,8 @@ pub fn build_proxy_config(port: u16, account: &credentials::Account) -> ProxyCon
     // WorkBuddy 后端只收流式：非流式请求会被拒（Non-stream chat request is currently
     // not supported）。所以对上游一律发流式，客户端要非流式时代理侧聚合 SSE 再回 JSON。
     cfg.force_upstream_stream = true;
+    // 请求日志来源标识：2API 服务（Buddy/2API 面板按它过滤展示）
+    cfg.source = "2api".to_string();
     cfg
 }
 
@@ -393,6 +395,18 @@ pub const AUTOSTART_ID: &str = "buddy2api";
 #[tauri::command]
 pub fn buddy2api_status() -> TwoApiStatus {
     status()
+}
+
+/// 2API 的请求日志（面板轮询展示；只返回来源为 `2api` 的，AI 工具代理日志不混入）。
+#[tauri::command]
+pub fn buddy2api_request_logs() -> Vec<crate::proxy::server::RequestLogEntry> {
+    crate::proxy::server::get_request_logs("2api")
+}
+
+/// 清空请求日志缓冲（面板「清空」按钮）。
+#[tauri::command]
+pub fn buddy2api_clear_request_logs() {
+    crate::proxy::server::clear_request_logs();
 }
 
 /// 启动前置检查：密钥 / 登录态 / 后端。三项全过才允许启动。
