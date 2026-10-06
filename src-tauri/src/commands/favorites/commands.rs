@@ -1107,7 +1107,7 @@ pub fn fav_get_credential(source: String) -> Result<String, String> {
 
 /// 列出收藏条目。
 ///
-/// `sort`：`favorited` 按收藏时间 / `created` 按入库时间 / 其它按最近更新。
+/// `sort`：已收敛为「按收藏时间」（历史 `created` / `updated` 选项已移除）。
 /// `favorited_since`：只保留收藏时间不早于该时刻的条目（本地时间字符串，由前端按
 /// 「今天 / 近 7 天 / 近 30 天 / 今年」这类预设算好再传，后端不猜时区）。
 #[tauri::command]

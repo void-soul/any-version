@@ -955,7 +955,7 @@ pub struct ListFilter {
     pub category_id: Option<i64>,
     pub status: Option<String>,
     pub keyword: Option<String>,
-    /// 排序方式：`favorited`（按收藏时间）/ `created`（按入库时间）/ 其它/缺省 = 按最近更新
+    /// 排序方式：已收敛为「按收藏时间」，此字段保留仅为兼容前端调用契约。
     pub sort: Option<String>,
     /// 只保留「收藏时间（取不到则入库时间）不早于该时刻」的条目，本地时间字符串
     pub favorited_since: Option<String>,
@@ -963,17 +963,15 @@ pub struct ListFilter {
 }
 
 /// 排序方式 → 固定 SQL 片段（白名单，绝不把用户输入直接拼进 SQL）。
-fn order_by_clause(sort: Option<&str>) -> &'static str {
-    match sort {
-        // 收藏时间优先；平台没给时间的来源回退到本地首次入库时间
-        Some("favorited") => "COALESCE(f.favorited_at, f.created_at) DESC, f.id DESC",
-        Some("created") => "f.created_at DESC, f.id DESC",
-        // 默认：最近更新在前
-        _ => "f.updated_at DESC, f.id DESC",
-    }
+///
+/// 只保留「按收藏时间」一种：收藏模块关心的就是「什么时候收藏的」。
+/// 平台没给时间的来源回退到本地首次入库时间（`created_at` 保留作回退，但不再提供
+/// 「按入库时间 / 按最近更新」两种排序）。
+fn order_by_clause(_sort: Option<&str>) -> &'static str {
+    "COALESCE(f.favorited_at, f.created_at) DESC, f.id DESC"
 }
 
-/// 按条件列出条目（默认按最近更新排序，最多 1000 条）。
+/// 按条件列出条目（按收藏时间排序，最多 1000 条）。
 pub fn list(conn: &Connection, filter: &ListFilter) -> Result<Vec<FavoriteRow>, String> {
     let limit = if filter.limit == 0 { 1000 } else { filter.limit };
     let keyword = filter

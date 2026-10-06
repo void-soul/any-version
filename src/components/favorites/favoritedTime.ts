@@ -5,13 +5,10 @@
 // 这里只做两件事：
 // ① 把「近 7 天 / 近 30 天 / 近一年」这类预设换算成该格式的起点（时区由前端定，
 //    后端不猜时区）；
-// ② 把时间串格式化成列表里显示的日期串，并在没有平台收藏时间时回退到入库时间。
+// ② 把时间串格式化成列表里显示的日期串（只显示平台收藏时间，不再回退入库时间）。
 
 /** 时间过滤预设。`all` = 不过滤。 */
 export type SincePreset = "all" | "7d" | "30d" | "365d";
-
-/** 排序方式：favorited=按收藏时间，created=按入库时间，updated=按最近更新。 */
-export type FavoritesSort = "favorited" | "created" | "updated";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -31,7 +28,7 @@ export function sinceToLocalString(preset: SincePreset, now: Date = new Date()):
   );
 }
 
-/** 取日期部分用于列表展示（`2021-03-04`）；空值或格式异常返回 null（调用方再决定回退）。 */
+/** 取日期部分用于列表展示（`2021-03-04`）；空值或格式异常返回 null（不显示时间）。 */
 export function favoritedDateLabel(value: string | null | undefined): string | null {
   if (!value) return null;
   const date = String(value).slice(0, 10);

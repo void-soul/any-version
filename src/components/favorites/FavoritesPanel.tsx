@@ -33,7 +33,7 @@ import {
   Loader2,
 } from "lucide-react";
 
-import { favoritedDateLabel, sinceToLocalString, type FavoritesSort, type SincePreset } from "./favoritedTime";
+import { favoritedDateLabel, sinceToLocalString, type SincePreset } from "./favoritedTime";
 import { progressKeyOf, progressRowsOf } from "./progress";
 import { parseAiResultLine } from "./aiResult";
 import { SharedButton } from "../shared/Button";
@@ -106,9 +106,6 @@ export default function FavoritesPanel() {
   const [pickerSelected, setPickerSelected] = useState<number[]>([]);
   const [source, setSource] = useState<string | null>(null);
   const [keyword, setKeyword] = useState("");
-  // 排序默认按「收藏时间」：这是收藏模块，用户最关心的是「我什么时候收藏的」，
-  // 而默认的「最近更新」会把 AI 归类动过的老条目顶到最前面，反直觉。
-  const [sort, setSort] = useState<FavoritesSort>("favorited");
   // 收藏时间过滤（全部 / 近 7 天 / 近 30 天 / 近一年）
   const [since, setSince] = useState<SincePreset>("all");
   // 正在跑的长任务（替换原先单个 busy 字段）：三个导入可以同时在列，
@@ -267,7 +264,7 @@ export default function FavoritesPanel() {
         categoryId: categoryId ?? undefined,
         status: null,
         keyword: keyword.trim() || null,
-        sort,
+        sort: "favorited",
         // 时区换算放在前端：后端只拿到一个「不早于」的本地时间串，不需要猜时区
         favoritedSince: sinceToLocalString(since),
         limit: 0,
@@ -280,7 +277,7 @@ export default function FavoritesPanel() {
     setStats(overview);
     setCredStatus(creds);
     setDeletedRows(deleted ?? []);
-  }, [source, categoryId, keyword, sort, since]);
+  }, [source, categoryId, keyword, since]);
 
   // ── 分类树操作（对齐启动模块：新建子分类 / 重命名 / 删除 / 同级排序）──
   const cats: FavoriteCategoryNode[] = stats?.categories || [];
@@ -1114,17 +1111,6 @@ export default function FavoritesPanel() {
               </option>
             ))}
           </select>
-          {/* 排序方式：默认按收藏时间 */}
-          <select
-            value={sort}
-            onChange={(e) => setSort(e.target.value as FavoritesSort)}
-            className="glass-input px-2 h-7 text-caption cursor-pointer"
-            title={t("favorites.sortTip")}
-          >
-            <option value="favorited">{t("favorites.sortFavorited")}</option>
-            <option value="created">{t("favorites.sortCreated")}</option>
-            <option value="updated">{t("favorites.sortUpdated")}</option>
-          </select>
           {/* 收藏时间过滤 */}
           <select
             value={since}
@@ -1336,23 +1322,17 @@ export default function FavoritesPanel() {
                       <span className="text-micro px-1 rounded bg-white/5 text-slate-500">
                         {SOURCE_LABELS[item.source] ?? item.source}
                       </span>
-                      {/* 收藏时间：优先平台记录的时间；老库/平台不返回时回退到入库时间，
-                          并在 tooltip 里说清这是哪一个，别让用户以为平台时间不准 */}
+                      {/* 收藏时间：只显示平台记录的时间；没有就不显示 */}
                       {(() => {
                         const platform = favoritedDateLabel(item.favoritedAt);
-                        const label = platform ?? favoritedDateLabel(item.createdAt);
-                        if (!label) return null;
+                        if (!platform) return null;
                         return (
                           <span
                             className="text-micro px-1 rounded bg-white/5 text-slate-500 flex items-center gap-0.5 shrink-0"
-                            title={
-                              platform
-                                ? t("favorites.favoritedAtTip", { time: item.favoritedAt })
-                                : t("favorites.importedAtTip", { time: item.createdAt })
-                            }
+                            title={t("favorites.favoritedAtTip", { time: item.favoritedAt })}
                           >
                             <Clock className="w-2.5 h-2.5" />
-                            {label}
+                            {platform}
                           </span>
                         );
                       })()}

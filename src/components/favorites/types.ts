@@ -16,7 +16,7 @@ export interface FavoriteRow {
   createdAt: string;
   updatedAt: string;
   /** 平台记录的**收藏时间**（GitHub starred_at / B站 fav_time / 知乎 created）；
-   *  老库或平台不返回时为 null，界面与排序回退到 createdAt（本地入库时间）。 */
+   *  老库或平台不返回时为 null，界面不显示时间（不再回退到本地入库时间）。 */
   favoritedAt?: string | null;
   /** 多标签：一个条目可以同时属于多个分类 */
   tags: string[];
