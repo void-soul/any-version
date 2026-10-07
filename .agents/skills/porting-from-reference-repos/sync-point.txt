@@ -15,11 +15,11 @@
 # open-tag + orca（多 agent 协同）。ai-toolbox / headroom / farming / claude-code-cli
 # **已移出跟踪范围**，下次不要再把它们纳入 diff。
 
-EchoBird        77228c38  2026-10-02  本轮评估：新增 Cline / Antigravity 客户端，但二者不支持自定义模型 → 按学习目标 1 规则不纳入；其余为自身版本与 UI
-cc-switch       b9e96202  2026-10-02  本轮评估：Stack 模式（多供应商模型同列客户端选择器）与我们「路由链」模型不同 → 不抄
-CodexPlusPlus   27d50a1   2026-10-02  本轮评估：1.4.0→1.5.0 多为拓展接口与 UI 修复，协议对齐无命中 → 不抄
-open-tag        35d8eee6  2026-10-02  无新提交
-orca            3f37fcc42 2026-10-02  本轮评估：仅 3 条 orchestration 相关，其余为 native-chat / SSH / worktree 自身产品 → 不抄
+EchoBird        4ad23303  2026-10-07  本轮评估：quota/credits 账号 UI + WorkBuddy credit 细分，属用量 UI（用户已否决）→ 不抄
+cc-switch       d35726e2  2026-10-07  本轮评估：v7 UI 重构（10 万行）不抄；抄「内联 think 剥离」（bfaaba16）；MCP 三连不适用（无 Codex MCP 部署）
+CodexPlusPlus   84afcbda  2026-10-07  本轮评估：抄 thought_signature 透传 + system 折叠 + GLM 图片前缀；web_search 还原不适用（我们跳过 web_search）
+open-tag        35d8eee6  2026-10-07  无新提交
+orca            9fdd90ff  2026-10-07  本轮评估：仅自身产品（terminal/SSH/cursor/CI）→ 不抄
 
 # ─── 学习记录 ───
 
@@ -494,3 +494,40 @@ U+200B 零宽字符。any-version 已加原创方言层 `proxy/xml_tools.rs`（J
 时模型连工具名/参数都瞎猜，Codex 执行即拒。故 ChatGPT Desktop 要稳走 DeepSeek/GLM/Moonshot
 官方；国产轻量模型（qwen3.8-flash/LongCat/阶跃）留给 CodeBuddy 面板（非流式路径已覆盖）。
 **不要**再把「方言还原」当成参考仓漏抄的能力。
+
+2026-10-07 第四轮（起点 = 上面 10-02 的 hash；本轮 5 仓 diff：EchoBird 37 提交、cc-switch 38、
+           CodexPlusPlus 85、open-tag 0、orca 367）。
+
+落地（QA 记录 Q-0344）：
+- **内联 think 剥离**（来源 cc-switch bfaaba16 #7741）：DeepSeek 系 / MiniMax 把 reasoning
+  内联进 content 开头（`<think>`/`<thinking>`）。新增 `proxy/inline_think.rs`（纯移植
+  `InlineThinkSplitter` 流式状态机 + `split_leading_think_block` 非流式，含全部测试）；
+  非流式 `transform.rs::openai_response_to_anthropic` 剥成 thinking 块；流式
+  `sse.rs::aggregate_chat_chunks` 逐增量剥成 reasoning_content + content。
+- **thought_signature 透传**（来源 CodexPlusPlus 191a9a4 #332/#1012）：Gemini 3 系 functionCall
+  要求回传 thought_signature，缺失整轮 400。`google.rs` 新增
+  `attach_thought_signature_to_function_call` / `attach_thought_signature_to_tool_call`，
+  在 openai↔google 的 functionCall 构造/解析处透传（非流式 4 处）。**刻意简化**：只做
+  「字段透传」，未抄它的跨 turn 缓存（`ExtraContentCache`）—— 我们是无状态代理，跨 turn
+  状态是架构变更；依赖客户端回传 extra_content 才生效，需真机确认。
+- **system 折叠**（来源 CodexPlusPlus cf7ee3b #1394/#410）：MiniMax 等要求 system 前置且只认
+  一条。`convert.rs` 新增 `collapse_system_messages_to_head`，出站 OpenAI 时把所有散落的
+  system 收拢到头部合成一条、空内容丢弃。
+- **GLM 图片前缀剥离**（来源 CodexPlusPlus 198db93 #2031）：glm-*/zhipu 只认纯 base64，
+  `convert.rs` 新增 `normalize_image_data_urls_for_model`，对这类模型剥 `data:image/...;base64,`
+  前缀，标准 data URL 上游不动。
+- 上述两处「出站规范化」接进 `server.rs::process_request` 与 `aggregate.rs` 两条链路
+  （`normalize_openai_message_roles` 之后、优化器之前），保证代理与聚合行为一致。
+
+经核实不适用（连同理由，避免下次重复评估）：
+- **web_search 还原**（CodexPlusPlus 2ac9f73）：它修的是「web_search 已翻译成 custom 代理工具、
+  响应侧还原错」—— 我们 `responses.rs::convert_tools` 是**跳过** web_search（第三方上游不认，
+  根本没翻译侧），还原侧无从谈起。要支持 web_search 需先实现翻译整套（新功能，非修复）。
+- **Codex MCP 序列化三连**（cc-switch 4e46e6b6/27e52822/81c0ff25）：我们 `mcp.rs::deploy_all`
+  只写 JSON（mcpServers/mcp），`ai_registry` 的 format 只有 claude/gemini/opencode，**没有 codex**
+  —— 没有 Codex config.toml 的 MCP 部署能力，无从「修序列化」。
+- EchoBird quota/credits 账号 UI：用量 UI，此前已否决。
+- orca 367 提交：terminal/SSH/cursor/markdown/CI，自身产品，与多 agent 协同无关。
+- cc-switch v7 UI 重构（sidebar shell / design tokens / tray rebuild，10 万行）：UI 范式不同。
+
+验证：`cargo test --lib` 1023 passed / 0 failed；`npx tsc --noEmit` 退出码 0。

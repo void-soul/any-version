@@ -1,4 +1,4 @@
-[79870647] 2026-10-02 cockpit-tools v1.3.59 —— 本轮审阅完毕，判定不移植（见末条）
+[2d0f13f9] 2026-10-07 cockpit-tools v1.3.64 —— 本轮审阅完毕，判定不移植（见末条）
 学习记录：
 - 2026-09-10 首次对齐 9 个功能域（账号库/导出导入、本地导入、新增 OAuth/token、用量配额、手动+自动签到、会话列表、切换账号、会话合并、账号互导）。期间修复大量移植缺陷（条件化 workbuddy.db 重映射、工作区正文漏拷、辅助目录空桩、备份漏 wal、报告对象渲染进 React、super 路径层级、log crate 等，详见 references/pitfalls.md）。验证：cargo check 干净、204 lib 测试、tsc 无错误。qa：Q-0035~Q-0040。
 - 2026-09-10 用本技能全量核对：relearn 无差异；A/B/D 检查单、WB auth 写回守护（$wbEncrypted/哈希原子写/四字段校验）、CN 注入三连、api.rs 端点与 token_expiry 秒毫秒归一、企业用量 /data/data 兜底、auto_checkin 随机窗口+日志裁剪 全部与参考一致。新发现两处属 Kira 适配（非缺口）已补入 pitfalls §E。验证同次通过（204 测试/tsc 干净），qa：Q-0042。
@@ -8,3 +8,10 @@
   **判定：不移植。pin 推进到 79870647**（差异已审阅完毕，避免重复列出）。
   同批 WorkDaddy（`7126432f → d3f29616`，1.2.148）本轮同样逐域判定完毕，结论见 `sync-point.workdaddy.txt` 末条：**核心接口无变化；会话同步明细、积分缓存、用量历史用户明确不要**。
   **本轮未改动任何产品代码**（只回写同步点与 qa.db）。
+- 2026-10-07 **本轮审阅（无落地改动）**：`79870647 → 2d0f13f9`（v1.3.59 → **v1.3.64**）核心变化是
+  `e78f8df2`「加密本地账号切换」—— 新增 `workbuddy_auth_crypto.rs`（+625 行，走官方客户端本地
+  key 接口读写加密凭据字段）。
+  **判定：不移植。pin 推进到 2d0f13f9**。理由：我们 `workbuddy.rs` 已有 `$wbEncrypted` 检测 +
+  `write_encrypted_session` + `atrest::decrypt/encrypt_tree`（WorkBuddy 5.6 起官方加密），cockpit
+  新增的是「官方 key 接口」另一套机制；用户本轮明确「暂不跟进」。若将来 WorkBuddy 加密登录文件
+  切换/导入真机复现读不出来，再回头对比 `workbuddy_auth_crypto.rs`。

@@ -1,4 +1,4 @@
-[d3f29616] 2026-10-02 WorkDaddy DAEMON_VERSION 1.2.148（build release-1.2.148-20260923-windows-compat-target）—— 本轮审阅完毕，逐域判定「不移植」（见末条）
+[e1691e00] 2026-10-07 WorkDaddy DAEMON_VERSION 1.2.11（build release-1.2.11-20261001-account-reload-list-codebuddy-pr345）—— 本轮审阅完毕，逐域判定「不移植」（见末条）
 学习记录：
 - 2026-09-17 首次把 WorkDaddy（E:\pro\other-sdk\buddy\WorkDaddy）纳入本技能（此前只有 cockpit-tools）。精读并建档 16 个功能域：账号库与加密导出导入（lib.js / secure-transfer.js）、本地导入与 .logged-out（lib.js）、无感 OAuth（daemon.js）、用量/积分（credit-request-usage / credit-history-sync / credit-usage-store / credit-segments）、Token 统计（token-stats.js）、积分轮换建议（credit-rotation.js）、签到（checkin-result / checkin-consent / daemon.js dailyCheckin）、会话列表（session-db.js）、切换与假退出（lib.js::switchTo、/api/switch、/api/logout）、会话归档 .wds v4（session-transfer.js）、auto-copy lineage 合并（daemon.js）、主账号与排序（primary-account.js）、profile 与能力矩阵（profiles.js / cdp-targets.js）、自动化任务（automation*.js + schemas/automation-package.v1.schema.json）、模型管理与 cc-switch 导入（third-party-models.js）、增强开关（inject.js + theme-*.js）。commit a0cdb0a0 / 1.2.42。
 - 2026-09-19 技能主轴调整：**WorkDaddy 升为主参考，cockpit-tools 降为辅参考**（我们的产品线以 WorkBuddy/CodeBuddy 为主，WorkDaddy 是只做 WorkBuddy 的深挖实现）。SKILL.md 重写 §0/§2/§3/§4/§6：新增 §0.1 硬规则「WorkDaddy 学到的语义默认只落 WorkBuddy 分支，不得据此改 CodeBuddy CN 行为」；§2.1 改为 WorkDaddy 全量对照表、§2.2 收缩为"仅在 WorkDaddy 未覆盖时按需查阅 cockpit"；裁决规则改为「账号域以 WorkDaddy 为准，切换时序与合并模型仍以 cockpit 为准」。relearn.sh 两仓输出加主/辅标注，并对 WorkDaddy 新增 `excludes`（Linux/打包类文件）。
@@ -39,3 +39,11 @@
   - **用量历史**（`credit-history-sync.js` 16，新增按天 × 按模型 `models` 细分）：**用户判定没意义** → 不移植。**注意这个域我们整体没有**：`daily_history.rs` 是签到/旅行归档、不是用量；`api.rs` 只查当前余量，未对接官方用量记录接口（对应 `credit-request-usage.js`）。所以只移植 `models` 字段无意义，要做必须连底层一起做。
   - **按既有结论排除**：`automation-*` 全套（2026-09-19 已评估否决、实现已删，不得重新实现）、`inject.js`（+2111，注入依赖，只借语义）、`docs/session-fork.md`（用户已明确不做 Fork）、平台专属件 / 打包 / 遥测 / 主题类测试。
   - **本轮未改动任何产品代码**，仅回写同步点与 qa.db。
+- 2026-10-07 **本轮逐域审阅（无落地改动）**：`d3f29616 → e1691e00`（DAEMON_VERSION 1.2.148 → **1.2.11**，
+  上游疑似重置版本线或切分支，build id 为 `20261001-account-reload-list-codebuddy-pr345`）。
+  94 文件 +9275/−824，主体是：① WorkDaddy 开始支持 **CodeBuddy**（新增 `codebuddy-files.js` 278 行、
+  `codebuddy-native`），② 会话同步按钮 / workspace hint / reload IDE workbench（注入依赖），③ theme
+  主题修复，④ 会话切换防重复（24bbe62）。
+  **判定：不移植。pin 推进到 e1691e00**。理由：① 的 CodeBuddy 实现依据违反 §0.1 硬规则（WorkDaddy
+  语义默认只落 WorkBuddy 分支，且这些是 renderer 注入依赖）；②③ 注入依赖；④ 属会话同步域，此前用户
+  已判定「会话同步明细没啥用」。本轮无纯逻辑 / 官方接口变化。
