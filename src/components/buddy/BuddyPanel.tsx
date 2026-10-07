@@ -811,9 +811,10 @@ const COL_INFO = 240;
 const COL_CREDITS_MIN = 240;
 /** 时间列（内置「到期」+ 每个自定义列）：只要放得下 `55.21` 这种紧凑写法 */
 const COL_W = 72;
-/** 操作列：切换 + 用量 2 个图标按钮，按实际按钮宽度收死（不再靠 `pl-9` 把按钮顶到右边，
-    那样按钮会被挤在一半列宽里）。刷新/导出/删除已收进 tab 工具栏行，按勾选批量操作。 */
-const COL_ACTIONS = 64;
+/** 操作列：只剩「切换」1 个图标按钮，按实际按钮宽度收死（不再靠 `pl-9` 把按钮顶到右边，
+    那样按钮会被挤在一半列宽里）。「用量」不再重复给按钮——点积分构成条即可打开同一个用量弹窗；
+    刷新/导出/删除已收进 tab 工具栏行，按勾选批量操作。 */
+const COL_ACTIONS = 32;
 
 // 时间标签 chip 配色（sky=等待恢复 / amber=即将恢复 / emerald=已恢复可用）
 const LABEL_TONE: Record<LabelState["tone"], { chip: string; bar: string; text: string }> = {
@@ -899,6 +900,13 @@ export default function BuddyPanel() {
   // 冲突处理结果（key = 会话 id）：会话明细据此显示「已合并 / 已覆盖 / 已保留」，
   // 而不是永远停在切换那一刻的初始状态
   const [conflictResolutions, setConflictResolutions] = useState<Record<string, BuddyConflictResolution>>({});
+  // 裁决二次确认：合并 / 覆盖 / 保留都会改会话内容，误点不可逆，所以先弹确认再执行。
+  // 单条与批量共用一个弹窗，用 kind 区分（批量一次可能改几十条）。
+  const [conflictConfirm, setConflictConfirm] = useState<
+    | { kind: "single"; conflict: BuddyPendingConflict; action: ConflictAction }
+    | { kind: "batch"; ids: string[]; action: ConflictAction }
+    | null
+  >(null);
   // 对话内容预览（key = `${conflictId}:${side}`）：点「看对话」才拉取，避免展开就搬全部消息。
   // 读取失败也用消息数组表达（role="error"），就地显示后端的可操作提示。
   const [conflictMessages, setConflictMessages] = useState<Record<string, BuddyConflictMessage[] | "loading">>({});
@@ -1067,7 +1075,7 @@ export default function BuddyPanel() {
   }, [loadConflicts]);
 
   /** 对一条冲突执行裁决，用后端返回的剩余列表整体替换本地状态 */
-  const resolveConflict = async (conflict: BuddyPendingConflict, action: ConflictAction) => {
+  const doResolveConflict = async (conflict: BuddyPendingConflict, action: ConflictAction) => {
     setConflictBusyId(conflict.id);
     try {
       const remaining = await invoke<BuddyPendingConflict[]>("buddy_resolve_session_conflict", {
@@ -1085,7 +1093,14 @@ export default function BuddyPanel() {
       });
       setExpandedConflictId(null);
       void loadConflictResolutions();
-      showMsg(true, t("buddy.conflictResolved", { label: conflict.label }));
+      // 冲突清零：面板已经没有可裁决的东西了，直接关掉并告诉用户「都处理完了」，
+      // 否则留一个空弹窗让人自己发现「怎么忽然什么都没了」。
+      if (remaining.length === 0) {
+        setConflictPanelOpen(false);
+        showMsg(true, t("buddy.conflictAllResolved"));
+      } else {
+        showMsg(true, t("buddy.conflictResolved", { label: conflict.label }));
+      }
     } catch (e: any) {
       showMsg(false, String(e));
     } finally {
@@ -1093,12 +1108,15 @@ export default function BuddyPanel() {
     }
   };
 
+  /** 点单条裁决按钮：先弹二次确认，不直接动数据（合并/覆盖/保留都会改会话内容，误点代价高） */
+  const resolveConflict = (conflict: BuddyPendingConflict, action: ConflictAction) => {
+    setConflictConfirm({ kind: "single", conflict, action });
+  };
+
   /** 批量裁决：对勾选的多条执行同一 action。
    *  走后端批量命令（一次加锁 + 一次备份目录），不在这里串行调单条 ——
    *  单条命令每次都会清空备份目录，串行下来只剩最后一条能回滚。 */
-  const resolveConflictsBatch = async (action: ConflictAction) => {
-    const ids = [...conflictSelectedIds];
-    if (ids.length === 0) return;
+  const doResolveConflictsBatch = async (ids: string[], action: ConflictAction) => {
     setConflictBatchBusy(true);
     try {
       const remaining = await invoke<BuddyPendingConflict[]>("buddy_resolve_session_conflicts", {
@@ -1113,12 +1131,24 @@ export default function BuddyPanel() {
       setConflictSelectedIds((prev) => new Set([...prev].filter((id) => remainingIds.has(id))));
       setExpandedConflictId(null);
       void loadConflictResolutions();
-      showMsg(true, t("buddy.conflictBatchResolved", { count: ids.length - remaining.filter((c) => ids.includes(c.id)).length, action: t(`buddy.conflictAction${action[0].toUpperCase()}${action.slice(1)}`) }));
+      if (remaining.length === 0) {
+        setConflictPanelOpen(false);
+        showMsg(true, t("buddy.conflictAllResolved"));
+      } else {
+        showMsg(true, t("buddy.conflictBatchResolved", { count: ids.length - remaining.filter((c) => ids.includes(c.id)).length, action: t(`buddy.conflictAction${action[0].toUpperCase()}${action.slice(1)}`) }));
+      }
     } catch (e: any) {
       showMsg(false, String(e));
     } finally {
       setConflictBatchBusy(false);
     }
+  };
+
+  /** 点批量裁决按钮：同样先弹确认（一次可能改几十条会话） */
+  const resolveConflictsBatch = (action: ConflictAction) => {
+    const ids = [...conflictSelectedIds];
+    if (ids.length === 0) return;
+    setConflictConfirm({ kind: "batch", ids, action });
   };
 
   const toggleConflictSelect = (id: string) => {
@@ -2675,7 +2705,6 @@ export default function BuddyPanel() {
                       {/* 操作 */}
                       <div style={{ width: COL_ACTIONS }} className="flex items-center justify-end gap-1 px-1 flex-shrink-0 border-l border-white/5">
                         <button onClick={() => switchAccount(acc.id)} disabled={busy || isCurrent} className={ACC_BTN} title={t("buddy.switch")}><LogIn className="w-3 h-3" /></button>
-                        <button onClick={() => setUsageAccountId(acc.id)} className={ACC_BTN} title={t("buddy.usage")}><Gauge className="w-3 h-3" /></button>
                       </div>
                     </div>
                   );
@@ -4147,6 +4176,56 @@ export default function BuddyPanel() {
               </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* 裁决二次确认弹窗：合并 / 覆盖 / 保留都会改会话内容且不可撤销，误点代价高，
+          所以统一先确认再执行（单条与批量共用）。
+          层级压在冲突处理面板（z-130）之上；modal-mask / rounded-panel / rounded-ctl /
+          bg-slate-900/95 这些 class 都走主题变量，深浅色主题自动跟随。 */}
+      {conflictConfirm && (
+        <div className="fixed inset-0 z-[140] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="w-[400px] max-w-[95vw] rounded-panel border border-white/10 bg-slate-900/95 shadow-2xl p-5">
+            <div className="flex items-center gap-2.5 mb-4">
+              <div className="w-9 h-9 rounded-card bg-amber-500/15 border border-amber-500/30 flex items-center justify-center">
+                <AlertTriangle className="w-4 h-4 text-amber-400" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-sm font-bold text-white">
+                  {t("buddy.conflictConfirmTitle", {
+                    action: t(
+                      `buddy.conflictAction${conflictConfirm.action[0].toUpperCase()}${conflictConfirm.action.slice(1)}`,
+                    ),
+                  })}
+                </h3>
+                <p className="text-tiny text-slate-500">{t("buddy.conflictConfirmHint")}</p>
+              </div>
+            </div>
+            <p className="text-body text-slate-300 leading-relaxed mb-5 break-all">
+              {conflictConfirm.kind === "single"
+                ? conflictConfirm.conflict.label
+                : t("buddy.conflictConfirmBatchDesc", { count: conflictConfirm.ids.length })}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConflictConfirm(null)}
+                className="px-3 py-1.5 rounded-ctl text-caption text-slate-400 hover:bg-white/5 cursor-pointer"
+              >
+                {t("buddy.conflictConfirmCancel")}
+              </button>
+              <button
+                onClick={() => {
+                  const c = conflictConfirm;
+                  setConflictConfirm(null);
+                  if (c.kind === "single") void doResolveConflict(c.conflict, c.action);
+                  else void doResolveConflictsBatch(c.ids, c.action);
+                }}
+                className="px-4 py-1.5 rounded-ctl text-caption bg-amber-600 hover:bg-amber-500 text-white font-semibold cursor-pointer"
+              >
+                {t("buddy.conflictConfirmOk")}
+              </button>
+            </div>
           </div>
         </div>
       )}

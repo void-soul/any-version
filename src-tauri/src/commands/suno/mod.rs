@@ -11,6 +11,7 @@ use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
+use base64::Engine;
 use winreg::enums::*;
 use winreg::RegKey;
 
@@ -152,19 +153,34 @@ fn save_profiles(profiles: &[String]) -> Result<(), String> {
 /// 项目全局的 `utils::get_http_client()` 没有启用 reqwest 的 `system-proxy` feature，
 /// 因此默认**不读系统代理**——Suno 这类需要走代理的域名会直接连失败。这里读注册表
 /// 把系统代理交给 reqwest。未启用 / 空则返回 None（PAC 模式暂不支持，直连兜底）。
-/// 结果用 OnceLock 缓存，代理判定日志只打一次。
+///
+/// 结果缓存起来避免每次请求都读注册表，但**可失效**（见 [`invalidate_proxy_cache`]）：
+/// 应用启动时代理往往还没就绪（mihomo 未起 / 端口未监听），此时若把地址永久固化，
+/// 之后每次请求都会撞上这个死代理，且永远不会重试——表现就是「明明浏览器能打开，
+/// 应用里一直报 `error sending request`」。
+/// 系统代理判定缓存：外层 `Option` 表示「是否已探测」，内层是探测结果。
+static PROXY_CACHE: std::sync::Mutex<Option<Option<String>>> = std::sync::Mutex::new(None);
+
 fn system_proxy() -> Option<String> {
-    static CACHE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    CACHE
-        .get_or_init(|| {
-            let proxy = read_system_proxy();
-            match &proxy {
-                Some(addr) => eprintln!("[Suno] 检测到系统代理: {addr}"),
-                None => eprintln!("[Suno] 未检测到系统代理，将直连"),
-            }
-            proxy
-        })
-        .clone()
+    let mut guard = PROXY_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(cached) = guard.as_ref() {
+        return cached.clone();
+    }
+    let proxy = read_system_proxy();
+    match &proxy {
+        Some(addr) => eprintln!("[Suno] 检测到系统代理: {addr}"),
+        None => eprintln!("[Suno] 未检测到系统代理，将直连"),
+    }
+    *guard = Some(proxy.clone());
+    proxy
+}
+
+/// 代理判定失效：下一次 [`system_proxy()`] 会重新读注册表。
+///
+/// 在「走了代理但网络层失败」时调用——代理地址可能已经变了（用户刚起/刚关 mihomo），
+/// 固化旧值会让后续请求一直失败。
+fn invalidate_proxy_cache() {
+    *PROXY_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 fn read_system_proxy() -> Option<String> {
@@ -187,7 +203,21 @@ fn read_system_proxy() -> Option<String> {
     Some(format!("http://{server}"))
 }
 
-/// 构建带系统代理的 HTTP 客户端。
+/// 不带代理的客户端：作为「代理不可用」时的兜底路径。
+///
+/// 直连并非永远可行（部分网络环境必须走代理），但代理只是**可选加速路径**——
+/// 代理挂了不该让整个功能变成「打不开」，所以两条路径都试。
+fn direct_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .http1_only()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
+/// 构建带系统代理的 HTTP 客户端（首选路径）。
 fn http_client() -> reqwest::Client {
     let mut builder = reqwest::Client::builder()
         .user_agent(USER_AGENT)
@@ -206,6 +236,20 @@ fn http_client() -> reqwest::Client {
     builder.build().unwrap_or_else(|_| reqwest::Client::new())
 }
 
+/// 把用户粘贴的地址归一化成 reqwest 能直接用的绝对 URL。
+///
+/// [`is_profile_url`] 故意宽松（允许 `suno.com/@user`、`http://`、`www.` 前缀），
+/// 但 reqwest 只接受**绝对 URL** —— 缺协议会直接报 `relative URL without a base`，
+/// 校验通过、请求却发不出去。这里统一补 `https://`，再把**真正要发出去的地址**打出来。
+fn normalize_fetch_url(trimmed: &str) -> String {
+    let s = trimmed.trim();
+    if s.starts_with("http://") || s.starts_with("https://") {
+        s.to_string()
+    } else {
+        format!("https://{s}")
+    }
+}
+
 /// 解析 Suno 用户主页，返回歌曲列表。
 #[tauri::command]
 pub async fn suno_parse_profile(url: String) -> Result<Vec<SunoSong>, String> {
@@ -213,20 +257,52 @@ pub async fn suno_parse_profile(url: String) -> Result<Vec<SunoSong>, String> {
     if !is_profile_url(trimmed) {
         return Err("只支持 Suno 用户主页（形如 https://suno.com/@用户名），不接受单曲页或其他链接".to_string());
     }
-    let url = trimmed.to_string();
-    eprintln!("[Suno] 解析主页: {url}");
+    let url = normalize_fetch_url(trimmed);
+    eprintln!("[Suno] 用户输入: {trimmed}");
+    eprintln!("[Suno] 实际请求: {url}");
+    eprintln!("[Suno] 网络路径: {}", match system_proxy() {
+        Some(p) => format!("系统代理 {p}（失败则回退直连）"),
+        None => "直连（未检测到系统代理）".to_string(),
+    });
+
+    // 先走带代理的客户端；网络层失败时把代理判定作废并用直连重试一次。
+    // 代理是可选加速路径，不是前置条件——固化一个没监听的代理端口会让功能整体不可用。
     let client = http_client();
-    let resp = client
+    let resp = match client
         .get(&url)
         .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml")
         .send()
         .await
-        .map_err(|e| {
-            eprintln!("[Suno] 请求主页失败: {e}");
-            format!("请求主页失败: {e}")
-        })?;
+    {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("[Suno] 经系统代理请求失败（{e}），作废代理判定并改走直连重试");
+            invalidate_proxy_cache();
+            let fallback = direct_client();
+            match fallback
+                .get(&url)
+                .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml")
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e2) => {
+                    eprintln!("[Suno] 直连也失败: {e2}");
+                    return Err(format!(
+                        "请求主页失败（代理 {}；直连 {}）: {e2}",
+                        e, e2
+                    ));
+                }
+            }
+        }
+    };
     let status = resp.status();
-    eprintln!("[Suno] 主页响应 HTTP {status}（版本 {:?}）", resp.version());
+    // 打 `resp.url()` 而不是请求串：重定向后的最终地址才是真正生效的那个
+    eprintln!(
+        "[Suno] 主页响应 HTTP {status}（协议 {:?}，最终地址 {}）",
+        resp.version(),
+        resp.url()
+    );
     if !status.is_success() {
         return Err(format!("主页返回 HTTP {status}"));
     }
@@ -243,6 +319,27 @@ pub async fn suno_parse_profile(url: String) -> Result<Vec<SunoSong>, String> {
     let head: String = html.chars().take(800).collect();
     eprintln!("[Suno] HTML 开头 800 字符:\n{head}");
     let mut songs = parse_profile_html(&html)?;
+
+    // 主页 SSR 只内嵌前 ~20 首，其余靠翻页接口补齐。
+    // 翻页失败不当作错误：宁可少几首，也别让已经解析出来的结果全废掉。
+    match extract_target_user_id(&html) {
+        Some(uid) => match fetch_all_songs(&client, &uid).await {
+            Ok(paged) if !paged.is_empty() => {
+                eprintln!("[Suno] 翻页补齐 {} 首（接口）", paged.len());
+                let mut seen: std::collections::HashSet<String> =
+                    songs.iter().map(|s| s.id.clone()).collect();
+                for song in paged {
+                    if seen.insert(song.id.clone()) {
+                        songs.push(song);
+                    }
+                }
+            }
+            Ok(_) => eprintln!("[Suno] 翻页接口没返回歌曲，沿用 SSR 结果"),
+            Err(e) => eprintln!("[Suno] 翻页失败（沿用 SSR 的 {} 首）：{e}", songs.len()),
+        },
+        None => eprintln!("[Suno] 未从页面提取到 target_user_id，跳过翻页"),
+    }
+
     // 标记已下载（本地缓存）
     let downloaded = load_downloaded();
     for s in songs.iter_mut() {
@@ -620,9 +717,257 @@ fn parse_content_item(item: &serde_json::Value) -> Option<SunoSong> {
     })
 }
 
+// ─── 分页：把主页的全部歌曲拉完 ───
+
+/// 翻页接口。主页 SSR 只内嵌前 ~20 首，其余要靠它按 cursor 拉。
+///
+/// 实测要点（都是踩出来的）：
+/// - 域名是 `studio-api-prod`（连字符），不是 `studio-api.prod`；
+/// - 方法 POST，路径 `/api/unified/feed`（**不是** `/api/feed/v3`，那个匿名一律 401）；
+/// - 匿名可用，**不要带 cookie**（前端就是 `credentials: "omit"`）。
+const UNIFIED_FEED_URL: &str = "https://studio-api-prod.suno.com/api/unified/feed";
+/// 每页条数（接口上限就是 20）。
+const PAGE_SIZE: usize = 20;
+/// 总量兜底上限：正常主页几百首够用，防止接口返回异常 next_cursor 导致死循环。
+const PAGE_MAX_ITEMS: usize = 2000;
+
+/// 从主页 HTML 里取目标用户 id（翻页接口的 `target_user_id`）。
+///
+/// 必须用 `"v2Data":{"user_id":"` 锚定：页面里有二十多处 `user_id`（歌曲作者、点赞者…），
+/// 取第一个会拿到错的用户。实测这个锚点反转义后唯一命中。
+fn extract_target_user_id(html: &str) -> Option<String> {
+    let unescaped = html.replace("\\\"", "\"");
+    let anchor = "\"v2Data\":{\"user_id\":\"";
+    let start = unescaped.find(anchor)? + anchor.len();
+    let rest = unescaped.get(start..)?;
+    let end = rest.find('"')?;
+    let id = rest.get(..end)?;
+    // 保守校验：只接受 UUID 形态，避免锚点附近结构变化时抓出半截字符串
+    (id.len() == 36 && id.chars().filter(|c| *c == '-').count() == 4)
+        .then(|| id.to_string())
+}
+
+/// `browser-token`：base64url(`{"timestamp":<毫秒>}`)，无 padding。
+///
+/// 这就是浏览器里那串 token 的**全部**内容——不含任何身份信息，纯粹是个时间戳凭证，
+/// 所以匿名也能过（实测 200）。别以为它缺了什么登录态而去加 Cookie。
+fn browser_token() -> String {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let payload = format!("{{\"timestamp\":{millis}}}");
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload)
+}
+
+/// `device-id`：随机 UUID v4（本仓库没有 uuid crate，用 getrandom 自己拼）。
+fn new_uuid_v4() -> Result<String, String> {
+    let mut b = [0u8; 16];
+    getrandom::getrandom(&mut b).map_err(|e| format!("生成 device-id 失败: {e}"))?;
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    Ok(format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]
+    ))
+}
+
+/// 拉一页，返回 `(本页歌曲, 下一页游标)`。游标为空串表示到底了。
+async fn fetch_feed_page(
+    client: &reqwest::Client,
+    target_user_id: &str,
+    device_id: &str,
+    cursor: &str,
+) -> Result<(Vec<SunoSong>, String), String> {
+    let body = serde_json::json!({
+        "feed_id": "user_songs",
+        "cursor": cursor,
+        "page_size": PAGE_SIZE,
+        "request_metadata": { "sort_by": "created_at" },
+        "target_user_id": target_user_id,
+    });
+    let resp = client
+        .post(UNIFIED_FEED_URL)
+        .header("accept", "*/*")
+        // token 要手工拼成 {"token":"..."} 这个 JSON 字符串，不是裸 token
+        .header("browser-token", format!("{{\"token\":\"{token}\"}}", token = browser_token()))
+        .header("device-id", device_id)
+        .header("referer", "https://suno.com/")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("拉取第 {cursor} 页失败: {e}"))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        // 游标越过末页时接口回 404，属于正常终止而不是错误
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok((Vec::new(), String::new()));
+        }
+        return Err(format!("拉取第 {cursor} 页返回 HTTP {status}"));
+    }
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析第 {cursor} 页失败: {e}"))?;
+
+    let next_cursor = json
+        .get("feed")
+        .and_then(|f| f.get("next_cursor"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    // items[].content_item 与主页 SSR 里的完全同构，直接复用同一个解析函数
+    let songs = json
+        .get("feed")
+        .and_then(|f| f.get("items"))
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("content_item"))
+                .filter_map(parse_content_item)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    Ok((songs, next_cursor))
+}
+
+/// 逐页拉完整个主页（去重）。`Err` 只在第一页就失败时返回——翻页中途断掉就把已有的交出去。
+async fn fetch_all_songs(
+    client: &reqwest::Client,
+    target_user_id: &str,
+) -> Result<Vec<SunoSong>, String> {
+    let device_id = new_uuid_v4()?;
+    let mut all: Vec<SunoSong> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut cursor = String::new();
+
+    loop {
+        let (songs, next) = fetch_feed_page(client, target_user_id, &device_id, &cursor).await?;
+        for song in songs {
+            if seen.insert(song.id.clone()) {
+                all.push(song);
+            }
+        }
+        if next.is_empty() || all.len() >= PAGE_MAX_ITEMS {
+            break;
+        }
+        cursor = next;
+    }
+    Ok(all)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{is_profile_url, normalize_profile_url, parse_profile_html, sanitize_filename, unique_path};
+    use super::{
+        browser_token, extract_target_user_id, is_profile_url, normalize_fetch_url,
+        normalize_profile_url, parse_profile_html, sanitize_filename, unique_path,
+    };
+    use serde_json::json;
+
+    /// 宽松校验通过后，必须补成绝对 URL —— 否则 reqwest 报 relative URL without a base。
+    #[test]
+    fn fetch_url_is_always_absolute() {
+        assert_eq!(
+            normalize_fetch_url("suno.com/@user"),
+            "https://suno.com/@user"
+        );
+        assert_eq!(
+            normalize_fetch_url("https://suno.com/@user"),
+            "https://suno.com/@user"
+        );
+        // 已有 http 不改写（保持用户原意）
+        assert_eq!(
+            normalize_fetch_url("http://suno.com/@user"),
+            "http://suno.com/@user"
+        );
+        // 校验通过的每种写法，归一化后都必须是绝对 URL
+        for raw in [
+            "https://suno.com/@u",
+            "http://suno.com/@u",
+            "suno.com/@u",
+            "https://www.suno.com/@u",
+        ] {
+            assert!(is_profile_url(raw), "前提：{raw} 应通过校验");
+            let out = normalize_fetch_url(raw);
+            assert!(
+                out.starts_with("http://") || out.starts_with("https://"),
+                "归一化后必须是绝对 URL：{out}"
+            );
+        }
+    }
+
+    /// 分页凭证：`browser-token` 解开就是一个时间戳，没有身份信息。
+    #[test]
+    fn browser_token_is_base64url_timestamp() {
+        use base64::Engine;
+        let token = browser_token();
+        let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(token.as_bytes())
+            .expect("token 必须是合法 base64url");
+        let text = String::from_utf8(decoded).expect("解码后应是 UTF-8");
+        let parsed: serde_json::Value = serde_json::from_str(&text).expect("应是 JSON");
+        assert!(
+            parsed.get("timestamp").and_then(|v| v.as_i64()).is_some(),
+            "token 里应有 timestamp：{text}"
+        );
+        // 无 padding
+        assert!(!token.contains('='), "不该带 padding：{token}");
+    }
+
+    /// `target_user_id` 只能取 v2Data 块里的那个，不能被其它 user_id 干扰。
+    #[test]
+    fn target_user_id_anchors_on_v2data() {
+        let html = r#"..."v2Data\":{\"user_id\":\"1498d99f-3aae-4c41-ada4-6642d539a30d\",\"metadata\":{\"handle\":\"echoingpromoter3561"}}"#;
+        assert_eq!(
+            extract_target_user_id(html).as_deref(),
+            Some("1498d99f-3aae-4c41-ada4-6642d539a30d")
+        );
+        // 前面出现的 song author user_id 不能干扰
+        let html2 = r#"\"content_item\":{\"id\":\"x\",\"user_id\":\"00000000-0000-4000-8000-000000000000\"}"v2Data\":{\"user_id\":\"1498d99f-3aae-4c41-ada4-6642d539a30d\"}"#;
+        assert_eq!(
+            extract_target_user_id(html2).as_deref(),
+            Some("1498d99f-3aae-4c41-ada4-6642d539a30d")
+        );
+        // 抓不到 / 格式异常时返回 None，不硬猜
+        assert_eq!(extract_target_user_id("no user here"), None);
+        assert_eq!(extract_target_user_id(r#"\"v2Data\":{\"user_id\":\"short\"}"#), None);
+    }
+
+    /// 翻页响应里的 content_item 与主页 SSR 同构，能被同一个解析函数吃下。
+    #[test]
+    fn parses_unified_feed_page_shape() {
+        let page = json!({
+            "feed": {
+                "feed_id": "user_songs",
+                "items": [
+                    {"content_type": "clip", "content_item": {
+                        "status": "complete", "title": "第一首",
+                        "id": "clip-1", "video_url": "https://cdn1.suno.ai/clip-1.mp4",
+                        "image_large_url": "https://cdn2.suno.ai/i1.jpeg", "play_count": 7
+                    }},
+                    {"content_type": "clip", "content_item": {
+                        "status": "streaming", "title": "生成中", "id": "clip-2",
+                        "video_url": "https://cdn1.suno.ai/clip-2.mp4"
+                    }}
+                ],
+                "next_cursor": "20"
+            }
+        });
+        let items = page["feed"]["items"].as_array().unwrap();
+        let songs: Vec<_> = items
+            .iter()
+            .filter_map(|i| i.get("content_item"))
+            .filter_map(super::parse_content_item)
+            .collect();
+        assert_eq!(songs.len(), 1, "草稿应被过滤");
+        assert_eq!(songs[0].title, "第一首");
+        assert_eq!(songs[0].audio_url, "https://cdn1.suno.ai/clip-1.mp4");
+        assert_eq!(page["feed"]["next_cursor"].as_str(), Some("20"));
+    }
 
     #[test]
     fn profile_url_only_accepts_user_homepage() {
