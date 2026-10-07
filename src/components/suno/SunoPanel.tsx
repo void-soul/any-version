@@ -12,6 +12,8 @@ import {
   Square,
   Loader2,
   AlertTriangle,
+  Star,
+  X,
 } from "lucide-react";
 
 interface SunoSong {
@@ -44,6 +46,7 @@ export default function SunoPanel() {
   const [downloading, setDownloading] = useState(false);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [profiles, setProfiles] = useState<string[]>([]);
   const unlistenRef = useRef<UnlistenFn | null>(null);
 
   // 监听下载进度
@@ -64,8 +67,42 @@ export default function SunoPanel() {
 
   const showMsg = (ok: boolean, text: string) => setMessage({ ok, text });
 
-  const parse = async () => {
+  // 加载收藏的主页
+  const loadProfiles = async () => {
+    try {
+      setProfiles(await invoke<string[]>("suno_list_profiles"));
+    } catch {
+      /* 忽略 */
+    }
+  };
+  useEffect(() => {
+    void loadProfiles();
+  }, []);
+
+  const saveProfile = async () => {
     const trimmed = url.trim();
+    if (!trimmed) {
+      showMsg(false, t("suno.emptyUrl"));
+      return;
+    }
+    try {
+      setProfiles(await invoke<string[]>("suno_save_profile", { url: trimmed }));
+      showMsg(true, t("suno.profileSaved"));
+    } catch (e) {
+      showMsg(false, String(e));
+    }
+  };
+
+  const removeProfile = async (u: string) => {
+    try {
+      setProfiles(await invoke<string[]>("suno_remove_profile", { url: u }));
+    } catch (e) {
+      showMsg(false, String(e));
+    }
+  };
+
+  const parse = async (target?: string) => {
+    const trimmed = (target ?? url).trim();
     if (!trimmed) {
       showMsg(false, t("suno.emptyUrl"));
       return;
@@ -164,6 +201,14 @@ export default function SunoPanel() {
           />
         </div>
         <button
+          onClick={() => void saveProfile()}
+          disabled={!url.trim()}
+          className="inline-flex items-center px-2 h-8 rounded-md border border-white/10 text-slate-400 hover:text-amber-300 hover:border-amber-300/40 disabled:opacity-40 cursor-pointer"
+          title={t("suno.saveProfile")}
+        >
+          <Star className="w-3.5 h-3.5" />
+        </button>
+        <button
           onClick={() => void parse()}
           disabled={parsing}
           className="inline-flex items-center gap-1 px-3 h-8 rounded-md bg-[var(--module-accent)] text-white text-caption font-medium hover:opacity-90 disabled:opacity-40 cursor-pointer"
@@ -172,6 +217,36 @@ export default function SunoPanel() {
           {t("suno.parse")}
         </button>
       </div>
+
+      {/* 收藏的主页 */}
+      {profiles.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap flex-shrink-0">
+          {profiles.map((p) => (
+            <span
+              key={p}
+              className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-md bg-white/5 border border-white/10 text-tiny text-slate-300 max-w-full"
+            >
+              <button
+                onClick={() => {
+                  setUrl(p);
+                  void parse(p);
+                }}
+                className="hover:text-[var(--module-accent)] truncate max-w-52"
+                title={p}
+              >
+                {p.replace(/^https?:\/\//, "").replace(/^www\./, "")}
+              </button>
+              <button
+                onClick={() => void removeProfile(p)}
+                className="text-slate-500 hover:text-red-400 flex-shrink-0"
+                title={t("suno.removeProfile")}
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* 提示 */}
       {message && (

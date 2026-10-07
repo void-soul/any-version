@@ -704,9 +704,12 @@ pub fn run() {
             commands::favorites::fav_get_credential,
             commands::favorites::fav_get_github_token,
             commands::favorites::fav_set_github_token,
-            // ---- Suno 音频下载（解析主页 → 下载 m4a → ffmpeg 转 mp3）----
+            // ---- Suno 音频下载（解析主页 → 下载 mp4 → ffmpeg 转 mp3）----
             commands::suno::suno_parse_profile,
             commands::suno::suno_download_songs,
+            commands::suno::suno_list_profiles,
+            commands::suno::suno_save_profile,
+            commands::suno::suno_remove_profile,
             commands::music::music_track_name_suggestion,
             commands::music::music_rename_track,
             commands::music::music_delete_tracks,

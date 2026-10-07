@@ -99,6 +99,49 @@ fn mark_downloaded(id: &str) {
     }
 }
 
+// ─── 主页收藏 ───
+
+/// 只认 Suno 用户主页：`https://suno.com/@username`（支持 www 前缀、无协议、http）。
+fn is_profile_url(url: &str) -> bool {
+    let lower = url.trim().to_lowercase();
+    let no_proto = lower
+        .strip_prefix("https://")
+        .or_else(|| lower.strip_prefix("http://"))
+        .unwrap_or(&lower);
+    let (host, rest) = match no_proto.split_once('/') {
+        Some((h, r)) => (h, r),
+        None => (no_proto, ""),
+    };
+    let host_ok = host == "suno.com" || host == "www.suno.com";
+    let name = rest.trim_start_matches('/').trim_end_matches('/');
+    host_ok && name.starts_with('@') && name.len() > 1
+}
+
+/// 归一化主页 URL（去尾斜杠、统一小写），用于收藏去重。
+fn normalize_profile_url(url: &str) -> String {
+    url.trim().trim_end_matches('/').to_lowercase()
+}
+
+fn profiles_path() -> std::path::PathBuf {
+    crate::commands::config::get_data_dir().join("suno").join("profiles.json")
+}
+
+fn load_profiles() -> Vec<String> {
+    let Ok(content) = std::fs::read_to_string(profiles_path()) else {
+        return Vec::new();
+    };
+    serde_json::from_str::<Vec<String>>(&content).unwrap_or_default()
+}
+
+fn save_profiles(profiles: &[String]) -> Result<(), String> {
+    let path = profiles_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let json = serde_json::to_string_pretty(profiles).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| format!("写入收藏失败: {e}"))
+}
+
 /// 读 Windows 系统代理（mihomo 固定端口模式），返回 `http://127.0.0.1:port`。
 ///
 /// 项目全局的 `utils::get_http_client()` 没有启用 reqwest 的 `system-proxy` feature，
@@ -161,6 +204,11 @@ fn http_client() -> reqwest::Client {
 /// 解析 Suno 用户主页，返回歌曲列表。
 #[tauri::command]
 pub async fn suno_parse_profile(url: String) -> Result<Vec<SunoSong>, String> {
+    let trimmed = url.trim();
+    if !is_profile_url(trimmed) {
+        return Err("只支持 Suno 用户主页（形如 https://suno.com/@用户名），不接受单曲页或其他链接".to_string());
+    }
+    let url = trimmed.to_string();
     eprintln!("[Suno] 解析主页: {url}");
     let client = http_client();
     let resp = client
@@ -201,6 +249,38 @@ pub async fn suno_parse_profile(url: String) -> Result<Vec<SunoSong>, String> {
         songs.iter().filter(|s| s.downloaded).count()
     );
     Ok(songs)
+}
+
+/// 列出收藏的主页。
+#[tauri::command]
+pub fn suno_list_profiles() -> Vec<String> {
+    load_profiles()
+}
+
+/// 收藏一个主页（去重），返回更新后的收藏列表。
+#[tauri::command]
+pub fn suno_save_profile(url: String) -> Result<Vec<String>, String> {
+    let url = url.trim().to_string();
+    if url.is_empty() {
+        return Err("主页 URL 不能为空".to_string());
+    }
+    let normalized = normalize_profile_url(&url);
+    let mut profiles = load_profiles();
+    if !profiles.iter().any(|p| normalize_profile_url(p) == normalized) {
+        profiles.push(url);
+        save_profiles(&profiles)?;
+    }
+    Ok(profiles)
+}
+
+/// 取消收藏一个主页，返回更新后的收藏列表。
+#[tauri::command]
+pub fn suno_remove_profile(url: String) -> Result<Vec<String>, String> {
+    let normalized = normalize_profile_url(&url);
+    let mut profiles = load_profiles();
+    profiles.retain(|p| normalize_profile_url(p) != normalized);
+    save_profiles(&profiles)?;
+    Ok(profiles)
 }
 
 /// 下载并转码一批歌曲。
@@ -502,7 +582,21 @@ fn parse_content_item(item: &serde_json::Value) -> Option<SunoSong> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_profile_html, sanitize_filename, unique_path};
+    use super::{is_profile_url, normalize_profile_url, parse_profile_html, sanitize_filename, unique_path};
+
+    #[test]
+    fn profile_url_only_accepts_user_homepage() {
+        assert!(is_profile_url("https://suno.com/@echoingpromoter3561"));
+        assert!(is_profile_url("http://suno.com/@user"));
+        assert!(is_profile_url("suno.com/@user"));
+        assert!(is_profile_url("https://www.suno.com/@user"));
+        assert!(is_profile_url("https://suno.com/@user/"));
+        assert!(!is_profile_url("https://suno.com/song/abc-123"));
+        assert!(!is_profile_url("https://suno.com/@"));
+        assert!(!is_profile_url("https://example.com/@user"));
+        assert!(!is_profile_url("https://suno.com/"));
+        assert_eq!(normalize_profile_url("https://suno.com/@User/"), "https://suno.com/@user");
+    }
 
     #[test]
     fn parses_songs_from_rsc_payload() {
