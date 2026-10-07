@@ -11,6 +11,42 @@
 
 use serde_json::{json, Value};
 
+/// 把 Google functionCall 的 `thought_signature` 透传到 OpenAI tool_call 的
+/// `extra_content.google.thought_signature`。
+///
+/// Gemini 3 系要求 functionCall 回传 thought_signature（OpenAI 兼容层放在
+/// `extra_content.google.thought_signature`），缺失时整轮 400（issue #332/#1012）。
+/// 抄 CodexPlusPlus 191a9a4：只做透传，无该字段时行为与改动前一致。
+fn attach_thought_signature_to_tool_call(fc: &Value, tool_call: &mut serde_json::Map<String, Value>) {
+    if let Some(sig) = fc.get("thought_signature") {
+        if !sig.is_null() {
+            tool_call.insert(
+                "extra_content".to_string(),
+                json!({ "google": { "thought_signature": sig } }),
+            );
+        }
+    }
+}
+
+/// 把 OpenAI tool_call 的附带数据（`extra_content.google.thought_signature` 或顶层
+/// `thought_signature` / `thoughtSignature`）透传回 Google functionCall 的 `thought_signature`。
+fn attach_thought_signature_to_function_call(
+    tc: &Value,
+    function_call: &mut serde_json::Map<String, Value>,
+) {
+    let sig = tc
+        .get("extra_content")
+        .and_then(|ec| ec.get("google"))
+        .and_then(|g| g.get("thought_signature"))
+        .or_else(|| tc.get("thought_signature"))
+        .or_else(|| tc.get("thoughtSignature"));
+    if let Some(sig) = sig {
+        if !sig.is_null() {
+            function_call.insert("thought_signature".to_string(), sig.clone());
+        }
+    }
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  请求转换：Anthropic / OpenAI → Google
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -262,7 +298,12 @@ pub fn openai_to_google(body: &Value, model: &str) -> Value {
                         .and_then(|v| v.as_str())
                         .and_then(|s| serde_json::from_str::<Value>(s).ok())
                         .unwrap_or(json!({}));
-                    gparts.push(json!({"functionCall": {"name": name, "args": args}}));
+                    let mut fc = serde_json::Map::new();
+                    fc.insert("name".to_string(), name);
+                    fc.insert("args".to_string(), args);
+                    // 透传 Gemini 3 的 thought_signature（客户端回传时挂回，缺字段则行为不变）
+                    attach_thought_signature_to_function_call(tc, &mut fc);
+                    gparts.push(json!({"functionCall": Value::Object(fc)}));
                 }
             }
             // tool 角色消息（工具结果）
@@ -430,11 +471,19 @@ pub fn google_to_openai(body: &Value, model: &str) -> Value {
                         text.push_str(t);
                     } else if p.get("functionCall").is_some() {
                         let fc = &p["functionCall"];
-                        tool_calls.push(json!({
-                            "id": fc.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                            "type": "function",
-                            "function": {"name": fc.get("name").cloned().unwrap_or(json!("")), "arguments": fc.get("args").and_then(|v| serde_json::to_string(v).ok()).unwrap_or_else(|| "{}".to_string())}
-                        }));
+                        let mut tc = serde_json::Map::new();
+                        tc.insert(
+                            "id".to_string(),
+                            json!(fc.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string()),
+                        );
+                        tc.insert("type".to_string(), json!("function"));
+                        tc.insert(
+                            "function".to_string(),
+                            json!({"name": fc.get("name").cloned().unwrap_or(json!("")), "arguments": fc.get("args").and_then(|v| serde_json::to_string(v).ok()).unwrap_or_else(|| "{}".to_string())}),
+                        );
+                        // 透传 Gemini 3 的 thought_signature → extra_content.google.thought_signature
+                        attach_thought_signature_to_tool_call(fc, &mut tc);
+                        tool_calls.push(Value::Object(tc));
                     } else if p.get("functionResponse").is_some() {
                         let fr = &p["functionResponse"];
                         messages.push(json!({"role": "tool", "name": fr.get("name").cloned().unwrap_or(json!("")), "content": fr.get("response").and_then(|r| r.get("result")).cloned().unwrap_or(json!(""))}));
@@ -568,11 +617,19 @@ pub fn google_response_to_openai(resp: &Value, request_model: &str) -> Value {
                         message_content.push_str(t);
                     } else if p.get("functionCall").is_some() {
                         let fc = &p["functionCall"];
-                        tool_calls.push(json!({
-                            "id": fc.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                            "type": "function",
-                            "function": {"name": fc.get("name").cloned().unwrap_or(json!("")), "arguments": fc.get("args").and_then(|v| serde_json::to_string(v).ok()).unwrap_or_else(|| "{}".to_string())}
-                        }));
+                        let mut tc = serde_json::Map::new();
+                        tc.insert(
+                            "id".to_string(),
+                            json!(fc.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string()),
+                        );
+                        tc.insert("type".to_string(), json!("function"));
+                        tc.insert(
+                            "function".to_string(),
+                            json!({"name": fc.get("name").cloned().unwrap_or(json!("")), "arguments": fc.get("args").and_then(|v| serde_json::to_string(v).ok()).unwrap_or_else(|| "{}".to_string())}),
+                        );
+                        // 透传 Gemini 3 的 thought_signature → extra_content.google.thought_signature
+                        attach_thought_signature_to_tool_call(fc, &mut tc);
+                        tool_calls.push(Value::Object(tc));
                     }
                 }
             }
@@ -1060,5 +1117,92 @@ impl GoogleToOpenaiStreamConverter {
             }]
         });
         vec![format!("data: {}\n\n", serde_json::to_string(&chunk_out).unwrap())]
+    }
+}
+
+#[cfg(test)]
+mod thought_signature_tests {
+    use super::{google_response_to_openai, openai_to_google};
+    use serde_json::json;
+
+    /// openai→google 请求：tool_call 的 extra_content.google.thought_signature 透传成
+    /// functionCall 的 thought_signature（Gemini 3 function calling 缺了整轮 400）。
+    #[test]
+    fn openai_to_google_passes_through_thought_signature() {
+        let body = json!({
+            "model": "gemini-3",
+            "messages": [{
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "search", "arguments": "{}"},
+                    "extra_content": {"google": {"thought_signature": "sig123"}}
+                }]
+            }]
+        });
+        let out = openai_to_google(&body, "gemini-3");
+        let fc = &out["contents"][0]["parts"][0]["functionCall"];
+        assert_eq!(fc["thought_signature"], json!("sig123"));
+        assert_eq!(fc["name"], json!("search"));
+    }
+
+    /// 顶层 thought_signature（非 extra_content 形态）也收。
+    #[test]
+    fn openai_to_google_accepts_top_level_signature() {
+        let body = json!({
+            "model": "gemini-3",
+            "messages": [{
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "search", "arguments": "{}"},
+                    "thought_signature": "top-sig"
+                }]
+            }]
+        });
+        let out = openai_to_google(&body, "gemini-3");
+        assert_eq!(
+            out["contents"][0]["parts"][0]["functionCall"]["thought_signature"],
+            json!("top-sig")
+        );
+    }
+
+    /// google→openai 响应：functionCall 的 thought_signature 透传成 tool_call 的
+    /// extra_content.google.thought_signature。
+    #[test]
+    fn google_response_to_openai_passes_through_thought_signature() {
+        let resp = json!({
+            "candidates": [{
+                "finishReason": "STOP",
+                "content": {"parts": [{
+                    "functionCall": {"name": "search", "args": {}, "thought_signature": "sig456"}
+                }]}
+            }]
+        });
+        let out = google_response_to_openai(&resp, "gemini-3");
+        let tc = &out["choices"][0]["message"]["tool_calls"][0];
+        assert_eq!(tc["extra_content"]["google"]["thought_signature"], json!("sig456"));
+        assert_eq!(tc["function"]["name"], json!("search"));
+    }
+
+    /// 无签名字段时行为与改动前完全一致（不凭空造字段）。
+    #[test]
+    fn no_signature_field_is_unchanged() {
+        let body = json!({
+            "model": "gemini-3",
+            "messages": [{
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "search", "arguments": "{}"}
+                }]
+            }]
+        });
+        let out = openai_to_google(&body, "gemini-3");
+        let fc = &out["contents"][0]["parts"][0]["functionCall"];
+        assert!(fc.get("thought_signature").is_none(), "无签名时不该造字段：{fc}");
     }
 }

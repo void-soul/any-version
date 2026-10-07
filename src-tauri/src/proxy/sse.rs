@@ -84,6 +84,9 @@ pub fn aggregate_chat_chunks(
     let mut created: Option<i64> = None;
     let mut content = String::new();
     let mut reasoning = String::new();
+    // 内联 think 标签剥离：DeepSeek/MiniMax 把 reasoning 内联进 content 开头，
+    // 逐增量剥成 reasoning_content + content（抄 cc-switch #7741）。
+    let mut think_splitter = crate::proxy::inline_think::InlineThinkSplitter::default();
     let mut finish_reason = Value::Null;
     let mut usage: Option<Value> = None;
     let mut role = String::from("assistant");
@@ -132,7 +135,13 @@ pub fn aggregate_chat_chunks(
         }
         if let Some(delta) = first.get("delta") {
             if let Some(c) = delta.get("content").and_then(|c| c.as_str()) {
-                content.push_str(c);
+                let (think, text) = think_splitter.push(c);
+                if let Some(t) = think {
+                    reasoning.push_str(&t);
+                }
+                if let Some(x) = text {
+                    content.push_str(&x);
+                }
             }
             // 思维链：混元等模型单独给这个字段，不聚合客户端就看不到推理内容
             for key in ["reasoning_content", "reasoning"] {
@@ -162,6 +171,15 @@ pub fn aggregate_chat_chunks(
                 finish_reason = fr.clone();
             }
         }
+    }
+
+    // 冲刷内联 think 残留：未闭合的 think 块按思考、半截开标签按正文，保住已收到的载荷
+    let (think, text) = think_splitter.flush();
+    if let Some(t) = think {
+        reasoning.push_str(&t);
+    }
+    if let Some(x) = text {
+        content.push_str(&x);
     }
 
     let mut message = json!({ "role": role, "content": content });

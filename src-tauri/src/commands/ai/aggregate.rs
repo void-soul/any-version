@@ -1320,9 +1320,14 @@ async fn try_candidate(
                 }
                 crate::proxy::convert::convert_request(inbound, outbound, &b, model)
             };
-            // 与单工具代理同一套整流：出站前跑优化器 + 预防式整流。
-            // 此前聚合完全不走这两步，导致同一份配置在「代理」与「聚合」两条路径上
+            // 与单工具代理同一套整流：出站前跑角色归一化 + 优化器 + 预防式整流。
+            // 此前聚合完全不走这几步，导致同一份配置在「代理」与「聚合」两条路径上
             // 协议行为不一致（thinking 参数、图片降级、cache 断点全都只在一边生效）。
+            if outbound == "openai" {
+                crate::proxy::convert::normalize_openai_message_roles(&mut built);
+                crate::proxy::convert::collapse_system_messages_to_head(&mut built);
+                crate::proxy::convert::normalize_image_data_urls_for_model(&mut built, model);
+            }
             optimizers::apply_optimizers(&mut built, outbound, proxy_cfg);
             optimizers::apply_preventive_rectifiers(&mut built, outbound, proxy_cfg);
             built

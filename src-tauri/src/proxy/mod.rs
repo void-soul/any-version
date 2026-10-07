@@ -1,6 +1,7 @@
 pub mod convert;
 pub mod google;
 pub mod headers;
+pub mod inline_think;
 pub mod optimizers;
 pub mod responses;
 pub mod server;

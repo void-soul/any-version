@@ -995,6 +995,8 @@ async fn process_request(
     // 实际是角色不认。放在优化器之前，整流器看到的也是归一化后的角色。
     if outbound == "openai" {
         crate::proxy::convert::normalize_openai_message_roles(&mut out_body);
+        crate::proxy::convert::collapse_system_messages_to_head(&mut out_body);
+        crate::proxy::convert::normalize_image_data_urls_for_model(&mut out_body, &actual_model);
     }
 
     // ④ 优化器（P_out 形态）

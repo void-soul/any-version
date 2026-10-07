@@ -55,6 +55,128 @@ pub fn normalize_openai_message_roles(body: &mut Value) {
     }
 }
 
+/// 把 `messages` 里散落的 `system` 消息收拢到头部，合成一条；空内容的 system 直接丢弃。
+///
+/// 抄 CodexPlusPlus `protocol_proxy.rs::collapse_system_messages_to_head`：MiniMax 等上游
+/// 要求 system 必须**前置**（且只认一条），Codex 的 Responses 请求会把系统提示拆成多条
+/// `developer`（归一化后变 `system`）散在 input 里，不折叠就报 400 2013。
+/// 只在出站 OpenAI 时调用（与 [`normalize_openai_message_roles`] 同一条链路）。
+pub fn collapse_system_messages_to_head(body: &mut Value) {
+    use serde_json::json;
+
+    let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) else {
+        return;
+    };
+    // 没有 system 消息时零改动（避免无谓的整数组重排）。
+    if !messages
+        .iter()
+        .any(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+    {
+        return;
+    }
+
+    let mut chunks = Vec::new();
+    let mut rest = Vec::with_capacity(messages.len());
+    for msg in messages.drain(..) {
+        if msg.get("role").and_then(|r| r.as_str()) == Some("system") {
+            let text = system_message_text(msg.get("content"));
+            if !text.trim().is_empty() {
+                chunks.push(text);
+            }
+            continue;
+        }
+        rest.push(msg);
+    }
+
+    if !chunks.is_empty() {
+        rest.insert(
+            0,
+            json!({ "role": "system", "content": chunks.join("\n\n") }),
+        );
+    }
+    *messages = rest;
+}
+
+/// 取 system 消息的文本内容：字符串直接返回，数组取各 part 的 `text`，其余为空。
+fn system_message_text(content: Option<&Value>) -> String {
+    match content {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Array(parts)) => parts
+            .iter()
+            .filter_map(|p| p.get("text").and_then(|v| v.as_str()).or_else(|| p.as_str()))
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+        _ => String::new(),
+    }
+}
+
+/// 需要纯 base64 图片的上游模型（GLM / 智谱系）。
+///
+/// 这些上游只认 `image_url` 里的纯 base64，不认 `data:image/png;base64,` 前缀，收到就
+/// 400（issue #2031：GLM-5.3-Flash 的本地图片被拒）。标准 data URL 上游保持原样。
+fn upstream_needs_bare_base64(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    model.starts_with("glm-") || model.starts_with("zhipu") || model.contains("/glm-")
+}
+
+/// 就地剥掉 messages 里 `image_url` 的 data URL 前缀（仅对 GLM / 智谱系模型）。
+///
+/// 抄 CodexPlusPlus `protocol_proxy.rs::normalize_image_data_urls_for_model`。
+/// 只对 glm-* / zhipu 系剥离，标准 data URL 上游与远端 https 图片一律不动。
+pub fn normalize_image_data_urls_for_model(body: &mut Value, model: &str) {
+    if !upstream_needs_bare_base64(model) {
+        return;
+    }
+    let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) else {
+        return;
+    };
+    for message in messages.iter_mut() {
+        let Some(parts) = message.get_mut("content").and_then(|v| v.as_array_mut()) else {
+            continue;
+        };
+        for part in parts.iter_mut() {
+            let is_image = part
+                .get("type")
+                .and_then(|v| v.as_str())
+                .is_some_and(|t| t == "image_url" || t == "input_image");
+            if !is_image {
+                continue;
+            }
+            // `image_url` 可能是 `{"url": "…"}`，也可能是裸字符串。
+            let Some(url) = part
+                .get_mut("image_url")
+                .and_then(|value| {
+                    if value.is_object() {
+                        value.get_mut("url")
+                    } else {
+                        Some(value)
+                    }
+                })
+                .and_then(|v| v.as_str().map(str::to_string))
+            else {
+                continue;
+            };
+            let Some(bare) = strip_data_url_prefix(&url) else {
+                continue;
+            };
+            let target = part.get_mut("image_url").expect("checked above");
+            if target.is_object() {
+                target["url"] = Value::String(bare);
+            } else {
+                *target = Value::String(bare);
+            }
+        }
+    }
+}
+
+/// `data:image/png;base64,AAAA` → `AAAA`；不是 data URL 返回 `None`。
+fn strip_data_url_prefix(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("data:image/")?;
+    let (_, payload) = rest.split_once(";base64,")?;
+    Some(payload.to_string())
+}
+
 /// 标识非聊天模型的 tag（图像/视频生成，客户端拿去聊天会被上游拒）
 pub const NON_CHAT_MODEL_TAGS: &[&str] = &["text-to-image", "image-to-image", "text-to-video"];
 
@@ -340,6 +462,138 @@ mod developer_role_tests {
             "出站体里不该再有 developer：{roles:?}"
         );
         assert_eq!(roles, vec!["system", "user"]);
+    }
+}
+
+#[cfg(test)]
+mod system_collapse_tests {
+    use super::collapse_system_messages_to_head;
+    use serde_json::json;
+
+    /// 多条散落的 system（字符串 content）收拢到头部合成一条。
+    #[test]
+    fn folds_multiple_system_messages_to_head() {
+        let mut body = json!({"messages": [
+            {"role": "user", "content": "q1"},
+            {"role": "system", "content": "sys-a"},
+            {"role": "assistant", "content": "a"},
+            {"role": "system", "content": "sys-b"}
+        ]});
+        collapse_system_messages_to_head(&mut body);
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs[0]["role"], json!("system"));
+        assert_eq!(msgs[0]["content"], json!("sys-a\n\nsys-b"));
+        let roles: Vec<&str> = msgs.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        assert_eq!(roles, vec!["system", "user", "assistant"]);
+    }
+
+    /// 空内容的 system 直接丢弃，不合成空 system。
+    #[test]
+    fn drops_empty_system_messages() {
+        let mut body = json!({"messages": [
+            {"role": "system", "content": ""},
+            {"role": "system", "content": "   "},
+            {"role": "user", "content": "q"}
+        ]});
+        collapse_system_messages_to_head(&mut body);
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 1, "只剩 user 消息");
+        assert_eq!(msgs[0]["role"], json!("user"));
+    }
+
+    /// content 为 parts 数组的 system 取各 part 的 text 拼接。
+    #[test]
+    fn reads_parts_array_content() {
+        let mut body = json!({"messages": [
+            {"role": "system", "content": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]},
+            {"role": "user", "content": "q"}
+        ]});
+        collapse_system_messages_to_head(&mut body);
+        assert_eq!(body["messages"][0]["content"], json!("a\n\nb"));
+    }
+
+    /// 没有 system 时零改动。
+    #[test]
+    fn untouched_without_system() {
+        let body = json!({"messages": [
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "content": "a"}
+        ]});
+        let mut b = body.clone();
+        collapse_system_messages_to_head(&mut b);
+        assert_eq!(b, body);
+    }
+}
+
+#[cfg(test)]
+mod glm_image_tests {
+    use super::{normalize_image_data_urls_for_model, strip_data_url_prefix};
+    use serde_json::json;
+
+    /// GLM 系剥前缀；非 GLM 保留；远端 https 图片不动。
+    #[test]
+    fn strips_data_url_prefix_only_for_glm_models() {
+        let mut body = json!({"messages": [
+            {"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+                {"type": "text", "text": "看这张图"}
+            ]}
+        ]});
+        normalize_image_data_urls_for_model(&mut body, "glm-5.3-flash");
+        assert_eq!(
+            body["messages"][0]["content"][0]["image_url"]["url"],
+            json!("AAAA")
+        );
+
+        // 非 GLM 模型保留前缀
+        let mut b2 = body.clone();
+        normalize_image_data_urls_for_model(&mut b2, "gpt-5.5");
+        assert_eq!(
+            b2["messages"][0]["content"][0]["image_url"]["url"],
+            json!("AAAA"),
+            "注意：上面 body 已被改成纯 base64，这里只是验证非 GLM 不再改动"
+        );
+
+        // 远端 https 图片不被 GLM 剥
+        let mut remote = json!({"messages": [
+            {"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": "https://x.com/a.png"}}
+            ]}
+        ]});
+        normalize_image_data_urls_for_model(&mut remote, "glm-5.3-flash");
+        assert_eq!(
+            remote["messages"][0]["content"][0]["image_url"]["url"],
+            json!("https://x.com/a.png")
+        );
+    }
+
+    /// 前缀剥离的纯函数：data URL → 纯 base64；非 data URL → None。
+    #[test]
+    fn strip_data_url_prefix_basics() {
+        assert_eq!(
+            strip_data_url_prefix("data:image/png;base64,AAAA"),
+            Some("AAAA".to_string())
+        );
+        assert_eq!(strip_data_url_prefix("https://x.com/a.png"), None);
+        assert_eq!(strip_data_url_prefix("AAAA"), None);
+    }
+
+    /// zhipu / /glm- 前缀也命中。
+    #[test]
+    fn zhipu_and_slash_glm_hit() {
+        for model in ["zhipu-glm-4", "openai/glm-5", "GLM-5.3"] {
+            let mut body = json!({"messages": [
+                {"role": "user", "content": [
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,BBBB"}}
+                ]}
+            ]});
+            normalize_image_data_urls_for_model(&mut body, model);
+            assert_eq!(
+                body["messages"][0]["content"][0]["image_url"]["url"],
+                json!("BBBB"),
+                "model={model} 应剥前缀"
+            );
+        }
     }
 }
 

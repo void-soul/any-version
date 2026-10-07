@@ -390,10 +390,21 @@ pub fn openai_response_to_anthropic(openai_resp: &Value, request_model: &str) ->
         }
     }
 
-    // content → text block
+    // content → text block（顺带剥离内联 think 标签成 thinking block）
     if let Some(text) = message.and_then(|m| m.get("content").and_then(|v| v.as_str())) {
         if !text.is_empty() {
-            content.push(json!({"type": "text", "text": text}));
+            if let Some((thinking, answer)) =
+                crate::proxy::inline_think::split_leading_think_block(text)
+            {
+                if !thinking.is_empty() {
+                    content.push(json!({"type": "thinking", "thinking": thinking}));
+                }
+                if !answer.is_empty() {
+                    content.push(json!({"type": "text", "text": answer}));
+                }
+            } else {
+                content.push(json!({"type": "text", "text": text}));
+            }
         }
     }
 
