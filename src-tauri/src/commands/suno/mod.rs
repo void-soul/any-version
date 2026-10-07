@@ -37,6 +37,9 @@ pub struct DownloadRef {
     pub id: String,
     pub title: String,
     pub audio_url: String,
+    /// 封面直链（可选，有则下载并嵌入 mp3 ID3v2 封面）
+    #[serde(default)]
+    pub image_url: Option<String>,
 }
 
 /// 下载报告
@@ -44,6 +47,8 @@ pub struct DownloadRef {
 #[serde(rename_all = "camelCase")]
 pub struct DownloadReport {
     pub succeeded: usize,
+    /// 成功下载的歌曲 id（前端据此立即标记「已下载」，无需刷新页面）
+    pub succeeded_ids: Vec<String>,
     pub failed: Vec<String>,
 }
 
@@ -298,12 +303,14 @@ pub async fn suno_download_songs(
 
     let total = songs.len();
     let mut succeeded = 0usize;
+    let mut succeeded_ids: Vec<String> = Vec::new();
     let mut failed: Vec<String> = Vec::new();
 
     for (i, song) in songs.iter().enumerate() {
         match download_one(&app, song, &target, i + 1, total).await {
             Ok(()) => {
                 succeeded += 1;
+                succeeded_ids.push(song.id.clone());
                 mark_downloaded(&song.id);
             }
             Err(e) => {
@@ -312,7 +319,7 @@ pub async fn suno_download_songs(
             }
         }
     }
-    Ok(DownloadReport { succeeded, failed })
+    Ok(DownloadReport { succeeded, succeeded_ids, failed })
 }
 
 /// 下载一首：mp4 落临时文件 → ffmpeg 提音轨转 mp3 → 清理临时文件。
@@ -324,6 +331,7 @@ async fn download_one(
     total: usize,
 ) -> Result<(), String> {
     let tmp = std::env::temp_dir().join(format!("suno_{}.mp4", song.id));
+    let cover_tmp = std::env::temp_dir().join(format!("suno_{}_cover", song.id));
 
     let _ = app.emit(
         "suno-download-progress",
@@ -336,6 +344,15 @@ async fn download_one(
     );
     download_file(&song.audio_url, &tmp).await?;
 
+    // 封面可选：下载失败不阻断音频下载，只是不带封面
+    let cover = match &song.image_url {
+        Some(url) if !url.is_empty() => match download_file(url, &cover_tmp).await {
+            Ok(()) if cover_tmp.is_file() => Some(cover_tmp.as_path()),
+            _ => None,
+        },
+        _ => None,
+    };
+
     let _ = app.emit(
         "suno-download-progress",
         DownloadProgress {
@@ -347,8 +364,9 @@ async fn download_one(
     );
     let mut out = dir.join(format!("{}.mp3", sanitize_filename(&song.title)));
     out = unique_path(out);
-    let result = transcode_to_mp3(&tmp, &out);
+    let result = transcode_to_mp3(&tmp, cover, &out);
     let _ = std::fs::remove_file(&tmp);
+    let _ = std::fs::remove_file(&cover_tmp);
     result
 }
 
@@ -382,25 +400,47 @@ async fn download_file(url: &str, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// 用内置 ffmpeg 从 mp4 提音轨转成 320k mp3。
-fn transcode_to_mp3(input: &Path, output: &Path) -> Result<(), String> {
+/// 用内置 ffmpeg 从 mp4 提音轨转成 320k mp3；`cover` 非空时嵌入 ID3v2 封面。
+fn transcode_to_mp3(input: &Path, cover: Option<&Path>, output: &Path) -> Result<(), String> {
     let ffmpeg = utils::bin_tool_path("ffmpeg")
         .unwrap_or_else(|| utils::get_bin_dir().join("ffmpeg").join("ffmpeg.exe"));
     if !ffmpeg.is_file() {
         return Err(format!("未找到内置 ffmpeg（{}），请在设置的运行组件里安装", ffmpeg.display()));
     }
-    eprintln!("[Suno] 转码中: {} -> {}", input.display(), output.display());
-    // `-vn` 去掉视频轨（源是 mp4，内嵌视频 + AAC 音频，只提音频转 mp3）
-    let status = Command::new(&ffmpeg)
-        .arg("-y")
-        .arg("-i")
-        .arg(input)
-        .arg("-vn")
-        .arg("-codec:a")
+    eprintln!("[Suno] 转码中: {} -> {}（封面：{}）", input.display(), output.display(), cover.map(|c| c.display().to_string()).unwrap_or_else(|| "无".to_string()));
+
+    let mut cmd = Command::new(&ffmpeg);
+    // 禁止弹出命令提示符黑框（GUI 应用直接 spawn 控制台程序默认会建一个新窗口）
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+
+    cmd.arg("-y").arg("-i").arg(input);
+    if let Some(cover) = cover {
+        cmd.arg("-i").arg(cover);
+    }
+    // 音频轨固定来自第一个输入（mp4）
+    cmd.arg("-map").arg("0:a");
+    if cover.is_some() {
+        // 封面作为第二个输入的视频轨，原格式（jpeg/png）直接搬进 ID3v2 APIC
+        cmd.arg("-map").arg("1:v")
+            .arg("-c:v").arg("copy")
+            .arg("-id3v2_version").arg("3")
+            .arg("-metadata:s:v").arg("title=Album cover")
+            .arg("-metadata:s:v").arg("comment=Cover (front)");
+    } else {
+        // `-vn` 去掉视频轨（源是 mp4，内嵌视频 + AAC 音频，只提音频转 mp3）
+        cmd.arg("-vn");
+    }
+    cmd.arg("-codec:a")
         .arg("libmp3lame")
         .arg("-b:a")
         .arg("320k")
-        .arg(output)
+        .arg(output);
+
+    let status = cmd
         .status()
         .map_err(|e| format!("启动 ffmpeg 失败: {e}"))?;
     if !status.success() {

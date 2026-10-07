@@ -27,6 +27,7 @@ interface SunoSong {
 
 interface DownloadReport {
   succeeded: number;
+  succeededIds: string[];
   failed: string[];
 }
 
@@ -157,7 +158,7 @@ export default function SunoPanel() {
 
     const refs = songs
       .filter((s) => selected.has(s.id))
-      .map((s) => ({ id: s.id, title: s.title, audioUrl: s.audioUrl }));
+      .map((s) => ({ id: s.id, title: s.title, audioUrl: s.audioUrl, imageUrl: s.imageUrl }));
 
     setDownloading(true);
     setProgress({ current: 0, total: refs.length, title: "", stage: "download" });
@@ -167,6 +168,13 @@ export default function SunoPanel() {
         songs: refs,
         dir,
       });
+      // 立即把成功下载的歌曲标记为「已下载」，无需刷新页面
+      if (report.succeededIds.length > 0) {
+        const okIds = new Set(report.succeededIds);
+        setSongs((prev) =>
+          prev.map((s) => (okIds.has(s.id) ? { ...s, downloaded: true } : s)),
+        );
+      }
       if (report.failed.length === 0) {
         showMsg(true, t("suno.done", { count: report.succeeded }));
       } else {
