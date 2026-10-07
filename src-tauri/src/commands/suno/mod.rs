@@ -563,7 +563,15 @@ fn sanitize_filename(title: &str) -> String {
     }
 }
 
-/// 目标文件已存在时，自动加 `(1)`、`(2)`… 后缀，避免覆盖。
+/// 目标文件已存在时，自动加 `V2`、`V3`… 序号后缀，避免覆盖。
+///
+/// 用 `V2` 而不是资源管理器默认的 `xxx (1)`：曲库里同一首歌常有多个版本（重生成 remix），
+/// `(1)` 容易被当成文件名的一部分，`V2` 一眼看出是「同一首的第 2 版」。
+///
+/// 命中的序号从 2 起（原件本身算第 1 版），并**跳过已占用的号**：
+/// 删掉 `V2` 后再下一次同名会补回 `V2`，不会跳到 `V4` 留空洞。
+/// 原本就以 `V<数字>` 结尾的名字（`DemoV2`）不会被误当成已编号，
+/// 因为编号是紧贴扩展名前追加的：`DemoV2.mp3` → `DemoV2V2.mp3`。
 fn unique_path(path: PathBuf) -> PathBuf {
     if !path.exists() {
         return path;
@@ -577,12 +585,12 @@ fn unique_path(path: PathBuf) -> PathBuf {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
     let parent = path.parent().unwrap_or(Path::new(""));
-    let mut n = 1usize;
+    let mut n = 2usize;
     loop {
         let candidate = if ext.is_empty() {
-            parent.join(format!("{stem} ({n})"))
+            parent.join(format!("{stem}V{n}"))
         } else {
-            parent.join(format!("{stem} ({n}).{ext}"))
+            parent.join(format!("{stem}V{n}.{ext}"))
         };
         if !candidate.exists() {
             return candidate;
@@ -1024,14 +1032,51 @@ mod tests {
     }
 
     #[test]
-    fn unique_path_adds_suffix() {
-        let dir = std::env::temp_dir().join("suno_unique_test");
+    /// 重名时自动加 `V2`/`V3`… 后缀（不是资源管理器默认的 ` (1)`）。
+    #[test]
+    fn unique_path_adds_version_suffix() {
+        // 目录名带 pid + 纳秒时间戳：测试二进制可能并行/重复运行同一用例，
+        // 固定目录名会让彼此踩文件（表现为随机的 remove_file 失败）。
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!(
+            "suno_unique_test_{}_{}",
+            std::process::id(),
+            stamp
+        ));
         std::fs::create_dir_all(&dir).unwrap();
-        let base = dir.join("x.mp3");
+        let base = dir.join("我的歌.mp3");
         std::fs::write(&base, b"x").unwrap();
-        let p = unique_path(base.clone());
-        assert_ne!(p, base);
-        assert!(p.to_string_lossy().contains("(1)"));
+
+        // 原件 → V2
+        let v2 = unique_path(base.clone());
+        assert_eq!(v2.file_name().unwrap(), "我的歌V2.mp3");
+
+        // V2 也占用了 → V3
+        std::fs::write(&v2, b"x").unwrap();
+        let v3 = unique_path(base.clone());
+        assert_eq!(v3.file_name().unwrap(), "我的歌V3.mp3");
+
+        // 删掉 V2 后应补回 V2，不跳号留空洞
+        std::fs::remove_file(&v2).unwrap();
+        assert_eq!(unique_path(base.clone()).file_name().unwrap(), "我的歌V2.mp3");
+
+        // 不存在的路径原样返回（不加工）
+        let fresh = dir.join("新歌.mp3");
+        assert_eq!(unique_path(fresh.clone()), fresh);
+
+        // 本身以 V2 结尾的名字不被误判：`DemoV2` → `DemoV2V2`
+        let demo = dir.join("DemoV2.mp3");
+        std::fs::write(&demo, b"x").unwrap();
+        assert_eq!(unique_path(demo).file_name().unwrap(), "DemoV2V2.mp3");
+
+        // 无扩展名时也带序号
+        let noext = dir.join("裸文件");
+        std::fs::write(&noext, b"x").unwrap();
+        assert_eq!(unique_path(noext).file_name().unwrap(), "裸文件V2");
+
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
