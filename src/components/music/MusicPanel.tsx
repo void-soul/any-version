@@ -33,6 +33,7 @@ import {
   Trash2,
   Volume2,
   VolumeX,
+  X,
 } from "lucide-react";
 
 import { SharedButton } from "../shared/Button";
@@ -94,6 +95,8 @@ export default function MusicPanel() {
   const [view, setView] = useState<MusicView>("library");
   const [library, setLibrary] = useState<MusicLibrary>({ folders: [], tracks: [] });
   const [search, setSearch] = useState("");
+  /** 文件夹筛选：null = 全部；否则只显示该导入目录下的曲目（并同步收窄播放队列） */
+  const [folderFilter, setFolderFilter] = useState<string | null>(null);
   const [player, setPlayer] = useState<PlayerState | null>(null);
   const [settings, setSettings] = useState<MusicSettings | null>(null);
   const [presets, setPresets] = useState<EqPresetInfo[]>([]);
@@ -115,23 +118,47 @@ export default function MusicPanel() {
   const pathIndexRef = useRef<Map<string, number>>(new Map());
   const saveTimerRef = useRef<number | null>(null);
 
-  // —— 过滤后的曲目列表（搜索 + 保持原始索引，播放索引以完整列表为准）——
+  // —— 过滤后的曲目列表（文件夹筛选 + 搜索 + 保持原始索引，播放索引以完整列表为准）——
+  /**
+   * `folderFilter` 非空 = 只看该导入目录下的曲目。
+   *
+   * 它同时管两件事（这是本需求的关键）：列表**显示**范围，以及交给后端的
+   * **播放队列**范围 —— 点文件夹名筛选后，播放列表里就只有这个文件夹的歌。
+   * 只筛显示、不筛队列的话，点「下一首」会跳到别的文件夹去，与界面所见不一致。
+   */
   const filteredTracks = useMemo(() => {
     const keyword = search.trim().toLowerCase();
-    const items = library.tracks.map((track, index) => ({ track, index }));
-    if (!keyword) return items;
-    return items.filter(({ track }) =>
-      [track.title, track.artist, track.album, track.path]
-        .join(" ")
-        .toLowerCase()
-        .includes(keyword)
-    );
-  }, [library.tracks, search]);
+    const folder = folderFilter;
+    return library.tracks
+      .map((track, index) => ({ track, index }))
+      .filter(({ track }) => (folder ? track.folder === folder : true))
+      .filter(({ track }) =>
+        keyword
+          ? [track.title, track.artist, track.album, track.path]
+              .join(" ")
+              .toLowerCase()
+              .includes(keyword)
+          : true,
+      );
+  }, [library.tracks, search, folderFilter]);
+
+  /** 筛选后的路径序列：既是列表可见范围，也是后端队列 */
+  const visiblePaths = useMemo(
+    () => filteredTracks.map(({ track }) => track.path),
+    [filteredTracks],
+  );
 
   useEffect(() => {
     tracksRef.current = library.tracks;
     pathIndexRef.current = new Map(library.tracks.map((track, index) => [track.path, index]));
   }, [library.tracks]);
+
+  // 被筛掉的目录若正好是当前筛选源，先解除筛选，否则界面会停在空列表上
+  useEffect(() => {
+    if (folderFilter && !library.folders.includes(folderFilter)) {
+      setFolderFilter(null);
+    }
+  }, [library.folders, folderFilter]);
 
   // —— 初始化：曲库 / 设置 / 预设 / 播放状态 ——
   useEffect(() => {
@@ -149,14 +176,17 @@ export default function MusicPanel() {
       .catch(() => {});
   }, [t]);
 
-  // —— 队列同步：曲库顺序或播放模式变化时交给后端（后端据此自动续播）——
+  // —— 队列同步：可见曲目顺序或播放模式变化时交给后端（后端据此自动续播）——
+  //
+  // 用 `visiblePaths`（含文件夹筛选）而非全曲库：筛选到某个文件夹后，
+  // 播放列表应当只含这个文件夹的歌，「下一首」才不会跳到别的文件夹。
   useEffect(() => {
-    if (!settings || library.tracks.length === 0) return;
+    if (!settings || visiblePaths.length === 0) return;
     invoke("music_set_queue", {
-      paths: library.tracks.map((track) => track.path),
+      paths: visiblePaths,
       mode: settings.play_mode,
     }).catch(() => {});
-  }, [library.tracks, settings?.play_mode]);
+  }, [visiblePaths, settings?.play_mode]);
 
   /** 把后端状态同步到界面；后端可能自行切歌（含托盘模式），因此要同步选中行 */
   const syncState = useCallback((snapshot: PlayerState) => {
@@ -529,24 +559,53 @@ export default function MusicPanel() {
       {view === "library" && library.folders.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap px-3 py-2 border-b border-white/5 flex-shrink-0">
           <ListMusic className="w-3 h-3 text-slate-500 flex-shrink-0" />
-          {library.folders.map((folder) => (
-            <span
-              key={folder}
-              title={folder}
-              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-tiny text-slate-300 max-w-[220px]"
-            >
-              <span className="truncate">{folderName(folder)}</span>
-              <button
-                onClick={() => removeFolder(folder)}
-                className="text-slate-500 hover:text-rose-400 cursor-pointer flex-shrink-0"
-                title={t("music.removeFolder")}
+          {/*
+            文件夹名本身是筛选开关：点一下只看这个文件夹的文件（播放队列同步收窄），
+            再点一下取消。选中态用 accent 描边，和旁边的「✕ 删除」区分开——
+            一个是切视图，一个是移出曲库，按钮挨在一起很容易误点。
+          */}
+          {library.folders.map((folder) => {
+            const active = folderFilter === folder;
+            return (
+              <span
+                key={folder}
+                title={active ? t("music.filterAllHint") : `${t("music.filterFolder")}: ${folderName(folder)}`}
+                className={`group inline-flex items-center gap-1 pl-1.5 pr-0.5 py-0.5 rounded border max-w-[220px] cursor-pointer transition-colors text-tiny ${
+                  active
+                    ? "border-[var(--module-accent)]/60 bg-[var(--module-accent)]/15 text-white"
+                    : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10"
+                }`}
               >
-                <Trash2 className="w-2.5 h-2.5" />
-              </button>
-            </span>
-          ))}
+                <span
+                  className="truncate"
+                  onClick={() => setFolderFilter(active ? null : folder)}
+                >
+                  {folderName(folder)}
+                </span>
+                {active && (
+                  <X
+                    className="w-2.5 h-2.5 flex-shrink-0 text-[var(--module-accent)] cursor-pointer"
+                    onClick={() => setFolderFilter(null)}
+                  />
+                )}
+                <button
+                  onClick={() => removeFolder(folder)}
+                  className="text-slate-500 hover:text-rose-400 cursor-pointer flex-shrink-0"
+                  title={t("music.removeFolder")}
+                >
+                  <Trash2 className="w-2.5 h-2.5" />
+                </button>
+              </span>
+            );
+          })}
           <span className="text-tiny text-slate-500 ml-auto">
-            {t("music.totalTracks", { count: library.tracks.length })}
+            {/* 筛选时同时给出「当前可见 / 曲库总数」，否则筛选后数字不变会让人以为没生效 */}
+            {folderFilter
+              ? t("music.filteredTracks", {
+                  shown: filteredTracks.length,
+                  total: library.tracks.length,
+                })
+              : t("music.totalTracks", { count: library.tracks.length })}
           </span>
         </div>
       )}
