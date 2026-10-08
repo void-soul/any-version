@@ -1309,7 +1309,8 @@ export default function FavoritesPanel() {
               <div
                 key={key}
                 ref={vlist.measureRef(key)}
-                className="absolute left-0 right-0 top-0 px-3 py-2 hover:bg-white/5 group border-b border-white/5"
+                // 行内边距走密度 token（行高由 useVirtualList 实测，改密度不需要改测量逻辑）
+                className="absolute left-0 right-0 top-0 px-3 py-[var(--density-py)] hover:bg-white/5 group border-b border-white/5"
                 style={{ transform: `translateY(${vlist.offsets[index]}px)` }}
               >
                 <div className="flex items-start gap-2">

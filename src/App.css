@@ -23,6 +23,18 @@
   --dur-base: 150ms;
   --dur-slow: 250ms;
   --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* 列表密度 token（唯一出处）：行的纵向内边距只由这一个变量决定，
+     紧凑 / 舒适两档靠 <html data-density> 切换，不再散落各模块的 py-* 硬编码。
+     ⚠ 坑：`.ui-row` / `.ui-btn` 这些通用层**本身不带 padding**——纵向间距一直由
+     调用处的 `py-*` 给，所以密度只能改「调用处显式引用了 var(--density-py) 的行」；
+     绝不能给 `.ui-row` 直接加 padding，那会和外部 py-* 叠加，撑坏现有布局。 */
+  --density-py: 0.5rem;   /* 舒适（默认）：行高约 32px */
+}
+
+/* 紧凑：行高约 24px。先只在音乐 / 收藏 / 项目三处试点，手感确认后再铺开。 */
+:root[data-density="compact"] {
+  --density-py: 0.25rem;
 }
 
 /* 皮肤语义 token：统一应用层明暗皮肤。

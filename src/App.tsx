@@ -137,6 +137,7 @@ export default function App() {
     disabledModules: string[];
     backgroundTexture: string;
     motionPreference: string;
+    density: string;
   }>({
     moduleThemeColors: {},
     globalFont: "",
@@ -146,6 +147,7 @@ export default function App() {
     disabledModules: [],
     backgroundTexture: "",
     motionPreference: "",
+    density: "",
   });
 
   // 懒挂载：仅渲染至少被访问过一次的页面，避免启动时全部组件同时初始化
@@ -189,6 +191,7 @@ export default function App() {
           disabledModules: string[];
           backgroundTexture: string;
           motionPreference: string;
+          density: string;
         }>("get_appearance_config");
         setAppearance(ap);
       } catch (e) {
@@ -230,6 +233,7 @@ export default function App() {
             disabledModules: string[];
             backgroundTexture: string;
             motionPreference: string;
+            density: string;
           }>("get_appearance_config");
           setAppearance(ap);
         } catch (e) {
@@ -349,6 +353,17 @@ export default function App() {
       root.classList.remove("motion-always");
     }
   }, [appearance.motionPreference]);
+
+  // 列表密度：在 <html> 上打 data-density，让 App.css 的 --density-py 覆盖生效
+  // （同动效偏好一样挂 documentElement：弹窗 / Toast 是 portal 到 body 的）。
+  useEffect(() => {
+    const root = document.documentElement;
+    if (appearance.density === "compact") {
+      root.setAttribute("data-density", "compact");
+    } else {
+      root.setAttribute("data-density", "comfortable");
+    }
+  }, [appearance.density]);
 
   // 计算模块布局：顶栏模块 / 更多模块 / 全部启用模块。
   const { toolbarModules, moreModules, allEnabled } = useMemo(

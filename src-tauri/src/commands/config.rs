@@ -173,6 +173,10 @@ pub struct Config {
     /// 头像辉光闪烁等自家动效就全停了 —— 这里给一个不听系统的出口。
     #[serde(default)]
     pub motion_preference: String,
+    /// 列表密度：`"compact"` = 紧凑（行内边距收窄）；其余（含空）= 舒适（默认）。
+    /// 只影响 `--density-py` 这一个 CSS 变量，命中范围见 App.css 的 `data-density` 规则。
+    #[serde(default)]
+    pub density: String,
 }
 
 // ─── 落盘形态：config.json 只存数据路径，其余选项存数据目录下的 settings.json ───
@@ -228,6 +232,8 @@ struct SettingsFile {
     pub language: String,
     #[serde(default)]
     pub motion_preference: String,
+    #[serde(default)]
+    pub density: String,
 }
 
 /// 业务选项文件：**跟随数据目录**（它是数据，不是入口配置；config.json 才是入口）。
@@ -280,6 +286,7 @@ fn split_config(config: &Config) -> (ConfigPathsFile, SettingsFile) {
             background_texture: config.background_texture.clone(),
             language: config.language.clone(),
             motion_preference: config.motion_preference.clone(),
+            density: config.density.clone(),
         },
     )
 }
@@ -318,6 +325,7 @@ fn merge_config(paths: ConfigPathsFile, settings: SettingsFile) -> Config {
         background_texture: settings.background_texture,
         language: settings.language,
         motion_preference: settings.motion_preference,
+        density: settings.density,
     }
 }
 
@@ -518,6 +526,8 @@ fn default_config() -> Config {
         language: String::new(),
         // 空 / 非 "always" 都按「跟随系统」处理
         motion_preference: String::new(),
+        // 空 / 非 "compact" 都按「舒适」处理
+        density: String::new(),
     }
 }
 
@@ -1456,6 +1466,7 @@ pub fn get_appearance_config() -> AppearanceConfig {
         background_texture: config.background_texture,
         language: config.language,
         motion_preference: config.motion_preference,
+        density: config.density,
     }
 }
 
@@ -1655,6 +1666,18 @@ mod tests {
         assert_eq!(normalize_motion_preference("always-on"), "");
     }
 
+    /// 密度只有 `compact` 一个「紧凑」值，其余一律按「舒适」，
+    /// 避免后端存进奇怪的值后前端 `data-density` 判断不出来。
+    #[test]
+    fn density_only_compact_tightens() {
+        assert_eq!(normalize_density("compact"), "compact");
+        assert_eq!(normalize_density("Compact"), "compact");
+        assert_eq!(normalize_density("  compact  "), "compact");
+        assert_eq!(normalize_density(""), "");
+        assert_eq!(normalize_density("comfortable"), "");
+        assert_eq!(normalize_density("ultra-compact"), "");
+    }
+
     /// 缺省字段的旧 settings.json 也要能读（全 default，不能因为缺字段整份解析失败）。
     #[test]
     fn settings_file_tolerates_missing_fields() {
@@ -1663,6 +1686,7 @@ mod tests {
         assert!(settings.rss_sources.is_empty());
         assert!(settings.tray_menu.enabled);
         assert_eq!(settings.language, "");
+        assert_eq!(settings.density, "");
     }
 }
 
@@ -1773,6 +1797,8 @@ pub struct AppearanceConfig {
     pub language: String,
     /// 动效偏好：`"always"` = 无视系统「减少动效」；其余（含空）= 跟随系统。
     pub motion_preference: String,
+    /// 列表密度：`"compact"` = 紧凑；其余（含空）= 舒适。
+    pub density: String,
 }
 
 /// 设置动效偏好（`always` = 始终开启动效；其它值 = 跟随系统）。
@@ -1791,6 +1817,26 @@ pub fn set_motion_preference(preference: String) -> Result<(), String> {
 fn normalize_motion_preference(preference: &str) -> String {
     if preference.trim().eq_ignore_ascii_case("always") {
         "always".to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// 设置列表密度（`compact` = 紧凑；其它值 = 舒适）。
+///
+/// 只存一个开关值、具体像素交给前端 CSS 变量（`--density-py`）决定：
+/// 密度是纯视觉手感，后端不该知道 8px / 4px 这种数。
+#[tauri::command]
+pub fn set_density(density: String) -> Result<(), String> {
+    let mut config = load_config();
+    config.density = normalize_density(&density);
+    save_config(&config)
+}
+
+/// 归一化密度：只有 `compact` 是紧凑，其余（空 / `comfortable` / 未知值）都回落到舒适。
+fn normalize_density(density: &str) -> String {
+    if density.trim().eq_ignore_ascii_case("compact") {
+        "compact".to_string()
     } else {
         String::new()
     }

@@ -360,6 +360,7 @@ export default function GlobalSettings() {
     backgroundTexture: string;
     language: string;
     motionPreference: string;
+    density: string;
   }>({
     moduleThemeColors: {},
     globalFont: "",
@@ -370,6 +371,7 @@ export default function GlobalSettings() {
     backgroundTexture: "",
     language: "",
     motionPreference: "",
+    density: "",
   });
   const [importingFont, setImportingFont] = useState(false);
   const [systemFonts, setSystemFonts] = useState<string[]>([]);
@@ -415,6 +417,7 @@ export default function GlobalSettings() {
         backgroundTexture: string;
         language: string;
         motionPreference: string;
+        density: string;
       }>("get_appearance_config");
       setAppearance(ap);
     } catch (e) {
@@ -542,6 +545,19 @@ export default function GlobalSettings() {
       emit("appearance-updated");
     } catch (e) {
       console.error("保存动效偏好失败", e);
+    }
+  };
+
+  // 列表密度：紧凑（行更高，一屏更多）/ 舒适（默认）。
+  // 后端只存 "compact" 一个开关值，具体像素由 App.css 的 --density-py 决定
+  // —— 密度是纯视觉手感，不该让后端知道 8px / 4px 这种数。
+  const handleSetDensity = async (value: string) => {
+    setAppearance({ ...appearance, density: value });
+    try {
+      await invoke("set_density", { density: value });
+      emit("appearance-updated");
+    } catch (e) {
+      console.error("保存列表密度失败", e);
     }
   };
 
@@ -1559,6 +1575,33 @@ export default function GlobalSettings() {
                 <button
                   key={opt.value || "system"}
                   onClick={() => handleSetMotionPreference(opt.value)}
+                  className={`px-4 py-1.5 rounded-ctl text-caption font-semibold transition cursor-pointer ${
+                    active
+                      ? "bg-[var(--module-accent)] text-white"
+                      : "bg-white/5 text-slate-300 hover:bg-white/10 border border-white/10"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 1.8 列表密度（试点：音乐 / 收藏 / 项目） */}
+        <div className="pt-3 border-t border-white/5 space-y-2.5">
+          <p className="text-caption font-medium text-slate-200">{t("settings.density")}</p>
+          <p className="text-micro text-slate-500">{t("settings.densityHint")}</p>
+          <div className="flex items-center gap-2">
+            {[
+              { value: "", label: t("settings.densityComfortable") },
+              { value: "compact", label: t("settings.densityCompact") },
+            ].map((opt) => {
+              const active = (appearance.density || "") === opt.value;
+              return (
+                <button
+                  key={opt.value || "comfortable"}
+                  onClick={() => handleSetDensity(opt.value)}
                   className={`px-4 py-1.5 rounded-ctl text-caption font-semibold transition cursor-pointer ${
                     active
                       ? "bg-[var(--module-accent)] text-white"

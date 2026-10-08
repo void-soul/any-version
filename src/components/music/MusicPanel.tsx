@@ -662,17 +662,18 @@ export default function MusicPanel() {
               ))}
             </colgroup>
             <thead className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur">
+              {/* 行内边距走密度 token（表头与数据行必须同源，否则紧凑模式下会错位） */}
               <tr className="text-slate-500">
-                <th className="py-2 text-center font-medium border-b border-white/5">
+                <th className="py-[var(--density-py)] text-center font-medium border-b border-white/5">
                   {t("music.thIndex")}
                 </th>
-                <th className="py-2 font-medium border-b border-white/5">{t("music.thTitle")}</th>
-                <th className="py-2 font-medium border-b border-white/5">{t("music.thArtist")}</th>
-                <th className="py-2 font-medium border-b border-white/5">{t("music.thAlbum")}</th>
-                <th className="py-2 text-right font-medium border-b border-white/5">
+                <th className="py-[var(--density-py)] font-medium border-b border-white/5">{t("music.thTitle")}</th>
+                <th className="py-[var(--density-py)] font-medium border-b border-white/5">{t("music.thArtist")}</th>
+                <th className="py-[var(--density-py)] font-medium border-b border-white/5">{t("music.thAlbum")}</th>
+                <th className="py-[var(--density-py)] text-right font-medium border-b border-white/5">
                   {t("music.thDuration")}
                 </th>
-                <th className="py-2 text-center font-medium border-b border-white/5">
+                <th className="py-[var(--density-py)] text-center font-medium border-b border-white/5">
                   {t("music.thActions")}
                 </th>
               </tr>
@@ -690,29 +691,29 @@ export default function MusicPanel() {
                       isSelected ? "bg-[var(--module-accent-soft)]" : "hover:bg-white/[0.03]"
                     }`}
                   >
-                    <td className="py-2 text-center font-mono text-slate-500" title={track.path}>
+                    <td className="py-[var(--density-py)] text-center font-mono text-slate-500" title={track.path}>
                       {isPlaying ? <span className="text-[var(--module-accent)]">♪</span> : index + 1}
                     </td>
                     <td
-                      className={`py-2 truncate ${
+                      className={`py-[var(--density-py)] truncate ${
                         isPlaying ? "text-[var(--module-accent)] font-semibold" : "text-slate-200"
                       }`}
                       title={track.title}
                     >
                       {track.title}
                     </td>
-                    <td className="py-2 truncate text-slate-400" title={track.artist}>
+                    <td className="py-[var(--density-py)] truncate text-slate-400" title={track.artist}>
                       {track.artist || t("music.unknownArtist")}
                     </td>
-                    <td className="py-2 truncate text-slate-500" title={track.album}>
+                    <td className="py-[var(--density-py)] truncate text-slate-500" title={track.album}>
                       {track.album}
                     </td>
-                    <td className="py-2 text-right font-mono text-slate-400">
+                    <td className="py-[var(--density-py)] text-right font-mono text-slate-400">
                       {formatTime(track.duration_ms)}
                     </td>
                     {/* 单曲操作：播放 / 定位文件 / 重命名（改磁盘文件名）/ 删除（移入回收站）。
                         stopPropagation：避免触发行级选中与双击播放。 */}
-                    <td className="py-1.5 text-center">
+                    <td className="py-[var(--density-py)] text-center">
                       <div className="flex items-center justify-center gap-0.5">
                         <button
                           onClick={(e) => {

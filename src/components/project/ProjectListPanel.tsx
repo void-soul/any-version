@@ -107,7 +107,7 @@ export default function ProjectListPanel({
             const isSelected = selectedId === p.id;
             return (
               <div key={p.id} onClick={() => onSelect(p)}
-                className={`relative p-2.5 flex items-center justify-between cursor-pointer transition-all border-b border-white/[0.03] ${
+                className={`relative px-2.5 py-[var(--density-py)] flex items-center justify-between cursor-pointer transition-all border-b border-white/[0.03] ${
                   isSelected ? "bg-[var(--module-accent-soft)] border-l-2 border-l-[var(--module-accent)]"
                     : "hover:bg-white/[0.03] border-l-2 border-l-transparent"
                 }`}>
