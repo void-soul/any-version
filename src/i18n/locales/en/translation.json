@@ -3598,6 +3598,7 @@
     "pickFolder": "Choose folder",
     "port": "Server port",
     "lanHint": "Allow LAN access (binds 0.0.0.0; enable only on trusted networks, otherwise the directory is reachable by other devices on the same subnet)",
+    "lanWarning": "Warning: with this enabled, every file in the directory is exposed to anyone on the same network, and the server is unencrypted with no login — do not enable it on public or untrusted Wi-Fi, and stop the server when done.",
     "starting": "Starting...",
     "start": "Start Server",
     "runningTitle": "Running servers ({{count}})",

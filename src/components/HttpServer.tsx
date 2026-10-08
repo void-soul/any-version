@@ -12,6 +12,7 @@ import {
   ExternalLink, 
   Server, 
   AlertCircle,
+  AlertTriangle,
   Copy,
   CheckCircle
 } from "lucide-react";
@@ -158,6 +159,17 @@ export default function HttpServer() {
           />
           {t("httpserver.lanHint")}
         </label>
+
+        {/*
+          勾选「允许局域网访问」会把整个目录共享给同一网络内的所有人，必须显式告知。
+          尤其要说明「不加密、无鉴权」——用户往往以为只是"自己手机上也能打开"。
+        */}
+        {allowLan && (
+          <div className="flex items-start gap-2 p-3 bg-amber-500/10 border border-amber-500/25 rounded-card text-tiny text-amber-200">
+            <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+            <span className="leading-relaxed">{t("httpserver.lanWarning")}</span>
+          </div>
+        )}
 
         {error && (
           <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-200 text-body rounded-card flex items-center gap-2">

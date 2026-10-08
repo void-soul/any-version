@@ -16,6 +16,13 @@
   /* var() 回退色唯一出处（CSS 侧）：各处 var(--neon, var(--vex-fallback-primary)) */
   --vex-fallback-primary: #ff2d95;
   --vex-fallback-cyan: #22d3ee;
+
+  /* 动效 token（唯一出处）：此前各处 transition 时长散落硬编码（0.15s/0.2s/0.25s/0.3s），
+     新增动效一律引用这些变量，改节奏只需改这里。dur-base 沿用既有 ui-* 的实际手感。 */
+  --dur-fast: 120ms;
+  --dur-base: 150ms;
+  --dur-slow: 250ms;
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* 皮肤语义 token：统一应用层明暗皮肤。
@@ -103,7 +110,7 @@
     color: var(--color-text-secondary);
     font-size: var(--text-caption);
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all var(--dur-base) var(--ease-standard);
   }
   .ui-btn:hover:not(:disabled) {
     background-color: rgb(255 255 255 / 0.1);
@@ -147,7 +154,7 @@
     background-color: transparent;
     color: var(--color-text-muted);
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all var(--dur-base) var(--ease-standard);
   }
   .ui-icon-btn:hover:not(:disabled) {
     background-color: rgb(255 255 255 / 0.1);
@@ -190,7 +197,7 @@
     border-radius: var(--radius-ctl);
     color: var(--color-text-secondary);
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all var(--dur-base) var(--ease-standard);
   }
   .ui-row:hover {
     background-color: var(--module-accent-soft, rgb(255 255 255 / 0.06));
