@@ -269,7 +269,7 @@ export interface BuddyClientPath {
 export interface BuddySwitchProgress {
   platform: string;
   accountId: string;
-  stage: "closing" | "merging" | "writing" | "launching" | "done";
+  stage: "checking" | "merging" | "writing" | "done";
   scannedWorkspaces: number;
   message?: string | null;
   /** 合并结束时后端一次性带上的同步台账 */

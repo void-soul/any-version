@@ -6,17 +6,17 @@
 //!   · WorkBuddy：优雅退出，超时升级强杀（taskkill /T /F / kill -9），保证切换可以继续
 //!   · CodeBuddy CN：只发送优雅退出请求（WM_CLOSE / kill -15），超时后提示用户手动退出——
 //!     不做强杀（强杀会让客户端来不及保存状态、丢失未落盘的会话）
-//! - 启动（按平台区分）：WorkBuddy 切换后自动重启；CodeBuddy CN 不自动启动，
-//!   由调用方提示用户手动启动。安装路径解析（client_paths.json + 常见安装位置候选）
-//!   供启动与设置页展示共用
+//!
+//! 注：原先这里还有「切换后自动重启客户端」（仅 WorkBuddy），已按用户要求移除——
+//! 切换时客户端本就必须是已退出状态，自动拉起会打断用户手头的事，两个平台现在统一
+//! 由调用方提示手动启动。安装路径解析（client_paths.json + 常见安装位置候选）仍保留，
+//! 供设置页展示客户端路径使用。
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use super::models::BuddyPlatform;
 use crate::commands::config::get_data_dir;
-
-pub const APP_PATH_MISSING_PREFIX: &str = "APP_PATH_NOT_FOUND:";
 
 /// 客户端展示名（用于消息文案）
 pub fn app_display_name(platform: BuddyPlatform) -> &'static str {
@@ -402,62 +402,6 @@ pub fn close_running(platform: BuddyPlatform, timeout_secs: u64) -> Result<(), S
             .map(|e| format!("：{}", e))
             .unwrap_or_default()
     ))
-}
-
-/// 重新启动客户端（`--new-window`，分离于本进程）。仅 WorkBuddy 在切换后调用。
-/// 未找到安装路径返回 APP_PATH_NOT_FOUND 前缀错误，由调用方按警告处理。
-pub fn launch(platform: BuddyPlatform) -> Result<(), String> {
-    let app_name = app_display_name(platform);
-    let path = resolve_launch_path(platform).ok_or_else(|| {
-        format!(
-            "{}未找到 {} 安装路径，可在 {} 中配置",
-            APP_PATH_MISSING_PREFIX,
-            app_name,
-            "buddy/client_paths.json"
-        )
-    })?;
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        let mut cmd = std::process::Command::new(&path);
-        cmd.creation_flags(0x0800_0000 | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
-        cmd.arg("--new-window");
-        let child = cmd
-            .spawn()
-            .map_err(|e| format!("启动 {} 失败：{}", app_name, e))?;
-        eprintln!("[Buddy Launch] {} 已启动: pid={}, path={:?}", app_name, child.id(), path);
-        return Ok(());
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let output = std::process::Command::new("open")
-            .args(["-n", &path.to_string_lossy(), "--args", "--new-window"])
-            .output()
-            .map_err(|e| format!("启动 {} 失败：{}", app_name, e))?;
-        if !output.status.success() {
-            return Err(format!(
-                "启动 {} 失败：{}",
-                app_name,
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
-        eprintln!("[Buddy Launch] {} 已启动: path={:?}", app_name, path);
-        return Ok(());
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let child = std::process::Command::new(&path)
-            .arg("--new-window")
-            .spawn()
-            .map_err(|e| format!("启动 {} 失败：{}", app_name, e))?;
-        eprintln!("[Buddy Launch] {} 已启动: pid={}, path={:?}", app_name, child.id(), path);
-        return Ok(());
-    }
-    #[allow(unreachable_code)]
-    Err(format!("暂不支持在当前平台启动 {}", app_name))
 }
 
 #[cfg(test)]

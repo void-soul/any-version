@@ -39,7 +39,7 @@ use models::{BuddyAccount, BuddyPlatform};
 pub struct BuddySwitchProgress {
     pub platform: String,
     pub account_id: String,
-    /// closing | merging | writing | launching | done
+    /// checking | merging | writing | done（切换后不再自动启动客户端，故无 launching 阶段）
     pub stage: String,
     /// 合并阶段：已扫描工作区数
     pub scanned_workspaces: usize,
@@ -536,36 +536,15 @@ pub async fn buddy_switch_account(
         // 切换成功后持久化当前账号（复刻 provider_current_state，供前端稳定标识）
         let _ = store::set_current_account_id(platform, Some(&account_id));
 
-        // 4) 启动行为按平台区分：WorkBuddy 自动重启客户端（启动失败不回滚切换）；
-        //    CodeBuddy CN 不自动启动，提示用户手动启动。
-        let mut message = message;
-        match platform {
-            BuddyPlatform::Workbuddy => {
-                emit_switch_progress(Some(&app), platform, &account_id, "launching", 0, None);
-                if let Err(err) = client_process::launch(platform) {
-                    eprintln!(
-                        "[Buddy Switch] {} 启动失败: {}",
-                        client_process::app_display_name(platform),
-                        err
-                    );
-                    message = format!(
-                        "{}，但 {} 启动失败：{}",
-                        message,
-                        client_process::app_display_name(platform),
-                        err.trim_start_matches(client_process::APP_PATH_MISSING_PREFIX)
-                            .trim()
-                    );
-                }
-            }
-            // CodeBuddy CN：不自动启动，提示用户手动启动
-            BuddyPlatform::CodebuddyCn => {
-                message = format!(
-                    "{}，请手动启动 {}",
-                    message,
-                    client_process::app_display_name(platform)
-                );
-            }
-        }
+        // 4) 切换后**不自动启动客户端**（两个平台一致）。
+        //    切换时客户端本来就必须是「已退出」状态（见上面 ensure_not_running），
+        //    自动拉起会打断用户手头的事：他可能正准备自己开窗口、或者正在处理别的窗口。
+        //    两个平台都需要手动启动，统一提示即可。
+        let message = format!(
+            "{}，请手动启动 {}",
+            message,
+            client_process::app_display_name(platform)
+        );
         emit_switch_progress(Some(&app), platform, &account_id, "done", 0, None);
         Ok((message, transfer_report))
     })

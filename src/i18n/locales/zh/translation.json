@@ -5023,7 +5023,6 @@
       "checking": "正在检查客户端是否已退出…",
       "merging": "正在合并本地会话（已扫描 {{workspaces}} 个工作区）…",
       "writing": "正在写入登录态…",
-      "launching": "正在重新启动客户端…",
       "done": "切换完成"
     },
     "mergeResult": "会话合并：新增 {{added}} 个对话，替换 {{replaced}} 个，重映射 {{rows}} 条记录，共扫描 {{workspaces}} 个工作区",

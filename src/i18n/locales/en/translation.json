@@ -5095,7 +5095,6 @@
       "checking": "Checking whether the client has exited…",
       "merging": "Merging local sessions ({{workspaces}} workspaces scanned)…",
       "writing": "Writing login state…",
-      "launching": "Relaunching the client…",
       "done": "Switch complete"
     },
     "mergeResult": "Sessions merged: {{added}} conversations added, {{replaced}} replaced, {{rows}} rows remapped, {{workspaces}} workspaces scanned",
