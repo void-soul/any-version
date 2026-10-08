@@ -1,4 +1,79 @@
+use std::io::Read;
 use std::process::Command;
+
+/// 读取子进程 stdout/stderr 的默认上限（8 MiB）。
+///
+/// `.output()` 会把子进程输出**全量**缓冲进内存。枚举类命令（`tasklist`、`netstat`、
+/// `wmic`、`sc query`、`dir /s`）在进程多、目录深时输出可达几十 MB 且无上界，
+/// 全量缓冲既吃内存又拖慢界面。这里给一个明确上限：超出即截断并标记，
+/// 调用方按需降级（例如只取前 N 行）。
+pub const DEFAULT_OUTPUT_CAP: usize = 8 * 1024 * 1024;
+
+/// 带上限的子进程输出。
+pub struct CappedOutput {
+    pub stdout: String,
+    pub stderr: String,
+    pub status: std::process::ExitStatus,
+    /// stdout 是否被截断（超出上限）
+    pub truncated: bool,
+}
+
+/// 执行一个命令并**带上限**地取回 stdout/stderr（替代无界的 `Command::output`）。
+///
+/// 超限处理：stdout 达到上限后标记 `truncated` 并**终止子进程**——否则子进程继续写
+/// 管道、我们已停止读取，会在 `wait()` 处死锁。
+///
+/// 仅捕获 stdout/stderr 两个管道；子进程若继承了父进程的 stdin 则不受影响。
+pub fn output_capped(mut cmd: Command, max_bytes: usize) -> std::io::Result<CappedOutput> {
+    use std::process::Stdio;
+
+    let mut child = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let mut stdout = child.stdout.take().expect("stdout 已设置为 piped");
+    let mut stderr = child.stderr.take().expect("stderr 已设置为 piped");
+
+    // 先按上限读 stdout
+    let mut out_buf = Vec::new();
+    stdout
+        .by_ref()
+        .take(max_bytes as u64)
+        .read_to_end(&mut out_buf)?;
+    // 读到上限只说明「可能还有更多」：再试读 1 字节确认是否真的截断。
+    let truncated = if out_buf.len() >= max_bytes {
+        let mut probe = [0u8; 1];
+        match stdout.read(&mut probe) {
+            Ok(0) => false,
+            Ok(_) => true,
+            Err(_) => true,
+        }
+    } else {
+        false
+    };
+
+    if truncated {
+        // 已超限：子进程可能还在写 stdout，必须终止，否则 wait() 死锁
+        let _ = child.kill();
+    }
+
+    // stderr 一般很小，同样加上限兜底
+    let mut err_buf = Vec::new();
+    stderr
+        .by_ref()
+        .take(DEFAULT_OUTPUT_CAP.min(max_bytes) as u64)
+        .read_to_end(&mut err_buf)?;
+
+    let status = child.wait()?;
+
+    Ok(CappedOutput {
+        stdout: String::from_utf8_lossy(&out_buf).into_owned(),
+        stderr: String::from_utf8_lossy(&err_buf).into_owned(),
+        status,
+        truncated,
+    })
+}
 
 /// 创建一个不会弹出控制台窗口的 Command（仅 Windows 生效）。
 ///

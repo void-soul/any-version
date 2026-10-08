@@ -560,13 +560,13 @@ pub fn bin_tool_path(tool: &str) -> Option<PathBuf> {
 /// 具体绑定（Windows 上 `127.0.0.1:port` 被其他进程占用时，通配绑定依然成功），
 /// 因此必须解析 netstat（Q-0095：Android 模拟器抢占 127.0.0.1:8554）。
 pub fn port_owner_pids(port: u16) -> Vec<u32> {
-    let Ok(output) = super::hidden_cmd::hidden_cmd("netstat")
-        .args(["-ano", "-p", "tcp"])
-        .output()
-    else {
+    // netstat 在连接数极多时输出无上界，走带上限的读取（超限也只是少匹配几行，不会撑爆内存）
+    let mut netstat = super::hidden_cmd::hidden_cmd("netstat");
+    netstat.args(["-ano", "-p", "tcp"]);
+    let Ok(output) = super::hidden_cmd::output_capped(netstat, super::hidden_cmd::DEFAULT_OUTPUT_CAP) else {
         return Vec::new();
     };
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = output.stdout;
     let target = format!(":{}", port);
     let mut pids = Vec::new();
     for line in stdout.lines() {
@@ -612,12 +612,11 @@ pub fn port_conflict_description(port: u16) -> Option<String> {
 
 /// 按进程 ID 查询进程名。
 pub fn process_name_by_pid(pid: u32) -> Option<String> {
-    let output = super::hidden_cmd::hidden_cmd("tasklist")
-        .args(["/fi", &format!("pid eq {}", pid), "/fo", "csv", "/nh"])
-        .output()
-        .ok()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let first = stdout.lines().next().unwrap_or("");
+    let mut tasklist = super::hidden_cmd::hidden_cmd("tasklist");
+    tasklist.args(["/fi", &format!("pid eq {}", pid), "/fo", "csv", "/nh"]);
+    let output =
+        super::hidden_cmd::output_capped(tasklist, super::hidden_cmd::DEFAULT_OUTPUT_CAP).ok()?;
+    let first = output.stdout.lines().next().unwrap_or("").to_string();
     first.split(',').next().map(|p| p.trim_matches('"').to_string())
 }
 
