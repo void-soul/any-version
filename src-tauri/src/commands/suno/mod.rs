@@ -459,11 +459,16 @@ async fn download_one(
             stage: "transcode".to_string(),
         },
     );
-    let mut out = dir.join(format!("{}.mp3", sanitize_filename(&song.title)));
-    out = unique_path(out);
+    let out = dir.join(format!("{}.mp3", sanitize_filename(&song.title)));
+    // 原子占位（避免并发下载同名的 TOCTOU）
+    let out = unique_path(out)?;
     let result = transcode_to_mp3(&tmp, cover, &out);
     let _ = std::fs::remove_file(&tmp);
     let _ = std::fs::remove_file(&cover_tmp);
+    if result.is_err() {
+        // 转码失败要把占位的 0 字节文件删掉，否则目录里留下残件
+        let _ = std::fs::remove_file(&out);
+    }
     result
 }
 
@@ -572,10 +577,34 @@ fn sanitize_filename(title: &str) -> String {
 /// 删掉 `V2` 后再下一次同名会补回 `V2`，不会跳到 `V4` 留空洞。
 /// 原本就以 `V<数字>` 结尾的名字（`DemoV2`）不会被误当成已编号，
 /// 因为编号是紧贴扩展名前追加的：`DemoV2.mp3` → `DemoV2V2.mp3`。
-fn unique_path(path: PathBuf) -> PathBuf {
-    if !path.exists() {
-        return path;
+///
+/// **原子占位**：返回的路径是当场用 `create_new(true)` 建出来的空文件（0 字节），
+/// 而不是「查一下不存在就算这个名字归我」。存在性检查与占位分开做是标准的 TOCTOU——
+/// 并发下载同一首歌时两边会算出同一个 `V2`，后写的把先写的静默覆盖。
+/// 占位之后由调用方写内容（ffmpeg `-y` 直接覆盖这个空文件）；
+/// **转码失败时调用方必须删掉占位文件**，否则目录里会留下 0 字节残件。
+fn unique_path(path: PathBuf) -> Result<PathBuf, String> {
+    use std::io::ErrorKind;
+
+    /// 原子占位：文件已存在返回 `AlreadyExists`，其余错误视为真失败。
+    fn try_reserve(candidate: &Path) -> Result<bool, std::io::Error> {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(candidate)
+        {
+            Ok(_) => Ok(true),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => Ok(false),
+            Err(e) => Err(e),
+        }
     }
+
+    match try_reserve(&path) {
+        Ok(true) => return Ok(path),
+        Ok(false) => {}
+        Err(e) => return Err(format!("创建文件失败 {}: {e}", path.display())),
+    }
+
     let stem = path
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
@@ -592,10 +621,12 @@ fn unique_path(path: PathBuf) -> PathBuf {
         } else {
             parent.join(format!("{stem}V{n}.{ext}"))
         };
-        if !candidate.exists() {
-            return candidate;
+        match try_reserve(&candidate) {
+            Ok(true) => return Ok(candidate),
+            // 被占就接着往后找，因此删掉 V2 后仍会补回 V2、不会跳号
+            Ok(false) => n += 1,
+            Err(e) => return Err(format!("创建文件失败 {}: {e}", candidate.display())),
         }
-        n += 1;
     }
 }
 
@@ -1031,52 +1062,87 @@ mod tests {
         assert_eq!(sanitize_filename("标题 123"), "标题 123");
     }
 
-    #[test]
-    /// 重名时自动加 `V2`/`V3`… 后缀（不是资源管理器默认的 ` (1)`）。
+    /// 重名时自动加 `V2`/`V3`… 后缀（不是资源管理器默认的 ` (1)`），且返回的路径是**原子占位**出来的。
     #[test]
     fn unique_path_adds_version_suffix() {
         // 目录名带 pid + 纳秒时间戳：测试二进制可能并行/重复运行同一用例，
         // 固定目录名会让彼此踩文件（表现为随机的 remove_file 失败）。
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let dir = std::env::temp_dir().join(format!(
-            "suno_unique_test_{}_{}",
-            std::process::id(),
-            stamp
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = temp_test_dir("suno_unique_test");
         let base = dir.join("我的歌.mp3");
         std::fs::write(&base, b"x").unwrap();
 
         // 原件 → V2
-        let v2 = unique_path(base.clone());
+        let v2 = unique_path(base.clone()).unwrap();
         assert_eq!(v2.file_name().unwrap(), "我的歌V2.mp3");
+        assert!(v2.exists(), "占位文件必须当场存在");
 
         // V2 也占用了 → V3
         std::fs::write(&v2, b"x").unwrap();
-        let v3 = unique_path(base.clone());
+        let v3 = unique_path(base.clone()).unwrap();
         assert_eq!(v3.file_name().unwrap(), "我的歌V3.mp3");
 
         // 删掉 V2 后应补回 V2，不跳号留空洞
         std::fs::remove_file(&v2).unwrap();
-        assert_eq!(unique_path(base.clone()).file_name().unwrap(), "我的歌V2.mp3");
+        assert_eq!(
+            unique_path(base.clone()).unwrap().file_name().unwrap(),
+            "我的歌V2.mp3"
+        );
 
-        // 不存在的路径原样返回（不加工）
+        // 不存在的路径直接占位，不加工名字
         let fresh = dir.join("新歌.mp3");
-        assert_eq!(unique_path(fresh.clone()), fresh);
+        let got = unique_path(fresh.clone()).unwrap();
+        assert_eq!(got, fresh);
 
         // 本身以 V2 结尾的名字不被误判：`DemoV2` → `DemoV2V2`
         let demo = dir.join("DemoV2.mp3");
         std::fs::write(&demo, b"x").unwrap();
-        assert_eq!(unique_path(demo).file_name().unwrap(), "DemoV2V2.mp3");
+        assert_eq!(
+            unique_path(demo).unwrap().file_name().unwrap(),
+            "DemoV2V2.mp3"
+        );
 
         // 无扩展名时也带序号
         let noext = dir.join("裸文件");
         std::fs::write(&noext, b"x").unwrap();
-        assert_eq!(unique_path(noext).file_name().unwrap(), "裸文件V2");
+        assert_eq!(unique_path(noext).unwrap().file_name().unwrap(), "裸文件V2");
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 并发占位必须给出**不同**的名字——这正是改成 `create_new` 要解决的 TOCTOU。
+    #[test]
+    fn unique_path_is_race_free() {
+        let dir = temp_test_dir("suno_race_test");
+        let base = dir.join("同首歌.mp3");
+        std::fs::write(&base, b"x").unwrap();
+
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let base = base.clone();
+                std::thread::spawn(move || unique_path(base).unwrap())
+            })
+            .collect();
+        let mut got: Vec<std::path::PathBuf> = handles
+            .into_iter()
+            .map(|h| h.join().expect("占位不应失败"))
+            .collect();
+
+        let total = got.len();
+        got.sort();
+        got.dedup();
+        assert_eq!(got.len(), total, "并发占位出现了重复名字：{got:?}");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 建一个本用例独占的临时目录（pid + 纳秒，避免并行测试互踩）。
+    fn temp_test_dir(prefix: &str) -> std::path::PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("{prefix}_{}_{}", std::process::id(), stamp));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 }
