@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { X, Minus, Square, Download, AlertTriangle, Loader2, FolderOpen, ChevronDown, Settings } from "lucide-react";
+import { X, Minus, Square, Download, AlertTriangle, Loader2, FolderOpen, ChevronDown, Settings, Search } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { MODULES, MODULE_MAP, resolveModuleLayout } from "./moduleRegistry";
 import VexGlowAvatar from "./components/VexGlowAvatar";
@@ -20,6 +20,8 @@ import { kiraQuoteLine } from "./utils/kiraQuotes";
 import { vexSay, onVexSay, type VexSayKind } from "./utils/vexSay";
 import { useTranslation } from "react-i18next";
 import { theamedAlert } from "./components/shared/ThemedAlert";
+import CommandPalette, { openCommandPalette } from "./components/shared/CommandPalette";
+import { commandPaletteItems, modulePaletteItems } from "./utils/paletteCommands";
 import "./App.css";
 
 /** 模块按钮统一样式：胶囊里的模块入口、「更多」下拉里的模块条目共用同一套外观与 hover。
@@ -58,6 +60,9 @@ function buildFontFaceCss(customFontPath: string): string {
     return "";
   }
 }
+
+/** 快捷键提示用：Windows 是 Ctrl+K，macOS 是 Cmd+K。 */
+const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/i.test(navigator.userAgent);
 
 export default function App() {
   const { t, i18n: i18nInst } = useTranslation();
@@ -376,6 +381,18 @@ export default function App() {
     [appearance.moduleOrder, appearance.toolbarModules, appearance.disabledModules]
   );
 
+  // 命令面板（Cmd+K）数据源：模块导航 + 全局命令。
+  // 依赖里带上 i18nInst.language —— 模块名走 moduleLabel（直接读 i18n），
+  // 语言切换后要重算，否则面板里还是旧语言的模块名。
+  const paletteItems = useMemo(
+    () => [
+      ...modulePaletteItems(allEnabled, activePage, t, switchPage),
+      ...commandPaletteItems(appearance.density, t),
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allEnabled, activePage, appearance.density, t, i18nInst.language]
+  );
+
   // 「设置」模块图标（用于窗口右上角只显示图标的设置按钮）
   const SettingsIcon = MODULE_MAP["settings"]?.icon ?? Settings;
 
@@ -584,6 +601,14 @@ export default function App() {
 
         {/* Right: Settings + Window Controls */}
         <div className="flex items-center gap-1">
+          {/* 命令面板入口：快捷键之外必须有个看得见的入口，否则用户根本不知道有 Cmd+K */}
+          <button
+            onClick={() => openCommandPalette()}
+            className="vex-neon-hover p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded transition-all cursor-pointer"
+            title={`${t("palette.openTip")} (${isMac ? "Cmd+K" : "Ctrl+K"})`}
+          >
+            <Search className="w-3.5 h-3.5" />
+          </button>
           <button
             onClick={() => switchPage("settings")}
             className={`p-1.5 rounded transition-all cursor-pointer vex-nav-tab ${
@@ -789,6 +814,9 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* 全局命令面板（Cmd+K）：自己管开关与快捷键，条目由上面 paletteItems 提供 */}
+        <CommandPalette items={paletteItems} />
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { theamedAlert, alertError } from "./shared/ThemedAlert";
+import { applyDensity } from "../utils/appearance";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen, emit } from "@tauri-apps/api/event";
@@ -554,8 +555,8 @@ export default function GlobalSettings() {
   const handleSetDensity = async (value: string) => {
     setAppearance({ ...appearance, density: value });
     try {
-      await invoke("set_density", { density: value });
-      emit("appearance-updated");
+      // 写入口与命令面板共用（utils/appearance.ts），避免两处各写一份 invoke + 广播
+      await applyDensity(value);
     } catch (e) {
       console.error("保存列表密度失败", e);
     }

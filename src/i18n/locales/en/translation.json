@@ -443,6 +443,17 @@
     "killProcDone": "{{msg}} — you can try again now",
     "killProcFail": "Failed to kill the process: {{err}}"
   },
+  "palette": {
+    "openTip": "Command palette",
+    "placeholder": "Search modules and commands…",
+    "noMatch": "No matching module or command",
+    "hint": "↑↓ to move · Enter to run · Esc to close",
+    "groupModules": "Modules",
+    "groupCommands": "Commands",
+    "currentModule": "Current module",
+    "musicToggle": "Play / pause",
+    "densityToggle": "Toggle list density (compact / comfortable)"
+  },
   "aiMinimized": {
     "minimize": "Minimize (keep generating in background; watch the canvas draw as views complete)",
     "running": "AI running in background",

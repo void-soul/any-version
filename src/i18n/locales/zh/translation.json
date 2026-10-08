@@ -443,6 +443,17 @@
     "killProcDone": "{{msg}}，可以重试了",
     "killProcFail": "结束进程失败：{{err}}"
   },
+  "palette": {
+    "openTip": "全局命令面板",
+    "placeholder": "搜索模块与命令…",
+    "noMatch": "没有匹配的模块或命令",
+    "hint": "↑↓ 选择 · Enter 执行 · Esc 关闭",
+    "groupModules": "模块",
+    "groupCommands": "命令",
+    "currentModule": "当前模块",
+    "musicToggle": "播放 / 暂停",
+    "densityToggle": "切换列表密度（紧凑 / 舒适）"
+  },
   "aiCloseGuard": {
     "title": "AI 任务进行中",
     "desc": "关闭将停止正在进行的 AI 任务，确定要关闭吗？",
