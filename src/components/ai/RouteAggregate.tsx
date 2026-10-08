@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { useRef } from "react";
+import { toastPortConflict } from "../../utils/portConflict";
 import AggregateLogPanel from "./AggregateLogPanel";
 import type {
   RouteCandidate,
@@ -248,6 +249,10 @@ export default function RouteAggregate() {
       const status = await invoke<AggregateStatus>("start_aggregate_service");
       setAggStatus(status);
     } catch (e: any) {
+      // 端口被占用时额外弹一条可操作 toast（日志面板常常不在视野里，光写日志等于没提示）；
+      // 其余错误保持原样只进日志。端口取配置值，服务没起来时 aggStatus 里读不到。
+      const conflictPort = aggregate?.port ?? aggStatus?.port;
+      if (conflictPort) await toastPortConflict(conflictPort, t);
       setLogs(prev => [...prev, { phase: "start", line: String(e), level: "error" }].slice(-MAX_LOG_LINES));
     } finally {
       setAggBusy(false);

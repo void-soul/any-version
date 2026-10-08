@@ -2,6 +2,7 @@
 
 import { useTranslation } from "react-i18next";
 import { alertError } from "./shared/ThemedAlert";
+import { toastPortConflict } from "../utils/portConflict";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -85,7 +86,10 @@ export default function HttpServer() {
       });
       await fetchRunningServers();
     } catch (err: any) {
-      setError(String(err));
+      // 端口被占用时换成可操作 toast（查一次占用者 → 给「结束进程」按钮）；
+      // 不是端口冲突（或查不到占用者）才回落到原来的纯文本错误。
+      const handled = await toastPortConflict(port, t);
+      if (!handled) setError(String(err));
     } finally {
       setLoading(false);
     }

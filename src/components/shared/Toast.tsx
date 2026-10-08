@@ -15,19 +15,36 @@ import { VEX_CYBER_ACCENT, resolveThemeAccent } from "../../utils/brand";
 
 type ToastKind = "ok" | "err" | "info";
 
+/** 气泡上的修复动作：让「报错」不只是告知，还带一条出路（例：端口被占用 → 结束进程）。 */
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 interface ToastMsg {
   id: number;
   kind: ToastKind;
   msg: string;
+  action?: ToastAction;
 }
+
+/** 普通提示停留时长；带动作的要多留一会儿 —— 2.6s 根本来不及看清再点按钮。 */
+const TOAST_MS = 2600;
+const TOAST_MS_WITH_ACTION = 9000;
 
 let items: ToastMsg[] = [];
 let seq = 0;
 let render: (() => void) | undefined;
 
-/** 显示一条 toast：toast("已保存") 或 toast("失败", "err")。 */
-export function toast(msg: string, kind: ToastKind = "ok"): void {
-  const item: ToastMsg = { id: ++seq, kind, msg };
+/** 手动关闭某条气泡（点了动作按钮就该立刻消失，否则会留下一个已经处理过的报错）。 */
+function dismiss(id: number): void {
+  items = items.filter((t) => t.id !== id);
+  render?.();
+}
+
+/** 显示一条 toast：toast("已保存") 或 toast("失败", "err")。action 可选，带一个修复按钮。 */
+export function toast(msg: string, kind: ToastKind = "ok", action?: ToastAction): void {
+  const item: ToastMsg = { id: ++seq, kind, msg, action };
   items = [...items.slice(-3), item];
   // 首次调用惰性挂载（避免模块渲染期间立即创建根节点）
   if (!render) {
@@ -41,7 +58,7 @@ export function toast(msg: string, kind: ToastKind = "ok"): void {
   setTimeout(() => {
     items = items.filter((t) => t.id !== item.id);
     render?.();
-  }, 2600);
+  }, action ? TOAST_MS_WITH_ACTION : TOAST_MS);
 }
 
 /** 主色调的进程内缓存：读一次就够（后续气泡直接用，不必先闪一下默认签名色）。 */
@@ -104,7 +121,8 @@ function ToastView({ items }: { items: ToastMsg[] }) {
         return (
           <div
             key={t.id}
-            className={`vex-neon-edge flex items-center gap-2.5 pl-3 pr-4 py-2.5 rounded-card bg-slate-900/95 backdrop-blur-md ${t.kind === "err" ? "vex-toast-pulse" : t.kind === "ok" ? "vex-toast-light" : ""}`}
+            // 容器整体是 pointer-events-none（不挡下方界面），只有带动作的气泡才放行点击
+            className={`vex-neon-edge flex items-center gap-2.5 pl-3 pr-4 py-2.5 rounded-card bg-slate-900/95 backdrop-blur-md ${t.action ? "pointer-events-auto" : ""} ${t.kind === "err" ? "vex-toast-pulse" : t.kind === "ok" ? "vex-toast-light" : ""}`}
             style={
               {
                 boxShadow: glowShadow,
@@ -117,7 +135,20 @@ function ToastView({ items }: { items: ToastMsg[] }) {
             <span className={`w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 ${iconCls}`}>
               <Icon className="w-3 h-3" />
             </span>
-            <span className="text-body text-slate-100 leading-snug break-words">{t.msg}</span>
+            <span className="min-w-0 text-body text-slate-100 leading-snug break-words">{t.msg}</span>
+            {t.action && (
+              <button
+                type="button"
+                onClick={() => {
+                  const run = t.action!.onClick;
+                  dismiss(t.id);
+                  run();
+                }}
+                className="flex-shrink-0 rounded-ctl border border-white/15 bg-white/10 px-2 py-1 text-caption text-slate-100 transition hover:bg-white/20 cursor-pointer"
+              >
+                {t.action.label}
+              </button>
+            )}
           </div>
         );
       })}

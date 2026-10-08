@@ -8,6 +8,16 @@ pub struct PortOwner {
     pub port: String,
     pub pid: String,
     pub process_name: String,
+    /// true = 占用者就是 Kira 自己（HTTP 静态服务 / 聚合服务都跑在主进程里）。
+    /// 前端据此不给「结束进程」按钮 —— 否则 taskkill 会把宿主自己杀掉。
+    #[serde(default)]
+    pub self_owned: bool,
+}
+
+/// 该 PID 是不是本进程。内置服务（HTTP / 聚合）监听的端口在 netstat 里
+/// 显示为本进程 PID，杀它就是自杀，必须显式识别出来。
+fn is_self_pid(pid: &str) -> bool {
+    !pid.trim().is_empty() && pid.trim() == std::process::id().to_string()
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -215,6 +225,7 @@ pub(crate) fn find_port_owner(port_str: &str) -> Option<PortOwner> {
                 port: port_str.to_string(),
                 pid: pid.clone(),
                 process_name: "Unknown".to_string(),
+                self_owned: is_self_pid(&pid),
             });
         }
     };
@@ -231,6 +242,7 @@ pub(crate) fn find_port_owner(port_str: &str) -> Option<PortOwner> {
 
     Some(PortOwner {
         port: port_str.to_string(),
+        self_owned: is_self_pid(&pid),
         pid,
         process_name,
     })
@@ -388,6 +400,11 @@ pub fn kill_port_owner(port_str: String) -> Result<String, String> {
     }
 
     let owner = find_port_owner(&port_str).ok_or_else(|| format!("未找到占用端口 {} 的进程", port_str))?;
+    // 内置服务（HTTP / 聚合）监听的端口属于本进程，杀它等于自杀 —— 后端兜底拒绝，
+    // 前端就算绕过 self_owned 判断也杀不掉自己。
+    if owner.self_owned {
+        return Err(format!("端口 {} 的占用进程就是 Kira 自己，已拒绝终止", port_str));
+    }
 
     // 先尝试普通权限杀死
     let taskkill_cmd = format!("taskkill /f /pid {}", owner.pid);
@@ -426,7 +443,18 @@ pub fn kill_port_owner(port_str: String) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_protocol, parse_excluded_ranges, validate_range};
+    use super::{is_self_pid, normalize_protocol, parse_excluded_ranges, validate_range};
+
+    /// 内置服务（HTTP / 聚合）占用端口时 netstat 给出的 PID 就是本进程，
+    /// 识别不出来会被「结束进程」按钮杀掉 —— 这是自杀，必须挡住。
+    #[test]
+    fn self_pid_is_detected_and_others_are_not() {
+        assert!(is_self_pid(&std::process::id().to_string()));
+        assert!(is_self_pid(&format!("  {} ", std::process::id())));
+        assert!(!is_self_pid(""));
+        assert!(!is_self_pid("999999"));
+        assert!(!is_self_pid("not-a-pid"));
+    }
 
     /// `netsh int ipv4 show excludedportrange` 的真实形态：`---` 分隔线之后才是数据，
     /// 行首 `*` 表示该段由系统动态保留（Hyper-V / WSL 等）。

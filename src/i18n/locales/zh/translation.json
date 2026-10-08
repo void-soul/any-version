@@ -436,7 +436,12 @@
     "open": "打开",
     "back": "返回",
     "next": "下一步",
-    "dialogClose": "关闭"
+    "dialogClose": "关闭",
+    "portOccupied": "端口 {{port}} 已被 {{proc}}（PID {{pid}}）占用",
+    "killProcAction": "结束进程",
+    "killProcConfirm": "确定结束进程 {{proc}}（PID {{pid}}）以释放端口 {{port}} 吗？该进程会被强制关闭，未保存的数据可能丢失。",
+    "killProcDone": "{{msg}}，可以重试了",
+    "killProcFail": "结束进程失败：{{err}}"
   },
   "aiCloseGuard": {
     "title": "AI 任务进行中",

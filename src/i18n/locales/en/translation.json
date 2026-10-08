@@ -436,7 +436,12 @@
     "open": "Open",
     "back": "Back",
     "next": "Next",
-    "dialogClose": "Close"
+    "dialogClose": "Close",
+    "portOccupied": "Port {{port}} is occupied by {{proc}} (PID {{pid}})",
+    "killProcAction": "Kill process",
+    "killProcConfirm": "Kill process {{proc}} (PID {{pid}}) to free port {{port}}? It will be force-closed and unsaved data may be lost.",
+    "killProcDone": "{{msg}} — you can try again now",
+    "killProcFail": "Failed to kill the process: {{err}}"
   },
   "aiMinimized": {
     "minimize": "Minimize (keep generating in background; watch the canvas draw as views complete)",
