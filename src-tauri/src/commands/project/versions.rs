@@ -1491,7 +1491,7 @@ fn setup_temp_dir(prefix: &str) -> Result<(PathBuf, Box<dyn FnOnce() + Send>), S
 /// 解压 7z 文件
 fn extract_7z(src: &Path, dest: &Path) -> Result<(), String> {
     fs::create_dir_all(dest).map_err(|e| e.to_string())?;
-    sevenz_rust::decompress_file(src, dest).map_err(|e| format!("7z 解压失败: {}", e))?;
+    sevenz_rust2::decompress_file(src, dest).map_err(|e| format!("7z 解压失败: {}", e))?;
     Ok(())
 }
 

@@ -37,7 +37,10 @@ http-body-util = "0.1"
 bytes = "1"
 async-stream = "0.3"
 zip = "2.1"
-sevenz-rust = "0.6"
+# 原本用 sevenz-rust 0.6，但它在 RUSTSEC-2026-0245（解压路径穿越 → 任意文件写）
+# 之外还被标记 unmaintained（RUSTSEC-2026-0246），最新只有 0.6.1、无补丁可用。
+# sevenz-rust2 是活跃的维护分支，API 基本同源。
+sevenz-rust2 = "0.16"
 tar = "0.4"
 flate2 = "1.0"
 xz2 = "0.1"
