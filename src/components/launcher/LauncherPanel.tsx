@@ -68,6 +68,7 @@ import { buildReorderOrders } from "./reorder";
 import CategoryModal from "./CategoryModal";
 import AddItemModal from "./AddItemModal";
 import VexGlowAvatar from "../VexGlowAvatar";
+import VexEmptyState from "../VexEmptyState";
 import VexBusy from "../VexBusy";
 import VexGreeting from "../VexGreeting";
 import { theamedConfirm } from "../shared/ThemedAlert";
@@ -1994,44 +1995,42 @@ export default function LauncherPanel() {
                     </div>
                   </SortableContext>
                 ) : subCategories.length === 0 ? (
-                  <div className="py-20 text-center text-slate-500 flex flex-col items-center justify-center">
-                    <UploadCloud className="w-12 h-12 mb-3 opacity-30 text-[var(--module-accent)]" />
-                    <p className="text-sm font-medium text-slate-300">{t("launcher.emptyCategory")}</p>
-                    <p className="text-body text-slate-500 mt-1 max-w-sm">
-                      {t("launcher.emptyCategoryHint")}
-                      <span className="text-[var(--module-accent)] font-medium">{t("launcher.dragHere")}</span>
-                    </p>
-                    <div className="flex items-center gap-2 mt-4">
-                      <button
-                        onClick={() => {
-                          if (Date.now() - justDraggedAtRef.current < 300) return; // 拖拽后的残留 click 不触发
-                          setEditingItem(null);
-                          setTargetClassificationId(
-                            activeTopCategory ? activeTopCategory.id : 1
-                          );
-                          setItemModalOpen(true);
-                        }}
-                        className="px-3.5 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-body font-medium rounded-card transition cursor-pointer flex items-center gap-1.5"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        {t("launcher.addItem")}
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (Date.now() - justDraggedAtRef.current < 300) return; // 拖拽后的残留 click 不触发
-                          setEditingCategory(null);
-                          setCategoryParentId(
-                            activeTopCategory ? activeTopCategory.id : null
-                          );
-                          setCategoryModalOpen(true);
-                        }}
-                        className="px-3.5 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 text-body font-medium rounded-card border border-white/10 transition cursor-pointer flex items-center gap-1.5"
-                      >
-                        <FolderPlus className="w-3.5 h-3.5 text-[var(--module-accent)]" />
-                        {t("launcher.newSubCategory")}
-                      </button>
-                    </div>
-                  </div>
+                  <VexEmptyState
+                    title={t("launcher.emptyCategory")}
+                    desc={
+                      <span className="inline-block max-w-sm">
+                        {t("launcher.emptyCategoryHint")}{" "}
+                        <span className="text-[var(--module-accent)] font-medium">
+                          {t("launcher.dragHere")}
+                        </span>
+                      </span>
+                    }
+                    tick={t("launcher.emptyCategoryTick")}
+                    avatarSize={52}
+                    className="!py-20"
+                    action={{
+                      label: t("launcher.addItem"),
+                      onClick: () => {
+                        if (Date.now() - justDraggedAtRef.current < 300) return; // 拖拽后的残留 click 不触发
+                        setEditingItem(null);
+                        setTargetClassificationId(
+                          activeTopCategory ? activeTopCategory.id : 1
+                        );
+                        setItemModalOpen(true);
+                      },
+                    }}
+                    secondaryAction={{
+                      label: t("launcher.newSubCategory"),
+                      onClick: () => {
+                        if (Date.now() - justDraggedAtRef.current < 300) return; // 拖拽后的残留 click 不触发
+                        setEditingCategory(null);
+                        setCategoryParentId(
+                          activeTopCategory ? activeTopCategory.id : null
+                        );
+                        setCategoryModalOpen(true);
+                      },
+                    }}
+                  />
                 ) : null}
               </Droppable>
             );
@@ -2054,10 +2053,12 @@ export default function LauncherPanel() {
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-5">
               {usageStats.length === 0 ? (
-                <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-slate-500">
-                  <BarChart3 className="w-10 h-10 opacity-30" />
-                  <p className="text-body">{t("launcher.noUsageStats")}</p>
-                </div>
+                <VexEmptyState
+                  title={t("launcher.noUsageStats")}
+                  tick={t("launcher.noUsageStatsTick")}
+                  avatarSize={40}
+                  className="h-full"
+                />
               ) : (
                 <div className="mx-auto grid max-w-3xl grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
                   {usageStats.map((item, index) => {
@@ -2186,13 +2187,12 @@ export default function LauncherPanel() {
                   );
                 })
               ) : searchQuery.trim() ? (
-                <div className="py-14 text-center text-slate-500 text-body flex flex-col items-center gap-3">
-                  <VexGlowAvatar size={44} className="opacity-80" />
-                  <div>
-                    <p>{t("launcher.searchNoResult", { query: searchQuery })}</p>
-                    <p className="text-caption text-slate-600 mt-1">{t("launcher.searchNoResultHint")}</p>
-                  </div>
-                </div>
+                <VexEmptyState
+                  title={t("launcher.searchNoResult", { query: searchQuery })}
+                  desc={t("launcher.searchNoResultHint")}
+                  avatarSize={44}
+                  className="!py-14"
+                />
               ) : (
                 <div className="py-12 text-center text-slate-500 text-body space-y-1">
                   <p>{t("launcher.searchHint")}</p>

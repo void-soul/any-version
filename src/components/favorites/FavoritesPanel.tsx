@@ -42,6 +42,7 @@ import { useVirtualList } from "../shared/useVirtualList";
 import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
 import { toast } from "../shared/Toast";
 import { theamedConfirm } from "../shared/ThemedAlert";
+import VexEmptyState from "../VexEmptyState";
 import { GithubTokenDialog } from "../project/GithubTokenDialog";
 import { MarkdownRenderer } from "../ai/MarkdownRenderer";
 import { CredentialDialog } from "./CredentialDialog";
@@ -1294,9 +1295,12 @@ export default function FavoritesPanel() {
           className="flex-1 overflow-y-auto glass-panel relative"
         >
           {items.length === 0 && (
-            <div className="h-full flex items-center justify-center text-caption text-slate-500">
-              {t("favorites.empty")}
-            </div>
+            <VexEmptyState
+              title={t("favorites.empty")}
+              tick={t("favorites.emptyTick")}
+              avatarSize={44}
+              className="h-full"
+            />
           )}
           <div className="relative" style={{ height: vlist.totalHeight }}>
           {vlist.visible.map(({ item, key, index }) => {

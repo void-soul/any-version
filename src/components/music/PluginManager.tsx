@@ -28,6 +28,7 @@ import {
 import { SharedButton } from "../shared/Button";
 import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
 import { toast } from "../shared/Toast";
+import VexEmptyState from "../VexEmptyState";
 import {
   type PluginEntry,
   type PluginImportResult,
@@ -368,11 +369,14 @@ export default function PluginManager() {
           <Loader2 className="w-5 h-5 animate-spin" />
         </div>
       ) : plugins.length === 0 ? (
-        <div className="py-10 flex flex-col items-center gap-2 text-slate-500">
-          <Package className="w-9 h-9 opacity-40" />
-          <p className="text-sm">{t("music.pluginEmpty")}</p>
-          <p className="text-caption text-slate-600">{t("music.pluginEmptyHint")}</p>
-        </div>
+        <VexEmptyState
+          title={t("music.pluginEmpty")}
+          desc={t("music.pluginEmptyHint")}
+          tick={t("music.pluginEmptyTick")}
+          avatarSize={40}
+          className="!py-10"
+          action={{ label: t("music.pluginPickFile"), onClick: () => void pickFile() }}
+        />
       ) : (
         <div className="space-y-1.5">
           {plugins.map((entry, index) => {

@@ -40,6 +40,7 @@ import { SharedButton } from "../shared/Button";
 import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
 import { ModuleSettingsButton } from "../shared/ModuleSettings";
 import { toast } from "../shared/Toast";
+import VexEmptyState from "../VexEmptyState";
 import { MusicSettingsDialog } from "./MusicSettings";
 import OnlineSearch from "./OnlineSearch";
 import PluginManager from "./PluginManager";
@@ -634,17 +635,21 @@ export default function MusicPanel() {
       {/* ── 曲目列表 ── */}
       <div className={`flex-1 overflow-auto ${showing("library")}`}>
         {library.tracks.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-500">
-            <ListMusic className="w-10 h-10 opacity-40" />
-            <p className="text-sm">{t("music.empty")}</p>
-            <p className="text-caption text-slate-600">{t("music.emptyHint")}</p>
-            <SharedButton variant="primary" onClick={importFolder}>
-              <FolderPlus className="w-3.5 h-3.5" />
-              {t("music.importFolder")}
-            </SharedButton>
-          </div>
+          <VexEmptyState
+            title={t("music.empty")}
+            desc={t("music.emptyHint")}
+            tick={t("music.emptyTick")}
+            avatarSize={44}
+            className="h-full"
+            action={{ label: t("music.importFolder"), onClick: importFolder }}
+          />
         ) : filteredTracks.length === 0 ? (
-          <div className="p-6 text-center text-slate-500 text-caption">{t("music.noMatch")}</div>
+          <VexEmptyState
+            title={t("music.noMatch")}
+            tick={t("music.noMatchTick")}
+            avatarSize={36}
+            className="!py-10"
+          />
         ) : (
           /*
             列宽：按百分比分配（colgroup + table-fixed），列与列之间不留 gap——

@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Search, RefreshCw, KeyRound } from "lucide-react";
 import type { ProjectStatus, ProjectCategory } from "./types";
 import { categoryLabel } from "./types";
+import VexEmptyState from "../VexEmptyState";
 import { GithubTokenDialog } from "./GithubTokenDialog";
 
 const FILTERS: Array<{ key: ProjectCategory | "all"; labelKey: string }> = [
@@ -95,7 +96,12 @@ export default function ProjectListPanel({
         {loading ? (
           <div className="p-6 text-center text-slate-500 text-caption">{t("projlist.loading")}</div>
         ) : filtered.length === 0 ? (
-          <div className="p-6 text-center text-slate-500 text-caption">{t("projlist.noMatch")}</div>
+          <VexEmptyState
+            title={t("projlist.noMatch")}
+            tick={t("projlist.noMatchTick")}
+            avatarSize={38}
+            className="!py-12"
+          />
         ) : (
           filtered.map((p) => {
             const isSelected = selectedId === p.id;

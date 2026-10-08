@@ -14,6 +14,7 @@ import { AlertTriangle, Download, Loader2, Play, Search } from "lucide-react";
 
 import { SharedButton } from "../shared/Button";
 import { toast } from "../shared/Toast";
+import VexEmptyState from "../VexEmptyState";
 import {
   formatSeconds,
   MUSIC_QUALITIES,
@@ -272,15 +273,20 @@ export default function OnlineSearch({ onPlayer, onLibrary }: Props) {
       {/* ── 结果 ── */}
       <div className="flex-1 overflow-auto">
         {!searched ? (
-          <div className="h-full flex flex-col items-center justify-center gap-2 text-slate-500">
-            <Search className="w-9 h-9 opacity-40" />
-            <p className="text-sm">{t("music.onlineSearchIdle")}</p>
-            <p className="text-caption text-slate-600">{t("music.onlineSearchIdleHint")}</p>
-          </div>
+          <VexEmptyState
+            title={t("music.onlineSearchIdle")}
+            desc={t("music.onlineSearchIdleHint")}
+            tick={t("music.onlineSearchIdleTick")}
+            avatarSize={40}
+            className="h-full"
+          />
         ) : hits.length === 0 && !loading ? (
-          <div className="p-6 text-center text-caption text-slate-500">
-            {t("music.onlineSearchNone")}
-          </div>
+          <VexEmptyState
+            title={t("music.onlineSearchNone")}
+            tick={t("music.noMatchTick")}
+            avatarSize={36}
+            className="!py-10"
+          />
         ) : (
           <div className="divide-y divide-white/[0.03]">
             {visibleHits.map((hit) => {
