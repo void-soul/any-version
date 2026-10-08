@@ -1135,7 +1135,13 @@ export default function BuddyPanel() {
         setConflictPanelOpen(false);
         showMsg(true, t("buddy.conflictAllResolved"));
       } else {
-        showMsg(true, t("buddy.conflictBatchResolved", { count: ids.length - remaining.filter((c) => ids.includes(c.id)).length, action: t(`buddy.conflictAction${action[0].toUpperCase()}${action.slice(1)}`) }));
+        showMsg(
+          true,
+          t("buddy.conflictBatchResolved", {
+            count: ids.length - remaining.filter((c) => ids.includes(c.id)).length,
+            action: conflictActionLabel(action),
+          }),
+        );
       }
     } catch (e: any) {
       showMsg(false, String(e));
@@ -1150,6 +1156,14 @@ export default function BuddyPanel() {
     if (ids.length === 0) return;
     setConflictConfirm({ kind: "batch", ids, action });
   };
+
+  /**
+   * 冲突动作的本地化名（合并/覆盖/保留）。确认弹窗标题、批量描述、成功提示三处共用——
+   * 曾因批量描述漏传 action 插值导致界面直接显示 `{{action}}` 字面量（Q-0357），
+   * 收敛到一处后不会再漏。
+   */
+  const conflictActionLabel = (action: ConflictAction) =>
+    t(`buddy.conflictAction${action[0].toUpperCase()}${action.slice(1)}`);
 
   const toggleConflictSelect = (id: string) => {
     setConflictSelectedIds((prev) => {
@@ -4194,9 +4208,7 @@ export default function BuddyPanel() {
               <div className="flex-1">
                 <h3 className="text-sm font-bold text-white">
                   {t("buddy.conflictConfirmTitle", {
-                    action: t(
-                      `buddy.conflictAction${conflictConfirm.action[0].toUpperCase()}${conflictConfirm.action.slice(1)}`,
-                    ),
+                    action: conflictActionLabel(conflictConfirm.action),
                   })}
                 </h3>
                 <p className="text-tiny text-slate-500">{t("buddy.conflictConfirmHint")}</p>
@@ -4205,7 +4217,10 @@ export default function BuddyPanel() {
             <p className="text-body text-slate-300 leading-relaxed mb-5 break-all">
               {conflictConfirm.kind === "single"
                 ? conflictConfirm.conflict.label
-                : t("buddy.conflictConfirmBatchDesc", { count: conflictConfirm.ids.length })}
+                : t("buddy.conflictConfirmBatchDesc", {
+                    count: conflictConfirm.ids.length,
+                    action: conflictActionLabel(conflictConfirm.action),
+                  })}
             </p>
             <div className="flex justify-end gap-2">
               <button
