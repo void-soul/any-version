@@ -79,6 +79,7 @@
     "empty": "Your library is empty",
     "emptyHint": "Import a local music folder to start (mp3 / flac / wav / m4a / ogg)",
     "noMatch": "No matching tracks",
+    "statePollFailed": "Failed to fetch playback state repeatedly; the UI may stop updating: {{err}}",
     "tabLibrary": "Library",
     "tabOnline": "Online",
     "tabPlugins": "Plugins",

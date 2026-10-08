@@ -79,6 +79,7 @@
     "empty": "曲库是空的",
     "emptyHint": "导入本地音乐文件夹开始（支持 mp3 / flac / wav / m4a / ogg）",
     "noMatch": "没有匹配的曲目",
+    "statePollFailed": "播放状态已连续多次获取失败，界面可能不再刷新：{{err}}",
     "tabLibrary": "曲库",
     "tabOnline": "在线搜索",
     "tabPlugins": "插件",

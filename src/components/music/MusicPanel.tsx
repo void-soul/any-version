@@ -64,6 +64,13 @@ import {
 
 /** 播放状态轮询间隔（ms） */
 const POLL_MS = 500;
+/**
+ * 连续轮询失败多少次才弹提示。
+ *
+ * 单次失败常是切歌/启动瞬间的竞态，立刻弹会刷屏；但一直不弹又成了静默失败
+ * （界面停在旧状态，用户以为"没变化"）。取 3 次（约 1.5s）作为折中。
+ */
+const POLL_FAIL_ALERT_AFTER = 3;
 /** 设置（音量/音效）落盘防抖（ms） */
 const SAVE_DEBOUNCE_MS = 500;
 
@@ -117,6 +124,8 @@ export default function MusicPanel() {
   /** path -> 曲库下标（后端自行切歌时用于同步选中行） */
   const pathIndexRef = useRef<Map<string, number>>(new Map());
   const saveTimerRef = useRef<number | null>(null);
+  /** 连续轮询失败计数（成功即清零，用于失败可感知提示） */
+  const pollFailRef = useRef(0);
 
   // —— 过滤后的曲目列表（文件夹筛选 + 搜索 + 保持原始索引，播放索引以完整列表为准）——
   /**
@@ -200,7 +209,19 @@ export default function MusicPanel() {
   // —— 播放状态轮询：只做 UI 同步，切歌由后端负责 ——
   useEffect(() => {
     const refresh = () => {
-      invoke<PlayerState>("music_get_state").then(syncState).catch(() => {});
+      invoke<PlayerState>("music_get_state")
+        .then((snapshot) => {
+          pollFailRef.current = 0;
+          syncState(snapshot);
+        })
+        .catch((err) => {
+          // 静默失败会让界面停在旧状态，用户会以为是「没变化」而不是「取数失败」。
+          // 但要连续失败几次才提示：单次失败常是切歌/启动瞬间的竞态，每次都弹会刷屏。
+          pollFailRef.current += 1;
+          if (pollFailRef.current === POLL_FAIL_ALERT_AFTER) {
+            toast(t("music.statePollFailed", { err: String(err) }), "err");
+          }
+        });
     };
     const timer = window.setInterval(refresh, POLL_MS);
     // 从托盘/最小化返回时立即对齐一次（隐藏期间 WebView2 会节流定时器）
@@ -212,7 +233,7 @@ export default function MusicPanel() {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [syncState]);
+  }, [syncState, t]);
 
   const playIndex = useCallback(
     async (index: number | null) => {
