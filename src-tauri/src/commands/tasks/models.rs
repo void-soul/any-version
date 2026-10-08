@@ -345,15 +345,6 @@ impl TaskBrief {
     }
 }
 
-/// 启动后的今日待办提醒数据。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReminderData {
-    pub today: String,
-    pub today_pending: Vec<TaskBrief>,
-    pub overdue: Vec<TaskBrief>,
-}
-
 // ─── 画布贴纸（白板便签） ───
 
 /// 贴纸数据。每个贴纸属于一个系列，可在画布上自由拖放。

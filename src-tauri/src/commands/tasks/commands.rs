@@ -577,51 +577,6 @@ pub fn tasks_reorder(input: ReorderInput) -> Result<(), String> {
     })
 }
 
-/// 启动后的今日待办提醒数据：今日未完成（按 sort_order）+ 逾期未完成。
-#[tauri::command]
-pub fn tasks_today_reminder() -> Result<ReminderData, String> {
-    let today = today();
-    with_conn(move |conn| {
-        let today_pending: Vec<TaskBrief> = conn
-            .prepare(&format!(
-                "SELECT {} FROM tasks \
-                 WHERE archived = 0 AND scheduled_date = ?1 AND progress < 100 \
-                 ORDER BY sort_order ASC, priority DESC",
-                TASK_COLUMNS
-            ))
-            .map_err(|e| e.to_string())?
-            .query_map(params![today], |row| Ok(row_to_task(row)?))
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .map(TaskBrief::from_item)
-            .collect();
-
-        let overdue: Vec<TaskBrief> = conn
-            .prepare(&format!(
-                "SELECT {} FROM tasks \
-                 WHERE archived = 0 AND scheduled_date < ?1 AND progress < 100 \
-                 ORDER BY scheduled_date ASC, sort_order ASC",
-                TASK_COLUMNS
-            ))
-            .map_err(|e| e.to_string())?
-            .query_map(params![today], |row| Ok(row_to_task(row)?))
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .map(TaskBrief::from_item)
-            .collect();
-
-        Ok(ReminderData {
-            today,
-            today_pending,
-            overdue,
-        })
-    })
-}
-
 /// 归档（软删除）或恢复任务。
 #[tauri::command]
 pub fn tasks_set_archived(id: String, archived: bool) -> Result<(), String> {

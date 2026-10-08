@@ -93,13 +93,6 @@ export interface TaskBrief {
   scheduledDate?: string | null;
 }
 
-/// 启动后的今日待办提醒数据。
-export interface ReminderData {
-  today: string;
-  todayPending: TaskBrief[];
-  overdue: TaskBrief[];
-}
-
 export interface CreateTaskInput {
   title: string;
   description?: string;
@@ -280,7 +273,6 @@ export const tasksApi = {
   listMoves: (taskId: string) => invoke<TaskMoveRecord[]>("tasks_list_moves", { taskId }),
   summary: (date: string) => invoke<TaskSummary>("tasks_summary", { date }),
   dayStats: (start: string, end: string) => invoke<DayStat[]>("tasks_day_stats", { start, end }),
-  todayReminder: () => invoke<ReminderData>("tasks_today_reminder"),
 };
 
 // ─── 贴纸 API ───
