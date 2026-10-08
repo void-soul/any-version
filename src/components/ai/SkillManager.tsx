@@ -2,12 +2,13 @@ import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { open } from '@tauri-apps/plugin-dialog';
 import { listen as listenEvent } from '@tauri-apps/api/event';
-import { Note } from '../shared/Note';
+import { Note, ResultNote } from '../shared/Note';
 import {
   Search, Tag, Boxes, Store, Download, Trash2,
   CheckCircle, AlertTriangle, ExternalLink, X, Package, Loader2,
-  ChevronDown, Settings2, Filter, Link2, Unlink
+  ChevronDown, Settings2, Filter, Link2, Unlink, Sparkles
 } from 'lucide-react';
 import { DetectedAiTool } from './types';
 import { alertError } from "../shared/ThemedAlert";
@@ -54,7 +55,14 @@ interface SkillToolStatusView {
   deployedCount?: number;
 }
 
-type TabKey = 'skills' | 'tools' | 'market';
+/** 内置技能（随 Kira 分发，可装到用户指定目录） */
+interface BuiltinSkillView {
+  id: string;
+  name: string;
+  description: string;
+}
+
+type TabKey = 'skills' | 'tools' | 'market' | 'builtin';
 
 const MARKET_SOURCES = [
   { name: 'skills.sh 官网', desc: 'Agent Skills 官方生态与规范', url: 'https://skills.sh' },
@@ -191,6 +199,11 @@ export default function SkillManager() {
   const [updates, setUpdates] = useState<SkillUpdateInfo[]>([]);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
 
+  // ── 内置技能 ──
+  const [builtins, setBuiltins] = useState<BuiltinSkillView[]>([]);
+  const [builtinBusy, setBuiltinBusy] = useState<string | null>(null);
+  const [builtinResult, setBuiltinResult] = useState<{ ok: boolean; msg: string } | null>(null);
+
   // ── 加载 ──
   const loadSkills = async () => {
     setSkillLoading(true);
@@ -222,6 +235,9 @@ export default function SkillManager() {
     loadSkills();
     loadTools();
     loadDeployed();
+    invoke<BuiltinSkillView[]>('list_builtin_skills')
+      .then(setBuiltins)
+      .catch(() => setBuiltins([]));
   }, []);
 
   // 监听安装进度
@@ -371,6 +387,22 @@ export default function SkillManager() {
     }
   };
 
+  // 安装内置技能：目录由用户选（后端不猜，也不偷偷装进公共仓库）
+  const installBuiltin = async (id: string) => {
+    const picked = await open({ directory: true, title: t("skillmgr.builtinPickDir") });
+    if (typeof picked !== 'string') return;
+    setBuiltinBusy(id);
+    setBuiltinResult(null);
+    try {
+      const path = await invoke<string>('install_builtin_skill', { skillId: id, targetDir: picked });
+      setBuiltinResult({ ok: true, msg: t("skillmgr.builtinInstalled", { path }) });
+      loadSkills();
+    } catch (e: any) {
+      setBuiltinResult({ ok: false, msg: String(e) });
+    }
+    setBuiltinBusy(null);
+  };
+
   return (
     <div className="flex flex-col h-full text-slate-200 select-none">
       {/* 顶部导航 Tab */}
@@ -380,6 +412,7 @@ export default function SkillManager() {
             { k: 'skills' as TabKey, label: t("skillmgr.tabSkills"), icon: Package },
             { k: 'tools' as TabKey, label: t("skillmgr.tabTools"), icon: Boxes },
             { k: 'market' as TabKey, label: t("skillmgr.tabMarket"), icon: Store },
+            { k: 'builtin' as TabKey, label: t("skillmgr.tabBuiltin"), icon: Sparkles },
           ]).map(({ k, label, icon: Icon }) => (
             <button
               key={k}
@@ -787,6 +820,45 @@ export default function SkillManager() {
                 )}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ════════ 内置技能 Tab ════════ */}
+        {tab === 'builtin' && (
+          <div className="space-y-4 max-w-4xl">
+            <Note tone="info" title={t("skillmgr.builtinTitle")}>
+              <p>{t("skillmgr.builtinHint1")}</p>
+              <p>{t("skillmgr.builtinHint2")}</p>
+            </Note>
+
+            {builtins.length === 0 ? (
+              <div className="text-center py-16 text-slate-500 text-sm">{t("skillmgr.builtinEmpty")}</div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                {builtins.map((b) => (
+                  <div key={b.id} className="rounded-card bg-white/[0.03] border border-white/10 p-3.5 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-3.5 h-3.5 text-[var(--module-accent)] flex-shrink-0" />
+                      <span className="text-body font-semibold text-slate-100 truncate">{b.name}</span>
+                      <code className="ml-auto text-micro text-slate-600 font-mono truncate">{b.id}</code>
+                    </div>
+                    <p className="text-tiny text-slate-400 leading-relaxed">{b.description}</p>
+                    <button
+                      onClick={() => void installBuiltin(b.id)}
+                      disabled={builtinBusy !== null}
+                      className="w-full px-3 py-2 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-body font-semibold text-white flex items-center justify-center gap-2 transition-all cursor-pointer"
+                    >
+                      {builtinBusy === b.id
+                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        : <Download className="w-3.5 h-3.5" />}
+                      {builtinBusy === b.id ? t("skillmgr.builtinInstalling") : t("skillmgr.builtinInstall")}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {builtinResult && <ResultNote ok={builtinResult.ok} message={builtinResult.msg} />}
           </div>
         )}
       </div>

@@ -1458,3 +1458,172 @@ mod tests {
         assert!(find_skill_root(&dir, None).is_err());
     }
 }
+
+// ─── 内置技能（随 Kira 分发） ───
+//
+// 技能文件放在 `src-tauri/resources/builtin-skills/<id>/`，编译期用 include_str! 嵌入：
+// 既不必在 tauri.conf 里声明 bundle.resources（开发态与打包态是两套路径逻辑），
+// 也不会因为用户换了数据目录就找不到。
+//
+// 名称与描述**不在这里另抄一份** —— 直接解析 SKILL.md 的 frontmatter，
+// 保证技能自我介绍只有一处真源（改 SKILL.md 即改列表）。
+
+const MINDMAP_IMPORT_SKILL_MD: &str =
+    include_str!("../../../resources/builtin-skills/mindmap-import/SKILL.md");
+const MINDMAP_IMPORT_SCHEMA_MD: &str =
+    include_str!("../../../resources/builtin-skills/mindmap-import/references/schema.md");
+const MINDMAP_IMPORT_VALIDATE_PY: &str =
+    include_str!("../../../resources/builtin-skills/mindmap-import/scripts/validate.py");
+
+struct BuiltinSkill {
+    id: &'static str,
+    /// SKILL.md 原文（用来取 frontmatter 里的 name / description）
+    skill_md: &'static str,
+    /// 文件清单：相对技能目录的路径 → 内容
+    files: &'static [(&'static str, &'static str)],
+}
+
+const BUILTIN_SKILLS: &[BuiltinSkill] = &[BuiltinSkill {
+    id: "mindmap-import",
+    skill_md: MINDMAP_IMPORT_SKILL_MD,
+    files: &[
+        ("SKILL.md", MINDMAP_IMPORT_SKILL_MD),
+        ("references/schema.md", MINDMAP_IMPORT_SCHEMA_MD),
+        ("scripts/validate.py", MINDMAP_IMPORT_VALIDATE_PY),
+    ],
+}];
+
+#[derive(Serialize, Clone, Debug)]
+pub struct BuiltinSkillView {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+}
+
+/// 读取 SKILL.md 开头 YAML frontmatter 里的某个 key（只认 `key: value` 单行形态）。
+fn frontmatter_value(md: &str, key: &str) -> Option<String> {
+    let body = md.strip_prefix("---")?;
+    let end = body.find("\n---")?;
+    for line in body[..end].lines() {
+        if let Some(rest) = line.trim().strip_prefix(key) {
+            if let Some(v) = rest.trim_start().strip_prefix(':') {
+                return Some(v.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+/// 列出内置技能（供前端「内置」页展示）
+#[tauri::command]
+pub fn list_builtin_skills() -> Vec<BuiltinSkillView> {
+    BUILTIN_SKILLS
+        .iter()
+        .map(|s| BuiltinSkillView {
+            id: s.id.to_string(),
+            name: frontmatter_value(s.skill_md, "name").unwrap_or_else(|| s.id.to_string()),
+            description: frontmatter_value(s.skill_md, "description").unwrap_or_default(),
+        })
+        .collect()
+}
+
+/// 把内置技能装到**用户指定**的目录：写出 `<target_dir>/<id>/` 下的全部文件。
+///
+/// 非破坏性：目标已存在且非空就直接报错，绝不覆盖用户自己的技能。
+/// 目录由用户在前端选（例如 ~/.agents/skills、某个 AI 工具的技能目录），
+/// 后端不猜、也不偷偷装进公共仓库。
+#[tauri::command]
+pub fn install_builtin_skill(skill_id: String, target_dir: String) -> Result<String, String> {
+    let skill = BUILTIN_SKILLS
+        .iter()
+        .find(|s| s.id == skill_id)
+        .ok_or_else(|| format!("没有内置技能「{}」", skill_id))?;
+
+    let target = PathBuf::from(target_dir.trim());
+    if target.as_os_str().is_empty() {
+        return Err("未选择安装目录".to_string());
+    }
+
+    let dest = target.join(skill.id);
+    if dest.exists() {
+        let occupied = fs::read_dir(&dest)
+            .map(|mut it| it.next().is_some())
+            .unwrap_or(true);
+        if occupied {
+            return Err(format!(
+                "目标目录已存在同名技能：{}（不覆盖，请换目录或先删掉它）",
+                dest.display()
+            ));
+        }
+    }
+
+    for (rel, content) in skill.files {
+        let path = dest.join(rel);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("创建目录失败 {}: {}", parent.display(), e))?;
+        }
+        fs::write(&path, content)
+            .map_err(|e| format!("写入失败 {}: {}", path.display(), e))?;
+    }
+
+    Ok(dest.to_string_lossy().to_string())
+}
+
+#[cfg(test)]
+mod builtin_skill_tests {
+    use super::*;
+
+    #[test]
+    fn frontmatter_is_parsed_from_skill_md() {
+        let s = &BUILTIN_SKILLS[0];
+        assert_eq!(
+            frontmatter_value(s.skill_md, "name").as_deref(),
+            Some("mindmap-import")
+        );
+        let desc = frontmatter_value(s.skill_md, "description").unwrap_or_default();
+        assert!(desc.contains("思维导图"), "description 应来自 frontmatter: {}", desc);
+        assert_eq!(frontmatter_value(s.skill_md, "no_such_key"), None);
+    }
+
+    #[test]
+    fn listed_builtin_skills_are_complete() {
+        let list = list_builtin_skills();
+        assert!(!list.is_empty());
+        for v in list {
+            assert!(!v.id.is_empty());
+            assert!(!v.name.is_empty(), "{} 缺 name（frontmatter 解析失败？）", v.id);
+            assert!(!v.description.is_empty(), "{} 缺 description", v.id);
+        }
+    }
+
+    #[test]
+    fn install_writes_every_file_and_refuses_overwrite() {
+        let dir = std::env::temp_dir().join(format!("kira-builtin-skill-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let installed = install_builtin_skill(
+            "mindmap-import".to_string(),
+            dir.to_string_lossy().to_string(),
+        )
+        .expect("首次安装应成功");
+        let root = PathBuf::from(&installed);
+        assert!(root.join("SKILL.md").exists(), "SKILL.md 未落盘");
+        assert!(root.join("references").join("schema.md").exists(), "schema.md 未落盘");
+        assert!(root.join("scripts").join("validate.py").exists(), "validate.py 未落盘");
+
+        // 已存在且非空 → 拒绝（不能覆盖用户的技能）
+        assert!(install_builtin_skill(
+            "mindmap-import".to_string(),
+            dir.to_string_lossy().to_string()
+        )
+        .is_err());
+        // 未知 id → 拒绝
+        assert!(
+            install_builtin_skill("nope".to_string(), dir.to_string_lossy().to_string()).is_err()
+        );
+        // 空目录 → 拒绝
+        assert!(install_builtin_skill("mindmap-import".to_string(), String::new()).is_err());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
