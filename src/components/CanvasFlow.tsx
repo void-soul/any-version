@@ -10,7 +10,6 @@ import {
   Position,
   ReactFlow,
   ReactFlowProvider,
-  getBezierPath,
   useReactFlow,
   type Edge,
   type EdgeProps,
@@ -19,6 +18,8 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { EDGE_STYLES, edgePath, useEdgeStyle, type EdgeStyle } from "../utils/graphEdgeStyle";
+import EdgeStyleSelect from "./shared/EdgeStyleSelect";
 import type { JsonValue, SearchMatches } from "./SystemTools/JsonBrowser";
 
 type JsonGraphItem = {
@@ -164,7 +165,9 @@ const JsonFlowNode = memo(function JsonFlowNode({ data }: NodeProps<Node<JsonFlo
 });
 
 const ColorEdge = memo(function ColorEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, selected, data }: EdgeProps) {
-  const [path] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, curvature: 0.28 });
+  // 自定义 edge 拿不到组件 state，样式由每条边的 `data.style` 传进来（缺失 = 曲线）
+  const style = (data?.style as EdgeStyle | undefined);
+  const [path] = edgePath(style && EDGE_STYLES.includes(style) ? style : "bezier", { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
   const color = data?.color as string | undefined ?? "#22d3ee";
   const gradientId = `flow-edge-${id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
   return <><defs><linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor={color} /><stop offset="100%" stopColor="#f8fafc" /></linearGradient></defs><path d={path} fill="none" stroke={color} strokeWidth={selected ? 5 : 3} opacity={selected ? 0.2 : 0.12} /><path d={path} fill="none" stroke={`url(#${gradientId})`} strokeWidth={selected ? 2.2 : 1.4} strokeLinecap="round" markerEnd={`url(#arrow-${gradientId})`} /><marker id={`arrow-${gradientId}`} markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#f8fafc" /></marker></>;
@@ -175,6 +178,8 @@ function JsonFlowInner({ value, selectedPath, searchMatches, onSelectPath, onCop
   const { fitView } = useReactFlow();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [nodes, setNodes] = useState<Node<JsonFlowNodeData>[]>([]);
+  // 连线样式（曲线 / 直角折线 / 直线）：与 ER 设计、思维导图共用一份偏好
+  const [edgeStyle, setEdgeStyle] = useEdgeStyle();
   const allItems = useMemo(() => buildJsonItems(value), [value]);
   const graphTruncated = allItems.length >= MAX_JSON_FLOW_ITEMS;
   const previousCollapseToken = useRef(0);
@@ -185,7 +190,7 @@ function JsonFlowInner({ value, selectedPath, searchMatches, onSelectPath, onCop
   }, [allItems, collapseAllToken]);
   const visibleItems = useMemo(() => allItems.filter((item) => { let current = item.parentId; while (current) { if (collapsed.has(current)) return false; current = allItems.find((candidate) => candidate.id === current)?.parentId ?? null; } return true; }), [allItems, collapsed]);
   const computedNodes = useMemo<Node<JsonFlowNodeData>[]>(() => visibleItems.map((item) => ({ id: item.id, type: "jsonNode", position: { x: item.depth * 260, y: item.depth === 0 ? 0 : visibleItems.filter((candidate) => candidate.depth === item.depth && candidate.id <= item.id).length * 92 }, data: { item, selectedPath, searchMatches, collapsed, onSelect: onSelectPath, onToggle: (path) => setCollapsed((current) => { const next = new Set(current); next.has(path) ? next.delete(path) : next.add(path); return next; }), onCopy }, sourcePosition: Position.Right, targetPosition: Position.Left })), [onCopy, onSelectPath, searchMatches, selectedPath, visibleItems, collapsed]);
-  const edges = useMemo<Edge[]>(() => visibleItems.flatMap((item) => !item.parentId || !visibleItems.some((candidate) => candidate.id === item.parentId) ? [] : [{ id: `json-edge-${item.id}`, source: item.parentId, target: item.id, type: "color", data: { color: hashColor(item.id, JSON_EDGE_COLORS) }, markerEnd: { type: MarkerType.ArrowClosed, color: "#f8fafc" } }]), [visibleItems]);
+  const edges = useMemo<Edge[]>(() => visibleItems.flatMap((item) => !item.parentId || !visibleItems.some((candidate) => candidate.id === item.parentId) ? [] : [{ id: `json-edge-${item.id}`, source: item.parentId, target: item.id, type: "color", data: { color: hashColor(item.id, JSON_EDGE_COLORS), style: edgeStyle }, markerEnd: { type: MarkerType.ArrowClosed, color: "#f8fafc" } }]), [visibleItems, edgeStyle]);
   // 保持拖放位置：computed nodes 更新时，已有位置的节点保持当前位置
   useEffect(() => {
     setNodes((current) => {
@@ -199,7 +204,7 @@ function JsonFlowInner({ value, selectedPath, searchMatches, onSelectPath, onCop
   // JSON 内容变化时重置位置
   useEffect(() => { setNodes(computedNodes); }, [value]);
   useEffect(() => { const timer = window.setTimeout(() => fitView({ padding: 0.2, duration: 240 }), 0); return () => window.clearTimeout(timer); }, [fitView, value, collapsed]);
-  return <div className="relative h-full min-h-0"><ReactFlow nodes={nodes} edges={edges} nodeTypes={{ jsonNode: JsonFlowNode }} edgeTypes={{ color: ColorEdge }} onNodesChange={(changes) => setNodes((cur) => applyNodeChanges(changes, cur))} fitView minZoom={0.15} maxZoom={2.2} nodesDraggable nodesConnectable={false} elementsSelectable proOptions={{ hideAttribution: true }}><Background color="#1e293b" gap={24} size={1} /><MiniMap style={{ backgroundColor: "var(--color-surface-deep)", border: "1px solid rgba(255,255,255,.12)" }} className="!bg-slate-950/95" nodeColor={(node) => hashColor(String(node.id), JSON_EDGE_COLORS)} nodeStrokeColor="#0f172a" nodeBorderRadius={2} maskColor="rgba(2, 6, 23, 0.72)" pannable zoomable /><Controls className="canvas-flow-controls" showInteractive={false} /></ReactFlow>{graphTruncated && <div className="pointer-events-none absolute left-3 top-3 z-10 rounded border border-amber-400/20 bg-slate-900/90 px-2 py-1 text-tiny text-amber-200">{t("canvasflow.graphTruncated", { count: MAX_JSON_FLOW_ITEMS })}</div>}</div>;
+  return <div className="relative h-full min-h-0"><ReactFlow nodes={nodes} edges={edges} nodeTypes={{ jsonNode: JsonFlowNode }} edgeTypes={{ color: ColorEdge }} onNodesChange={(changes) => setNodes((cur) => applyNodeChanges(changes, cur))} fitView minZoom={0.15} maxZoom={2.2} nodesDraggable nodesConnectable={false} elementsSelectable proOptions={{ hideAttribution: true }}><Background color="#1e293b" gap={24} size={1} /><MiniMap style={{ backgroundColor: "var(--color-surface-deep)", border: "1px solid rgba(255,255,255,.12)" }} className="!bg-slate-950/95" nodeColor={(node) => hashColor(String(node.id), JSON_EDGE_COLORS)} nodeStrokeColor="#0f172a" nodeBorderRadius={2} maskColor="rgba(2, 6, 23, 0.72)" pannable zoomable /><Controls className="canvas-flow-controls" showInteractive={false} /></ReactFlow>{graphTruncated && <div className="pointer-events-none absolute left-3 top-3 z-10 rounded border border-amber-400/20 bg-slate-900/90 px-2 py-1 text-tiny text-amber-200">{t("canvasflow.graphTruncated", { count: MAX_JSON_FLOW_ITEMS })}</div>}{/* 连线样式（右下角浮层）：与 ER 设计、思维导图共用一份偏好 */}<div className="absolute bottom-3 right-3 z-10"><EdgeStyleSelect value={edgeStyle} onChange={setEdgeStyle} className="rounded-full border border-white/10 bg-slate-900/80 px-2 py-1 text-tiny text-slate-300 shadow backdrop-blur outline-none hover:bg-slate-900" /></div></div>;
 }
 
 export function JsonFlowCanvas(props: { value: JsonValue; selectedPath: string; searchMatches: SearchMatches; onSelectPath: (path: string) => void; onCopy: (value: string) => void; collapseAllToken: number }) {

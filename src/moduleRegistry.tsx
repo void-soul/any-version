@@ -29,6 +29,7 @@ import {
   Music2,
   Star,
   CalendarDays,
+  Database,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import i18n from "./i18n";
@@ -314,6 +315,15 @@ export const MODULES: ModuleDef[] = [
     color: "#f59e0b",
     defaultToolbar: false,
     Component: lazyLoad(() => import("./components/tasks/TaskCalendarPanel")),
+  },
+  // —— 数据库设计器（画表/视图 → 导出建表 SQL；纯文件 .dbdesign.json）——
+  {
+    id: "dbdesigner",
+    label: "数据库设计",
+    icon: Database,
+    color: "#0ea5e9",
+    defaultToolbar: false,
+    Component: lazyLoad(() => import("./components/dbdesigner/DbDesignerPanel")),
   },
 ];
 

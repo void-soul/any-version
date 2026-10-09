@@ -1143,6 +1143,21 @@ pub fn run() {
                 commands::mindmap::mm_bind_document_dir,
                 commands::mindmap::mm_list_project_files,
 
+                // ---- 数据库设计器（纯文件：.dbdesign.json） ----
+                commands::db_designer::commands::dbd_new_document,
+                commands::db_designer::commands::dbd_open_file,
+                commands::db_designer::commands::dbd_save_file,
+                commands::db_designer::commands::dbd_write_file,
+                commands::db_designer::commands::dbd_validate,
+                commands::db_designer::commands::dbd_export_sql,
+                commands::db_designer::commands::dbd_export_sql_file,
+                commands::db_designer::commands::dbd_export_outline,
+                commands::db_designer::commands::dbd_export_outline_file,
+                commands::db_designer::commands::dbd_rename_field,
+                commands::db_designer::commands::dbd_reverse_sqlite,
+                commands::db_designer::commands::dbd_reverse_ddl_text,
+                commands::db_designer::commands::dbd_reverse_ddl_file,
+
                 // ---- Node 项目管理器 ----
                 commands::node_manager::npm_list_projects,
                 commands::node_manager::npm_deps,

@@ -4,10 +4,12 @@ import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
 import {
-  BaseEdge, Controls, EdgeLabelRenderer, Handle, MarkerType, MiniMap, Position, ReactFlow, ReactFlowProvider, getBezierPath, useReactFlow,
+  BaseEdge, Controls, EdgeLabelRenderer, Handle, MarkerType, MiniMap, Position, ReactFlow, ReactFlowProvider, useReactFlow,
   type Connection, type Edge, type EdgeProps, type Node, type NodeChange, type NodeProps, type Viewport,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { CONNECTION_LINE_BY_STYLE, EDGE_STYLES, edgePath, useEdgeStyle, type EdgeStyle } from "../../utils/graphEdgeStyle";
+import EdgeStyleSelect from "../shared/EdgeStyleSelect";
 import { MindmapMarkdown } from "./MindmapMarkdown";
 import { MarkdownFieldEditor } from "./MarkdownFieldEditor";
 import { NodeFormFields } from "./NodeFormFields";
@@ -211,8 +213,14 @@ const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<FlowNodeData>>)
 
 // ════════════ 连线 ════════════
 
+/** 自定义 edge 拿不到组件 state，样式由每条边的 `data.style` 传进来（缺失 = 曲线）。 */
+function edgeStyleOf(data: Record<string, unknown> | undefined): EdgeStyle {
+  const style = data?.style as EdgeStyle | undefined;
+  return style && EDGE_STYLES.includes(style) ? style : "bezier";
+}
+
 const ColorEdge = memo(function ColorEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps) {
-  const [path] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, curvature: 0.28 });
+  const [path] = edgePath(edgeStyleOf(data), { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
   const color = (data?.color as string | undefined) ?? VEX_CYBER_CYAN;
   const gid = `mm-edge-${id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
   return (<>
@@ -227,7 +235,7 @@ const ColorEdge = memo(function ColorEdge({ id, sourceX, sourceY, targetX, targe
  *  标签本身即操作入口：点击改文字，悬停显示 ✕ 删除。 */
 const RelationEdge = memo(function RelationEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps) {
   const { t } = useTranslation();
-  const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, curvature: 0.35 });
+  const [path, labelX, labelY] = edgePath(edgeStyleOf(data), { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition }, 0.35);
   const color = (data?.color as string | undefined) ?? VEX_CYBER_CYAN;
   const label = (data?.label as string | undefined) ?? "";
   const onEdit = data?.onEdit as ((e: React.MouseEvent) => void) | undefined;
@@ -789,6 +797,8 @@ type NodeCacheEntry = {
 function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVersion, onAiProject, onExportMd, onError, aiPill, treeOpen, onTreeOpenChange }: { full: DocumentFull; accent: string; onDocumentUpdate: (d: DocumentFull) => void; onHistoryPush: () => void; historyVersion: number; onAiProject: () => void; onExportMd: () => void; onError: (message: string) => void; aiPill?: React.ReactNode; treeOpen: boolean; onTreeOpenChange: (open: boolean) => void }) {
   const { t } = useTranslation();
   const { fitView, flowToScreenPosition } = useReactFlow();
+  // 连线样式（曲线 / 直角折线 / 直线）：与 ER 设计、JSON 图共用一份偏好，存在 localStorage
+  const [edgeStyle, setEdgeStyle] = useEdgeStyle();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // 节点树导航面板：点击树节点 = 选中 + 展开祖先 + 视口聚焦（与悬浮窗树形选择同一交互直觉）。
@@ -1308,7 +1318,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       if (!n.parentId || !visible.has(n.parentId)) continue;
       const isOnChain = highlightChain.includes(n.id) && highlightChain.includes(n.parentId);
       out.push({ id: `mm-e-${n.id}`, source: n.parentId, target: n.id, sourceHandle: "out", targetHandle: "in", type: "colorE", style: isOnChain ? { strokeWidth: 2, opacity: 0.9 } : {},
-        data: { color: effectiveNodeColor(n) }, markerEnd: { type: MarkerType.ArrowClosed, color: "#f8fafc" } } as Edge);
+        data: { color: effectiveNodeColor(n), style: edgeStyle }, markerEnd: { type: MarkerType.ArrowClosed, color: "#f8fafc" } } as Edge);
     }
     // 自由关系线（虚线 + 文字标签）：两端节点都可见时才画（折叠隐藏的子树不画）
     for (const l of links) {
@@ -1319,6 +1329,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
         type: "relationE",
         data: {
           color: src ? effectiveNodeColor(src) : VEX_CYBER_CYAN,
+          style: edgeStyle,
           label: l.label,
           onEdit: (e: React.MouseEvent) => openLinkEditor(l, e),
           onDelete: () => removeLink(l.id),
@@ -1326,7 +1337,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       } as Edge);
     }
     return out;
-  }, [visibleNodes, byId, highlightChain, links, openLinkEditor, removeLink]);
+  }, [visibleNodes, byId, highlightChain, links, openLinkEditor, removeLink, edgeStyle]);
 
   // 受控节点：React Flow 拖放时把位置写入 posOverrides。仅处理 position 变更，
   // 选择由 selectedId 管理。一次 setState → 一次渲染 → 收敛，无反馈循环。
@@ -1576,6 +1587,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
         onPaneClick={() => { setSelectedId(null); setCtxMenu(null); setPreview(null); setLinkFrom(null); }}
         onNodeContextMenu={(e, n) => onNodeContextMenu(e, n as Node)}
         onEdgeClick={(e, ed) => { const l = links.find(x => `mm-l-${x.id}` === ed.id); if (l) openLinkEditor(l, e); }}
+        connectionLineType={CONNECTION_LINE_BY_STYLE[edgeStyle]}
         minZoom={0.1} maxZoom={2.5} nodesConnectable
         proOptions={{ hideAttribution: true }}>
         <MiniMap style={{ backgroundColor: "var(--color-surface-deep)", border: "1px solid rgba(255,255,255,.12)" }} className="!bg-slate-950/95"
@@ -1583,6 +1595,15 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
           nodeStrokeColor="#0f172a" nodeBorderRadius={2} maskColor="rgba(2,6,23,0.72)" pannable zoomable />
         <Controls className="canvas-flow-controls" showInteractive={false} />
       </ReactFlow>
+
+      {/* 连线样式（右下角浮层）：与 ER 设计 / JSON 图共用一份偏好 */}
+      <div className="absolute bottom-3 right-3 z-10">
+        <EdgeStyleSelect
+          value={edgeStyle}
+          onChange={setEdgeStyle}
+          className="rounded-full border border-white/10 bg-slate-900/80 px-2 py-1 text-tiny text-slate-300 shadow backdrop-blur outline-none hover:bg-slate-900"
+        />
+      </div>
 
       {/* 连线规则提示：拖线＝改上级（拖到节点卡片上松手同样改上级）；关系线模式下拖线＝加一条带文字的关系线 */}
       <div className="pointer-events-none absolute bottom-2 left-1/2 z-10 -translate-x-1/2">
