@@ -321,11 +321,12 @@ pub fn reverse_ddl(text: &str, dialect: &str, name: &str) -> Result<DbDesignDocu
                 kind: "table".to_string(),
                 name: table_name,
                 comment: String::new(),
-                // 简单横向排布：后续若有「自动整理」可以再换布局
+                // 反推出来的位置只是「能看」的兜底；用户点「自动布局」会重排（见前端 layout.ts）
                 x: (doc.nodes.len() % 4) as f64 * 280.0,
                 y: (doc.nodes.len() / 4) as f64 * 240.0,
                 table: Some(DbTableBody { fields, indexes }),
                 view: None,
+                ..Default::default()
             });
         } else if lower.contains("create view") {
             let Some(v) = parse_create_view(&stmt) else { continue };
@@ -339,6 +340,7 @@ pub fn reverse_ddl(text: &str, dialect: &str, name: &str) -> Result<DbDesignDocu
                 y: (doc.nodes.len() / 4) as f64 * 240.0,
                 table: None,
                 view: Some(DbViewBody { sql: v.1 }),
+                ..Default::default()
             });
         } else if lower.contains("create index") || lower.contains("create unique index") {
             let Some((idx_name, table, cols, unique)) = parse_create_index(&stmt) else {
@@ -389,6 +391,7 @@ pub fn reverse_ddl(text: &str, dialect: &str, name: &str) -> Result<DbDesignDocu
             kind: "1-n".to_string(),
             on_delete,
             on_update,
+            mirror: false,
         });
     }
 
@@ -501,16 +504,56 @@ fn parse_table_body(body: &str, _lower_hint: &str) -> (Vec<DbField>, Vec<DbIndex
     (fields, indexes)
 }
 
+/// 索引/主键里的**列名**清洗：`col(10)` 长度后缀、`ASC`/`DESC` 排序方向、反引号。
+///
+/// ⚠ 踩过：Navicat 导出的索引是 `` KEY `idx_51`(`openid` ASC, `user_status` ASC) USING BTREE ``，
+/// 去掉反引号后还剩「`openid` ASC」。而 `unquote_ident` 要求首尾**都是**反引号，
+/// 这种「开头是、结尾不是」的串会原样返回 —— 于是索引引用了名为「`openid` ASC」的字段，
+/// 校验判为「引用了不存在的字段」，整个逆向 DDL 失败（真实 dump 里 226 处一起报）。
+/// 排序方向不是我们要的语义（设计文档里没有 DESC 索引），直接丢掉。
+fn clean_index_col(raw: &str) -> String {
+    let s = raw.trim();
+    // `col` DESC / `col` ASC —— 按空白切开，尾部那个排序关键字丢掉
+    let s = match s.rsplit_once(char::is_whitespace) {
+        Some((head, tail)) if tail.eq_ignore_ascii_case("asc") || tail.eq_ignore_ascii_case("desc") => head,
+        _ => s,
+    };
+    // `col(10)` 之类的长度后缀
+    let s = match s.find('(') {
+        Some(i) => s[..i].trim(),
+        None => s,
+    };
+    unquote_ident(s)
+}
+
 /// `UNIQUE KEY name (a,b)` / `KEY name (a)` / `UNIQUE (a)` → (名, 列, 是否唯一)
 fn parse_index_clause(item: &str) -> (String, Vec<String>, bool) {
     let mut rest = item.trim().to_string();
     let low = rest.to_lowercase();
     let unique = low.starts_with("unique");
-    for kw in ["unique", "key", "index"] {
-        if rest.to_lowercase().starts_with(kw) {
-            rest = rest[kw.len()..].trim_start().to_string();
-            break;
+    // 关键字可能叠着出现：`UNIQUE KEY idx (...)` / `KEY INDEX (...)`。
+    // 逐个剥掉，但要求关键字后面紧跟空格或左括号 —— 否则表名叫 `indexed_foo`
+    // 会被砍成 `ed_foo`（前缀匹配不等于关键字）。
+    loop {
+        let low = rest.to_lowercase();
+        let mut found: Option<&str> = None;
+        for k in ["unique", "key", "index"] {
+            if !low.starts_with(k) {
+                continue;
+            }
+            // 关键字后面必须是空格或左括号，否则只是前缀撞名（`indexed_foo`）
+            let boundary = match rest[k.len()..].chars().next() {
+                Some('(') => true,
+                Some(c) => c.is_whitespace(),
+                None => true,
+            };
+            if boundary {
+                found = Some(k);
+                break;
+            }
         }
+        let Some(kw) = found else { break };
+        rest = rest[kw.len()..].trim_start().to_string();
     }
     // 约束名前缀：`CONSTRAINT uk_x UNIQUE (a)` → uk_x
     let mut name = String::new();
@@ -529,20 +572,21 @@ fn parse_index_clause(item: &str) -> (String, Vec<String>, bool) {
     let Some(o) = rest.find('(') else {
         return (name, Vec::new(), unique);
     };
+    // `KEY `idx_51` (...)` 的索引名在左括号之前。
+    // 踩过：以前只认 `CONSTRAINT x UNIQUE (...)` 那一种形式，Navicat/MySQL dump 里
+    // 满地的 `UNIQUE KEY `idx_51` (...)` 全都拿不到名字，被合成成
+    // `idx_<序号>_<列名>` —— 逆向再导出，索引名就跟原库对不上了。
+    // （`UNIQUE (` / `KEY (` 这种没名字的写法不能把关键字当名字。）
+    let head = rest[..o].trim();
+    if !head.is_empty() && !matches!(head.to_lowercase().as_str(), "unique" | "key" | "index") {
+        name = unquote_ident(head);
+    }
     let Some(c) = rest.rfind(')') else {
         return (name, Vec::new(), unique);
     };
     let cols = split_top_level(&rest[o + 1..c], ',')
         .iter()
-        .map(|s| {
-            // 去掉 `col(10)` 之类的长度后缀
-            let base = s.trim();
-            let base = match base.find('(') {
-                Some(i) => base[..i].trim(),
-                None => base,
-            };
-            unquote_ident(base)
-        })
+        .map(|s| clean_index_col(s))
         .filter(|s| !s.is_empty())
         .collect();
     (name, cols, unique)
@@ -802,7 +846,7 @@ fn parse_create_index(stmt: &str) -> Option<(String, String, Vec<String>, bool)>
     let Some(c) = after.rfind(')') else { return None };
     let cols = split_top_level(&after[o + 1..c], ',')
         .iter()
-        .map(|s| unquote_ident(s))
+        .map(|s| clean_index_col(s))
         .filter(|s| !s.is_empty())
         .collect::<Vec<String>>();
     Some((name, table, cols, unique))
@@ -892,6 +936,7 @@ pub fn reverse_sqlite(path: &str, name: &str) -> Result<DbDesignDocument, String
                 y: (doc.nodes.len() / 4) as f64 * 240.0,
                 table: None,
                 view: Some(DbViewBody { sql }),
+                ..Default::default()
             });
             continue;
         }
@@ -989,6 +1034,7 @@ pub fn reverse_sqlite(path: &str, name: &str) -> Result<DbDesignDocument, String
             y: (doc.nodes.len() / 4) as f64 * 240.0,
             table: Some(DbTableBody { fields, indexes }),
             view: None,
+            ..Default::default()
         });
     }
 
@@ -1039,6 +1085,7 @@ pub fn reverse_sqlite(path: &str, name: &str) -> Result<DbDesignDocument, String
                     kind: "1-n".to_string(),
                     on_delete: on_delete.clone(),
                     on_update: on_update.clone(),
+                    mirror: false,
                 });
             }
         }
@@ -1151,6 +1198,30 @@ mod tests {
         assert!(team.table.as_ref().unwrap().fields[0].auto_increment);
         assert_eq!(doc.relations.len(), 1, "{:?}", doc.relations);
         assert_eq!(doc.relations[0].on_delete, "SET NULL");
+    }
+
+    #[test]
+    fn navicat_style_index_columns_with_asc_and_using_btree_are_parsed() {
+        // Navicat 导出的索引列带排序方向，末尾还跟 USING BTREE：
+        //   UNIQUE KEY `idx_51`(`openid` ASC, `user_status` ASC) USING BTREE
+        // 踩过的坑：只脱反引号会留下「`openid` ASC」这种列名，校验判为引用不存在字段，
+        // 整个逆向 DDL 直接失败（真实 dump 里 226 处一起报）。
+        let ddl = r#"
+        CREATE TABLE `base_user` (
+          `openid` varchar(32) NOT NULL,
+          `user_status` char(1) NULL DEFAULT '0',
+          PRIMARY KEY (`openid`) USING BTREE,
+          UNIQUE KEY `idx_51`(`openid` ASC, `user_status` ASC) USING BTREE
+        ) ENGINE = InnoDB CHARACTER SET = utf8mb4;
+        CREATE INDEX `idx_52` ON `base_user` (`user_status` DESC);
+        "#;
+        let doc = reverse_ddl(ddl, "mysql", "t").unwrap();
+        let t = doc.nodes[0].table.as_ref().unwrap();
+        let idx = t.indexes.iter().find(|i| i.name == "idx_51").expect("idx_51");
+        assert_eq!(idx.fields, vec!["openid".to_string(), "user_status".to_string()]);
+        assert_eq!(idx.kind, "unique");
+        let idx2 = t.indexes.iter().find(|i| i.name == "idx_52").expect("idx_52");
+        assert_eq!(idx2.fields, vec!["user_status".to_string()]);
     }
 
     #[test]

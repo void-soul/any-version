@@ -50,6 +50,10 @@ export interface DbDesignNode {
   kind: "table" | "view";
   name: string;
   comment?: string;
+  /** 标签：自由文本，画布上按标签筛选 */
+  tags?: string[];
+  /** 主题色 `#rrggbb`：节点与它的连线都用这个颜色 */
+  color?: string;
   x?: number;
   y?: number;
   table?: DbTableBody | null;
@@ -71,6 +75,12 @@ export interface DbDesignRelation {
   kind: "1-1" | "1-n" | "n-n";
   onDelete?: string;
   onUpdate?: string;
+  /**
+   * true = 这条关系是「镜像父表主键」拖出来的，from 那一列是我们复制过去的副本。
+   * 之后父表加减主键，子表跟着变（后端 dbd_sync_relations 负责同步）。
+   * 字段级手动拖的关系为 false —— 父表后来加主键不该自动推给子表。
+   */
+  mirror?: boolean;
 }
 
 export interface DbDesignDocument {
@@ -110,6 +120,19 @@ export function relationFieldsOf(doc: DbDesignDocument, nodeId: string): string[
     for (const end of [r.from, r.to]) {
       if (end.node === nodeId && !out.includes(end.field)) out.push(end.field);
     }
+  }
+  return out;
+}
+
+/** 节点卡片里显示哪些字段行：只主键+外键，还是全部字段。 */
+export type FieldRowMode = "keys" | "all";
+export const FIELD_ROW_MODES: FieldRowMode[] = ["keys", "all"];
+
+/** 某张表里当外键用的字段（在关系里位于「多」端，即 from 那一侧）。 */
+export function fkFieldsOf(doc: DbDesignDocument, nodeId: string): string[] {
+  const out: string[] = [];
+  for (const r of doc.relations) {
+    if (r.from.node === nodeId && !out.includes(r.from.field)) out.push(r.from.field);
   }
   return out;
 }

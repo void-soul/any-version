@@ -3,12 +3,14 @@
 // 分期见 docs/design/db-designer.md：
 //   P1 数据模型 + 校验 + 导出（本目录已实现）
 //   P2 画布 UI（React Flow）  P3 反向工程  P4 Agent 助手 + 内置技能
+pub mod ai;
 pub mod commands;
 pub mod export;
 pub mod file;
 pub mod models;
 pub mod reverse;
 pub mod store;
+pub mod sync;
 
 #[cfg(test)]
 mod tests {
@@ -64,6 +66,7 @@ mod tests {
                         indexes: vec![],
                     }),
                     view: None,
+                    ..Default::default()
                 },
                 DbDesignNode {
                     id: "n_order".to_string(),
@@ -85,6 +88,7 @@ mod tests {
                         }],
                     }),
                     view: None,
+                    ..Default::default()
                 },
             ],
             relations: vec![DbDesignRelation {
@@ -95,6 +99,7 @@ mod tests {
                 kind: "1-n".to_string(),
                 on_delete: "CASCADE".to_string(),
                 on_update: "CASCADE".to_string(),
+                mirror: false,
             }],
             updated_at: String::new(),
         }
@@ -264,6 +269,7 @@ mod tests {
                 indexes: vec![],
             }),
             view: None,
+            ..Default::default()
         });
         doc.relations.push(DbDesignRelation {
             id: "r2".to_string(),
@@ -273,6 +279,7 @@ mod tests {
             kind: "n-n".to_string(),
             on_delete: "CASCADE".to_string(),
             on_update: "CASCADE".to_string(),
+            mirror: false,
         });
         let sql = export_sql(&doc).unwrap();
         assert!(sql.contains("CREATE TABLE `orders_tags` ("), "{}", sql);
@@ -292,6 +299,7 @@ mod tests {
             y: 0.0,
             table: None,
             view: Some(DbViewBody { sql: "SELECT * FROM orders;".to_string() }),
+            ..Default::default()
         });
         let sql = export_sql(&doc).unwrap();
         assert!(sql.contains("CREATE VIEW \"v_orders\" AS"), "{}", sql);
@@ -320,6 +328,7 @@ mod tests {
             y: 0.0,
             table: None,
             view: None,
+            ..Default::default()
         });
         let r = validate(&doc);
         assert!(r.errors.iter().any(|e| e.contains("不在允许列表")), "{:?}", r.errors);

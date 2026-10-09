@@ -40,6 +40,17 @@ pub fn dbd_validate(doc: DbDesignDocument) -> ValidationReport {
     validate(&doc)
 }
 
+/// 把文档里所有「镜像父表主键」的关系同步到当前主键定义。
+///
+/// 前端每次改字段（加/删字段、改主键、改类型）后调一次：父表主键变了，子表的
+/// 外键副本与连线跟着变。规则见 `sync::sync_mirrored_relations`。
+#[tauri::command]
+pub fn dbd_sync_relations(doc: DbDesignDocument) -> DbDesignDocument {
+    let mut next = doc;
+    super::sync::sync_mirrored_relations(&mut next);
+    next
+}
+
 /// 生成建表语句文本（前端负责另存为）
 #[tauri::command]
 pub fn dbd_export_sql(doc: DbDesignDocument) -> Result<String, String> {
@@ -97,7 +108,17 @@ pub fn dbd_reverse_ddl_text(text: String, dialect: String, name: String) -> Resu
 /// 从 DDL 文件反推设计
 #[tauri::command]
 pub fn dbd_reverse_ddl_file(path: String, dialect: String) -> Result<DbDesignDocument, String> {
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("读取失败 {}: {}", path, e))?;
+    // 中文 Windows 的 Navicat / mysqldump 默认导出 GBK，read_to_string 会直接抛
+    // "stream did not contain valid UTF-8" —— 用户看不懂。改成先按字节读，
+    // 非 UTF-8 时给一句能照做的提示（另存为 UTF-8）。
+    let bytes = std::fs::read(&path).map_err(|e| format!("读取失败 {}: {}", path, e))?;
+    let text = String::from_utf8(bytes).map_err(|_| {
+        format!(
+            "{} 不是 UTF-8 编码（中文 Windows 的 Navicat / mysqldump 常默认导出 GBK）。\n\
+             请在导出的字符集里选 UTF-8（Navicat：编码 = UTF-8）后重新导出。",
+            path
+        )
+    })?;
     let name = std::path::Path::new(&path)
         .file_stem()
         .and_then(|s| s.to_str())

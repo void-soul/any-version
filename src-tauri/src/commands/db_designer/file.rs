@@ -18,7 +18,10 @@ pub const FILE_SUFFIX: &str = ".dbdesign.json";
 /// 读设计文件。JSON 非法才报错；内容校验交给 `validate`（允许带着 warning 打开）。
 pub fn load_file(path: &str) -> Result<DbDesignDocument, String> {
     let raw = fs::read_to_string(path).map_err(|e| format!("读取设计文件失败 {}: {}", path, e))?;
-    let doc: DbDesignDocument = serde_json::from_str(&raw)
+    // 容忍 UTF-8 BOM：Windows 上的编辑器 / Agent 脚本写出的文件常带 BOM，
+    // 而 serde_json 不认，会直接报「expected value at line 1 column 1」。
+    let raw = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
+    let doc: DbDesignDocument = serde_json::from_str(raw)
         .map_err(|e| format!("设计文件不是合法 JSON：{}（{}）", e, path))?;
     Ok(doc)
 }
@@ -133,6 +136,7 @@ mod tests {
                 indexes: vec![],
             }),
             view: None,
+            ..Default::default()
         });
         doc
     }
@@ -174,6 +178,7 @@ mod tests {
             kind: "1-n".to_string(),
             on_delete: String::new(),
             on_update: String::new(),
+            mirror: false,
         });
         assert!(save_file(&p, &doc).is_err());
         assert!(!Path::new(&p).exists(), "校验失败就不该落盘");

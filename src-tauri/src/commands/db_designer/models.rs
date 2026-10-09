@@ -96,7 +96,7 @@ pub struct DbViewBody {
 }
 
 /// 一个节点 = 一张表 / 一个视图（函数不做，见 NODE_KINDS 注释）。
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct DbDesignNode {
     pub id: String,
@@ -105,6 +105,13 @@ pub struct DbDesignNode {
     pub name: String,
     #[serde(default)]
     pub comment: String,
+    /// 标签：自由文本，画布上按标签筛选用（PowerDesigner 的对象分类）。
+    /// 存字符串数组而不是固定枚举 —— 各项目对表的分类完全不一样，写死枚举反而不通用。
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// 主题色（`#rrggbb`）。连线用它着色：一条关联画成它所属表（外键所在那张）的颜色。
+    #[serde(default)]
+    pub color: String,
     #[serde(default)]
     pub x: f64,
     #[serde(default)]
@@ -138,6 +145,15 @@ pub struct DbDesignRelation {
     pub on_delete: String,
     #[serde(default)]
     pub on_update: String,
+    /// 这条关系是「镜像父表主键」产生的（从父表整表/全部主键锚点拖出来的），
+    /// 且 `from` 那一列是**我们复制过去的副本**。
+    ///
+    /// 为什么需要这个标记：复合主键的引用 intent（"B 要跟着 A 的主键走"）没法从
+    /// 单条字段对推断出来 —— 没有它就无法回答"A 又加了一个主键，B 要不要跟着加"。
+    /// 字段级手动拖出来的关系 mirror = false：A 之后加主键**不**自动推给 B
+    /// （那属于用户显式要的一部分）。
+    #[serde(default)]
+    pub mirror: bool,
 }
 
 /// 设计文档：应用内落库，同时可导出为 `.dbdesign.json` 给 Agent 用。
@@ -163,6 +179,11 @@ pub struct DbDesignDocument {
 impl DbDesignDocument {
     pub fn node(&self, id: &str) -> Option<&DbDesignNode> {
         self.nodes.iter().find(|n| n.id == id)
+    }
+
+    /// 可变版 node()：同步副本字段时需要就地改表体（`node()` 拿到的引用不能改）。
+    pub fn node_mut(&mut self, id: &str) -> Option<&mut DbDesignNode> {
+        self.nodes.iter_mut().find(|n| n.id == id)
     }
 
     /// 表节点才有字段；视图 / 函数没有字段概念。

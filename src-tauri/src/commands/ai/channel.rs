@@ -337,8 +337,10 @@ async fn consume_sse(
         if cur.saturating_sub(last_len) >= 400 || last_emit.elapsed().as_millis() >= 200 {
             last_emit = std::time::Instant::now();
             last_len = cur;
-            let tail: String = acc.chars().rev().take(120).collect::<Vec<_>>().into_iter().rev().collect();
-            on_stream_tick(cur, &tail);
+            // 传**累积全文**而不是尾片段：调用方要做增量解析（数据库设计器边收边落图）
+            // 就必须拿到完整文本；只给尾部 120 字符会丢中段内容，无法累积。
+            // 需要尾预览的调用方（思维导图）自己切片即可。
+            on_stream_tick(cur, &acc);
         }
     }
     // 收尾：缓冲区里剩余的最后一行（可能没有换行符结尾）
@@ -385,8 +387,9 @@ pub struct StreamOutcome {
 /// 发送一次流式请求并消费 SSE；断流/续写重试由此函数全权负责。
 /// 调用方拿到 [`StreamOutcome`] 后自行做 JSON 解析等业务收尾。
 ///
-/// `on_stream_tick(len, tail)`：流式增量节流回调（约每 400 字符 / 200ms 一次），
-/// 传 `|_, _| {}` 即可静默。
+/// `on_stream_tick(len, acc)`：流式节流回调（约每 400 字符 / 200ms 一次）。
+/// 第二个参数是**当前累积到的完整文本**（不是增量、也不是尾片段）——
+/// 调用方可以据此做增量解析；只要尾预览的自己切片。传 `|_, _| {}` 即可静默。
 ///
 /// 个别网关不识别 `stream_options.include_usage` 时会 400/422：首次响应遇到该错误
 /// 自动去掉参数重试一次（之后无 usage，仅进度）。

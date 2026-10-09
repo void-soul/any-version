@@ -846,7 +846,11 @@ async fn call_ai_json(
     let outcome = ai::channel::stream_chat_with_resume(
         &hooks, provider, model, system, user,
         0.3,
-        |len, tail| emit_progress(app, "stream", serde_json::json!({ "length": len, "text": tail })),
+        // 通道给的是累积全文，这里只取尾部 120 字符做预览 —— 事件里没必要每次都带上整篇
+        |len, acc| {
+            let tail: String = acc.chars().rev().take(120).collect::<Vec<_>>().into_iter().rev().collect();
+            emit_progress(app, "stream", serde_json::json!({ "length": len, "text": tail }))
+        },
     )
     .await;
     let outcome = match outcome {
