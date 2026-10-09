@@ -1,6 +1,9 @@
 [package]
 name = "kira"
 version = "2.5.5"
+# 仓库里有第二个 bin（kira-dbd CLI）后，`cargo run` / `yarn tauri dev` 会报
+# "could not determine which binary to run"。这里显式指定默认跑主程序。
+default-run = "kira"
 description = "Windows Multi-Language Dev Environment Version Manager"
 authors = ["Kira Team"]
 edition = "2021"

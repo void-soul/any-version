@@ -1475,6 +1475,14 @@ const MINDMAP_IMPORT_SCHEMA_MD: &str =
 const MINDMAP_IMPORT_VALIDATE_PY: &str =
     include_str!("../../../resources/builtin-skills/mindmap-import/scripts/validate.py");
 
+// 数据库设计器技能：Agent 产出 .dbdesign.json（设计文档 §6「Agent 友好」第 2 条）
+const DB_DESIGNER_SKILL_MD: &str =
+    include_str!("../../../resources/builtin-skills/db-designer/SKILL.md");
+const DB_DESIGNER_SCHEMA_MD: &str =
+    include_str!("../../../resources/builtin-skills/db-designer/references/schema.md");
+const DB_DESIGNER_VALIDATE_PY: &str =
+    include_str!("../../../resources/builtin-skills/db-designer/scripts/validate.py");
+
 struct BuiltinSkill {
     id: &'static str,
     /// SKILL.md 原文（用来取 frontmatter 里的 name / description）
@@ -1483,15 +1491,26 @@ struct BuiltinSkill {
     files: &'static [(&'static str, &'static str)],
 }
 
-const BUILTIN_SKILLS: &[BuiltinSkill] = &[BuiltinSkill {
-    id: "mindmap-import",
-    skill_md: MINDMAP_IMPORT_SKILL_MD,
-    files: &[
-        ("SKILL.md", MINDMAP_IMPORT_SKILL_MD),
-        ("references/schema.md", MINDMAP_IMPORT_SCHEMA_MD),
-        ("scripts/validate.py", MINDMAP_IMPORT_VALIDATE_PY),
-    ],
-}];
+const BUILTIN_SKILLS: &[BuiltinSkill] = &[
+    BuiltinSkill {
+        id: "mindmap-import",
+        skill_md: MINDMAP_IMPORT_SKILL_MD,
+        files: &[
+            ("SKILL.md", MINDMAP_IMPORT_SKILL_MD),
+            ("references/schema.md", MINDMAP_IMPORT_SCHEMA_MD),
+            ("scripts/validate.py", MINDMAP_IMPORT_VALIDATE_PY),
+        ],
+    },
+    BuiltinSkill {
+        id: "db-designer",
+        skill_md: DB_DESIGNER_SKILL_MD,
+        files: &[
+            ("SKILL.md", DB_DESIGNER_SKILL_MD),
+            ("references/schema.md", DB_DESIGNER_SCHEMA_MD),
+            ("scripts/validate.py", DB_DESIGNER_VALIDATE_PY),
+        ],
+    },
+];
 
 #[derive(Serialize, Clone, Debug)]
 pub struct BuiltinSkillView {

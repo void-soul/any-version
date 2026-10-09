@@ -367,6 +367,8 @@ pub mod tool_ids {
     pub const TRANSLATE: &str = "translate";
     /// API 模块智能导入
     pub const API_IMPORT: &str = "api-import";
+    /// 数据库设计器（AI 生成表结构）
+    pub const DB_DESIGNER: &str = "db-designer";
     /// AI 工具安装助手 Agent
     pub const INSTALL_AGENT: &str = "install-agent";
     /// 其它 / 未归类（尽量别用：看不出是谁花的）
