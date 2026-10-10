@@ -99,6 +99,10 @@ pub struct DbViewBody {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct DbDesignNode {
+    /// AI 生成时经常整个字段都不写（提示词要求了但模型会漏）。
+    /// 所以缺 id 按「空」处理而不是解析失败 —— 解析失败会让整份产出作废，
+    /// 而空 id 可以在收尾时补一个（`parse_document` / `extract_partial` 都会补）。
+    #[serde(default)]
     pub id: String,
     #[serde(default = "default_node_kind")]
     pub kind: String,
@@ -134,6 +138,8 @@ pub struct DbRelationEnd {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DbDesignRelation {
+    /// 同上：缺 id 当空，收尾时补。
+    #[serde(default)]
     pub id: String,
     #[serde(default)]
     pub name: String,
@@ -160,7 +166,10 @@ pub struct DbDesignRelation {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DbDesignDocument {
+    /// 与节点 id 同理：AI 常漏写顶层 id，缺了就当空，由解析侧补一个。
+    #[serde(default)]
     pub id: String,
+    #[serde(default)]
     pub name: String,
     #[serde(default)]
     pub description: String,

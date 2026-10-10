@@ -90,7 +90,8 @@ const SYSTEM_PROMPT: &str = "\
 
 硬性要求：
 1. 只输出 JSON 对象本身，不要 Markdown 代码围栏，不要任何解释文字。
-2. 顶层：id（字符串）、name（设计名）、dialect（mysql|postgres|sqlite）、nodes、relations。
+2. 顶层：name（设计名）、dialect（mysql|postgres|sqlite）、nodes、relations。
+   id 可以省略（省略了我来补），不要为了凑字段编一个。
 3. 节点只有 table 和 view 两种 kind。表名用小写蛇形（users / order_items），不允许重名。
 4. 字段类型是**逻辑类型对象**：{\"base\":\"varchar\",\"length\":32}。base 只能是：
    int bigint smallint tinyint decimal float double char varchar text date time
@@ -98,7 +99,8 @@ const SYSTEM_PROMPT: &str = "\
    decimal 要给 precision/scale，enum 要给 values。
 5. 每张表至少一个主键（字段 pk:true）。自增 autoIncrement:true 必须同时是主键。
 6. 关联：from = 子表（外键所在的那一端），to = 父表（被引用的那一端）。
-   from/to 的 node 是节点 id，field 是字段名。不要写自关联。
+   from/to 的 node 写节点 id（节点没写 id 时写表名也可以，我能认出来），
+   field 是字段名。不要写自关联。
    外键字段的类型要和父表主键一致。
 7. 主键只用字段 pk:true 表达，**不要**额外写 kind 为 primary 的索引。
    需要查询加速的写 kind 为 index / unique 的索引，fields 是列名数组。
@@ -211,7 +213,17 @@ fn parse_document(json: serde_json::Value) -> Result<DbDesignDocument, String> {
                 .cloned();
             match nested.and_then(|v| serde_json::from_value::<DbDesignDocument>(v).ok()) {
                 Some(d) => d,
-                None => return Err(format!("AI 返回的不是合法设计文件：{}", e)),
+                None => {
+                    // 解析失败时把 AI 原始输出落滚动日志（同思维导图的做法）：
+                    // 只给用户看 "missing field `id`" 没法定位，得看它到底写了什么。
+                    let head: String = json.to_string().chars().take(2000).collect();
+                    tracing::error!(
+                        "[dbd] AI 产出无法解析为设计文件（{}）；AI 原始输出开头：{}",
+                        e,
+                        head
+                    );
+                    return Err(format!("AI 返回的不是合法设计文件：{}", e));
+                }
             }
         }
     };
@@ -227,10 +239,36 @@ fn parse_document(json: serde_json::Value) -> Result<DbDesignDocument, String> {
     if doc.nodes.is_empty() {
         return Err("AI 没有产出任何表。换个说法再试一次，或自己加表".to_string());
     }
-    // 节点 id / 坐标兜底：AI 常漏 id，坐标更是不会给 —— 交给前端「自动布局」摆位置
-    for (i, n) in doc.nodes.iter_mut().enumerate() {
-        if n.id.trim().is_empty() {
-            n.id = format!("t{}", i + 1);
+    // 节点 id 兜底：AI 常漏 id（这时 `id` 反序列化为空串），坐标更是不会给 ——
+    // 位置交给前端「自动布局」。编号要避开 AI 自己写过的 id，否则会覆盖它的引用。
+    let mut node_ids: Vec<String> = doc.nodes.iter().map(|n| n.id.clone()).collect();
+    fill_missing_ids(&mut node_ids, "t");
+    for (n, id) in doc.nodes.iter_mut().zip(node_ids) {
+        n.id = id;
+    }
+    let mut relation_ids: Vec<String> = doc.relations.iter().map(|r| r.id.clone()).collect();
+    fill_missing_ids(&mut relation_ids, "r");
+    for (r, id) in doc.relations.iter_mut().zip(relation_ids) {
+        r.id = id;
+    }
+
+    // 关联端点写的是**表名**而不是 id 时（AI 漏写 id 的情况下很常见），按表名回认一次。
+    // 只在端点指向不存在的节点时才改 —— 正常的 id 引用一律不动。
+    let id_by_name: std::collections::HashMap<String, String> = doc
+        .nodes
+        .iter()
+        .filter(|n| !n.name.trim().is_empty())
+        .map(|n| (n.name.trim().to_lowercase(), n.id.clone()))
+        .collect();
+    for r in doc.relations.iter_mut() {
+        for end in [&mut r.from, &mut r.to] {
+            let key = end.node.trim().to_lowercase();
+            if key.is_empty() || doc.nodes.iter().any(|n| n.id == end.node) {
+                continue;
+            }
+            if let Some(real) = id_by_name.get(&key) {
+                end.node = real.clone();
+            }
         }
     }
     Ok(doc)
@@ -363,6 +401,19 @@ fn extract_partial(text: &str) -> DbDesignDocument {
             doc.relations.push(r);
         }
     }
+    // 补 id：AI 漏写 id 时节点现在能解析通过了（`id` 改成缺了当空），但空 id 会让
+    // 前端 React key 撞车、关联也引用不到 —— 所以这里按 t1/t2、r1/r2 补齐。
+    // 与 parse_document 用同一套编号，流式落图和最终结果对得上。
+    let mut node_ids: Vec<String> = doc.nodes.iter().map(|n| n.id.clone()).collect();
+    fill_missing_ids(&mut node_ids, "t");
+    for (n, id) in doc.nodes.iter_mut().zip(node_ids) {
+        n.id = id;
+    }
+    let mut rel_ids: Vec<String> = doc.relations.iter().map(|r| r.id.clone()).collect();
+    fill_missing_ids(&mut rel_ids, "r");
+    for (r, id) in doc.relations.iter_mut().zip(rel_ids) {
+        r.id = id;
+    }
     if let Some(d) = grab_string(text, "dialect") {
         if crate::commands::db_designer::models::DIALECTS.contains(&d.as_str()) {
             doc.dialect = d;
@@ -380,6 +431,27 @@ fn emit_partial(app: &Option<tauri::AppHandle>, run_id: &str, doc: &DbDesignDocu
             "dbd-ai-partial",
             serde_json::json!({ "runId": run_id, "doc": doc }),
         );
+    }
+}
+
+/// 给一批元素补 id：缺的按 `t1` / `r1` 这样的序号补，并且**不和 AI 自己写的 id 撞车**
+/// （AI 可能只给一部分元素写 id，编号撞上去会覆盖它的引用关系）。
+fn fill_missing_ids(ids: &mut Vec<String>, prefix: &str) {
+    let used: std::collections::HashSet<String> =
+        ids.iter().filter(|s| !s.trim().is_empty()).cloned().collect();
+    let mut seq = 1usize;
+    for id in ids.iter_mut() {
+        if !id.trim().is_empty() {
+            continue;
+        }
+        loop {
+            let cand = format!("{}{}", prefix, seq);
+            seq += 1;
+            if !used.contains(&cand) {
+                *id = cand;
+                break;
+            }
+        }
     }
 }
 
@@ -433,6 +505,43 @@ mod tests {
     fn partial_nodes_handle_missing_key() {
         assert!(complete_elements("{}", "nodes").is_empty());
         assert!(complete_elements(r#"{"nodes":[]}"#, "nodes").is_empty());
+    }
+
+    /// 回归：模型整个漏写 id（顶层 / 节点 / 关系都没有）。
+    /// 之前 `id` 是必填字段，`serde_json::from_value` 直接 "missing field `id`"，
+    /// 整份产出作废；现在缺 id 按空处理，收尾补上。
+    #[test]
+    fn parse_document_tolerates_missing_ids() {
+        let json = serde_json::json!({
+            "name": "订单系统",
+            "dialect": "mysql",
+            "nodes": [
+                {"name":"user","kind":"table","table":{"fields":[{"name":"id","type":{"base":"bigint"},"pk":true}]}},
+                {"name":"order","kind":"table","table":{"fields":[{"name":"id","type":{"base":"bigint"},"pk":true},{"name":"user_id","type":{"base":"bigint"}}]}}
+            ],
+            "relations": [
+                {"from":{"node":"order","field":"user_id"},"to":{"node":"user","field":"id"},"kind":"1-n"}
+            ]
+        });
+        let doc = parse_document(json).expect("漏写 id 不该让整份产出作废");
+        assert_eq!(doc.nodes.len(), 2);
+        assert!(doc.nodes.iter().all(|n| !n.id.is_empty()), "节点 id 要补上");
+        assert!(doc.relations.iter().all(|r| !r.id.is_empty()), "关系 id 要补上");
+        assert!(!doc.id.is_empty(), "顶层 id 要补上");
+        // 端点写的是表名（没 id 可用时模型多半这么干）→ 应回认成节点 id
+        assert_eq!(doc.relations[0].from.node, doc.nodes[1].id);
+        assert_eq!(doc.relations[0].to.node, doc.nodes[0].id);
+    }
+
+    /// 流式阶段同样要能抠出没写 id 的节点，否则就是「进度条在涨但画布空白」。
+    #[test]
+    fn extract_partial_tolerates_missing_ids() {
+        let text = r#"{"dialect":"mysql","nodes":[
+            {"name":"user","kind":"table","table":{"fields":[{"name":"id","type":{"base":"bigint"},"pk":true}]}},
+            {"name":"order","kind":"t"#;
+        let doc = extract_partial(text);
+        assert_eq!(doc.nodes.len(), 1, "没写 id 的节点也要能画出来");
+        assert_eq!(doc.nodes[0].id, "t1", "空 id 要补齐，否则前端 key 撞车、关联引用不到");
     }
 
     /// extract_partial 把节点、关系、方言一起收成一份可画的文档。
