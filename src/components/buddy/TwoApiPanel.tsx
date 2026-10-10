@@ -38,6 +38,45 @@ interface RequestLogEntry {
   message: string;
 }
 
+/** 用量统计（后端 `ai_usage` 表按 tool_id=buddy2api 聚合，口径与 AI 用量面板一致） */
+interface UsageByModel {
+  model: string;
+  request_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  /** 无速率数据（未测耗时）时为 null */
+  output_tps: number | null;
+  success_rate: number | null;
+  cache_hit_rate: number | null;
+}
+
+interface UsageSummary {
+  total_records: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_success: number;
+  total_failure: number;
+  total_cache_read_tokens: number;
+  by_model: UsageByModel[];
+}
+
+/** 比率：没有请求时显示「—」而不是 0%（两者是两回事） */
+function pct(ok: number, total: number): string {
+  if (total === 0) return "—";
+  return `${((ok / total) * 100).toFixed(1)}%`;
+}
+
+/** 统计卡片：一行一个指标（值 + 说明） */
+function StatCell({ label, value, title }: { label: string; value: string; title?: string }) {
+  return (
+    <div className="flex flex-col gap-0.5 px-2 py-1.5 rounded bg-white/5" title={title}>
+      <span className="text-slate-500">{label}</span>
+      <span className="text-slate-100 font-semibold tabular-nums">{value}</span>
+    </div>
+  );
+}
+
 /** 与后端 twoapi::AUTOSTART_ID 一致：写进 config.auto_start_services */
 const AUTOSTART_ID = "buddy2api";
 
@@ -84,6 +123,23 @@ export default function TwoApiPanel() {
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ block: "nearest" });
   }, [logs]);
+
+  // ─── 用量统计 ───
+  const [usage, setUsage] = useState<UsageSummary | null>(null);
+
+  // 统计只在「有请求跑完」时才变，10s 足够（状态/日志是 2s）；
+  // 数据是累计值，服务重启不清零。
+  const refreshUsage = useCallback(() => {
+    invoke<UsageSummary>("buddy2api_usage_stats")
+      .then(setUsage)
+      .catch(() => setUsage(null));
+  }, []);
+
+  useEffect(() => {
+    refreshUsage();
+    const id = window.setInterval(refreshUsage, 10000);
+    return () => window.clearInterval(id);
+  }, [refreshUsage]);
 
   const clearLogs = async () => {
     try {
@@ -349,6 +405,76 @@ export default function TwoApiPanel() {
           )}
           <div ref={logsEndRef} />
         </div>
+      </div>
+
+      {/* ⑥ 用量统计（累计，按 tool_id=buddy2api 从 ai_usage 聚合；口径同 AI 用量面板） */}
+      <div className="flex flex-col rounded bg-black/20 border border-white/8">
+        <div className="flex items-center gap-2 px-2 py-1.5 border-b border-white/8">
+          <span className="text-slate-300 font-semibold">{t("buddy.twoapi.usageTitle")}</span>
+          <div className="flex-1" />
+          <button
+            onClick={() => void refreshUsage()}
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer transition"
+            title={t("buddy.refresh")}
+          >
+            <RefreshCw className="w-3 h-3" />
+          </button>
+        </div>
+
+        {usage === null ? (
+          <div className="px-2 py-1.5 text-slate-600">{t("buddy.twoapi.usageLoading")}</div>
+        ) : usage.total_records === 0 ? (
+          <div className="px-2 py-1.5 text-slate-600">{t("buddy.twoapi.usageEmpty")}</div>
+        ) : (
+          <div className="flex flex-col gap-1.5 p-2">
+            <div className="grid grid-cols-3 gap-1 sm:grid-cols-4">
+              <StatCell
+                label={t("buddy.twoapi.usageRequests")}
+                value={usage.total_records.toLocaleString()}
+              />
+              <StatCell
+                label={t("buddy.twoapi.usageSuccessRate")}
+                value={pct(usage.total_success, usage.total_records)}
+                title={`${usage.total_success} / ${usage.total_records}`}
+              />
+              <StatCell
+                label={t("buddy.twoapi.usageInput")}
+                value={usage.total_input_tokens.toLocaleString()}
+              />
+              <StatCell
+                label={t("buddy.twoapi.usageOutput")}
+                value={usage.total_output_tokens.toLocaleString()}
+              />
+              <StatCell
+                label={t("buddy.twoapi.usageTotal")}
+                value={(usage.total_input_tokens + usage.total_output_tokens).toLocaleString()}
+              />
+              <StatCell
+                label={t("buddy.twoapi.usageCacheRead")}
+                value={usage.total_cache_read_tokens.toLocaleString()}
+              />
+              <StatCell
+                label={t("buddy.twoapi.usageFailures")}
+                value={usage.total_failure.toLocaleString()}
+              />
+            </div>
+
+            {/* 按模型 Top 5：总量最大的 5 个，速度与命中率只在测到时显示 */}
+            <div className="flex flex-col gap-0.5">
+              <span className="text-slate-500">{t("buddy.twoapi.usageByModel")}</span>
+              {usage.by_model.slice(0, 5).map((m) => (
+                <div key={m.model} className="flex items-center gap-2 text-slate-400">
+                  <span className="flex-1 min-w-0 truncate text-slate-300">{m.model}</span>
+                  <span className="tabular-nums">{m.request_count.toLocaleString()} 次</span>
+                  <span className="tabular-nums">{m.total_tokens.toLocaleString()} tok</span>
+                  <span className="tabular-nums text-slate-500">
+                    {m.output_tps != null ? `${m.output_tps.toFixed(1)} tok/s` : ""}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 说明 */}

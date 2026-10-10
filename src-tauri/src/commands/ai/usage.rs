@@ -371,12 +371,29 @@ pub mod tool_ids {
     pub const DB_DESIGNER: &str = "db-designer";
     /// AI 工具安装助手 Agent
     pub const INSTALL_AGENT: &str = "install-agent";
+    /// workBuddy2API：请求由 `proxy/server.rs` 转发并记账，靠这个 id 把它的用量
+    /// 与其它 AI 调用方区分开（不填的话全部落进空 tool_id，混成一团看不出是谁花的）
+    pub const BUDDY2API: &str = "buddy2api";
     /// 其它 / 未归类（尽量别用：看不出是谁花的）
     pub const OTHER: &str = "other";
 }
 
-/// 从数据库聚合查询用量摘要
+/// 从数据库聚合查询用量摘要（全部工具）
 pub fn get_usage_summary_db() -> Result<UsageSummary, String> {
+    summary_filtered(None)
+}
+
+/// 只统计某一个工具的用量摘要。
+///
+/// 为什么单独开一个入口：workBuddy2API 的请求同样进 `ai_usage` 表，但它的面板只想看
+/// 自己那一份 —— 用总览会让「按工具 / 按供应商」的分组全是别人的噪音。
+pub fn get_usage_summary_by_tool_db(tool_id: &str) -> Result<UsageSummary, String> {
+    summary_filtered(Some(tool_id))
+}
+
+/// 聚合查询本体。过滤条件写成「参数为空即不过滤」，同一批 SQL 同时服务总览与单工具。
+fn summary_filtered(tool_id: Option<&str>) -> Result<UsageSummary, String> {
+    const FILTER: &str = " WHERE (?1 IS NULL OR tool_id = ?1)";
     get_db()?;
     let mut guard = DB_CONN.lock().map_err(|e| format!("DB锁错误: {}", e))?;
     let conn = guard.as_mut().ok_or("数据库未初始化")?;
@@ -390,13 +407,16 @@ pub fn get_usage_summary_db() -> Result<UsageSummary, String> {
         u64,
     ) = conn
         .query_row(
-            "SELECT COUNT(*),
+            &format!(
+                "SELECT COUNT(*),
                     COALESCE(SUM(input_tokens), 0),
                     COALESCE(SUM(output_tokens), 0),
                     COALESCE(SUM(ok), 0),
                     COALESCE(SUM(cache_read_tokens), 0)
-             FROM ai_usage",
-            [],
+             FROM ai_usage{}",
+                FILTER
+            ),
+            rusqlite::params![tool_id],
             |row| {
                 Ok((
                     row.get::<_, i64>(0)? as u64,
@@ -412,10 +432,10 @@ pub fn get_usage_summary_db() -> Result<UsageSummary, String> {
     // by_tool
     let mut by_tool: Vec<UsageByTool> = Vec::new();
     let mut stmt = conn
-        .prepare("SELECT tool_id, COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(input_tokens + output_tokens),0) FROM ai_usage GROUP BY tool_id ORDER BY SUM(input_tokens + output_tokens) DESC")
+        .prepare(&format!("SELECT tool_id, COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(input_tokens + output_tokens),0) FROM ai_usage{} GROUP BY tool_id ORDER BY SUM(input_tokens + output_tokens) DESC", FILTER))
         .map_err(|e| format!("预处理 by_tool 失败: {}", e))?;
     let tool_iter = stmt
-        .query_map([], |row| {
+        .query_map(rusqlite::params![tool_id], |row| {
             Ok(UsageByTool {
                 tool_id: row.get(0)?,
                 request_count: row.get::<_, i64>(1)? as u64,
@@ -434,10 +454,10 @@ pub fn get_usage_summary_db() -> Result<UsageSummary, String> {
     // by_model（附带输出速度：仅聚合测得耗时的记录，未测耗时的记录不参与）
     let mut by_model: Vec<UsageByModel> = Vec::new();
     let mut stmt = conn
-        .prepare("SELECT model, COALESCE(provider, ''), COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(input_tokens + output_tokens),0), COALESCE(SUM(CASE WHEN duration_ms > 0 THEN duration_ms - first_token_ms ELSE 0 END),0), COALESCE(SUM(CASE WHEN duration_ms > 0 THEN output_tokens ELSE 0 END),0), COALESCE(SUM(ok),0), max(0, COALESCE(SUM(ok),0) - COUNT(*)), COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(CASE WHEN cache_read_tokens > 0 OR cache_write_tokens > 0 THEN input_tokens ELSE 0 END),0) FROM ai_usage GROUP BY model, provider ORDER BY SUM(input_tokens + output_tokens) DESC, COUNT(*) DESC")
+        .prepare(&format!("SELECT model, COALESCE(provider, ''), COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(input_tokens + output_tokens),0), COALESCE(SUM(CASE WHEN duration_ms > 0 THEN duration_ms - first_token_ms ELSE 0 END),0), COALESCE(SUM(CASE WHEN duration_ms > 0 THEN output_tokens ELSE 0 END),0), COALESCE(SUM(ok),0), max(0, COALESCE(SUM(ok),0) - COUNT(*)), COALESCE(SUM(cache_read_tokens),0), COALESCE(SUM(CASE WHEN cache_read_tokens > 0 OR cache_write_tokens > 0 THEN input_tokens ELSE 0 END),0) FROM ai_usage{} GROUP BY model, provider ORDER BY SUM(input_tokens + output_tokens) DESC, COUNT(*) DESC", FILTER))
         .map_err(|e| format!("预处理 by_model 失败: {}", e))?;
     let model_iter = stmt
-        .query_map([], |row| {
+        .query_map(rusqlite::params![tool_id], |row| {
             // 生成窗口 = Σ(总耗时 − 首字延迟)；非流式请求 first_token_ms 为 0，窗口即总耗时
             let generation_window_ms = row.get::<_, i64>(6)?.max(0) as u64;
             let measured_output = row.get::<_, i64>(7)?.max(0) as u64;
@@ -472,10 +492,10 @@ pub fn get_usage_summary_db() -> Result<UsageSummary, String> {
     // by_provider
     let mut by_provider: Vec<UsageByProvider> = Vec::new();
     let mut stmt = conn
-        .prepare("SELECT COALESCE(provider, ''), COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(input_tokens + output_tokens),0) FROM ai_usage GROUP BY provider ORDER BY SUM(input_tokens + output_tokens) DESC")
+        .prepare(&format!("SELECT COALESCE(provider, ''), COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(input_tokens + output_tokens),0) FROM ai_usage{} GROUP BY provider ORDER BY SUM(input_tokens + output_tokens) DESC", FILTER))
         .map_err(|e| format!("预处理 by_provider 失败: {}", e))?;
     let provider_iter = stmt
-        .query_map([], |row| {
+        .query_map(rusqlite::params![tool_id], |row| {
             Ok(UsageByProvider {
                 provider: row.get(0)?,
                 request_count: row.get::<_, i64>(1)? as u64,
@@ -494,10 +514,10 @@ pub fn get_usage_summary_db() -> Result<UsageSummary, String> {
     // daily（最近）
     let mut daily: Vec<UsageDaily> = Vec::new();
     let mut stmt = conn
-        .prepare("SELECT substr(timestamp, 1, 10) as date, COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(input_tokens + output_tokens),0) FROM ai_usage GROUP BY date ORDER BY date ASC")
+        .prepare(&format!("SELECT substr(timestamp, 1, 10) as date, COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(input_tokens + output_tokens),0) FROM ai_usage{} GROUP BY date ORDER BY date ASC", FILTER))
         .map_err(|e| format!("预处理 daily 失败: {}", e))?;
     let daily_iter = stmt
-        .query_map([], |row| {
+        .query_map(rusqlite::params![tool_id], |row| {
             Ok(UsageDaily {
                 date: row.get(0)?,
                 request_count: row.get::<_, i64>(1)? as u64,
@@ -622,7 +642,9 @@ mod tests {
             tool_ids::FAVORITES,
             tool_ids::TRANSLATE,
             tool_ids::API_IMPORT,
+            tool_ids::DB_DESIGNER,
             tool_ids::INSTALL_AGENT,
+            tool_ids::BUDDY2API,
             tool_ids::OTHER,
         ];
         for id in all {

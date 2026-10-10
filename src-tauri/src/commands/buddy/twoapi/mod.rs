@@ -131,6 +131,11 @@ pub fn build_proxy_config(port: u16, account: &credentials::Account) -> ProxyCon
     cfg.force_upstream_stream = true;
     // 请求日志来源标识：2API 服务（Buddy/2API 面板按它过滤展示）
     cfg.source = "2api".to_string();
+    // 用量记账的两个维度：不填的话代理层记进空 tool_id，跟其它 AI 调用混成一团、
+    // 在用量面板里看不出 2API 花了多少。填了之后请求数 / 成功失败 / token / 缓存 /
+    // 耗时都会按 `buddy2api` 归档，2API 面板与 AI 用量面板都能直接查。
+    cfg.tool_id = crate::commands::ai::usage::tool_ids::BUDDY2API.to_string();
+    cfg.provider_id = "workbuddy".to_string();
     cfg
 }
 
@@ -407,6 +412,18 @@ pub fn buddy2api_request_logs() -> Vec<crate::proxy::server::RequestLogEntry> {
 #[tauri::command]
 pub fn buddy2api_clear_request_logs() {
     crate::proxy::server::clear_request_logs();
+}
+
+/// 2API 的用量统计：只取 `tool_id = buddy2api` 的那部分记录。
+///
+/// 数据来自 `ai_usage` 表（代理层每请求落一条），不是新开一套统计：请求数、成功/失败、
+/// token、缓存命中、输出速度全部复用既有口径，所以和 AI 用量面板里的数字对得上。
+/// 返回的是累计值 —— 服务重启不清零（清空请用 AI 用量面板的「清空」）。
+#[tauri::command]
+pub fn buddy2api_usage_stats() -> Result<crate::commands::ai::models::UsageSummary, String> {
+    crate::commands::ai::usage::get_usage_summary_by_tool_db(
+        crate::commands::ai::usage::tool_ids::BUDDY2API,
+    )
 }
 
 /// 启动前置检查：密钥 / 登录态 / 后端。三项全过才允许启动。
