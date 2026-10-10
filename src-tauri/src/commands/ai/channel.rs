@@ -258,8 +258,13 @@ async fn send_with_retries(
     Err(last_err)
 }
 
-/// 解析一行 SSE data 载荷：累积 delta.content、记录 usage、识别 error。
-fn process_sse_line(line: &str, acc: &mut String, usage: &mut Option<serde_json::Value>) -> Result<(), String> {
+/// 解析一行 SSE data 载荷：累积 delta.content、delta.reasoning*（思考过程）、记录 usage、识别 error。
+fn process_sse_line(
+    line: &str,
+    acc: &mut String,
+    reasoning: &mut String,
+    usage: &mut Option<serde_json::Value>,
+) -> Result<(), String> {
     let data = line.strip_prefix("data:").map(str::trim).unwrap_or("");
     if data.is_empty() || data == "[DONE]" {
         return Ok(());
@@ -274,6 +279,20 @@ fn process_sse_line(line: &str, acc: &mut String, usage: &mut Option<serde_json:
     }
     if let Some(d) = v.pointer("/choices/0/delta/content").and_then(|c| c.as_str()) {
         acc.push_str(d);
+    }
+    // 推理型模型（DeepSeek-R1 / Qwen 思考模式等）的「思考过程」：
+    // 字段名不统一，OpenAI o 系用 reasoning，DeepSeek/Qwen 用 reasoning_content，
+    // 个别网关用 thinking。取到哪个算哪个，累积出来供调用方展示「思维过程」。
+    let delta = v.pointer("/choices/0/delta");
+    if let Some(r) = delta
+        .and_then(|d| d.get("reasoning_content"))
+        .or_else(|| delta.and_then(|d| d.get("reasoning")))
+        .or_else(|| delta.and_then(|d| d.get("thinking")))
+        .and_then(|r| r.as_str())
+    {
+        if !r.is_empty() {
+            reasoning.push_str(r);
+        }
     }
     if let Some(u) = v.get("usage") {
         *usage = Some(u.clone());
@@ -294,10 +313,12 @@ async fn consume_sse(
     use futures_util::StreamExt;
     log_call(call_id, "开始读取 SSE 流…");
     let mut acc = String::new();
+    let mut acc_reason = String::new();
     let mut usage: Option<serde_json::Value> = None;
     let mut line_buf = String::new();
     let mut last_emit = std::time::Instant::now();
     let mut last_len = 0usize;
+    let mut last_reason_len = 0usize;
     let mut stream = resp.bytes_stream();
     loop {
         let chunk = match tokio::time::timeout(SSE_IDLE_TIMEOUT, stream.next()).await {
@@ -327,7 +348,7 @@ async fn consume_sse(
         while let Some(pos) = line_buf.find('\n') {
             let line = line_buf[..pos].trim().to_string();
             line_buf.drain(..=pos);
-            process_sse_line(&line, &mut acc, &mut usage).map_err(|e| {
+            process_sse_line(&line, &mut acc, &mut acc_reason, &mut usage).map_err(|e| {
                 log_call(call_id, &format!("SSE data 行报错：{}（行内容：{}）", e, line.chars().take(500).collect::<String>()));
                 e
             })?;
@@ -342,15 +363,46 @@ async fn consume_sse(
             // 需要尾预览的调用方（思维导图）自己切片即可。
             on_stream_tick(cur, &acc);
         }
+        // 思考过程（reasoning_content）单独节流上报：推理型模型先想几十秒才动笔，
+        // 这部分不报进度，前端就像卡死。阈值（200 字符/200ms）独立于 content，
+        // 保证「只思考不写字」时屏幕也在动。text 只给尾部 200 字符做预览，
+        // 完整思考文本对调用方没价值（模型输出的是正文，不是思考）。
+        let r_cur = acc_reason.chars().count();
+        if r_cur > last_reason_len
+            && (r_cur - last_reason_len >= 200 || last_emit.elapsed().as_millis() >= 200)
+        {
+            let tail: String = acc_reason
+                .chars()
+                .rev()
+                .take(200)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            hooks.on_progress(
+                "reasoning",
+                serde_json::json!({ "length": r_cur, "text": tail }),
+            );
+            last_reason_len = r_cur;
+            last_emit = std::time::Instant::now();
+        }
     }
     // 收尾：缓冲区里剩余的最后一行（可能没有换行符结尾）
     if !line_buf.trim().is_empty() {
-        process_sse_line(line_buf.trim(), &mut acc, &mut usage).map_err(|e| {
+        process_sse_line(line_buf.trim(), &mut acc, &mut acc_reason, &mut usage).map_err(|e| {
             log_call(call_id, &format!("SSE data 行报错：{}（行内容：{}）", e, line_buf.trim().chars().take(500).collect::<String>()));
             e
         })?;
     }
-    log_call(call_id, &format!("SSE 流正常结束：累计 {} 字符，usage={}", acc.chars().count(), usage.is_some()));
+    // 思考过程收尾：有增量就标 done（前端据此把「思考中」定格为已完成的思考块）
+    let r_final = acc_reason.chars().count();
+    if r_final > last_reason_len {
+        hooks.on_progress(
+            "reasoning",
+            serde_json::json!({ "length": r_final, "done": true }),
+        );
+    }
+    log_call(call_id, &format!("SSE 流正常结束：累计 {} 字符，思考 {} 字符，usage={}", acc.chars().count(), acc_reason.chars().count(), usage.is_some()));
     Ok((acc, usage))
 }
 

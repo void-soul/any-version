@@ -51,3 +51,50 @@ export function useToolListWidth(): [number, (width: number) => void] {
   }, []);
   return [width, update];
 }
+
+// ── AI 助手右侧栏（数据库设计器等模块共用）──
+// 与思维导图 AI 栏同构：右贴边、左缘拖宽、宽度持久化。区间与默认值对齐
+// 思维导图的 ai 栏（300~640 / 440），两个模块的 AI 栏手感一致；
+// 存储键各自独立，互不影响对方的布局记忆。
+
+export const AI_PANEL_WIDTH_MIN = 300;
+export const AI_PANEL_WIDTH_MAX = 640;
+export const AI_PANEL_WIDTH_DEFAULT = 440;
+
+const AI_PANEL_STORAGE_KEY = "any_version_ai_panel_width";
+
+export function clampAiPanelWidth(value: number): number {
+  if (!Number.isFinite(value)) return AI_PANEL_WIDTH_DEFAULT;
+  return Math.min(AI_PANEL_WIDTH_MAX, Math.max(AI_PANEL_WIDTH_MIN, Math.round(value)));
+}
+
+export function loadAiPanelWidth(): number {
+  if (typeof localStorage === "undefined") return AI_PANEL_WIDTH_DEFAULT;
+  try {
+    const raw = localStorage.getItem(AI_PANEL_STORAGE_KEY);
+    if (!raw) return AI_PANEL_WIDTH_DEFAULT;
+    return clampAiPanelWidth(Number(JSON.parse(raw)));
+  } catch {
+    return AI_PANEL_WIDTH_DEFAULT;
+  }
+}
+
+export function saveAiPanelWidth(width: number): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(AI_PANEL_STORAGE_KEY, JSON.stringify(clampAiPanelWidth(width)));
+  } catch {
+    /* 隐私模式 / 配额满：忽略，宽度在本次会话内仍生效 */
+  }
+}
+
+/** AI 助手侧栏宽度的受控状态 + 持久化。 */
+export function useAiPanelWidth(): [number, (width: number) => void] {
+  const [width, setWidth] = useState(loadAiPanelWidth);
+  const update = useCallback((next: number) => {
+    const value = clampAiPanelWidth(next);
+    setWidth(value);
+    saveAiPanelWidth(value);
+  }, []);
+  return [width, update];
+}

@@ -111,6 +111,8 @@ export const STEP_ICONS: Record<string, React.ReactNode> = {
   agentTool: <Wrench className="h-3 w-3 text-cyan-300" />,
   agentThought: <Brain className="h-3 w-3 text-violet-300" />,
   agentReasoning: <Brain className="h-3 w-3 text-fuchsia-300" />,
+  // 流式思考帧（step=reasoning）：推理模型边想边推的尾部预览，与 agentReasoning 同色系
+  reasoning: <Brain className="h-3 w-3 text-fuchsia-300" />,
 };
 
 export const fmtNum = (n: number) => n.toLocaleString();
@@ -172,6 +174,9 @@ export function progressText(e: AiProgressEntry, t: (k: string, o?: any) => stri
       return t("mindmap.aiStepUsage", { model: e.model ?? "" });
     case "stream":
       return e.done ? t("mindmap.aiStepStreamDone", { n: e.length ?? 0 }) : t("mindmap.aiStepStream");
+    // 流式思考帧：推理模型先想几十秒才动笔，这部分也要有进度，否则像卡死
+    case "reasoning":
+      return e.done ? t("mindmap.aiStepReasoningDone", { n: e.length ?? 0 }) : t("mindmap.aiStepReasoning", { n: e.length ?? 0 });
     case "ask":
       return t("agent.askStep", { n: e.round ?? 1, max: e.max ?? 3 });
     case "cancel":
@@ -519,12 +524,12 @@ function ActivityLine({ e, projectRoot, t }: { e: AiProgressEntry; projectRoot?:
             ))}
           </div>
         )}
-        {/* 思考过程：模型调用工具前的想法 / 模型产出的推理文本（长文可展开） */}
-        {(e.step === "agentThought" || e.step === "agentReasoning") && !!e.text && (
+        {/* 思考过程：模型调用工具前的想法 / 模型产出的推理文本 / 流式思考帧（长文可展开） */}
+        {(e.step === "agentThought" || e.step === "agentReasoning" || e.step === "reasoning") && !!e.text && (
           <div className={`mt-0.5 max-h-24 overflow-y-auto whitespace-pre-wrap rounded border px-1.5 py-1 text-micro leading-4 ${
-            e.step === "agentReasoning"
-              ? "border-fuchsia-400/20 bg-fuchsia-400/[0.04] text-fuchsia-200/80"
-              : "border-violet-400/20 bg-violet-400/[0.04] text-violet-200/80"
+            e.step === "agentThought"
+              ? "border-violet-400/20 bg-violet-400/[0.04] text-violet-200/80"
+              : "border-fuchsia-400/20 bg-fuchsia-400/[0.04] text-fuchsia-200/80"
           }`} title={e.text}>{e.text}</div>
         )}
         {/* 工具参数：折叠展示，避免长 JSON 把时间线撑爆 */}
@@ -747,14 +752,23 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
     }
     return null;
   }, [entries]);
+  // 流式思考帧（reasoning）：思考块收尾（done）或正文开始输出（后面出现 stream）后为 null
+  const lastReasoning = useMemo(() => {
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i];
+      if (e.step === "reasoning") return e.done ? null : { length: e.length ?? 0, text: e.text ?? "" };
+      if (e.step === "stream" || e.step === "cancel" || e.step === "fail") return null;
+    }
+    return null;
+  }, [entries]);
 
-  // 时间线：折叠重复的 stream 进行中帧（与旧 AiProgressLog 一致）
+  // 时间线：折叠重复的 stream / reasoning 进行中帧（与旧 AiProgressLog 一致）
   const timeline = useMemo(() => {
     const out: AiProgressEntry[] = [];
     for (const p of entries) {
-      if (p.step === "stream" && !p.done) {
+      if ((p.step === "stream" || p.step === "reasoning") && !p.done) {
         const l = out[out.length - 1];
-        if (l && l.step === "stream" && !l.done) continue;
+        if (l && l.step === p.step && !l.done) continue;
       }
       out.push(p);
     }
@@ -912,6 +926,19 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
                     <span className="ml-0.5 inline-block h-2 w-1 animate-pulse bg-emerald-300 align-middle" />
                   </div>
                   <div className="mt-0.5 font-mono text-[7px] text-slate-500">{fmtNum(lastStream.length)} chars</div>
+                </div>
+              </div>
+            ) : lastReasoning ? (
+              // 推理模型「只思考不写字」阶段：展示思考尾部预览，屏幕一直在动
+              <div className="flex items-start gap-1.5">
+                <span className="mt-0.5 shrink-0"><Brain className="h-3 w-3 animate-pulse text-fuchsia-300" /></span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-micro text-fuchsia-200/90">{t("mindmap.aiStepReasoning", { n: lastReasoning.length })}</div>
+                  <div className="mt-0.5 max-h-[72px] overflow-y-auto rounded border border-fuchsia-400/15 bg-fuchsia-400/[0.03] px-1.5 py-1 font-mono text-[8px] leading-3.5 whitespace-pre-wrap text-fuchsia-100/80">
+                    {lastReasoning.text || "…"}
+                    <span className="ml-0.5 inline-block h-2 w-1 animate-pulse bg-fuchsia-300 align-middle" />
+                  </div>
+                  <div className="mt-0.5 font-mono text-[7px] text-slate-500">{fmtNum(lastReasoning.length)} chars</div>
                 </div>
               </div>
             ) : (

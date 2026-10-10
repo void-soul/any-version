@@ -47,8 +47,11 @@ function DesignNodeCardInner({ data }: NodeProps) {
   const { node, relationFields, expanded, selected, fieldRows, fkFields } = d;
   const isView = node.kind === "view";
   const fields = node.table?.fields ?? [];
-  /** 表配色：节点左侧色条 + 表头图标用这个颜色；没设置就回退模块强调色 */
-  const tint = /^#[0-9a-f]{6}$/i.test(node.color ?? "") ? (node.color as string) : "var(--module-accent)";
+  /** 表配色：图标 / 表名 / 表头底 / 整卡底 / 左侧色条都用它；没设置就回退模块强调色。
+   *  rawColor 单独留一份原始 hex（仅用户显式选色时非空）：背景要按透明度混色，
+   *  CSS 变量拼不了 alpha 值，所以两者分开。 */
+  const rawColor = /^#[0-9a-f]{6}$/i.test(node.color ?? "") ? (node.color as string) : "";
+  const tint = rawColor || "var(--module-accent)";
   /**
    * 折叠态显示哪些字段：
    *   keys —— 只主键 + 外键（「这张表靠什么关联」一眼看到，杂字段不占地方）
@@ -68,6 +71,16 @@ function DesignNodeCardInner({ data }: NodeProps) {
       className={`group relative w-[288px] overflow-hidden rounded-card border bg-surface-panel shadow-lg transition-shadow ${
         selected ? "border-[var(--module-accent)]" : "border-white/10"
       }`}
+      // 选色后：整卡底色混入 6% 的表色（选中时边框也换成表色），
+      // 让颜色落在「卡身」上，而不只是左侧一条色带
+      style={
+        rawColor
+          ? {
+              background: `color-mix(in srgb, ${rawColor} 6%, var(--color-surface-panel))`,
+              ...(selected ? { borderColor: rawColor } : null),
+            }
+          : undefined
+      }
     >
       {/* 表配色：左侧一条竖色带，一眼分出这张表属于哪一组（不用读标签文字） */}
       <div className="absolute inset-y-0 left-0 w-[3px]" style={{ background: tint }} />
@@ -85,13 +98,23 @@ function DesignNodeCardInner({ data }: NodeProps) {
         className="!h-3 !w-3 !rounded-full !border-2 !border-sky-400 !bg-surface-panel opacity-30 transition group-hover:opacity-70 group-hover:opacity-100"
       />
 
-      <div className="relative flex items-center gap-1.5 border-b border-white/10 bg-white/[0.04] px-2.5 py-1.5">
+      <div
+        className="relative flex items-center gap-1.5 border-b border-white/10 bg-white/[0.04] px-2.5 py-1.5"
+        // 表头底：混入 16% 的表色 —— 表头是配色最显眼的部分
+        style={rawColor ? { background: `color-mix(in srgb, ${rawColor} 16%, transparent)` } : undefined}
+      >
         {isView ? (
           <Eye className="h-3.5 w-3.5 flex-shrink-0 text-sky-400" />
         ) : (
-          <Database className="h-3.5 w-3.5 flex-shrink-0 text-[var(--module-accent)]" />
+          <Database className="h-3.5 w-3.5 flex-shrink-0" style={{ color: tint }} />
         )}
-        <span className="min-w-0 flex-1 truncate text-body font-semibold text-slate-100">{node.name}</span>
+        <span
+          className="min-w-0 flex-1 truncate text-body font-semibold text-slate-100"
+          // 表名用表色（仅显式选色时；不选色保持默认白）
+          style={rawColor ? { color: rawColor } : undefined}
+        >
+          {node.name}
+        </span>
         <span className="flex-shrink-0 text-micro text-slate-600">{isView ? "view" : `${fields.length}`}</span>
         {/* 整表锚点：拖到另一张表 = 复制**全部**主键字段并建外键（复合主键走这个）。
             做得比字段锚点大一点：金色小点在深色卡片上太难点中，而它是复合主键唯一的入口。 */}
