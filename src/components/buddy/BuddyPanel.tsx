@@ -60,7 +60,10 @@ import {
   Star,
   Package,
   GitFork,
+  FolderInput,
 } from "lucide-react";
+import { openPath } from "@tauri-apps/plugin-opener";
+import { theamedConfirm } from "../shared/ThemedAlert";
 
 export interface BuddyAccount {
   id: string;
@@ -312,6 +315,17 @@ export interface BuddySessionForkReport {
   /** 正文一个都没拷到（只有库记录被复制） */
   contentMissing: boolean;
   errors: string[];
+}
+
+/** 改会话目录的结果（后端搬完正文 + 索引后返回） */
+export interface BuddySessionMoveReport {
+  moved: number;
+  /** 搬动的目录数（正文 + 各类辅助目录） */
+  dirsMoved: number;
+  /** 没动成的会话：`id：原因` */
+  skipped: string[];
+  /** 本次备份根目录（要还原就把它整棵放回去） */
+  backupDir: string;
 }
 
 export interface BuddySessionDeleteReport {
@@ -949,6 +963,8 @@ export default function BuddyPanel() {
   const [sessionDelete, setSessionDelete] = useState<{ ids: string[]; label: string } | null>(null);
   // 会话多选（批量删除）
   const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set());
+  // 上一次「改目录」的备份目录：留个入口让用户能打开/核对，确认无误后自己忽略掉
+  const [lastMoveBackup, setLastMoveBackup] = useState("");
 
   // 自动签到
   const [autoConfig, setAutoConfig] = useState<BuddyAutoCheckinConfig | null>(null);
@@ -2060,6 +2076,48 @@ export default function BuddyPanel() {
     }
   };
 
+  /**
+   * 改会话所属目录：连正文一起搬到目标目录对应的工作区（不是只改列表里的分组文字）。
+   * 搬之前后端会整批备份一次，备份路径回传到这里给用户留个入口。
+   */
+  const moveSessionsToDir = async (ids: string[]) => {
+    let dir: string | null = null;
+    try {
+      const picked = await openDialog({
+        directory: true,
+        title: t("buddy.sessions.movePickTitle"),
+      });
+      dir = typeof picked === "string" ? picked : null;
+    } catch {
+      dir = null;
+    }
+    if (!dir) return;
+    const ok = await theamedConfirm(t("buddy.sessions.moveConfirm", { count: ids.length, dir }));
+    if (!ok) return;
+    setSessionsBusy(true);
+    try {
+      const report = await invoke<BuddySessionMoveReport>("buddy_move_sessions", {
+        platform,
+        conversationIds: ids,
+        targetDir: dir,
+      });
+      if (report.skipped.length > 0) {
+        showMsg(
+          false,
+          `${t("buddy.sessions.movePartial", { count: report.moved })}：${report.skipped.join("；")}`,
+        );
+      } else {
+        showMsg(true, t("buddy.sessions.moveDone", { count: report.moved, dir }));
+      }
+      if (report.backupDir) setLastMoveBackup(report.backupDir);
+      await loadSessions();
+    } catch (e) {
+      showMsg(false, String(e));
+    } finally {
+      setSessionsBusy(false);
+    }
+  };
+
   const toggleSessionSelect = (id: string) => {
     setSelectedSessionIds((prev) => {
       const next = new Set(prev);
@@ -2792,6 +2850,31 @@ export default function BuddyPanel() {
               </div>
             ) : (
               <div className="space-y-2">
+                {/* 上次改目录留下的备份：搬完先别急着删，客户端里打开确认过再说 */}
+                {lastMoveBackup ? (
+                  <div className="flex items-center gap-2 rounded-card border border-amber-500/25 bg-amber-500/10 px-3 py-2">
+                    <FolderOpen className="w-3.5 h-3.5 text-amber-300 flex-shrink-0" />
+                    <span
+                      className="text-tiny text-amber-200 truncate min-w-0 flex-1"
+                      title={lastMoveBackup}
+                    >
+                      {t("buddy.sessions.moveBackupHint")}：{lastMoveBackup}
+                    </span>
+                    <button
+                      onClick={() => void openPath(lastMoveBackup)}
+                      className="px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10 text-amber-200 text-tiny cursor-pointer transition flex-shrink-0"
+                    >
+                      {t("buddy.sessions.moveOpenBackup")}
+                    </button>
+                    <button
+                      onClick={() => setLastMoveBackup("")}
+                      className="p-0.5 rounded hover:bg-white/10 text-amber-300/70 cursor-pointer transition flex-shrink-0"
+                      title={t("common.dialogClose")}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ) : null}
                 {buildSessionGroups(sessions).map((group) => {
                   const isExpanded = expandedGroups.has(group.cwd);
                   return (
@@ -2909,6 +2992,14 @@ export default function BuddyPanel() {
                                 title={t("buddy.sessions.forkTitle")}
                               >
                                 <GitFork className="w-3 h-3" />
+                              </button>
+                              <button
+                                onClick={() => void moveSessionsToDir([s.conversationId])}
+                                disabled={sessionsBusy}
+                                className="p-1.5 rounded-md bg-white/5 hover:bg-violet-500/15 text-slate-300 hover:text-violet-300 border border-white/10 cursor-pointer transition flex-shrink-0 disabled:opacity-40"
+                                title={t("buddy.sessions.moveTitle")}
+                              >
+                                <FolderInput className="w-3 h-3" />
                               </button>
                               <button
                                 onClick={() => setSessionDelete({ ids: [s.conversationId], label: s.title || s.conversationId })}

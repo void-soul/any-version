@@ -887,6 +887,26 @@ pub fn buddy_fork_session(
     sessions::fork_session(&platform, &conversation_id, title)
 }
 
+/// 改会话的所属目录（**连正文一起搬**到目标目录对应的工作区）。
+///
+/// 只改索引里的 `cwd` 不改正文会让会话变成「内容缺失」，所以两处一起改，
+/// 并在搬之前整批备份一次（备份目录在返回值的 `backup_dir`，要还原就整棵放回去）。
+#[tauri::command]
+pub fn buddy_move_sessions(
+    platform: String,
+    conversation_ids: Vec<String>,
+    target_dir: String,
+) -> Result<sessions::BuddySessionMoveReport, String> {
+    // WorkBuddy 的会话正文不在 md5(cwd) 目录里（5.x 是共享库），搬法完全不同，先不支持
+    if platform_from_str(&platform)? != models::BuddyPlatform::CodebuddyCn {
+        return Err("目前只支持 CodeBuddy CN 会话改目录".to_string());
+    }
+    if conversation_ids.is_empty() {
+        return Err("请先选中要改目录的会话".to_string());
+    }
+    sessions::move_sessions_to_dir(&conversation_ids, &target_dir)
+}
+
 /// 列出**当前登录账号**（作为合并目标）的待处理会话冲突。
 ///
 /// 冲突文件按目标账号分文件落盘，来回切换会留下多份旧快照；只按当前账号

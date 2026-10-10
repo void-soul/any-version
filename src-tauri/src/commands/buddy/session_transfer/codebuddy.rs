@@ -24,8 +24,50 @@ use crate::commands::buddy::emit_switch_progress;
 static TRANSFER_LOCK: std::sync::LazyLock<std::sync::Mutex<()>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
 
-/// 会话备份目录的分类名（`{data_dir}/buddy/session-backup/<本值>/<uid>`）
-const BACKUP_PLATFORM_LABEL: &str = "codebuddy-cn";
+/// 会话备份目录的分类名（`{data_dir}/buddy/session-backup/<本值>/<uid>`）。
+/// 同时是同步基线 / 待处理冲突文件的分类名（三处共用同一个 label）。
+pub(crate) const BACKUP_PLATFORM_LABEL: &str = "codebuddy-cn";
+
+/// 与「切号合并」共用同一把进程级锁：两边动的是同一批会话目录，必须互斥。
+pub(crate) fn transfer_lock() -> &'static std::sync::Mutex<()> {
+    &TRANSFER_LOCK
+}
+
+/// 工作区目录名 = **MD5(项目路径)**，口径与客户端一致（Windows：小写盘符 + 反斜杠）。
+///
+/// 反向解析（哈希 → 路径）见 [`resolve_workspace_display`]；这里只需要正向。
+pub(crate) fn workspace_hash_for_path(path: &str) -> String {
+    format!("{:x}", md5::compute(normalize_workspace_path(path).as_bytes()))
+}
+
+/// 规范成哈希口径：去掉首尾空白与尾部分隔符；Windows 上盘符转小写、分隔符统一为反斜杠。
+///
+/// 用户从目录选择器里拿到的是 `E:\pro\x`（大写盘符），客户端落盘用的是 `e:\pro\x`
+/// —— 不规范化就会算出另一个哈希，搬过去客户端照样找不到。
+pub(crate) fn normalize_workspace_path(path: &str) -> String {
+    let trimmed = path.trim().trim_end_matches(['/', '\\']).to_string();
+    if !cfg!(target_os = "windows") {
+        return trimmed;
+    }
+    let mut out = trimmed.replace('/', "\\");
+    let mut chars = out.chars();
+    if let (Some(drive), Some(colon)) = (chars.next(), chars.next()) {
+        if colon == ':' && drive.is_ascii_alphabetic() {
+            out.replace_range(0..1, &drive.to_ascii_lowercase().to_string());
+        }
+    }
+    out
+}
+
+/// 把「哈希 → 真实路径」立刻填进缓存。
+///
+/// 不改的话，目标目录若从没在 IDE 里打开过，`resolve_workspace_display` 还原不出路径，
+/// 界面上这个会话的目录会退化成一串 32 位哈希。
+pub(crate) fn cache_workspace_path(workspace_hash: &str, path: &str) {
+    if let Ok(mut cache) = WORKSPACE_PATH_CACHE.lock() {
+        cache.insert(workspace_hash.to_string(), Some(path.to_string()));
+    }
+}
 
 /// 辅助数据目录类型（复刻 cockpit-tools 的 kinds 清单）
 pub(crate) const AUXILIARY_KINDS: [&str; 5] = [
@@ -1559,6 +1601,213 @@ fn copy_auxiliary_conversation(
     Ok(())
 }
 
+/// 搬一个会话到另一个工作区的产物。
+#[derive(Debug, Default)]
+pub(crate) struct ConversationMoveOutcome {
+    /// 搬动过的目录数（正文 + 各类辅助目录）
+    pub dirs_moved: usize,
+    /// 实际发生搬运的 IDE 目录名（基线 key 带 IDE 维度，要跟着一起改）
+    pub ides: Vec<String>,
+}
+
+/// 把一个会话从旧工作区搬到新工作区（同账号下**每个 IDE 目录**都搬）。
+///
+/// 每个 IDE 目录内依次处理：正文 `history/<ws>/<id>` → 5 类辅助目录 → 两侧 index.json。
+/// 搬运顺序是「先备份、再复制到目标、最后才删源」：中途失败时源还在，不至于两头空。
+///
+/// `backup_root` 由调用方**整批准备一次**（`prepare_backup_root` 会清空该 uid 的旧备份，
+/// 一条会话调一次会把前一条的备份冲掉）。
+pub(crate) fn move_conversation_to_workspace(
+    extension_data_dir: &Path,
+    uid: &str,
+    conversation_id: &str,
+    old_workspace: &str,
+    new_workspace: &str,
+    backup_root: &Path,
+) -> Result<ConversationMoveOutcome, String> {
+    validate_uid(uid)?;
+    validate_conversation_id(conversation_id)?;
+    let mut outcome = ConversationMoveOutcome::default();
+    let account_outer = extension_data_dir.join(uid);
+    if !account_outer.is_dir() {
+        return Ok(outcome);
+    }
+    let ide_entries = std::fs::read_dir(&account_outer).map_err(|e| {
+        format!(
+            "读取 CodeBuddy CN 账号目录失败: path={}, error={}",
+            account_outer.display(),
+            e
+        )
+    })?;
+    let mut errors: Vec<String> = Vec::new();
+
+    for ide_entry in ide_entries.flatten() {
+        let ide_name = ide_entry.file_name().to_string_lossy().to_string();
+        let Ok(metadata) = std::fs::symlink_metadata(ide_entry.path()) else {
+            continue;
+        };
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            continue;
+        }
+        let account_root = ide_entry.path().join(uid);
+        let history_root = account_root.join("history");
+        if !history_root.is_dir() {
+            continue;
+        }
+        let source = history_root.join(old_workspace).join(conversation_id);
+        if !source.is_dir() {
+            continue;
+        }
+
+        // ① 备份：按 ide/workspace/id 分桶，只备一次
+        let backup = backup_root
+            .join(&ide_name)
+            .join("history")
+            .join(old_workspace)
+            .join(conversation_id);
+        if !backup.exists() {
+            copy_dir_recursive(&source, &backup)
+                .map_err(|e| format!("备份会话正文失败: {}", e))?;
+        }
+
+        // ② 正文：复制到目标工作区（已存在则不覆盖 —— 宁可报错也不动用户的现有会话）
+        let target = history_root.join(new_workspace).join(conversation_id);
+        reject_symlink_if_exists(&target)?;
+        if target.exists() {
+            errors.push(format!(
+                "目标工作区已存在同名会话目录: {}",
+                target.display()
+            ));
+            continue;
+        }
+        copy_dir_atomic(&source, &target)?;
+
+        // ③ 辅助目录（check-point / file-tree / plan-task / genie-cache / connectors）
+        for kind in AUXILIARY_KINDS {
+            let aux_source = account_root.join(kind).join(old_workspace).join(conversation_id);
+            if !aux_source.is_dir() {
+                continue;
+            }
+            let aux_backup = backup_root
+                .join(&ide_name)
+                .join(kind)
+                .join(old_workspace)
+                .join(conversation_id);
+            if !aux_backup.exists() {
+                let _ = copy_dir_recursive(&aux_source, &aux_backup);
+            }
+            let aux_target = account_root.join(kind).join(new_workspace).join(conversation_id);
+            if aux_target.exists() {
+                continue;
+            }
+            if let Err(e) = copy_dir_atomic(&aux_source, &aux_target) {
+                errors.push(format!("搬辅助目录 {} 失败: {}", kind, e));
+                continue;
+            }
+            let _ = std::fs::remove_dir_all(&aux_source);
+            outcome.dirs_moved += 1;
+        }
+
+        // ④ 两侧 index.json：旧工作区摘掉条目、目标工作区登记
+        if let Err(e) =
+            reindex_after_move(&history_root, old_workspace, new_workspace, conversation_id, backup_root)
+        {
+            errors.push(e);
+            continue;
+        }
+
+        // ⑤ 目标都就位了才删源
+        let _ = std::fs::remove_dir_all(&source);
+        outcome.dirs_moved += 1;
+        outcome.ides.push(ide_name);
+    }
+
+    if !errors.is_empty() {
+        return Err(errors.join("；"));
+    }
+    Ok(outcome)
+}
+
+/// 搬完后维护两侧 index.json（**改前都先备份**）。
+///
+/// 旧工作区：移除该会话条目，`current` 指向它就清空（与删除会话同一约定）。
+/// 目标工作区：没有索引文件时新建一份再登记；`current` 空着则指向刚搬来的会话。
+/// 参数名不能用 `conversation_id`：会和取条目 id 的 `conversation_id()` 函数重名（遮蔽）。
+fn reindex_after_move(
+    history_root: &Path,
+    old_workspace: &str,
+    new_workspace: &str,
+    conv_id: &str,
+    backup_root: &Path,
+) -> Result<(), String> {
+    let mut moved_entry: Option<Value> = None;
+
+    let old_index_path = history_root.join(old_workspace).join("index.json");
+    if old_index_path.is_file() {
+        let mut index = read_workspace_index(&old_index_path)?;
+        let _ = std::fs::copy(
+            &old_index_path,
+            backup_root.join(format!("index-{}.json", old_workspace)),
+        );
+        let mut remaining: Vec<Value> = Vec::new();
+        for conversation in conversations(&index) {
+            if conversation_id(&conversation) == Some(conv_id) {
+                moved_entry = Some(conversation);
+            } else {
+                remaining.push(conversation);
+            }
+        }
+        if let Some(object) = index.as_object_mut() {
+            object.insert("conversations".to_string(), Value::Array(remaining));
+            let current = object
+                .get("current")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if current == conv_id {
+                object.insert("current".to_string(), Value::String(String::new()));
+            }
+        }
+        let serialized = serde_json::to_string_pretty(&index)
+            .map_err(|e| format!("序列化工作区索引失败: {}", e))?;
+        store::write_atomic(&old_index_path, &serialized)?;
+    }
+
+    let Some(entry) = moved_entry else {
+        return Ok(());
+    };
+
+    let new_dir = history_root.join(new_workspace);
+    let new_index_path = new_dir.join("index.json");
+    let mut new_index = if new_index_path.is_file() {
+        read_workspace_index(&new_index_path)?
+    } else {
+        std::fs::create_dir_all(&new_dir)
+            .map_err(|e| format!("创建目标工作区目录失败: {}", e))?;
+        serde_json::json!({ "version": 1, "conversations": [] })
+    };
+    let mut list = conversations(&new_index);
+    if !list.iter().any(|c| conversation_id(c) == Some(conv_id)) {
+        list.push(entry);
+        list.sort_by(|left, right| compare_conversation_recency(right, left));
+    }
+    if let Some(object) = new_index.as_object_mut() {
+        object.insert("conversations".to_string(), Value::Array(list));
+        let current = object
+            .get("current")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if current.is_empty() {
+            object.insert("current".to_string(), Value::String(conv_id.to_string()));
+        }
+    }
+    let serialized = serde_json::to_string_pretty(&new_index)
+        .map_err(|e| format!("序列化目标工作区索引失败: {}", e))?;
+    store::write_atomic(&new_index_path, &serialized)?;
+    Ok(())
+}
+
 fn temp_name(prefix: &str) -> String {
     format!(
         ".kira-session-{}-{}-{}",
@@ -2040,6 +2289,107 @@ mod tests {
             .unwrap();
             assert!(message.contains("清除") || message.contains("忽略"), "{message}");
         }
+    }
+
+    /// 会话改目录：正文 + 辅助目录搬过去、源目录消失、两侧 index.json 都更新、备份留下。
+    #[test]
+    fn moves_conversation_between_workspaces() {
+        let dest = make_temp();
+        let data_root = dest.join("CodeBuddyExtension").join("Data");
+        let uid = "u1";
+        let account_root = data_root.join(uid).join("VSCode").join(uid);
+        let old_ws = "oldhash";
+        let new_ws = "newhash";
+        let conv = "c1";
+
+        let conv_dir = account_root.join("history").join(old_ws).join(conv);
+        std::fs::create_dir_all(&conv_dir).unwrap();
+        std::fs::write(conv_dir.join("messages.json"), "[]").unwrap();
+        let aux_dir = account_root.join("check-point").join(old_ws).join(conv);
+        std::fs::create_dir_all(&aux_dir).unwrap();
+        std::fs::write(aux_dir.join("cp.json"), "{}").unwrap();
+        let index_path = account_root.join("history").join(old_ws).join("index.json");
+        std::fs::write(
+            &index_path,
+            r#"{"version":1,"current":"c1","conversations":[{"id":"c1","title":"会话一"}]}"#,
+        )
+        .unwrap();
+
+        let backup_root = dest.join("backup");
+        std::fs::create_dir_all(&backup_root).unwrap();
+        let outcome = move_conversation_to_workspace(
+            &data_root, uid, conv, old_ws, new_ws, &backup_root,
+        )
+        .unwrap();
+
+        assert_eq!(outcome.dirs_moved, 2, "正文 + 一个辅助目录");
+        assert_eq!(outcome.ides, vec!["VSCode".to_string()]);
+
+        // 目标侧：正文与辅助目录都在
+        let moved = account_root.join("history").join(new_ws).join(conv);
+        assert!(moved.join("messages.json").is_file(), "正文应搬过去");
+        assert!(
+            account_root.join("check-point").join(new_ws).join(conv).join("cp.json").is_file(),
+            "辅助目录应一起搬"
+        );
+        // 源侧：目录已删
+        assert!(!conv_dir.exists(), "源目录应删掉");
+        assert!(!aux_dir.exists(), "源辅助目录应删掉");
+
+        // index.json：旧的摘掉并清空 current，新的登记并把 current 指过去
+        let old_index: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&index_path).unwrap()).unwrap();
+        assert_eq!(old_index["conversations"].as_array().unwrap().len(), 0);
+        assert_eq!(old_index["current"].as_str(), Some(""));
+        let new_index: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(account_root.join("history").join(new_ws).join("index.json"))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(new_index["conversations"].as_array().unwrap().len(), 1);
+        assert_eq!(new_index["current"].as_str(), Some(conv));
+
+        // 备份：正文 + 旧索引都在
+        assert!(backup_root.join("VSCode").join("history").join(old_ws).join(conv).join("messages.json").is_file());
+        assert!(backup_root.join(format!("index-{}.json", old_ws)).is_file());
+    }
+
+    /// 目标工作区里已经有同名会话目录：不许覆盖，报错由上层记进 skipped。
+    #[test]
+    fn refuses_to_overwrite_existing_conversation() {
+        let dest = make_temp();
+        let data_root = dest.join("CodeBuddyExtension").join("Data");
+        let uid = "u1";
+        let account_root = data_root.join(uid).join("VSCode").join(uid);
+        let conv = "c1";
+        std::fs::create_dir_all(account_root.join("history").join("oldhash").join(conv)).unwrap();
+        std::fs::create_dir_all(account_root.join("history").join("newhash").join(conv)).unwrap();
+        let backup_root = dest.join("backup");
+        std::fs::create_dir_all(&backup_root).unwrap();
+
+        let err = move_conversation_to_workspace(
+            &data_root, uid, conv, "oldhash", "newhash", &backup_root,
+        )
+        .unwrap_err();
+        assert!(err.contains("已存在同名会话目录"), "{err}");
+    }
+
+    /// 路径 → 工作区哈希：口径要和客户端一致（Windows 小写盘符 + 反斜杠）。
+    #[test]
+    fn workspace_hash_matches_client_convention() {
+        // 用户从目录选择器拿到的是大写盘符 + 正斜杠，也要算出同一个哈希
+        let normalized = normalize_workspace_path("E:/pro/my/any-version/");
+        if cfg!(target_os = "windows") {
+            assert_eq!(normalized, "e:\\pro\\my\\any-version");
+            assert_eq!(workspace_hash_for_path("E:/pro/my/any-version"), workspace_hash_for_path(&normalized));
+        } else {
+            assert_eq!(normalized, "E:/pro/my/any-version");
+        }
+        // 同一个目录的不同写法必须收敛到同一个哈希
+        assert_eq!(
+            workspace_hash_for_path("e:\\pro\\my\\any-version"),
+            workspace_hash_for_path("E:/pro/my/any-version")
+        );
     }
 
     #[test]
