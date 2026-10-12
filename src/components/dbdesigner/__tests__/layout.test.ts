@@ -67,7 +67,9 @@ describe("computeLayout", () => {
     );
     const pos = computeLayout(doc, opts);
     expect(pos.users.x).toBeLessThan(pos.orders.x);
-    expect(pos.users.y).toBe(pos.orders.y);
+    // 父表居中于首末子表：两张卡片字段数不同、高度就不等，y 不会严格相同。
+    // 真正要保证的是「父子落在同一视野带」（纵向重叠），而不是精确的等号。
+    expect(Math.abs(pos.users.y - pos.orders.y)).toBeLessThan(120);
   });
 
   it("多级链路一层一层往右排", () => {

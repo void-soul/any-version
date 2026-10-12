@@ -74,8 +74,11 @@ function layoutGroup(
   const positions: Record<string, { x: number; y: number }> = {};
   const idSet = new Set(group.map((n) => n.id));
 
+  const byId = (id: string) => group.find((x) => x.id === id)!;
+  /** 文档次序（按 id），各种排序的稳定兜底 */
+  const indexOfId = (id: string) => originalIndex(byId(id));
+
   const children = new Map<string, string[]>();
-  const isChild = new Set<string>();
   for (const r of doc.relations) {
     // n-n 不参与分层：它在画布上表现为一张中间表，参与只会把布局搅乱
     if (r.kind === "n-n") continue;
@@ -83,94 +86,129 @@ function layoutGroup(
     const list = children.get(r.to.node) ?? [];
     if (!list.includes(r.from.node)) list.push(r.from.node);
     children.set(r.to.node, list);
-    isChild.add(r.from.node);
   }
 
   // 层号 = 从根出发的最长路径长度。逐轮松弛：有更深的来路就下沉，
-  // 用「本轮是否还在变」收敛，成环时最多多跑一轮就停（不会死循环）。
+  // 用「本轮是否还在变」收敛；成环时每轮还会涨，但轮数有上限（不会死循环）。
   const depth = new Map<string, number>();
-  const parentOf = new Map<string, string | null>();
-  const queue: string[] = [];
-  for (const n of group) {
-    if (!isChild.has(n.id)) {
-      depth.set(n.id, 0);
-      parentOf.set(n.id, null);
-      queue.push(n.id);
-    }
-  }
-  // 关系成环（全是子表）时从第一张起算，保证每个节点都有层
-  if (queue.length === 0) {
-    depth.set(group[0].id, 0);
-    parentOf.set(group[0].id, null);
-    queue.push(group[0].id);
-  }
-  for (const n of group) {
-    if (!depth.has(n.id)) {
-      depth.set(n.id, 0);
-      parentOf.set(n.id, null);
-    }
-  }
+  for (const n of group) depth.set(n.id, 0);
   for (let round = 0; round < group.length; round++) {
     let changed = false;
     for (const n of group) {
       const d = depth.get(n.id) ?? 0;
       for (const child of children.get(n.id) ?? []) {
         // 子节点必须比父节点深一层：比现在更深才更新
-        if ((depth.get(child) ?? 0) <= d) {
-          if ((depth.get(child) ?? 0) < d + 1) {
-            depth.set(child, d + 1);
-            parentOf.set(child, n.id);
-            changed = true;
-          }
+        if ((depth.get(child) ?? 0) < d + 1) {
+          depth.set(child, d + 1);
+          changed = true;
         }
       }
     }
     if (!changed) break;
   }
-  for (const n of group) {
-    if (!depth.has(n.id)) {
-      depth.set(n.id, 0);
-      parentOf.set(n.id, null);
-    }
-  }
 
-  const layers = new Map<number, DbDesignNode[]>();
+  // ── 树布局：后序叶子计数（替换早先的「层内网格」）───────────────────
+  //
+  // 网格的致命伤：同一层 N 张表被 ceil(sqrt(N*1.4)) 列的格子填充，落在末尾的表
+  // （比如 purchase_order）会被推到角落，离它引用的父表隔了大半个网格 —— 截图里
+  // 「几张表孤立漂浮在底部」就是这么来的。
+  //
+  // 正确的做法与思维导图 layoutTree 同源：**后序叶子计数**。叶子依次占一个槽位，
+  // 父节点居中于首末子节点之间。每个子树在堆叠轴上连续，父子必然紧凑，
+  // 不需要再去猜「这个父表该排第几行」。
+  //
+  // 但**没有子树的根**（典型是逆向 dump 里一堆互不相干的表）仍然走网格：它们之间
+  // 没有关系，纵向排成一条竖线会把画布拉得又高又窄，横向铺开才像一张总览图。
+  //
+  // ER 图不是树（多对多、有环），所以先提取「主树」：每个节点只保留一个主父节点
+  // （引用它的、且恰好浅一层的那个），再按主树布局。其余连线照常画，不参与排位。
+
+  // 1) 提取主树：每个节点的「主父」= 引用它的、且恰好浅一层的节点。
+  //    并列时用文档次序兜底，保证同一份设计两次布局长得一样。
+  const mainParent = new Map<string, string | null>();
   for (const n of group) {
     const d = depth.get(n.id) ?? 0;
-    const list = layers.get(d) ?? [];
-    list.push(n);
-    layers.set(d, list);
+    if (d === 0) {
+      mainParent.set(n.id, null);
+      continue;
+    }
+    let best: string | null = null;
+    let bestScore = Number.MAX_SAFE_INTEGER;
+    for (const r of doc.relations) {
+      if (r.from.node !== n.id || !idSet.has(r.to.node) || r.kind === "n-n") continue;
+      const pd = depth.get(r.to.node) ?? 0;
+      // 主父必须在浅一层（d-1），否则就是「跨层回折线」的来源
+      if (pd !== d - 1) continue;
+      const score = indexOfId(r.to.node);
+      if (score < bestScore) {
+        bestScore = score;
+        best = r.to.node;
+      }
+    }
+    mainParent.set(n.id, best);
   }
-  const depths = [...layers.keys()].sort((a, b) => a - b);
 
-  // 兄弟相邻：层内按「父节点在本层的落位次序」排序。
-  // 父在上一层，所以从上往下逐层处理，排完一层就把序号回填给它的子节点用。
-  const orderOf = new Map<string, number>();
-  let maxY = 0;
+  // 2) 主树的反向映射（父 → 子），兄弟按文档次序排序保证稳定
+  const treeChildren = new Map<string, string[]>();
+  for (const [child, parent] of mainParent) {
+    if (!parent) continue;
+    const list = treeChildren.get(parent) ?? [];
+    list.push(child);
+    treeChildren.set(parent, list);
+  }
+  for (const list of treeChildren.values()) list.sort((a, b) => indexOfId(a) - indexOfId(b));
 
-  depths.forEach((d, layerIndex) => {
-    const list = layers.get(d)!;
-    // 排序键 = 父节点的序号；无父（根层）用自身在文档中的序号兜底，保持稳定
-    list.sort((a, b) => {
-      const pa = parentOf.get(a.id);
-      const pb = parentOf.get(b.id);
-      const ka = pa ? orderOf.get(pa) ?? Number.MAX_SAFE_INTEGER : originalIndex(a);
-      const kb = pb ? orderOf.get(pb) ?? Number.MAX_SAFE_INTEGER : originalIndex(b);
-      return ka - kb || originalIndex(a) - originalIndex(b);
-    });
+  // 有子树的根 → 各占一条纵向带；「光杆根」→ 汇到末尾统一排网格
+  const roots = group
+    .filter((n) => mainParent.get(n.id) === null)
+    .sort((a, b) => originalIndex(a) - originalIndex(b));
+  const treeRoots = roots.filter((r) => (treeChildren.get(r.id) ?? []).length > 0);
+  const looseRoots = roots.filter((r) => (treeChildren.get(r.id) ?? []).length === 0);
 
-    const cols = Math.max(1, Math.ceil(Math.sqrt(list.length * 1.4)));
-    const rowH = Math.max(...list.map((n) => estimateHeight(n, opts)));
-    const layerX = PAD + layerIndex * (CARD_W + GAP_X);
-    list.forEach((n, i) => {
+  // 3) 后序遍历：叶子占槽位，父节点居中于首末子节点之间
+  let cursor = PAD;
+  const place = (id: string, d: number): { top: number; bottom: number } => {
+    const n = byId(id);
+    const selfH = estimateHeight(n, opts);
+    const kids = treeChildren.get(id) ?? [];
+    if (kids.length === 0) {
+      positions[id] = { x: PAD + d * (CARD_W + GAP_X), y: cursor };
+      const bottom = cursor + selfH;
+      cursor = bottom + GAP_Y;
+      return { top: positions[id].y, bottom };
+    }
+    const tops: number[] = [];
+    const bottoms: number[] = [];
+    for (const k of kids) {
+      const { top, bottom } = place(k, d + 1);
+      tops.push(top);
+      bottoms.push(bottom);
+    }
+    // 父节点居中于首末子节点：父子落在同一视野带里，连线是短横线而不是斜跨
+    const top = Math.min(...tops);
+    const bottom = Math.max(...bottoms);
+    positions[id] = { x: PAD + d * (CARD_W + GAP_X), y: (top + bottom) / 2 - selfH / 2 };
+    return { top, bottom };
+  };
+  // 一个子树 = 一条纵向带，带与带之间再留一道空隙
+  for (const r of treeRoots) {
+    place(r.id, 0);
+    cursor += GAP_Y;
+  }
+
+  // 4) 光杆根铺成网格：互不相干的表排成一条竖线，既难看又白费屏高
+  if (looseRoots.length > 0) {
+    const cols = Math.max(1, Math.ceil(Math.sqrt(looseRoots.length * 1.4)));
+    const rowH = Math.max(...looseRoots.map((n) => estimateHeight(n, opts)));
+    looseRoots.forEach((n, i) => {
       const col = i % cols;
       const row = Math.floor(i / cols);
-      positions[n.id] = { x: layerX + col * (CARD_W + GAP_X), y: PAD + row * (rowH + GAP_Y) };
-      orderOf.set(n.id, i);
-      maxY = Math.max(maxY, PAD + row * (rowH + GAP_Y) + rowH);
+      positions[n.id] = { x: PAD + col * (CARD_W + GAP_X), y: cursor + row * (rowH + GAP_Y) };
     });
-  });
+  }
 
+  let maxY = 0;
+  for (const n of group) maxY = Math.max(maxY, positions[n.id].y + estimateHeight(n, opts));
   return { positions, height: maxY };
 }
 
