@@ -35,7 +35,7 @@ fn home_dir() -> PathBuf {
 }
 
 /// 根据配置字符串解析技能目录：
-/// - 空字符串 → 默认 `~/.agents/skills`；
+/// - 空字符串 → 默认「数据目录下的 skills」（见 `default_skills_dir`）；
 /// - 支持 `~` 前缀与 Windows `%VAR%` 占位符展开；
 /// - 相对路径以应用根目录为基准。
 pub(crate) fn resolve_skills_dir(cfg_value: &str) -> PathBuf {
@@ -444,7 +444,7 @@ struct SkillMetaItem {
     tags: Vec<String>,
 }
 
-/// 元数据文件路径：`~/.agents/skills/.meta.json`（点文件，扫描时跳过）
+/// 元数据文件路径：`<技能库>/.meta.json`（点文件，扫描时跳过）
 fn skill_meta_path() -> PathBuf {
     skills_dir().join(".meta.json")
 }
@@ -568,7 +568,8 @@ fn is_junction(path: &PathBuf) -> bool {
 
 // ─── 技能列表（仓库扫描） ───
 
-/// 技能总览：扫描技能仓库（skills.sh 公共仓库，默认 ~/.agents/skills）。
+/// 技能总览：扫描技能库目录（默认「数据目录下的 skills」）。
+/// 手工拷进去的技能同样会被列出来——它和安装进来的技能没有区别对待。
 #[tauri::command]
 pub fn get_skill_overview() -> Result<Vec<SkillEntry>, String> {
     let store = skills_dir();
@@ -1701,11 +1702,10 @@ pub fn list_builtin_skills() -> Vec<BuiltinSkillView> {
         .collect()
 }
 
-/// 把内置技能装到**用户指定**的目录：写出 `<target_dir>/<id>/` 下的全部文件。
+/// 把内置技能装进**技能库**：写出 `<技能库>/<id>/` 下的全部文件。
 ///
 /// 非破坏性：目标已存在且非空就直接报错，绝不覆盖用户自己的技能。
-/// 目录由用户在前端选（例如 ~/.agents/skills、某个 AI 工具的技能目录），
-/// 后端不猜、也不偷偷装进公共仓库。
+/// 装完它只是技能库里的一个普通技能，仍需用户显式安装给某个项目才生效。
 #[tauri::command]
 pub fn install_builtin_skill(skill_id: String) -> Result<String, String> {
     // 装进技能库即可 —— 装完它就是一个普通技能，由用户显式安装给某个项目。
