@@ -217,6 +217,8 @@ export default function DbDesignerPanel() {
   /** 连线样式（曲线 / 直角折线 / 直线）：与思维导图、JSON 图共用一份偏好 */
   const [edgeStyle, setEdgeStyle] = useEdgeStyle();
   const [report, setReport] = useState<ValidationReport | null>(null);
+  /** 校验结果条是否展开：默认展开（有问题就该看得见），收起只留一行摘要把画布还回去 */
+  const [reportOpen, setReportOpen] = useState(true);
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
   /** 底部 dock：页签（字段 / 索引 / 关联）+ 折叠。属性编辑全在这里，画布只负责摆表。 */
   const [dockTab, setDockTab] = useState<"fields" | "indexes" | "relations">("fields");
@@ -1471,14 +1473,34 @@ export default function DbDesignerPanel() {
         ) : null}
       </div>
 
+      {/* 校验结果条：每条都是长句，一换行就是两三行 —— 不设上限时会直接把画布顶没。
+          所以折叠只是一行摘要（✕ 数 · ! 数），展开也限高滚动，画布始终拿得回来。 */}
       {report && (report.errors.length > 0 || report.warnings.length > 0) ? (
-        <div className="border-b border-white/5 px-3 py-1.5 text-micro">
-          {report.errors.slice(0, 3).map((e) => (
-            <div key={e} className="text-rose-400">✕ {e}</div>
-          ))}
-          {report.warnings.slice(0, 3).map((w) => (
-            <div key={w} className="text-amber-400/90">! {w}</div>
-          ))}
+        <div className="border-b border-white/5 px-3 py-1 text-micro">
+          <button
+            onClick={() => setReportOpen((v) => !v)}
+            className="flex w-full items-center gap-1.5 text-left text-slate-400 hover:text-slate-200 cursor-pointer"
+            title={t("dbd.reportToggleHint")}
+          >
+            <ChevronDown className={`w-3 h-3 shrink-0 transition-transform ${reportOpen ? "" : "-rotate-90"}`} />
+            <span className="shrink-0 font-semibold text-slate-300">{t("dbd.reportTitle")}</span>
+            {report.errors.length > 0 ? (
+              <span className="shrink-0 text-rose-400">✕ {report.errors.length}</span>
+            ) : null}
+            {report.warnings.length > 0 ? (
+              <span className="shrink-0 text-amber-400/90">! {report.warnings.length}</span>
+            ) : null}
+          </button>
+          {reportOpen ? (
+            <div className="mt-1 max-h-20 overflow-y-auto pr-1">
+              {report.errors.map((e) => (
+                <div key={e} className="text-rose-400">✕ {e}</div>
+              ))}
+              {report.warnings.map((w) => (
+                <div key={w} className="text-amber-400/90">! {w}</div>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
 

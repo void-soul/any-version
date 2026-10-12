@@ -94,6 +94,8 @@
     "dockResize": "Drag to resize (arrow keys to adjust)",
     "fieldRows": "Show in nodes",
     "autoLayout": "Auto layout",
+    "reportTitle": "Validation",
+    "reportToggleHint": "Click the title to collapse / expand (errors and warnings; scrolling when expanded)",
     "tableNav": "Tables",
     "tableNavTitle": "Table navigator: click a name to jump there and see its relations",
     "tableNavAll": "All tables",

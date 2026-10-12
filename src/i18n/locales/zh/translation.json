@@ -94,6 +94,8 @@
     "dockResize": "拖动调整高度（↑↓ 微调）",
     "fieldRows": "节点里显示",
     "autoLayout": "自动布局",
+    "reportTitle": "校验结果",
+    "reportToggleHint": "点标题折叠 / 展开（错误与警告都列在这里，展开时限高滚动）",
     "tableNav": "表",
     "tableNavTitle": "表导航：点表名并跳连它的关联径",
     "tableNavAll": "全部表",
