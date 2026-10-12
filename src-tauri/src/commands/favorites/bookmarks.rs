@@ -185,7 +185,7 @@ pub fn import(browser: &str, custom_path: Option<&str>) -> Result<BookmarkImport
                     Some(id) => id,
                     None => {
                         folders += 1;
-                        db::create_category(conn, name, parent)?
+                        db::create_category(conn, name, parent, "topic")?
                     }
                 };
                 parent = Some(id);

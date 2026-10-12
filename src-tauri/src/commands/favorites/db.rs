@@ -167,6 +167,23 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
         )
         .map_err(|e| format!("回填分类来源失败: {}", e))?;
     }
+    // 星标：“特别关注”的位置
+    if !has_column(conn, "favorite", "is_starred")? {
+        conn.execute(
+            "ALTER TABLE favorite ADD COLUMN is_starred INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .map_err(|e| format!("升级收藏库失败（is_starred）: {}", e))?;
+    }
+    // 分类的性质：topic = 主题分类（AI 归类会写），follow = 关注分组。
+    // 两者必须区分开：关注分组是人工维护的，被「重新归类」清掉或被 AI 自动塞进其他类都会变成灾难恢复的事故
+    if !has_column(conn, "favorite_category", "kind")? {
+        conn.execute(
+            "ALTER TABLE favorite_category ADD COLUMN kind TEXT NOT NULL DEFAULT 'topic'",
+            [],
+        )
+        .map_err(|e| format!("升级收藏库失败（category.kind）: {}", e))?;
+    }
     migrate_tags_to_categories(conn)?;
     Ok(())
 }
@@ -944,6 +961,8 @@ pub struct FavoriteRow {
     pub updated_at: String,
     /// 平台记录的收藏时间；取不到为 None（前端回退显示 created_at）
     pub favorited_at: Option<String>,
+    /// 特别关注：列表里置顶，不会被新收藏的涌到后面去
+    pub is_starred: bool,
     pub tags: Vec<String>,
 }
 
@@ -959,6 +978,8 @@ pub struct ListFilter {
     pub sort: Option<String>,
     /// 只保留「收藏时间（取不到则入库时间）不早于该时刻」的条目，本地时间字符串
     pub favorited_since: Option<String>,
+    /// 只看星标条目（左侧「星标」入口）
+    pub starred_only: bool,
     pub limit: usize,
 }
 
@@ -968,7 +989,7 @@ pub struct ListFilter {
 /// 平台没给时间的来源回退到本地首次入库时间（`created_at` 保留作回退，但不再提供
 /// 「按入库时间 / 按最近更新」两种排序）。
 fn order_by_clause(_sort: Option<&str>) -> &'static str {
-    "COALESCE(f.favorited_at, f.created_at) DESC, f.id DESC"
+    "f.is_starred DESC, COALESCE(f.favorited_at, f.created_at) DESC, f.id DESC"
 }
 
 /// 按条件列出条目（按收藏时间排序，最多 1000 条）。
@@ -999,7 +1020,7 @@ pub fn list(conn: &Connection, filter: &ListFilter) -> Result<Vec<FavoriteRow>, 
 
     let sql = format!(
         "SELECT f.id, f.source, f.external_id, f.url, f.title, f.subtitle, f.description, \
-                f.status, f.checked_at, f.ai_locked, f.ai_model, f.created_at, f.updated_at, f.favorited_at \
+                f.status, f.checked_at, f.ai_locked, f.ai_model, f.created_at, f.updated_at, f.favorited_at, f.is_starred \
          FROM favorite f \
          WHERE (?1 IS NULL OR f.source = ?1) \
            AND (?2 IS NULL OR f.status = ?2) \
@@ -1007,6 +1028,7 @@ pub fn list(conn: &Connection, filter: &ListFilter) -> Result<Vec<FavoriteRow>, 
            AND (?4 IS NULL OR EXISTS (SELECT 1 FROM favorite_item_category ic \
                                       WHERE ic.favorite_id = f.id AND ic.category_id IN ({category_in}))) \
            AND (?5 IS NULL OR COALESCE(f.favorited_at, f.created_at) >= ?5) \
+          AND (?6 = 0 OR f.is_starred = 1) \
          ORDER BY {} LIMIT {}",
         order_by_clause(filter.sort.as_deref()),
         limit
@@ -1021,7 +1043,8 @@ pub fn list(conn: &Connection, filter: &ListFilter) -> Result<Vec<FavoriteRow>, 
                 filter.status,
                 keyword,
                 filter.category_id,
-                since
+                since,
+                filter.starred_only as i64
             ],
             |row| {
                 Ok(FavoriteRow {
@@ -1039,6 +1062,7 @@ pub fn list(conn: &Connection, filter: &ListFilter) -> Result<Vec<FavoriteRow>, 
                     created_at: row.get(11)?,
                     updated_at: row.get(12)?,
                     favorited_at: row.get(13)?,
+                    is_starred: row.get::<_, i64>(14)? != 0,
                     tags: Vec::new(),
                 })
             },
@@ -1083,6 +1107,8 @@ pub struct CategoryNode {
     pub parent_id: Option<i64>,
     pub name: String,
     pub sort_order: i32,
+    /// topic = 主题分类（AI 归类会写）；follow = 关注分组（人工维护，AI 归类不碰）
+    pub kind: String,
     /// 直接挂在本分类下的条目数
     pub count: i64,
     /// 含所有子孙分类的条目数（前端侧栏显示这个才有意义：点父级要看全部）
@@ -1096,13 +1122,15 @@ struct CategoryFlat {
     parent_id: Option<i64>,
     name: String,
     sort_order: i32,
+    /// topic / follow
+    kind: String,
     count: i64,
 }
 
 fn load_flat_categories(conn: &Connection) -> Result<Vec<CategoryFlat>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT c.id, c.parent_id, c.name, c.sort_order, \
+            "SELECT c.id, c.parent_id, c.name, c.sort_order, c.kind, \
                     (SELECT COUNT(*) FROM favorite_item_category ic WHERE ic.category_id = c.id) \
              FROM favorite_category c \
              ORDER BY c.parent_id IS NOT NULL, c.sort_order ASC, c.name ASC",
@@ -1115,7 +1143,8 @@ fn load_flat_categories(conn: &Connection) -> Result<Vec<CategoryFlat>, String> 
                 parent_id: r.get(1)?,
                 name: r.get(2)?,
                 sort_order: r.get(3)?,
-                count: r.get(4)?,
+                kind: r.get(4)?,
+                count: r.get(5)?,
             })
         })
         .map_err(|e| format!("读取分类失败: {e}"))?;
@@ -1138,6 +1167,7 @@ pub fn list_category_tree(conn: &Connection) -> Result<Vec<CategoryNode>, String
                 parent_id: c.parent_id,
                 name: c.name.clone(),
                 sort_order: c.sort_order,
+                kind: c.kind.clone(),
                 count: c.count,
                 total: c.count,
                 children: Vec::new(),
@@ -1230,7 +1260,7 @@ fn sibling_name_taken(conn: &Connection, parent_id: Option<i64>, name: &str, exc
 }
 
 /// 新建分类（同名同级拒绝），返回新 id。
-pub fn create_category(conn: &Connection, name: &str, parent_id: Option<i64>) -> Result<i64, String> {
+pub fn create_category(conn: &Connection, name: &str, parent_id: Option<i64>, kind: &str) -> Result<i64, String> {
     let name = name.trim();
     if name.is_empty() {
         return Err("分类名不能为空".to_string());
@@ -1360,7 +1390,7 @@ pub fn ensure_category(conn: &Connection, parent_id: Option<i64>, name: &str) ->
     drop(stmt);
     match found {
         Some(id) => Ok(id),
-        None => create_category(conn, name, parent_id),
+        None => create_category(conn, name, parent_id, "topic"),
     }
 }
 
@@ -1395,6 +1425,20 @@ pub fn reorder_categories(conn: &Connection, orders: &[(i64, i32)]) -> Result<()
         .ok();
     }
     tx.commit().map_err(|e| format!("提交事务失败: {e}"))?;
+    Ok(())
+}
+
+/// 设置 / 取消星标（特别关注）。列表会把它置顶。
+pub fn set_starred(conn: &Connection, id: i64, starred: bool) -> Result<(), String> {
+    let changed = conn
+        .execute(
+            "UPDATE favorite SET is_starred = ?2 WHERE id = ?1",
+            rusqlite::params![id, starred as i64],
+        )
+        .map_err(|e| format!("设置星标失败: {e}"))?;
+    if changed == 0 {
+        return Err(format!("收藏条目不存在: {id}"));
+    }
     Ok(())
 }
 
@@ -1447,7 +1491,7 @@ pub fn resolve_category_by_name(conn: &Connection, name: &str) -> Result<i64, St
     ) {
         return Ok(id);
     }
-    create_category(conn, name, None)
+    create_category(conn, name, None, "topic")
 }
 
 /// 人工设置标签（全量替换），并锁定：后续 AI 归类不再碰它。
@@ -1638,6 +1682,7 @@ pub fn count_all(conn: &Connection) -> Result<usize, String> {
         .map_err(|e| format!("统计收藏条目失败: {}", e))
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1646,8 +1691,8 @@ mod tests {
         link_item_category, list, list_category_tree, list_deleted, mark_deleted, migrate,
         move_category, prune_all_empty_categories, rename_category, reset_classification,
         select_unclassified, set_credential, set_import_cursor, set_item_categories,
-        set_item_categories_manual, set_tags, stats, upsert, CategoryNode, FavoriteRow,
-        FavoriteStats, ListFilter, NewFavorite, UpsertOutcome,
+        set_item_categories_manual, set_starred, set_tags, stats, upsert, CategoryNode,
+        FavoriteRow, FavoriteStats, ListFilter, NewFavorite, UpsertOutcome,
     };
 
     /// 前后端的字段契约：这两个结构按 camelCase 序列化，前端读的是 `bySource` / `aiLocked`。
@@ -1683,6 +1728,7 @@ mod tests {
             created_at: "2026-01-01".to_string(),
             updated_at: "2026-01-01".to_string(),
             favorited_at: None,
+            is_starred: false,
             tags: vec![],
         };
         let value = serde_json::to_value(&row).unwrap();
@@ -1705,6 +1751,43 @@ mod tests {
             favorited_at: None,
             initial_status: None,
         }
+    }
+
+    // 造一条收藏条目（测试用；is_starred 走默认 0）
+    fn insert_fav(conn: &rusqlite::Connection, id: i64, external_id: &str) {
+        conn.execute(
+            "INSERT INTO favorite (id, source, external_id, url, title, extra_json, created_at, updated_at) \
+             VALUES (?1, 'github', ?2, 'https://x', ?2, '{}', 'now', 'now')",
+            rusqlite::params![id, external_id],
+        )
+        .unwrap();
+    }
+
+    // 星标置顶：星标过的条目不该被新收藏的涌到后面（否则“关注的那几条”越用越难找）
+    #[test]
+    fn starred_items_sort_above_newer_ones() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        insert_fav(&conn, 1, "old");
+        insert_fav(&conn, 2, "new");
+        set_starred(&conn, 1, true).unwrap();
+        let rows = list(&conn, &ListFilter::default()).unwrap();
+        assert_eq!(rows[0].id, 1, "星标条目应置顶，即使它更旧");
+        assert!(rows[0].is_starred);
+        assert!(!rows[1].is_starred);
+    }
+
+    /// 只筛星标：星标 + 非星标混合时，只有星标进结果（左侧「星标」入口靠它）。
+    #[test]
+    fn starred_only_filter_returns_only_starred() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        insert_fav(&conn, 1, "a");
+        insert_fav(&conn, 2, "b");
+        set_starred(&conn, 1, true).unwrap();
+        let rows = list(&conn, &ListFilter { starred_only: true, ..Default::default() }).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, 1);
     }
 
     // ─── 删除墓碑：删掉的条目不该被下次导入捞回来 ───
@@ -2033,13 +2116,13 @@ mod tests {
     #[test]
     fn category_tree_supports_nesting_and_filtering() {
         let conn = seeded();
-        let root = create_category(&conn, "技术", None).unwrap();
-        let child = create_category(&conn, "编译器", Some(root)).unwrap();
-        let grand = create_category(&conn, "LLVM", Some(child)).unwrap();
+        let root = create_category(&conn, "技术", None, "topic").unwrap();
+        let child = create_category(&conn, "编译器", Some(root), "topic").unwrap();
+        let grand = create_category(&conn, "LLVM", Some(child), "topic").unwrap();
 
         // 同级重名要拦住（父级不同则可以同名）
-        assert!(create_category(&conn, "技术", None).is_err());
-        assert!(create_category(&conn, "编译器", Some(grand)).is_ok());
+        assert!(create_category(&conn, "技术", None, "topic").is_err());
+        assert!(create_category(&conn, "编译器", Some(grand), "topic").is_ok());
 
         set_item_categories(&conn, 1, &[grand]).unwrap();
         set_item_categories(&conn, 2, &[]).unwrap();
@@ -2076,8 +2159,8 @@ mod tests {
     #[test]
     fn category_tree_counts_include_descendants() {
         let conn = seeded();
-        let root = create_category(&conn, "A", None).unwrap();
-        let child = create_category(&conn, "B", Some(root)).unwrap();
+        let root = create_category(&conn, "A", None, "topic").unwrap();
+        let child = create_category(&conn, "B", Some(root), "topic").unwrap();
         set_item_categories(&conn, 1, &[root]).unwrap();
         set_item_categories(&conn, 2, &[child]).unwrap();
 
@@ -2134,7 +2217,7 @@ mod tests {
         assert_eq!(pending.len(), 4);
 
         // 只有目录分类（书签导入形态）、没有 ai_model → 仍要归类
-        let cli = create_category(&conn, "CLI", None).unwrap();
+        let cli = create_category(&conn, "CLI", None, "topic").unwrap();
         set_item_categories(&conn, 1, &[cli]).unwrap();
         // 人工改分类（界面选择器）会顺手锁定 → 永远不再归类
         set_item_categories_manual(&conn, 2, &[cli]).unwrap();
@@ -2222,7 +2305,7 @@ mod tests {
         insert_raw(&conn, 1, "1", "{}");
 
         // 书签目录分类（bookmark）
-        let bm = create_category(&conn, "书签栏", None).unwrap();
+        let bm = create_category(&conn, "书签栏", None, "topic").unwrap();
         link_item_category(&conn, 1, bm).unwrap();
 
         // 第一次 AI 归类（ai）→ 旧分类
@@ -2271,19 +2354,19 @@ mod tests {
         migrate(&conn).unwrap();
 
         // 有内容的分类（保留）
-        let used = create_category(&conn, "有内容", None).unwrap();
+        let used = create_category(&conn, "有内容", None, "topic").unwrap();
         link_item_category(&conn, 1, used).unwrap();
 
         // 空叶子（删）
-        let _ = create_category(&conn, "空叶子", None).unwrap();
+        let _ = create_category(&conn, "空叶子", None, "topic").unwrap();
 
         // 空父 + 空子：父子都空 → 级联删
-        let empty_parent = create_category(&conn, "空父", None).unwrap();
-        let _ = create_category(&conn, "空子", Some(empty_parent)).unwrap();
+        let empty_parent = create_category(&conn, "空父", None, "topic").unwrap();
+        let _ = create_category(&conn, "空子", Some(empty_parent), "topic").unwrap();
 
         // 父分类下有「有内容」的子分类：父不删
-        let parent = create_category(&conn, "父", None).unwrap();
-        let used_child = create_category(&conn, "有内容子", Some(parent)).unwrap();
+        let parent = create_category(&conn, "父", None, "topic").unwrap();
+        let used_child = create_category(&conn, "有内容子", Some(parent), "topic").unwrap();
         link_item_category(&conn, 1, used_child).unwrap();
 
         let removed = prune_all_empty_categories(&conn).unwrap();

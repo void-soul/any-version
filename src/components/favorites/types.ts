@@ -18,6 +18,8 @@ export interface FavoriteRow {
   /** 平台记录的**收藏时间**（GitHub starred_at / B站 fav_time / 知乎 created）；
    *  老库或平台不返回时为 null，界面不显示时间（不再回退到本地入库时间）。 */
   favoritedAt?: string | null;
+  /** 特别关注（星标）：列表里置顶 */
+  isStarred: boolean;
   /** 多标签：一个条目可以同时属于多个分类 */
   tags: string[];
 }
@@ -28,6 +30,8 @@ export interface FavoriteCategoryNode {
   parentId: number | null;
   name: string;
   sortOrder: number;
+  /** `topic` = 主题分类（AI 归类会往里写）· `follow` = 关注分组（人工维护，AI 归类不碰） */
+  kind: "topic" | "follow";
   /** 直接挂在本分类下的条目数 */
   count: number;
   /** 含所有子孙分类的条目数 */

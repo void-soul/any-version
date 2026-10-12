@@ -1118,6 +1118,7 @@ pub fn fav_list(
     keyword: Option<String>,
     sort: Option<String>,
     favorited_since: Option<String>,
+    starred_only: Option<bool>,
     limit: Option<usize>,
 ) -> Result<Vec<db::FavoriteRow>, String> {
     db::with_conn(|conn| {
@@ -1130,10 +1131,20 @@ pub fn fav_list(
                 keyword,
                 sort,
                 favorited_since,
+                starred_only: starred_only.unwrap_or(false),
                 limit: limit.unwrap_or(0),
             },
         )
     })
+}
+
+/// 星标（特别关注）开关。
+///
+/// 为什么不用「小型号」实现：这是跨设备的个人标记，不是要还原平台的任何状态 ——
+/// 平台侧没有这个概念，拉下来再同步只会造成两边不一致。
+#[tauri::command]
+pub fn fav_set_starred(id: i64, starred: bool) -> Result<(), String> {
+    db::with_conn(|conn| db::set_starred(conn, id, starred))
 }
 
 /// 导入浏览器收藏夹（Edge / Chrome）。
@@ -1158,9 +1169,20 @@ pub fn fav_list_categories() -> Result<Vec<db::CategoryNode>, String> {
 }
 
 /// 新建分类（顶层传 null）。
+///
+/// `kind`：`topic` = 主题分类（AI 归类会往里写）· `follow` = 关注分组（人工维护，
+/// AI 归类不碰）。两者必须分开，否则用户整理的「待读 / 重点」会被重新归类清空。
 #[tauri::command]
-pub fn fav_create_category(name: String, parent_id: Option<i64>) -> Result<i64, String> {
-    db::with_conn(|conn| db::create_category(conn, &name, parent_id))
+pub fn fav_create_category(
+    name: String,
+    parent_id: Option<i64>,
+    kind: Option<String>,
+) -> Result<i64, String> {
+    let k = match kind.as_deref() {
+        Some("follow") => "follow",
+        _ => "topic",
+    };
+    db::with_conn(|conn| db::create_category(conn, &name, parent_id, k))
 }
 
 /// 重命名分类。

@@ -8,6 +8,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
@@ -31,6 +32,7 @@ import {
   Send,
   Sparkles,
   Loader2,
+  Star,
 } from "lucide-react";
 
 import { favoritedDateLabel, sinceToLocalString, type SincePreset } from "./favoritedTime";
@@ -98,6 +100,8 @@ export default function FavoritesPanel() {
   // 分类筛选：走分类 id（树），名字只用于回显
   const [categoryId, setCategoryId] = useState<number | null>(null);
   const [categoryName, setCategoryName] = useState<string | null>(null);
+  // 只看星标（左侧「星标」入口）：与分类筛选可叠加 —— 同时选中时两者都要满足
+  const [starredOnly, setStarredOnly] = useState(false);
   // 分类树里展开的节点
   const [expandedCats, setExpandedCats] = useState<Set<number>>(new Set());
   // 分类右键菜单
@@ -268,6 +272,7 @@ export default function FavoritesPanel() {
         sort: "favorited",
         // 时区换算放在前端：后端只拿到一个「不早于」的本地时间串，不需要猜时区
         favoritedSince: sinceToLocalString(since),
+        starredOnly: starredOnly || null,
         limit: 0,
       }),
       invoke<FavoriteStats>("fav_stats"),
@@ -278,7 +283,23 @@ export default function FavoritesPanel() {
     setStats(overview);
     setCredStatus(creds);
     setDeletedRows(deleted ?? []);
-  }, [source, categoryId, keyword, since]);
+  }, [source, categoryId, keyword, since, starredOnly]);
+
+  // 星标数量：当前列表里的（分类/关键词筛选会收窄它，与列表所见保持一致）
+  const starredCount = useMemo(() => items.filter((i) => i.isStarred).length, [items]);
+
+  /** 星标开关：乐观更新（先改 UI 再发请求），失败时回滚并提示。
+   *  星标是纯本地标记，不涉及任何平台同步，所以不该有等待感。 */
+  const toggleStar = async (item: FavoriteRow) => {
+    const next = !item.isStarred;
+    setItems((cur) => cur.map((x) => (x.id === item.id ? { ...x, isStarred: next } : x)));
+    try {
+      await invoke("fav_set_starred", { id: item.id, starred: next });
+    } catch (e) {
+      setItems((cur) => cur.map((x) => (x.id === item.id ? { ...x, isStarred: item.isStarred } : x)));
+      toast(String(e), "err");
+    }
+  };
 
   // ── 分类树操作（对齐启动模块：新建子分类 / 重命名 / 删除 / 同级排序）──
   const cats: FavoriteCategoryNode[] = stats?.categories || [];
@@ -323,11 +344,11 @@ export default function FavoritesPanel() {
     return walk(cats) || [];
   };
 
-  const createCat = async (parentId: number | null) => {
+  const createCat = async (parentId: number | null, kind: "topic" | "follow" = "topic") => {
     const name = window.prompt(t(pickCatKey(parentId)));
     if (!name?.trim()) return;
     try {
-      const id = await invoke<number>("fav_create_category", { name: name.trim(), parentId });
+      const id = await invoke<number>("fav_create_category", { name: name.trim(), parentId, kind });
       if (parentId != null) setExpandedCats((s) => new Set(s).add(parentId));
       setCategoryId(id);
       setCategoryName(name.trim());
@@ -1245,7 +1266,23 @@ export default function FavoritesPanel() {
             <span className="float-right text-slate-500">{stats?.total ?? 0}</span>
           </button>
 
-          {/* 分类树：可折叠，右键出菜单（新建子分类 / 重命名 / 上移下移 / 删除） */}
+          {/* 星标（特别关注）入口：与「全部」并列，筛选逻辑是 starred_only */}
+          <button
+            onClick={() => { setCategoryId(null); setCategoryName(null); setStarredOnly((v) => !v); }}
+            className={`w-full text-left px-2 py-1 rounded text-caption cursor-pointer transition-colors ${
+              starredOnly
+                ? "bg-[var(--module-accent-soft)] text-white"
+                : "text-slate-400 hover:bg-white/5"
+            }`}
+          >
+            <Star className={`w-3 h-3 inline mr-1 ${starredOnly ? "text-amber-400" : "text-slate-500"}`} />
+            {t("favorites.starred")}
+            <span className="float-right text-slate-500">{starredCount}</span>
+          </button>
+
+          {/* 分类树：可折叠，右键出菜单（新建子分类 / 重命名 / 上移下移 / 删除）。
+              关注分组（kind=follow）用琥珀色区分 —— 它由用户人工维护，
+              AI 归类不会往里写，两者混在一起会让人分不清哪些是自动、哪些是手动。 */}
           <CategoryTree
             nodes={cats}
             depth={0}
@@ -1267,6 +1304,15 @@ export default function FavoritesPanel() {
           >
             <Plus className="w-3 h-3 inline mr-1" />
             {t("favorites.newCategory")}
+          </button>
+          {/* 关注分组：人工维护，AI 归类不会往里写 */}
+          <button
+            onClick={() => void createCat(null, "follow")}
+            className="w-full text-left px-2 py-1 rounded text-tiny text-slate-500 hover:text-amber-300 hover:bg-white/5 cursor-pointer"
+            title={t("favorites.newFollowGroup")}
+          >
+            <Star className="w-3 h-3 inline mr-1" />
+            {t("favorites.newFollowGroup")}
           </button>
 
           {cats.length === 0 && (
@@ -1406,6 +1452,17 @@ export default function FavoritesPanel() {
                         )}
                       </button>
                     )}
+                    <button
+                      onClick={() => void toggleStar(item)}
+                      className={`p-1 rounded cursor-pointer ${
+                        item.isStarred
+                          ? "text-amber-400"
+                          : "text-slate-600 hover:text-amber-400 opacity-0 group-hover:opacity-100"
+                      }`}
+                      title={item.isStarred ? t("favorites.unstar") : t("favorites.star")}
+                    >
+                      <Star className={`w-3 h-3 ${item.isStarred ? "fill-current" : ""}`} />
+                    </button>
                     <button
                       onClick={() => removeItem(item)}
                       className="p-1 rounded text-slate-600 hover:text-rose-400 cursor-pointer opacity-0 group-hover:opacity-100"
@@ -1807,6 +1864,7 @@ function CategoryTree({
   onSelect: (id: number, name: string) => void;
   onContextMenu: (id: number, name: string, x: number, y: number) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <>
       {nodes.map((c) => {
@@ -1834,7 +1892,13 @@ function CategoryTree({
               >
                 {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
               </button>
-              <span className="truncate flex-1 py-1">{c.name}</span>
+              <span
+                className={`truncate flex-1 py-1 ${c.kind === "follow" ? "text-amber-300/90" : ""}`}
+                title={c.kind === "follow" ? t("favorites.followGroupHint") : c.name}
+              >
+                {c.kind === "follow" && <Star className="w-2.5 h-2.5 inline mr-0.5 -mt-0.5" />}
+                {c.name}
+              </span>
               <span className="pr-1 text-slate-500">{c.total}</span>
             </div>
             {open && hasKids && (
