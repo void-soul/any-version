@@ -38,6 +38,7 @@ import {
   FilePlus2,
   FolderOpen,
   LayoutGrid,
+  Palette,
   Plus,
   Rows3,
   Save,
@@ -138,6 +139,54 @@ interface AiProviderLike {
 
 /** 表配色预设（点一下取消；不选 = 用模块强调色） */
 const NODE_COLORS = ["#0ea5e9", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#14b8a6"];
+
+/**
+ * 按「外键连通分量」给表分组，同组同色。
+ *
+ * 用并查集而不是表名前缀：互相引用过的表天然属于同一个业务系列
+ * （users / orders / order_items / order_logs），而前缀法会把
+ * 「跨模块分表」（billing_invoice 之于 invoice）错归到不同系列。
+ *
+ * 颜色按分量在文档中的**出现顺序**分配，而不是按 hash —— 这样同一份设计
+ * 每次打开配色都一致，不会因为节点增删顺序变化而整体换色。
+ * 分量数超过色板长度时会循环复用（那种规模下本来也难再靠颜色区分）。
+ */
+function assignSeriesColors(doc: DbDesignDocument): Map<string, string> {
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    let root = x;
+    while (parent.get(root) !== root) root = parent.get(root)!;
+    // 路径压缩：避免长链上反复遍历
+    let cur = x;
+    while (parent.get(cur) !== root) {
+      const next = parent.get(cur)!;
+      parent.set(cur, root);
+      cur = next;
+    }
+    return root;
+  };
+  for (const n of doc.nodes) parent.set(n.id, n.id);
+  for (const r of doc.relations) {
+    // 两端都得是已知节点（悬空关系跳过，否则会把路径压缩跑到不存在的 key 上）
+    if (!parent.has(r.from.node) || !parent.has(r.to.node)) continue;
+    const a = find(r.from.node);
+    const b = find(r.to.node);
+    if (a !== b) parent.set(a, b);
+  }
+  // 先按分量分配颜色，再摊回到每个节点 —— 调用方是按**节点 id** 取色的，
+  // 这里如果直接返回「分量根 id → 颜色」，调用方就会查不到（拿到 undefined）
+  const colorOfRoot = new Map<string, string>();
+  const byNode = new Map<string, string>();
+  let idx = 0;
+  for (const n of doc.nodes) {
+    const root = find(n.id);
+    if (!colorOfRoot.has(root)) {
+      colorOfRoot.set(root, NODE_COLORS[idx++ % NODE_COLORS.length]);
+    }
+    byNode.set(n.id, colorOfRoot.get(root)!);
+  }
+  return byNode;
+}
 const MIN_DOCK_HEIGHT = 150;
 const MIN_CANVAS_HEIGHT = 120;
 const DEFAULT_DOCK_HEIGHT = 320;
@@ -337,6 +386,38 @@ export default function DbDesignerPanel() {
     setDoc(next);
     setDirty(true);
   }, []);
+
+  // 同系列自动配色：只在**节点集合或关系端点**变化时重算，拖动节点/切页签不会触发，
+  // 否则每次微动都可能去改文档，把文档标记成「已修改」。
+  const autoColorSigRef = useRef("");
+  useEffect(() => {
+    if (!doc) return;
+    const sig =
+      doc.nodes.map((n) => n.id).sort().join(",") +
+      "|" +
+      doc.relations.map((r) => `${r.from.node}>${r.to.node}`).sort().join(",");
+    if (sig === autoColorSigRef.current) return;
+    autoColorSigRef.current = sig;
+
+    const bySeries = assignSeriesColors(doc);
+    let changed = false;
+    const nodes = doc.nodes.map((n) => {
+      // 手选色优先：用户手动挑过的颜色绝不覆盖
+      if (n.color) return n;
+      const c = bySeries.get(n.id);
+      if (!c || c === n.color) return n;
+      changed = true;
+      return { ...n, color: c };
+    });
+    if (changed) patchDoc({ ...doc, nodes });
+  }, [doc, patchDoc]);
+
+  /** 交回自动配色：清掉所有手选色，让同系列重新按分组上色 */
+  const autoColorAll = useCallback(() => {
+    if (!doc) return;
+    autoColorSigRef.current = ""; // 强制下一轮 effect 重算
+    patchDoc({ ...doc, nodes: doc.nodes.map((n) => ({ ...n, color: "" })) });
+  }, [doc, patchDoc]);
 
   // ── 文件 ──
   const newDoc = async () => {
@@ -1192,6 +1273,14 @@ export default function DbDesignerPanel() {
         <div className="mx-1 h-4 w-px bg-white/10" />
         <button onClick={() => void autoLayout()} disabled={!doc} className="ui-btn px-2 py-1 text-caption disabled:opacity-40" title={t("dbd.autoLayout")}>
           <LayoutGrid className="h-3.5 w-3.5" /> {t("dbd.autoLayout")}
+        </button>
+        <button
+          onClick={autoColorAll}
+          disabled={!doc}
+          className="ui-btn px-2 py-1 text-caption disabled:opacity-40"
+          title={t("dbd.autoColorHint")}
+        >
+          <Palette className="h-3.5 w-3.5" /> {t("dbd.autoColor")}
         </button>
         <button onClick={() => void reverseSqlite()} className="ui-btn px-2 py-1 text-caption" title={t("dbd.reverseSqlite")}>
           <Database className="h-3.5 w-3.5" /> {t("dbd.reverseSqlite")}

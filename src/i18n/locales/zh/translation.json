@@ -94,6 +94,8 @@
     "dockResize": "拖动调整高度（↑↓ 微调）",
     "fieldRows": "节点里显示",
     "autoLayout": "自动布局",
+    "autoColor": "按系列配色",
+    "autoColorHint": "按外键关联把彼此引用的表归为同一系列并着同一颜色。会清掉手选配色（自动配色本身不会覆盖你手动挑过的）",
     "layoutTitle": "重新布局",
     "layoutConfirm": "会按「父表在左、子表在右」重新摆放所有表，并覆盖当前手工调过的位置。",
     "layoutBtn": "重新布局",

@@ -94,6 +94,8 @@
     "dockResize": "Drag to resize (arrow keys to adjust)",
     "fieldRows": "Show in nodes",
     "autoLayout": "Auto layout",
+    "autoColor": "Color by series",
+    "autoColorHint": "Tables linked by foreign keys are grouped into one series and share a color. This clears manual colors (automatic coloring never overrides colors you picked by hand).",
     "layoutTitle": "Re-layout",
     "layoutConfirm": "All tables will be placed again (parents left, children right), overwriting your current manual positions.",
     "layoutBtn": "Re-layout",
