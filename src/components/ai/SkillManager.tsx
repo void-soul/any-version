@@ -125,6 +125,8 @@ export default function SkillManager() {
   const [skillsDir, setSkillsDir] = useState('');
   /** 技能库位置设置弹窗 */
   const [dirDialog, setDirDialog] = useState<{ path: string; busy: boolean; msg: string | null } | null>(null);
+  /** 技能库网格是否折叠（折叠后只留标题栏 + 操作条，勾选与批量安装照常可用） */
+  const [libCollapsed, setLibCollapsed] = useState(false);
   const [projMsg, setProjMsg] = useState<{ id: string; msg: string; ok: boolean } | null>(null);
   /** 右侧正在查看的项目（左侧点谁看谁） */
   const [selProject, setSelProject] = useState<string | null>(null);
@@ -585,8 +587,77 @@ export default function SkillManager() {
               </div>
             )}
 
+            {/* ────────── 技能库（顶部通栏，可折叠） ────────── */}
+            <div className="rounded-card bg-white/[0.02] border border-white/10 p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  onClick={() => setLibCollapsed((v) => !v)}
+                  className="flex items-center gap-1.5 cursor-pointer min-w-0"
+                  title={libCollapsed ? t("skillmgr.libExpand") : t("skillmgr.libCollapse")}
+                >
+                  <ChevronDown className={`w-3.5 h-3.5 text-slate-400 flex-shrink-0 transition-transform ${libCollapsed ? '' : 'rotate-180'}`} />
+                  <span className="text-body font-bold text-slate-300">{t("skillmgr.libTitle")}</span>
+                  <span className="text-micro text-slate-500 truncate">
+                    {libCollapsed && pickedLib.size > 0
+                      ? t("skillmgr.libPickedBadge", { n: pickedLib.size })
+                      : t("skillmgr.libHint")}
+                  </span>
+                </button>
+                {!libCollapsed && (
+                  <button
+                    onClick={() => toggleAllLib(filtered)}
+                    className="px-2 py-0.5 rounded text-micro bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer flex-shrink-0"
+                  >
+                    {t("skillmgr.projSelectAll")}
+                  </button>
+                )}
+              </div>
+
+              {!libCollapsed && (
+                skills.length === 0 ? (
+                  <div className="text-tiny text-slate-500 py-4 text-center">{t("skillmgr.projNoSkills")}</div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-1.5 max-h-64 overflow-y-auto">
+                    {filtered.map((s) => {
+                      const on = pickedLib.has(s.id);
+                      return (
+                        <button
+                          key={s.id}
+                          onClick={() => toggleLibPick(s.id)}
+                          className={`flex items-center gap-1.5 px-2 py-1.5 rounded-ctl text-left cursor-pointer transition-colors ${
+                            on ? 'bg-emerald-500/15 text-emerald-300' : 'bg-white/5 text-slate-400 hover:bg-white/10'
+                          }`}
+                          title={s.description || s.id}
+                        >
+                          <span className={`w-3 h-3 rounded-sm flex-shrink-0 border ${on ? 'bg-emerald-500 border-emerald-400' : 'border-white/20'}`} />
+                          <span className="text-tiny truncate flex-1">{s.name || s.id}</span>
+                          <span className="text-micro text-slate-500 font-mono flex-shrink-0">{t("skillmgr.skillChars", { n: s.skillMdChars })}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )
+              )}
+
+              {/* 操作条放在折叠区之外：折叠后仍看得见勾了多少、也照样点得了批量安装 */}
+              <div className="flex items-center justify-end gap-2 pt-1 border-t border-white/5">
+                <span className="text-micro text-slate-500">
+                  {t("skillmgr.projPickedMatrix", { n: pickedLib.size, m: pickedProjects.size })}
+                </span>
+                <button
+                  onClick={() => void applyToPicked()}
+                  disabled={projBusy === '*' || pickedLib.size === 0 || pickedProjects.size === 0}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-40 disabled:bg-slate-700 text-body font-semibold text-white cursor-pointer transition-all"
+                >
+                  {projBusy === '*' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />}
+                  {t("skillmgr.projApplyTo")}
+                </button>
+              </div>
+            </div>
+
+            {/* ────────── 下：左项目 / 右项目技能 ────────── */}
             <div className="grid grid-cols-1 lg:grid-cols-[264px_1fr] gap-3 items-start">
-              {/* ────────── 左：项目列表（复选框 = 安装目标） ────────── */}
+              {/* 左：项目列表（复选框 = 安装目标） */}
               <div className="rounded-card bg-white/[0.02] border border-white/10 p-2 space-y-1.5">
                 <div className="flex items-center justify-between px-1">
                   <span className="text-body font-bold text-slate-300">{t("skillmgr.projTitle")}</span>
@@ -640,165 +711,112 @@ export default function SkillManager() {
                 )}
               </div>
 
-              {/* ────────── 右：选中项目的技能 ────────── */}
-              <div className="space-y-3 min-w-0">
+              {/* 右：当前项目的技能 */}
+              <div className="min-w-0">
                 {!selProject ? (
                   <div className="rounded-card bg-white/[0.02] border border-white/10 text-center py-16 text-slate-500 text-sm">
                     {t("skillmgr.projPickOne")}
                   </div>
                 ) : (
-                  <>
-                    {/* 技能库（安装源）：勾选后装到左侧勾选的项目 */}
-                    <div className="rounded-card bg-white/[0.02] border border-white/10 p-3 space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-body font-bold text-slate-300">{t("skillmgr.projLibTitle")}</span>
-                        <button
-                          onClick={() => toggleAllLib(filtered)}
-                          className="px-2 py-0.5 rounded text-micro bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer"
-                        >
-                          {t("skillmgr.projSelectAll")}
-                        </button>
-                      </div>
-
-                      {skills.length === 0 ? (
-                        <div className="text-tiny text-slate-500 py-4 text-center">{t("skillmgr.projNoSkills")}</div>
-                      ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-56 overflow-y-auto">
-                          {filtered.map((s) => {
-                            const on = pickedLib.has(s.id);
-                            return (
-                              <button
-                                key={s.id}
-                                onClick={() => toggleLibPick(s.id)}
-                                className={`flex items-center gap-1.5 px-2 py-1.5 rounded-ctl text-left cursor-pointer transition-colors ${
-                                  on ? 'bg-emerald-500/15 text-emerald-300' : 'bg-white/5 text-slate-400 hover:bg-white/10'
-                                }`}
-                                title={s.description || s.id}
-                              >
-                                <span className={`w-3 h-3 rounded-sm flex-shrink-0 border ${on ? 'bg-emerald-500 border-emerald-400' : 'border-white/20'}`} />
-                                <span className="text-tiny truncate flex-1">{s.name || s.id}</span>
-                                <span className="text-micro text-slate-500 font-mono flex-shrink-0">{t("skillmgr.skillChars", { n: s.skillMdChars })}</span>
-                              </button>
-                            );
-                          })}
+                  (() => {
+                    const list = projSkills[selProject] || [];
+                    const broken = list.filter((e) => e.state === 'broken');
+                    const alive = list.filter((e) => e.state !== 'broken');
+                    const viewing = projects.find((p) => p.id === selProject);
+                    return (
+                      <div className="rounded-card bg-white/[0.02] border border-white/10 p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-body font-bold text-slate-300 truncate">
+                            {t("skillmgr.projInstalledTitle")}
+                            <span className="ml-1.5 text-micro text-slate-500 font-normal">{viewing?.path}</span>
+                          </span>
+                          <button
+                            onClick={() => void removePickedInstalled()}
+                            disabled={pickedInstalled.size === 0 || projBusy === selProject}
+                            className="flex items-center gap-1 px-2 py-1 rounded-ctl bg-red-500/15 hover:bg-red-500/25 disabled:opacity-40 text-red-300 text-tiny font-semibold cursor-pointer flex-shrink-0"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            {t("skillmgr.projBatchDelete")}
+                            {pickedInstalled.size > 0 ? ` (${pickedInstalled.size})` : ''}
+                          </button>
                         </div>
-                      )}
 
-                      <div className="flex items-center justify-end gap-2 pt-1">
-                        <span className="text-micro text-slate-500">
-                          {t("skillmgr.projPickedMatrix", { n: pickedLib.size, m: pickedProjects.size })}
-                        </span>
-                        <button
-                          onClick={() => void applyToPicked()}
-                          disabled={projBusy === '*' || pickedLib.size === 0 || pickedProjects.size === 0}
-                          className="flex items-center gap-1 px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-40 disabled:bg-slate-700 text-body font-semibold text-white cursor-pointer transition-all"
-                        >
-                          {projBusy === '*' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />}
-                          {t("skillmgr.projApplyTo")}
-                        </button>
-                      </div>
-                    </div>
+                        {broken.length > 0 && (
+                          <div className="p-2 rounded-ctl bg-amber-500/10 text-amber-400 text-tiny flex items-center justify-between gap-2">
+                            <span className="min-w-0">
+                              {t("skillmgr.projBrokenHint", { names: broken.map((b) => b.skillId).join('、') })}
+                            </span>
+                            <button
+                              onClick={() => void cleanupBroken(selProject)}
+                              disabled={projBusy === selProject}
+                              className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 cursor-pointer disabled:opacity-50 flex-shrink-0"
+                            >
+                              <Unlink className="w-3 h-3" /> {t("skillmgr.projBrokenClean")}
+                            </button>
+                          </div>
+                        )}
 
-                    {/* 项目内技能（已装）：勾选 = 待批量删除；点名称看 SKILL.md */}
-                    <div className="rounded-card bg-white/[0.02] border border-white/10 p-3 space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-body font-bold text-slate-300">{t("skillmgr.projInstalledTitle")}</span>
-                        <button
-                          onClick={() => void removePickedInstalled()}
-                          disabled={pickedInstalled.size === 0 || projBusy === selProject}
-                          className="flex items-center gap-1 px-2 py-1 rounded-ctl bg-red-500/15 hover:bg-red-500/25 disabled:opacity-40 text-red-300 text-tiny font-semibold cursor-pointer"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                          {t("skillmgr.projBatchDelete")}
-                          {pickedInstalled.size > 0 ? ` (${pickedInstalled.size})` : ''}
-                        </button>
-                      </div>
-
-                      {(() => {
-                        const list = projSkills[selProject] || [];
-                        const broken = list.filter((e) => e.state === 'broken');
-                        const alive = list.filter((e) => e.state !== 'broken');
-                        return (
-                          <>
-                            {broken.length > 0 && (
-                              <div className="p-2 rounded-ctl bg-amber-500/10 text-amber-400 text-tiny flex items-center justify-between gap-2">
-                                <span className="min-w-0">
-                                  {t("skillmgr.projBrokenHint", { names: broken.map((b) => b.skillId).join('、') })}
-                                </span>
-                                <button
-                                  onClick={() => void cleanupBroken(selProject)}
-                                  disabled={projBusy === selProject}
-                                  className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 cursor-pointer disabled:opacity-50 flex-shrink-0"
+                        {alive.length === 0 ? (
+                          <div className="text-tiny text-slate-500 py-6 text-center">{t("skillmgr.projInstalledEmpty")}</div>
+                        ) : (
+                          <div className="space-y-1">
+                            {alive.map((e) => {
+                              const on = pickedInstalled.has(e.skillId);
+                              return (
+                                <div
+                                  key={e.skillId}
+                                  className={`flex items-center gap-2 px-2 py-1.5 rounded-ctl ${on ? 'bg-red-500/10' : 'bg-white/[0.03]'}`}
                                 >
-                                  <Unlink className="w-3 h-3" /> {t("skillmgr.projBrokenClean")}
-                                </button>
-                              </div>
-                            )}
+                                  <input
+                                    type="checkbox"
+                                    checked={on}
+                                    onChange={() => toggleInstalledPick(e.skillId)}
+                                    title={t("skillmgr.projPickToDelete")}
+                                    className="w-3 h-3 accent-red-400 flex-shrink-0 cursor-pointer"
+                                  />
+                                  <button
+                                    onClick={() => void openPreview(e)}
+                                    className="text-tiny font-semibold text-slate-200 hover:text-[var(--module-accent)] underline decoration-dotted underline-offset-2 truncate cursor-pointer"
+                                    title={t("skillmgr.projViewMd")}
+                                  >
+                                    {e.name || e.skillId}
+                                  </button>
+                                  <span
+                                    className={`px-1.5 py-0.5 rounded text-micro font-semibold flex-shrink-0 ${
+                                      e.state === 'linked'
+                                        ? 'bg-violet-500/15 text-violet-300'
+                                        : 'bg-sky-500/15 text-sky-300'
+                                    }`}
+                                  >
+                                    {e.state === 'linked' ? t("skillmgr.projFromLibrary") : t("skillmgr.projFromProject")}
+                                  </span>
+                                  <span className="text-micro text-slate-500 font-mono flex-shrink-0">
+                                    {t("skillmgr.skillChars", { n: e.skillMdChars })}
+                                  </span>
+                                  {e.category && (
+                                    <span className="px-1.5 py-0.5 rounded text-micro bg-[var(--module-accent-soft)] text-[var(--module-accent)] flex-shrink-0">
+                                      {e.category}
+                                    </span>
+                                  )}
+                                  {e.tags.map((tag) => (
+                                    <span key={tag} className="px-1.5 py-0.5 rounded text-micro bg-white/5 text-slate-400 flex-shrink-0">
+                                      #{tag}
+                                    </span>
+                                  ))}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
 
-                            {alive.length === 0 ? (
-                              <div className="text-tiny text-slate-500 py-6 text-center">{t("skillmgr.projInstalledEmpty")}</div>
-                            ) : (
-                              <div className="space-y-1">
-                                {alive.map((e) => {
-                                  const on = pickedInstalled.has(e.skillId);
-                                  return (
-                                    <div
-                                      key={e.skillId}
-                                      className={`flex items-center gap-2 px-2 py-1.5 rounded-ctl ${on ? 'bg-red-500/10' : 'bg-white/[0.03]'}`}
-                                    >
-                                      <input
-                                        type="checkbox"
-                                        checked={on}
-                                        onChange={() => toggleInstalledPick(e.skillId)}
-                                        title={t("skillmgr.projPickToDelete")}
-                                        className="w-3 h-3 accent-red-400 flex-shrink-0 cursor-pointer"
-                                      />
-                                      <button
-                                        onClick={() => void openPreview(e)}
-                                        className="text-tiny font-semibold text-slate-200 hover:text-[var(--module-accent)] underline decoration-dotted underline-offset-2 truncate cursor-pointer"
-                                        title={t("skillmgr.projViewMd")}
-                                      >
-                                        {e.name || e.skillId}
-                                      </button>
-                                      {/* 类型徽章：技能库 / 项目内置 */}
-                                      <span
-                                        className={`px-1.5 py-0.5 rounded text-micro font-semibold flex-shrink-0 ${
-                                          e.state === 'linked'
-                                            ? 'bg-violet-500/15 text-violet-300'
-                                            : 'bg-sky-500/15 text-sky-300'
-                                        }`}
-                                      >
-                                        {e.state === 'linked' ? t("skillmgr.projFromLibrary") : t("skillmgr.projFromProject")}
-                                      </span>
-                                      <span className="text-micro text-slate-500 font-mono flex-shrink-0">
-                                        {t("skillmgr.skillChars", { n: e.skillMdChars })}
-                                      </span>
-                                      {e.category && (
-                                        <span className="px-1.5 py-0.5 rounded text-micro bg-[var(--module-accent-soft)] text-[var(--module-accent)] flex-shrink-0">
-                                          {e.category}
-                                        </span>
-                                      )}
-                                      {e.tags.map((tag) => (
-                                        <span key={tag} className="px-1.5 py-0.5 rounded text-micro bg-white/5 text-slate-400 flex-shrink-0">
-                                          #{tag}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
-
-                            {projMsg?.id === selProject && (
-                              <div className={`text-tiny break-all ${projMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>
-                                {projMsg.msg}
-                              </div>
-                            )}
-                          </>
-                        );
-                      })()}
-                    </div>
-                  </>
+                        {projMsg?.id === selProject && (
+                          <div className={`text-tiny break-all ${projMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {projMsg.msg}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()
                 )}
               </div>
             </div>
