@@ -22,6 +22,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { CONNECTION_LINE_BY_STYLE, useEdgeStyle } from "../../utils/graphEdgeStyle";
 import { computeLayout } from "./layout";
+import { groupByForeignKey } from "./series";
 import EdgeStyleSelect from "../shared/EdgeStyleSelect";
 import {
   ArrowRight,
@@ -141,52 +142,22 @@ interface AiProviderLike {
 const NODE_COLORS = ["#0ea5e9", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#14b8a6"];
 
 /**
- * 按「外键连通分量」给表分组，同组同色。
+ * 同系列自动配色：给每个节点挑一个颜色。
  *
- * 用并查集而不是表名前缀：互相引用过的表天然属于同一个业务系列
- * （users / orders / order_items / order_logs），而前缀法会把
- * 「跨模块分表」（billing_invoice 之于 invoice）错归到不同系列。
- *
- * 颜色按分量在文档中的**出现顺序**分配，而不是按 hash —— 这样同一份设计
- * 每次打开配色都一致，不会因为节点增删顺序变化而整体换色。
- * 分量数超过色板长度时会循环复用（那种规模下本来也难再靠颜色区分）。
+ * 分组规则复用 series.ts 的 groupByForeignKey —— 与自动布局是同一份「系列」定义。
+ * 两处若各写一套，就会出现「同色却离得很远」这种自相矛盾的画面。
  */
 function assignSeriesColors(doc: DbDesignDocument): Map<string, string> {
-  const parent = new Map<string, string>();
-  const find = (x: string): string => {
-    let root = x;
-    while (parent.get(root) !== root) root = parent.get(root)!;
-    // 路径压缩：避免长链上反复遍历
-    let cur = x;
-    while (parent.get(cur) !== root) {
-      const next = parent.get(cur)!;
-      parent.set(cur, root);
-      cur = next;
-    }
-    return root;
-  };
-  for (const n of doc.nodes) parent.set(n.id, n.id);
-  for (const r of doc.relations) {
-    // 两端都得是已知节点（悬空关系跳过，否则会把路径压缩跑到不存在的 key 上）
-    if (!parent.has(r.from.node) || !parent.has(r.to.node)) continue;
-    const a = find(r.from.node);
-    const b = find(r.to.node);
-    if (a !== b) parent.set(a, b);
-  }
-  // 先按分量分配颜色，再摊回到每个节点 —— 调用方是按**节点 id** 取色的，
-  // 这里如果直接返回「分量根 id → 颜色」，调用方就会查不到（拿到 undefined）
-  const colorOfRoot = new Map<string, string>();
+  const groups = groupByForeignKey(doc);
   const byNode = new Map<string, string>();
-  let idx = 0;
-  for (const n of doc.nodes) {
-    const root = find(n.id);
-    if (!colorOfRoot.has(root)) {
-      colorOfRoot.set(root, NODE_COLORS[idx++ % NODE_COLORS.length]);
-    }
-    byNode.set(n.id, colorOfRoot.get(root)!);
-  }
+  groups.forEach((group, i) => {
+    // 颜色按系列在文档中的出现顺序分配（不按 hash），同一份设计每次打开配色都一致
+    const color = NODE_COLORS[i % NODE_COLORS.length];
+    for (const n of group) byNode.set(n.id, color);
+  });
   return byNode;
 }
+
 const MIN_DOCK_HEIGHT = 150;
 const MIN_CANVAS_HEIGHT = 120;
 const DEFAULT_DOCK_HEIGHT = 320;

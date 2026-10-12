@@ -1,19 +1,24 @@
-// 画布自动布局：分层（有关系的表按「父 → 子」分层）+ 网格回退（没关系的表按网格排）。
+// 画布自动布局：先按「业务系列」分块，块内再按父子分层。
 //
-// 逆向出来的设计最常见的问题就是「所有表叠在左上角密密麻麻」—— 反推只写结构、不摆位置。
-// 这里给一个**可预期**的摆法：有关联的表按层级从左到右排，同一层的表按网格往下铺；
-// 完全没有关系的表自然全落在第 0 层，也就是纯网格。
+// 逆向出来的设计最常见的问题是「所有表叠在左上角密密麻麻」—— 反推只写结构、不摆位置。
 //
 // 为什么不引 dagre / elkjs：布局结果会**写进设计文件**（node.x/y），必须稳定可复现 ——
 // 「同一份设计，布局两次要长得一样」。力导向每次结果都不同，不适合当默认摆法。
 // 想看漂亮的力导向图，用户可以自己拖。
+//
+// 为什么按系列分块（这是连线不再打结的关键）：早期把所有表丢进同一套分层，
+// 于是 orders 系的表和 log 系的表交错排在同一层，连线横穿整个画布，看着就是一团乱麻。
+// 现在每个系列独立布局、系列之间垂直堆叠 —— 不相关系列物理隔离，连线永远不跨块。
 
 import type { DbDesignDocument, DbDesignNode } from "./types";
+import { groupByForeignKey } from "./series";
 
 /** 节点卡片宽度（与 DesignNodeCard 的 w-[288px] 对齐；改那边记得改这里） */
 const CARD_W = 288;
 const GAP_X = 88;
 const GAP_Y = 44;
+/** 两个系列块之间的纵向间距：给连线留出走线的余量 */
+const GAP_SERIES = 140;
 const PAD = 40;
 /** 卡片高度估算：字段一行 ≈ 18px，表头 ≈ 46px（与卡片实际样式同量级即可，宁可高估） */
 const ROW_H = 18;
@@ -38,26 +43,34 @@ function estimateHeight(node: DbDesignNode, opts: LayoutOptions): number {
   return HEADER_H + rows * ROW_H + (node.comment ? 18 : 0) + 12;
 }
 
+/** 一个系列的布局结果：坐标 + 该块占位尺寸（用于垂直堆叠下一块） */
+interface GroupLayout {
+  positions: Record<string, { x: number; y: number }>;
+  height: number;
+}
+
 /**
- * 算每个节点的落点（node id → 坐标）。
+ * 单个系列内部：BFS 分层 + 层内「兄弟相邻」网格。
  *
- * 分层：`父表（关系的 to 端）` 在左，`子表（from 端）` 在右，深度用 BFS 首次到达的层数。
- * 用「首次到达」而不是「最长链」是有意的：后者遇到 A→B→A 这种环会死循环 / 需要额外收敛，
- * 而 BFS 天然只访问一次，行为可预期。
- * 多对多（n-n）不参与分层 —— 画布上它表现为一张中间表，参与分层只会把布局搅乱。
+ * 父表在左、子表在右，深度用 BFS 首次到达的层数（用「首次到达」而非「最长链」
+ * 是有意的：后者遇 A→B→A 的环会死循环，BFS 天然只访问一次）。
+ *
+ * 层内再按「父节点是谁」排序：同一个父的子表连着排。早期直接按文档顺序铺网格，
+ * 一个父表的几个子表被拆到网格不同角落，从父表拉出的线就成了扇形乱麻 ——
+ * 这是连线乱的第二个根因，且比换线条类型管用得多。
  */
-export function computeLayout(
+function layoutGroup(
+  group: DbDesignNode[],
   doc: DbDesignDocument,
   opts: LayoutOptions,
-): Record<string, { x: number; y: number }> {
-  const nodes = doc.nodes.filter((n) => n.kind === "table");
-  const out: Record<string, { x: number; y: number }> = {};
-  if (nodes.length === 0) return out;
+): GroupLayout {
+  const positions: Record<string, { x: number; y: number }> = {};
+  const idSet = new Set(group.map((n) => n.id));
 
-  const idSet = new Set(nodes.map((n) => n.id));
   const children = new Map<string, string[]>();
   const isChild = new Set<string>();
   for (const r of doc.relations) {
+    // n-n 不参与分层：它在画布上表现为一张中间表，参与只会把布局搅乱
     if (r.kind === "n-n") continue;
     if (!idSet.has(r.to.node) || !idSet.has(r.from.node) || r.to.node === r.from.node) continue;
     const list = children.get(r.to.node) ?? [];
@@ -66,19 +79,21 @@ export function computeLayout(
     isChild.add(r.from.node);
   }
 
-  // BFS 分层：根 = 不在任何关系里当子表的那张
   const depth = new Map<string, number>();
+  const parentOf = new Map<string, string | null>();
   const queue: string[] = [];
-  for (const n of nodes) {
+  for (const n of group) {
     if (!isChild.has(n.id)) {
       depth.set(n.id, 0);
+      parentOf.set(n.id, null);
       queue.push(n.id);
     }
   }
-  // 全都是子表（关系成环）时，从第一张起算，保证每个节点都有层
+  // 关系成环（全是子表）时从第一张起算，保证每个节点都有层
   if (queue.length === 0) {
-    depth.set(nodes[0].id, 0);
-    queue.push(nodes[0].id);
+    depth.set(group[0].id, 0);
+    parentOf.set(group[0].id, null);
+    queue.push(group[0].id);
   }
   while (queue.length > 0) {
     const id = queue.shift()!;
@@ -86,16 +101,19 @@ export function computeLayout(
     for (const child of children.get(id) ?? []) {
       if (depth.has(child)) continue; // 只认第一次到达，环不会死循环
       depth.set(child, d + 1);
+      parentOf.set(child, id);
       queue.push(child);
     }
   }
-  for (const n of nodes) {
-    if (!depth.has(n.id)) depth.set(n.id, 0); // 兜底：不在任何可达链路上的孤立表
+  for (const n of group) {
+    if (!depth.has(n.id)) {
+      depth.set(n.id, 0);
+      parentOf.set(n.id, null);
+    }
   }
 
-  // 层内网格：列数按表数开方（略偏宽），行高取该层最高的卡片，保证不重叠
   const layers = new Map<number, DbDesignNode[]>();
-  for (const n of nodes) {
+  for (const n of group) {
     const d = depth.get(n.id) ?? 0;
     const list = layers.get(d) ?? [];
     list.push(n);
@@ -103,17 +121,79 @@ export function computeLayout(
   }
   const depths = [...layers.keys()].sort((a, b) => a - b);
 
+  // 兄弟相邻：层内按「父节点在本层的落位次序」排序。
+  // 父在上一层，所以从上往下逐层处理，排完一层就把序号回填给它的子节点用。
+  const orderOf = new Map<string, number>();
+  let maxY = 0;
+
   depths.forEach((d, layerIndex) => {
     const list = layers.get(d)!;
+    // 排序键 = 父节点的序号；无父（根层）用自身在文档中的序号兜底，保持稳定
+    list.sort((a, b) => {
+      const pa = parentOf.get(a.id);
+      const pb = parentOf.get(b.id);
+      const ka = pa ? orderOf.get(pa) ?? Number.MAX_SAFE_INTEGER : originalIndex(a);
+      const kb = pb ? orderOf.get(pb) ?? Number.MAX_SAFE_INTEGER : originalIndex(b);
+      return ka - kb || originalIndex(a) - originalIndex(b);
+    });
+
     const cols = Math.max(1, Math.ceil(Math.sqrt(list.length * 1.4)));
     const rowH = Math.max(...list.map((n) => estimateHeight(n, opts)));
     const layerX = PAD + layerIndex * (CARD_W + GAP_X);
     list.forEach((n, i) => {
       const col = i % cols;
       const row = Math.floor(i / cols);
-      out[n.id] = { x: layerX + col * (CARD_W + GAP_X), y: PAD + row * (rowH + GAP_Y) };
+      positions[n.id] = { x: layerX + col * (CARD_W + GAP_X), y: PAD + row * (rowH + GAP_Y) };
+      orderOf.set(n.id, i);
+      maxY = Math.max(maxY, PAD + row * (rowH + GAP_Y) + rowH);
     });
   });
 
+  return { positions, height: maxY };
+}
+
+/** 节点在文档中的原始次序：作为排序的稳定兜底，避免同父兄弟之间的顺序飘 */
+function originalIndex(n: DbDesignNode): number {
+  return parseInt(n.id.replace(/\D+/g, ""), 10) || 0;
+}
+
+/**
+ * 算每个节点的落点（node id → 坐标）。
+ *
+ * 分两步：**先按业务系列分块并垂直堆叠**，块内各自分父子层。
+ * 这样「不相干的表不会互相挡道」「同一系列父子挨着站」，连线自然就不会打结 ——
+ * 比单纯把线条换成正交折线有效得多。
+ */
+export function computeLayout(
+  doc: DbDesignDocument,
+  opts: LayoutOptions,
+): Record<string, { x: number; y: number }> {
+  const nodes = doc.nodes.filter((n) => n.kind === "table");
+  if (nodes.length === 0) return {};
+
+  const groups = groupByForeignKey(doc, nodes);
+
+  // 孤立表（与任何表都没关系）若各自成块，会被顺次堆叠成一条线 —— 而它们无关缘线，
+  // 本来就应该以网格排并到一块里去（逆向 dump 里“一堆无关联表”很常见）。
+  const linked = new Set<string>();
+  for (const r of doc.relations) {
+    if (r.kind === "n-n") continue;
+    linked.add(r.from.node);
+    linked.add(r.to.node);
+  }
+  const isIsolated = (g: DbDesignNode[]) => g.length === 1 && !linked.has(g[0].id);
+  const isolated = groups.filter(isIsolated).flat();
+  const blocks = groups.filter((g) => !isIsolated(g));
+  if (isolated.length > 0) blocks.push(isolated);
+
+  const out: Record<string, { x: number; y: number }> = {};
+  let cursorY = 0;
+  for (const group of blocks) {
+    const { positions, height } = layoutGroup(group, doc, opts);
+    for (const [id, p] of Object.entries(positions)) {
+      out[id] = { x: p.x, y: p.y + cursorY };
+    }
+    cursorY += height + GAP_SERIES;
+  }
   return out;
 }

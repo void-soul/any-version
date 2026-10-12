@@ -33,7 +33,10 @@ function isEdgeStyle(value: string | null): value is EdgeStyle {
 
 function loadEdgeStyle(): EdgeStyle {
   const saved = localStorage.getItem(EDGE_STYLE_KEY);
-  return isEdgeStyle(saved) ? saved : "bezier";
+  // 默认改用正交折线：ER 图的连线密度天然比思维导图高，曲线在字段一多时
+  // 会大面积糊在一起（用户抱怨「连线乱麻」多半由此而来）。已经手动选过的
+  // 用户不受影响 —— 这里只决定「本地还没有偏好时」的初值。
+  return isEdgeStyle(saved) ? saved : "smoothstep";
 }
 
 /** 读当前样式 + 切换即持久化。切换只重建 edges，不动节点位置。 */
