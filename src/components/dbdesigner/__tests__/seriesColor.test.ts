@@ -1,5 +1,5 @@
 ﻿import { describe, it, expect } from "vitest";
-import type { DbDesignDocument, DbDesignNode, DbDesignRelation } from "./types";
+import type { DbDesignDocument, DbDesignNode, DbDesignRelation } from "../types";
 
 /** 与 DbDesignerPanel 中 assignSeriesColors 同构的副本：这里只测算法本身 */
 function assignSeriesColors(doc: DbDesignDocument, palette: string[]): Map<string, string> {
