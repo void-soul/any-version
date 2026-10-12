@@ -11,6 +11,7 @@
 // 现在每个系列独立布局、系列之间垂直堆叠 —— 不相关系列物理隔离，连线永远不跨块。
 
 import type { DbDesignDocument, DbDesignNode } from "./types";
+import { fkFieldsOf, relationFieldsOf, type FieldRowMode } from "./types";
 import { groupByForeignKey } from "./series";
 
 /** 节点卡片宽度（与 DesignNodeCard 的 w-[288px] 对齐；改那边记得改这里） */
@@ -30,21 +31,33 @@ const ROW_H = 18;
 const HEADER_H = 58;
 
 export interface LayoutOptions {
-  /** 常驻展开时按全部字段算高度，折叠时只按主键算 —— 算矮了卡片会互相压住 */
-  alwaysExpand: boolean;
-  /** 折叠态显示哪些字段（keys = 只主键+外键） */
-  fieldRows: "keys" | "all";
+  /** 卡片里显示哪些字段行：keys = 主键 + 外键 + 关联字段，all = 全部字段 */
+  fieldRows: FieldRowMode;
 }
 
-/** 这张表在当前显示模式下会渲染几行字段 */
-function visibleFieldCount(node: DbDesignNode, opts: LayoutOptions): number {
+/**
+ * 这张表在当前显示模式下会渲染几行字段。
+ *
+ * 口径必须与 `DesignNodeCard` 里 `shown` 的筛选**逐字一致**：布局坐标要写进设计
+ * 文件，估矮了卡片就会互相压住。所以这里直接复用卡片自己用的两个 helper，
+ * 而不是再写一遍「哪些算外键」—— 两边各写一份迟早会漂。
+ */
+function visibleFieldCount(doc: DbDesignDocument, node: DbDesignNode, mode: FieldRowMode): number {
   const fields = node.table?.fields ?? [];
-  if (opts.alwaysExpand || opts.fieldRows === "all") return fields.length;
-  return fields.filter((f) => f.pk).length;
+  if (mode === "all") return fields.length;
+  const fk = fkFieldsOf(doc, node.id);
+  const rel = relationFieldsOf(doc, node.id);
+  return fields.filter((f) => f.pk || fk.includes(f.name) || rel.includes(f.name)).length;
 }
 
-function estimateHeight(node: DbDesignNode, opts: LayoutOptions): number {
-  const rows = Math.max(1, visibleFieldCount(node, opts));
+function estimateHeight(doc: DbDesignDocument, node: DbDesignNode, mode: FieldRowMode): number {
+  // 视图没有字段行：展开态显示最多 3 行 SQL（卡片是 line-clamp-3），折叠态就一行占位
+  const rows =
+    node.kind === "view"
+      ? mode === "all"
+        ? 3
+        : 1
+      : Math.max(1, visibleFieldCount(doc, node, mode));
   return HEADER_H + rows * ROW_H + (node.comment ? 18 : 0) + 12;
 }
 
@@ -73,6 +86,7 @@ function layoutGroup(
 ): GroupLayout {
   const positions: Record<string, { x: number; y: number }> = {};
   const idSet = new Set(group.map((n) => n.id));
+  const mode = opts.fieldRows;
 
   const byId = (id: string) => group.find((x) => x.id === id)!;
   /** 文档次序（按 id），各种排序的稳定兜底 */
@@ -169,7 +183,7 @@ function layoutGroup(
   let cursor = PAD;
   const place = (id: string, d: number): { top: number; bottom: number } => {
     const n = byId(id);
-    const selfH = estimateHeight(n, opts);
+    const selfH = estimateHeight(doc, n, mode);
     const kids = treeChildren.get(id) ?? [];
     if (kids.length === 0) {
       positions[id] = { x: PAD + d * (CARD_W + GAP_X), y: cursor };
@@ -199,7 +213,7 @@ function layoutGroup(
   // 4) 光杆根铺成网格：互不相干的表排成一条竖线，既难看又白费屏高
   if (looseRoots.length > 0) {
     const cols = Math.max(1, Math.ceil(Math.sqrt(looseRoots.length * 1.4)));
-    const rowH = Math.max(...looseRoots.map((n) => estimateHeight(n, opts)));
+    const rowH = Math.max(...looseRoots.map((n) => estimateHeight(doc, n, mode)));
     looseRoots.forEach((n, i) => {
       const col = i % cols;
       const row = Math.floor(i / cols);
@@ -208,7 +222,7 @@ function layoutGroup(
   }
 
   let maxY = 0;
-  for (const n of group) maxY = Math.max(maxY, positions[n.id].y + estimateHeight(n, opts));
+  for (const n of group) maxY = Math.max(maxY, positions[n.id].y + estimateHeight(doc, n, mode));
   return { positions, height: maxY };
 }
 

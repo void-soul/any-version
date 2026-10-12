@@ -41,7 +41,6 @@ import {
   LayoutGrid,
   Palette,
   Plus,
-  Rows3,
   ListTree,
   Save,
   Sparkles,
@@ -126,7 +125,6 @@ function CenterOnSignal({ signal, nodeId }: { signal: number; nodeId: string | n
  *  且必须给画布留 MIN_CANVAS_HEIGHT，否则窗口小的时候画布会被挤没。 */
 const DOCK_HEIGHT_KEY = "kira.dbd.dockHeight";
 const FIELD_ROWS_KEY = "kira.dbd.fieldRows";
-const EXPAND_KEY = "kira.dbd.alwaysExpand";
 /** 模块级进度缓冲：与思维导图同款（keep-alive 切换页面也不会丢事件）。
  *  data：stream/reasoning 帧携带 length（累计字符）+ text（末尾 200 字预览）；
  *  reasoning 收尾帧带 done=true。 */
@@ -210,10 +208,6 @@ export default function DbDesignerPanel() {
   const [path, setPath] = useState<string>("");
   const [dirty, setDirty] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  /** 常驻展开：打开后所有节点一直显示全部字段。
-   *  刻意**不做**「悬停/选中就展开」—— 那个靠鼠标悬停才能看到全貌，
-   *  一旦移开又缩回去，读字段时来回移动很烦（用户明确要求去掉）。 */
-  const [alwaysExpand, setAlwaysExpand] = useState<boolean>(() => localStorage.getItem(EXPAND_KEY) === "1");
   /** 布局变化计数：+1 就让画布重新适应视野（自动布局后必须做，否则停在角落） */
   const [fitSignal, setFitSignal] = useState(0);
   /** 表导航：点表名 → 选中它 + 画布平移过去（表一多，画布上「找到那张表」全靠拖） */
@@ -905,7 +899,11 @@ export default function DbDesignerPanel() {
       /** 压暗只在「确实选中了某张表」时才做 ——
        *  没选中是一种状态，不该被当成「这张表跟谁都没关系」。 */
       const dimmed = selectedId !== null && !selected && !related;
-      const expanded = alwaysExpand;
+      // 展开态只由「节点里显示」这一档决定：选「全部字段」= 表显示全部字段、
+      // 视图展开 SQL 全文。早先另有一个「常驻展开」开关与它重复（两者对表的结果
+      // 完全一样，只对视图的 SQL 有差别），已合并进这个下拉。
+      // 刻意不做「悬停/选中就展开」—— 移开鼠标又缩回去，读字段时来回挪很烦。
+      const expanded = fieldRows === "all";
       const measured = measuredMap[n.id];
       const prev = cache.get(n.id);
       const prevObj = prev?.obj;
@@ -958,7 +956,7 @@ export default function DbDesignerPanel() {
       out.push(obj);
     }
     return out;
-  }, [doc, positions, selectedId, relatedIds, measuredMap, fieldRows, alwaysExpand, visibleNodes]);
+  }, [doc, positions, selectedId, relatedIds, measuredMap, fieldRows, visibleNodes]);
 
   const rfEdges: Edge[] = useMemo(() => {
     if (!doc) return [];
@@ -1235,7 +1233,7 @@ export default function DbDesignerPanel() {
           currentDoc: baseDoc ?? undefined,
         },
       });
-      const pos = computeLayout(generated, { alwaysExpand, fieldRows });
+      const pos = computeLayout(generated, { fieldRows });
       const placed: DbDesignDocument = {
         ...generated,
         nodes: generated.nodes.map((n) => {
@@ -1294,7 +1292,7 @@ export default function DbDesignerPanel() {
       confirmText: t("dbd.layoutBtn"),
     });
     if (!ok) return;
-    const pos = computeLayout(doc, { alwaysExpand, fieldRows });
+    const pos = computeLayout(doc, { fieldRows });
     patchDoc({
       ...doc,
       nodes: doc.nodes.map((n) => {
@@ -1416,17 +1414,16 @@ export default function DbDesignerPanel() {
               onChange={setEdgeStyle}
               className="rounded-ctl bg-white/5 px-2 py-1 text-caption text-slate-200 outline-none"
             />
-            {/* 节点卡片里显示哪些字段行（常驻展开打开时这个选择就无意义了，置灰） */}
+            {/* 节点卡片里显示哪些字段行：主键+外键（精简）/ 全部字段（展开，视图同时展开 SQL） */}
             <select
               value={fieldRows}
-              disabled={alwaysExpand}
               onChange={(e) => {
                 const next = e.target.value as FieldRowMode;
                 setFieldRows(next);
                 localStorage.setItem(FIELD_ROWS_KEY, next);
               }}
               title={t("dbd.fieldRows")}
-              className="rounded-ctl bg-white/5 px-2 py-1 text-caption text-slate-200 outline-none disabled:opacity-40"
+              className="rounded-ctl bg-white/5 px-2 py-1 text-caption text-slate-200 outline-none"
             >
               {FIELD_ROW_MODES.map((mode) => (
                 <option key={mode} value={mode}>
@@ -1434,17 +1431,6 @@ export default function DbDesignerPanel() {
                 </option>
               ))}
             </select>
-            <button
-              onClick={() => {
-                const next = !alwaysExpand;
-                setAlwaysExpand(next);
-                localStorage.setItem(EXPAND_KEY, next ? "1" : "0");
-              }}
-              className={`ui-btn px-2 py-1 text-caption ${alwaysExpand ? "ui-btn-primary" : ""}`}
-              title={t("dbd.alwaysExpandHint")}
-            >
-              <Rows3 className="h-3.5 w-3.5" /> {t("dbd.alwaysExpand")}
-            </button>
             <span className="text-micro text-slate-600">
               {dirty ? t("dbd.unsaved") : path ? t("dbd.savedShort") : ""}
             </span>

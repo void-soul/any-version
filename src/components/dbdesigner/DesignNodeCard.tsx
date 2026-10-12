@@ -19,7 +19,8 @@ export interface DesignNodeData extends Record<string, unknown> {
   node: DbDesignNode;
   /** 折叠态显示的字段（参与关联的那些） */
   relationFields: string[];
-  /** 展开态由面板按 hover / 选中控制 */
+  /** 展开态：由面板按「节点里显示 = 全部字段」推导（不再有独立的常驻展开开关）。
+   *  刻意不做 hover / 选中触发展开 —— 移开鼠标又缩回去，读字段时来回挪很烦。 */
   expanded: boolean;
   selected: boolean;
   /** 折叠态显示哪些字段：只主键+外键，还是全部 */

@@ -2,7 +2,7 @@
 import { computeLayout } from "../layout";
 import type { DbDesignDocument, DbDesignNode, DbDesignRelation } from "../types";
 
-const OPTS = { alwaysExpand: false, fieldRows: "all" as const };
+const OPTS = { fieldRows: "all" as const };
 
 function n(id: string, rows = 2): DbDesignNode {
   return {

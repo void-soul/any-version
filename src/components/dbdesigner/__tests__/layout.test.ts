@@ -34,7 +34,9 @@ function docOf(nodes: DbDesignNode[], relations: DbDesignDocument["relations"] =
   };
 }
 
-const opts = { alwaysExpand: false, fieldRows: "all" as const };
+const opts = { fieldRows: "all" as const };
+/** 精简档：只显示主键 + 外键 + 关联字段 */
+const keysOpts = { fieldRows: "keys" as const };
 
 describe("computeLayout", () => {
   it("没有任何关系时全部落在第 0 层并排成网格（逆向 dump 的常见情况）", () => {
@@ -111,9 +113,35 @@ describe("computeLayout", () => {
     const fat = table("fat", Array.from({ length: 12 }, (_, i) => field(`c${i}`)));
     const thin = table("thin", [field("id", true)]);
     const doc = docOf([fat, thin]);
-    const pos = computeLayout(doc, { alwaysExpand: true, fieldRows: "all" });
+    const pos = computeLayout(doc, { fieldRows: "all" });
     // 两个都在第 0 层、同一行 → y 相同；行高由更高的 fat 决定
     expect(pos.fat.y).toBe(pos.thin.y);
+  });
+
+  it("精简档的高度把外键行也算进去（与卡片实际渲染的行数一致）", () => {
+    // 卡片在「主键和外键」档显示的是「主键 + 外键 + 关联字段」；布局若只按主键估高
+    // 就会估矮，坐标写进设计文件后卡片互相压叠。这里用「同一父表下两个子表的间距」
+    // 来量高度：间距 = 前一个子表的高度 + GAP_Y，多渲染一行就多一个 ROW_H(18)。
+    const gapWithFk = (fkCount: number) => {
+      const fields = [field("id", true)];
+      for (let i = 0; i < fkCount; i++) fields.push(field(`u${i}`));
+      const doc = docOf(
+        [table("users", [field("id", true)]), table("t1", fields), table("t2", [field("id", true)])],
+        [
+          ...Array.from({ length: fkCount }, (_, i) => ({
+            id: `r${i}`,
+            from: { node: "t1", field: `u${i}` },
+            to: { node: "users", field: "id" },
+            kind: "1-n" as const,
+          })),
+          { id: "rt2", from: { node: "t2", field: "user_id" }, to: { node: "users", field: "id" }, kind: "1-n" },
+        ],
+      );
+      const pos = computeLayout(doc, keysOpts);
+      return pos.t2.y - pos.t1.y;
+    };
+    // t1 从 1 个外键变 3 个 → 多渲染 2 行 → 间距正好多 2 个行高
+    expect(gapWithFk(3) - gapWithFk(1)).toBe(2 * 18);
   });
 
   it("空文档返回空结果，不报错", () => {
