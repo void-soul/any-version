@@ -123,6 +123,8 @@ export default function SkillManager() {
   const [projects, setProjects] = useState<SkillProject[]>([]);
   /** 技能库实际路径（如实显示，别让用户猜装到哪了） */
   const [skillsDir, setSkillsDir] = useState('');
+  /** 技能库位置设置弹窗 */
+  const [dirDialog, setDirDialog] = useState<{ path: string; busy: boolean; msg: string | null } | null>(null);
   const [projMsg, setProjMsg] = useState<{ id: string; msg: string; ok: boolean } | null>(null);
   /** 右侧正在查看的项目（左侧点谁看谁） */
   const [selProject, setSelProject] = useState<string | null>(null);
@@ -316,6 +318,49 @@ export default function SkillManager() {
   };
 
 // ── 项目操作 ──
+
+  /**
+   * 改技能库位置。
+   *
+   * 后端会连着搬三样东西：技能实体目录、skills.json 里记录的 directory、
+   * 以及各项目里指向旧库的 junction（目录联接记绝对路径，不重建就全成悬空）。
+   * 所以这里成功提示要报迁移数量，让用户知道发生了什么。
+   */
+  const saveSkillsDir = async () => {
+    if (!dirDialog) return;
+    setDirDialog((d) => (d ? { ...d, busy: true, msg: null } : d));
+    try {
+      const r = await invoke<{ dir: string; moved: number; relinked: number; unchanged: boolean }>(
+        'set_skills_dir',
+        { path: dirDialog.path },
+      );
+      setSkillsDir(r.dir);
+      setDirDialog(null);
+      // 技能库换位置了，列表和项目清单都得重拉
+      await Promise.all([loadSkills(), loadProjects()]);
+      setProjSkills({});
+      setProjMsg({
+        id: '*',
+        msg: r.unchanged
+          ? t("skillmgr.dirSame")
+          : t("skillmgr.dirChanged", { path: r.dir, n: r.moved, links: r.relinked }),
+        ok: true,
+      });
+    } catch (e: any) {
+      setDirDialog((d) => (d ? { ...d, busy: false, msg: String(e) } : d));
+    }
+  };
+
+  const pickSkillsDir = async () => {
+    try {
+      const picked = await open({ directory: true, multiple: false, title: t("skillmgr.dirPick") });
+      if (typeof picked === 'string' && picked) {
+        setDirDialog((d) => (d ? { ...d, path: picked, msg: null } : d));
+      }
+    } catch {
+      /* 用户取消 */
+    }
+  };
 
   /** 添加项目：让用户直接选一个目录 */
   const addProject = async () => {
@@ -511,8 +556,17 @@ export default function SkillManager() {
             </button>
           ))}
         </div>
-        <div className="text-tiny text-slate-500 font-mono truncate max-w-[50%]" title={skillsDir}>
-          {t("skillmgr.libraryDir")}<code className="text-slate-400">{skillsDir || '…'}</code>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <div className="text-tiny text-slate-500 font-mono truncate max-w-[320px]" title={skillsDir}>
+            {t("skillmgr.libraryDir")}<code className="text-slate-400">{skillsDir || '…'}</code>
+          </div>
+          <button
+            onClick={() => setDirDialog({ path: skillsDir, busy: false, msg: null })}
+            className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-slate-200 cursor-pointer flex-shrink-0"
+            title={t("skillmgr.dirChange")}
+          >
+            <Settings2 className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
 
@@ -1054,6 +1108,71 @@ export default function SkillManager() {
         )}
 
       </div>
+
+      {/* 技能库位置设置弹窗 */}
+      {dirDialog && (
+        <div className="fixed inset-0 z-50 modal-mask bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="rounded-card ui-input p-4 w-full max-w-lg space-y-3 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-white/5 pb-2">
+              <span className="text-body font-bold text-slate-200">{t("skillmgr.dirChange")}</span>
+              <button onClick={() => setDirDialog(null)} className="text-slate-500 hover:text-slate-300">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-tiny text-slate-400">{t("skillmgr.dirCurrent")}</div>
+              <code className="block text-micro text-slate-300 font-mono break-all">{skillsDir || '…'}</code>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-tiny text-slate-400">{t("skillmgr.dirNew")}</div>
+              <code className="block text-micro text-slate-300 font-mono break-all">
+                {dirDialog.path || t("skillmgr.dirDefaultHint")}
+              </code>
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  onClick={() => void pickSkillsDir()}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-ctl bg-white/5 hover:bg-white/10 text-tiny text-slate-200 cursor-pointer"
+                >
+                  <FolderOpen className="w-3 h-3" /> {t("skillmgr.dirPick")}
+                </button>
+                <button
+                  onClick={() => setDirDialog((d) => (d ? { ...d, path: '', msg: null } : d))}
+                  disabled={dirDialog.path === ''}
+                  className="px-2.5 py-1.5 rounded-ctl bg-white/5 hover:bg-white/10 disabled:opacity-40 text-tiny text-slate-300 cursor-pointer"
+                >
+                  {t("skillmgr.dirReset")}
+                </button>
+              </div>
+            </div>
+
+            <Note tone="warn" title={t("skillmgr.dirWarnTitle")}>
+              <p>{t("skillmgr.dirWarn1")}</p>
+              <p className="text-micro text-slate-400">{t("skillmgr.dirWarn2")}</p>
+            </Note>
+
+            {dirDialog.msg && <ResultNote ok={false} message={dirDialog.msg} />}
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                onClick={() => setDirDialog(null)}
+                className="px-3 py-1.5 rounded-ctl bg-white/5 hover:bg-white/10 text-body text-slate-300 cursor-pointer"
+              >
+                {t("skillmgr.cancel")}
+              </button>
+              <button
+                onClick={() => void saveSkillsDir()}
+                disabled={dirDialog.busy}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-body font-semibold text-white cursor-pointer"
+              >
+                {dirDialog.busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {t("skillmgr.dirSave")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 编辑分类/标签弹窗 */}
       {editing && (

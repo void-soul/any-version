@@ -749,6 +749,7 @@ pub fn run() {
             commands::ai::usage::clear_usage,
             commands::ai::skills::get_skill_overview,
             commands::ai::skills::get_skills_dir,
+            commands::ai::skills::set_skills_dir,
             commands::ai::skills::get_skill_meta,
             commands::ai::skills::update_skill_meta,
             commands::ai::skills::list_projects,
