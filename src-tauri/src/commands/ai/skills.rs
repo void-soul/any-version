@@ -6,7 +6,6 @@ use std::process::Stdio;
 use tauri::Emitter;
 use crate::commands::config::get_data_dir;
 use crate::commands::cache::create_junction;
-use super::config::load_ai_config;
 use super::models::*;
 
 // ─── 基础路径 ───
@@ -25,53 +24,13 @@ pub(crate) fn default_skills_dir() -> PathBuf {
     get_data_dir().join("skills")
 }
 
-/// 取 HOME 目录（兼容 Windows `USERPROFILE` / Unix `HOME`）
-fn home_dir() -> PathBuf {
-    PathBuf::from(
-        std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOME"))
-            .unwrap_or_default(),
-    )
-}
-
-/// 根据配置字符串解析技能目录：
-/// - 空字符串 → 默认「数据目录下的 skills」（见 `default_skills_dir`）；
-/// - 支持 `~` 前缀与 Windows `%VAR%` 占位符展开；
-/// - 相对路径以应用根目录为基准。
-pub(crate) fn resolve_skills_dir(cfg_value: &str) -> PathBuf {
-    if cfg_value.is_empty() {
-        return default_skills_dir();
-    }
-    let home = home_dir();
-    let with_tilde = if cfg_value.starts_with("~/") {
-        home.join(&cfg_value[2..]).to_string_lossy().to_string()
-    } else if cfg_value.starts_with('~') && cfg_value.len() > 1 {
-        home.join(&cfg_value[1..]).to_string_lossy().to_string()
-    } else {
-        cfg_value.to_string()
-    };
-    let resolved = with_tilde
-        .replace("%USERPROFILE%", &home.to_string_lossy())
-        .replace("%LOCALAPPDATA%", &std::env::var("LOCALAPPDATA").unwrap_or_default())
-        .replace("%APPDATA%", &std::env::var("APPDATA").unwrap_or_default())
-        .replace("%PROGRAMFILES%", &std::env::var("ProgramFiles").unwrap_or_default());
-    let mut p = PathBuf::from(resolved);
-    if p.is_relative() {
-        p = get_data_dir().join(&p);
-    }
-    p
-}
-
-/// 当前技能仓库路径。
-/// 默认是 Kira 数据目录下的 `skills`；`AiConfig.skills_dir` 非空时用用户指定的目录。
+/// 当前技能库目录：固定为「数据目录下的 skills」，**没有配置项**。
+///
+/// 刻意不给用户改：一来 `~/.agents/skills` 那类原生扫描目录不能占用（见
+/// `default_skills_dir` 的理由），二来路径一旦可改，用户装好的技能会跟着搬家，
+/// 「技能到底装哪了」这个问题就很难回答 —— 所以宁可固定，也要让行为可预测。
 pub(crate) fn skills_dir() -> PathBuf {
-    let cfg = load_ai_config();
-    let configured = cfg.skills_dir.trim();
-    if configured.is_empty() {
-        default_skills_dir()
-    } else {
-        resolve_skills_dir(configured)
-    }
+    default_skills_dir()
 }
 
 /// 当前生效的技能库目录（前端要如实显示「技能装到哪了」）。
@@ -146,10 +105,6 @@ fn load_projects_from(path: &Path) -> ProjectsFile {
         }
     }
     ProjectsFile::default()
-}
-
-fn save_projects(f: &ProjectsFile) -> Result<(), String> {
-    save_projects_to(&projects_path(), f)
 }
 
 fn save_projects_to(path: &Path, f: &ProjectsFile) -> Result<(), String> {
@@ -231,11 +186,7 @@ fn gen_project_id() -> String {
 // 不会让技能副本散落到各处，技能库一改，所有项目立刻同步。
 
 /// 解析项目记录 → `<项目>/.agents/skills`，顺带校验项目目录还在。
-fn resolve_project_skills_dir(project_id: &str) -> Result<PathBuf, String> {
-    resolve_project_skills_dir_in(&projects_path(), project_id)
-}
-
-/// 同上，但项目清单路径可注入（单测用；否则测试会写用户真实的数据目录）。
+/// 清单路径可注入（单测用；否则测试会写用户真实的数据目录）。
 fn resolve_project_skills_dir_in(file: &Path, project_id: &str) -> Result<PathBuf, String> {
     let f = load_projects_from(file);
     let p = f
@@ -366,6 +317,24 @@ pub struct ProjectSkillEntry {
     pub description: String,
     /// `linked` 指向技能库的链接 · `local` 项目自带的真实目录 · `broken` 悬空链接（技能库里的技能已被删除）
     pub state: String,
+    /// SKILL.md 字符数（与技能库列表同一指标，便于两边对照）
+    pub skill_md_chars: usize,
+    /// 技能库 `.meta.json` 里设的标签 —— 项目列表要跟着显示，
+    /// 否则用户在技能库整理的分类/标签到了项目里就全丢了。
+    pub tags: Vec<String>,
+    pub category: String,
+}
+
+/// 取项目里某个技能的 SKILL.md 全文，供 UI 渲染预览。
+///
+/// **按需取**而不是随列表一起返回：一份 SKILL.md 动辄几千字符，几十个技能
+/// 一起塞进列表会把 IPC 撑大，而用户通常一次只看一个。
+#[tauri::command]
+pub fn get_project_skill_md(project_id: String, skill_id: String) -> Result<String, String> {
+    let dir = resolve_project_skills_dir_in(&projects_path(), &project_id)?;
+    let path = dir.join(&skill_id).join("SKILL.md");
+    // junction 可穿透：读到的是技能库里的实体文件
+    fs::read_to_string(&path).map_err(|e| format!("{} 读取失败: {}", path.display(), e))
 }
 
 /// 列出某个项目装了什么：扫 `.agents/skills`，看哪些是指向技能库的 junction。
@@ -385,6 +354,8 @@ fn list_installed(store: &Path, projects_file: &Path, project_id: &str) -> Resul
         // 项目还没装过任何技能（.agents/skills 不存在）：返回空而不是报错
         Err(_) => return Ok(out),
     };
+    // .meta.json 读一次就够，别在循环里反复读盘
+    let meta = load_skill_meta();
     for entry in entries.flatten() {
         let path = entry.path();
         let fallback_id = entry.file_name().to_string_lossy().to_string();
@@ -399,17 +370,22 @@ fn list_installed(store: &Path, projects_file: &Path, project_id: &str) -> Resul
             // 同样要认出来：不然它在 UI 上完全隐形，用户既看不到也清不掉。
             // 名字/描述就地读它自己的 SKILL.md，不去技能库找。
             let md = path.join("SKILL.md");
-            let (name, description) = if md.is_file() {
+            let (name, description, chars) = if md.is_file() {
                 let c = fs::read_to_string(&md).unwrap_or_default();
-                parse_skill_md(&c, &fallback_id)
+                let (n, d) = parse_skill_md(&c, &fallback_id);
+                (n, d, c.chars().count())
             } else {
-                (fallback_id.clone(), String::new())
+                (fallback_id.clone(), String::new(), 0)
             };
             out.push(ProjectSkillEntry {
                 skill_id: fallback_id.clone(),
                 name,
                 description,
                 state: "local".to_string(),
+                skill_md_chars: chars,
+                // 项目自带技能不在技能库里，没有 .meta.json 可查
+                tags: Vec::new(),
+                category: String::new(),
             });
             continue;
         }
@@ -419,23 +395,32 @@ fn list_installed(store: &Path, projects_file: &Path, project_id: &str) -> Resul
             // 是链接但目标已不在技能库 → 悬空，UI 要能标出来并给清理入口
             _ => (fallback_id.clone(), "broken"),
         };
-        let (name, description) = match state {
+        let (name, description, chars) = match state {
             "linked" => {
                 let md = store.join(&skill_id).join("SKILL.md");
-                if md.exists() {
+                if md.is_file() {
                     let c = fs::read_to_string(&md).unwrap_or_default();
-                    parse_skill_md(&c, &skill_id)
+                    let (n, d) = parse_skill_md(&c, &skill_id);
+                    (n, d, c.chars().count())
                 } else {
-                    (skill_id.clone(), String::new())
+                    (skill_id.clone(), String::new(), 0)
                 }
             }
-            _ => (fallback_id.clone(), String::new()),
+            _ => (fallback_id.clone(), String::new(), 0),
         };
+        // 标签/分类从技能库的 .meta.json 取：用户在技能库整理的元数据
+        // 在项目列表里也要看得见，否则两边的信息会各说各话。
+        let m = meta.skills.get(&skill_id);
+        let tags = m.map(|x| x.tags.clone()).unwrap_or_default();
+        let category = m.map(|x| x.category.clone()).unwrap_or_default();
         out.push(ProjectSkillEntry {
             skill_id,
             name,
             description,
             state: state.to_string(),
+            skill_md_chars: chars,
+            tags,
+            category,
         });
     }
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
@@ -542,6 +527,9 @@ pub struct SkillEntry {
     /// 用户自定义标签（来自 .meta.json，缺省空数组）
     #[serde(default)]
     pub tags: Vec<String>,
+    /// SKILL.md 的字符数。UI 拿它一眼看出「这个技能有多重」——
+    /// 描述在每次会话都常驻，而正文只在用到时读，字符数是这个技能的成本指标。
+    pub skill_md_chars: usize,
 }
 
 /// 安装进度事件
@@ -609,11 +597,12 @@ pub fn get_skill_overview() -> Result<Vec<SkillEntry>, String> {
         }
 
         let skill_md = path.join("SKILL.md");
-        let (name, description) = if skill_md.exists() {
+        let (name, description, skill_md_chars) = if skill_md.is_file() {
             let c = fs::read_to_string(&skill_md).unwrap_or_default();
-            parse_skill_md(&c, &id)
+            let (n, d) = parse_skill_md(&c, &id);
+            (n, d, c.chars().count())
         } else {
-            (id.clone(), String::new())
+            (id.clone(), String::new(), 0)
         };
 
         // 从 manifest 补充元数据
@@ -635,6 +624,7 @@ pub fn get_skill_overview() -> Result<Vec<SkillEntry>, String> {
             install_method,
             category,
             tags,
+            skill_md_chars,
         });
     }
 
@@ -1161,89 +1151,6 @@ pub async fn check_skill_updates() -> Result<Vec<SkillUpdateInfo>, String> {
 }
 
 // ─── 旧数据迁移 ───
-
-/// 技能迁移进度
-#[derive(Serialize, Clone, Debug)]
-pub struct SkillMigrateProgress {
-    pub stage: String,
-    pub current: usize,
-    pub total: usize,
-    pub skill_name: String,
-}
-
-/// 技能迁移结果
-#[derive(Serialize, Clone, Debug)]
-pub struct SkillMigrateResult {
-    pub moved_count: usize,
-    pub rebuilt_junctions: usize,
-    pub errors: Vec<String>,
-}
-
-/// 执行技能目录迁移（配置变更时由 save_ai_config 调用）
-pub(crate) fn do_migrate_skills(
-    old_dir: &str,
-    new_dir: &str,
-    skills: &[Skill],
-    app_handle: Option<&tauri::AppHandle>,
-) -> SkillMigrateResult {
-    let old_path = PathBuf::from(old_dir);
-    let new_path = PathBuf::from(new_dir);
-
-    let mut result = SkillMigrateResult {
-        moved_count: 0,
-        rebuilt_junctions: 0,
-        errors: Vec::new(),
-    };
-
-    if let Err(e) = fs::create_dir_all(&new_path) {
-        result.errors.push(format!("创建新目录失败: {}", e));
-        return result;
-    }
-
-    let total = skills.len();
-    for (i, skill) in skills.iter().enumerate() {
-        let skill_id = &skill.id;
-        if let Some(handle) = app_handle {
-            let _ = handle.emit("skill-migrate-progress", SkillMigrateProgress {
-                stage: "移动技能".to_string(),
-                current: i + 1,
-                total,
-                skill_name: skill.name.clone(),
-            });
-        }
-
-        let old_skill_dir = old_path.join(skill_id);
-        let new_skill_dir = new_path.join(skill_id);
-
-        if old_skill_dir.exists() && old_skill_dir != new_skill_dir {
-            if new_skill_dir.exists() {
-                let _ = fs::remove_dir_all(&new_skill_dir);
-            }
-            match fs::rename(&old_skill_dir, &new_skill_dir) {
-                Ok(()) => { result.moved_count += 1; }
-                Err(e) => {
-                    if let Err(e2) = copy_dir_recursive(&old_skill_dir, &new_skill_dir) {
-                        result.errors.push(format!("迁移 {} 失败: {} -> {}", skill.name, e, e2));
-                        continue;
-                    } else {
-                        let _ = fs::remove_dir_all(&old_skill_dir);
-                        result.moved_count += 1;
-                    }
-                }
-            }
-        }
-    }
-
-    if let Some(handle) = app_handle {
-        let _ = handle.emit("skill-migrate-progress", SkillMigrateProgress {
-            stage: "完成".to_string(),
-            current: total,
-            total,
-            skill_name: String::new(),
-        });
-    }
-    result
-}
 
 /// 一次性迁移：若旧仓库 ~/.any-version/skills 存在且有内容，合并到新仓库
 #[tauri::command]

@@ -757,6 +757,7 @@ pub fn run() {
             commands::ai::skills::install_skill_to_project,
             commands::ai::skills::remove_skill_from_project,
             commands::ai::skills::list_project_skills,
+            commands::ai::skills::get_project_skill_md,
             commands::ai::skills::install_skill,
             commands::ai::skills::uninstall_skill,
             commands::ai::skills::get_skill_files,

@@ -793,7 +793,6 @@ mod global_default_tests {
             rectifier: Default::default(),
             headroom: Default::default(),
             optimizer: Default::default(),
-            skills_dir: String::new(),
             route_chain: Vec::new(),
             aggregate: Default::default(),
         }

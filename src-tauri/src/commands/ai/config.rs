@@ -5,7 +5,6 @@ use tauri::Emitter;
 use crate::commands::ai_registry::{registry, AiToolDefDto};
 use crate::commands::config::get_data_dir;
 use super::models::*;
-use super::skills::{normalize_path, load_skills, do_migrate_skills, save_skills, resolve_skills_dir};
 
 
 fn ai_config_path() -> PathBuf {
@@ -77,7 +76,6 @@ pub(crate) fn load_ai_config() -> AiConfig {
         providers: Vec::new(),
         proxy_port: 15721,
         default_project_path: String::new(),
-        skills_dir: String::new(),
         rectifier: RectifierConfig::default(),
         headroom: HeadroomConfig::default(),
         optimizer: OptimizerConfig::default(),
@@ -209,49 +207,17 @@ pub async fn save_ai_config(app: AppHandle, mut config: AiConfig) -> Result<serd
         provider.custom_headers = crate::proxy::headers::normalize(&provider.custom_headers);
     }
 
-    let old_config = load_ai_config();
-    // 解析为实际路径（空字符串 → 默认 ~/.agents/skills），使默认目录与新目录间的迁移也能正确触发
-    let old_resolved = resolve_skills_dir(&old_config.skills_dir);
-    let new_resolved = resolve_skills_dir(&config.skills_dir);
-
-    // 先保存新配置
+    // 技能库路径固定为「数据目录下的 skills」（见 skills::skills_dir），没有可配置项，
+    // 因此这里不再需要「配置变更 → 搬迁技能」的逻辑。
     save_ai_config_to_file(&config)?;
-
-    // 检测 skill 目录是否变更，执行迁移
-    let mut skill_migrated = false;
-    if normalize_path(&old_resolved.to_string_lossy()) != normalize_path(&new_resolved.to_string_lossy()) {
-        let skills_file = load_skills();
-        if !skills_file.skills.is_empty() {
-            // Clone 需要移入闭包的值
-            let old_str = old_resolved.to_string_lossy().to_string();
-            let new_str = new_resolved.to_string_lossy().to_string();
-            let skills_list = skills_file.skills.clone();
-            let app_handle = app.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                do_migrate_skills(&old_str, &new_str, &skills_list, Some(&app_handle))
-            }).await.map_err(|e| e.to_string())?;
-            skill_migrated = result.moved_count > 0 || result.rebuilt_junctions > 0;
-
-            // 更新 skills.json 中的 directory 路径
-            let mut updated_skills = skills_file;
-            for skill in &mut updated_skills.skills {
-                let old_path = PathBuf::from(&skill.directory);
-                if let Ok(rel) = old_path.strip_prefix(&old_resolved) {
-                    skill.directory = new_resolved.join(rel).to_string_lossy().to_string();
-                }
-            }
-            save_skills(&updated_skills)?;
-        }
-    }
 
     let _ = app.emit("ai-config-changed", serde_json::json!({
         "default_project_path": &config.default_project_path,
-        "skills_dir": &config.skills_dir,
         "providers_changed": true,
     }));
     Ok(serde_json::json!({
         "ok": true,
-        "skill_migrated": skill_migrated,
+        "skill_migrated": false,
     }))
 }
 
@@ -527,7 +493,6 @@ mod tests {
             rectifier: RectifierConfig::default(),
             headroom: HeadroomConfig::default(),
             optimizer: OptimizerConfig::default(),
-            skills_dir: String::new(),
             route_chain: Vec::new(),
             aggregate: AggregateConfig::default(),
         };

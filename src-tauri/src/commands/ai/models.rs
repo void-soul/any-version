@@ -199,12 +199,6 @@ pub struct AiConfig {
     /// 优化器配置
     #[serde(default)]
     pub optimizer: OptimizerConfig,
-    /// 技能存储目录（空字符串 = 默认「数据目录下的 skills」）。
-    ///
-    /// 默认刻意不是 `~/.agents/skills` —— 那是多个 AI 工具的原生扫描目录，
-    /// 放进去的技能会对所有项目全局生效。参见 `skills::default_skills_dir` 的注释。
-    #[serde(default)]
-    pub skills_dir: String,
     /// 路由链（顺序即优先级）；候选 = 供应商实例 + 其模型列表中的模型
     #[serde(default)]
     pub route_chain: Vec<RouteCandidate>,
