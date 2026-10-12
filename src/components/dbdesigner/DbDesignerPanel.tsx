@@ -1850,119 +1850,120 @@ export default function DbDesignerPanel() {
               </button>
             </div>
 
+                        {/* ① 内容区：AI 回复与进度 —— 占满剩余空间（输入框在底部，这里才是「对话」）*/}
             <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3">
               <p className="text-micro leading-relaxed text-slate-500">{t("dbd.aiHint")}</p>
-              {/* 画布已有设计时提示：这不只是生成器，还能直接改当前设计 */}
               {doc && doc.nodes.length > 0 ? (
                 <p className="text-micro leading-relaxed text-slate-500">
                   {t("dbd.aiModifyHint", { count: doc.nodes.length })}
                 </p>
               ) : null}
-              <textarea
-                value={aiText}
-                onChange={(e) => setAiText(e.target.value)}
-                rows={6}
-                placeholder={t("dbd.aiPh")}
-                className="w-full resize-none rounded-ctl bg-black/30 px-2 py-1.5 text-caption text-slate-200 outline-none placeholder:text-slate-600"
-              />
-              {/* 模型选择器用 AI 模块的共享组件（与思维导图 Agent、API 智能导入同一套 UI） */}
-              <div className="flex items-center gap-2">
-                <span className="shrink-0 text-micro text-slate-500">{t("dbd.aiModel")}</span>
-                <ModelSelector
-                  providers={aiProviders as unknown as ProviderLike[]}
-                  providerId={aiProviderId}
-                  modelId={aiModelId}
-                  onSelect={(pid, mid) => {
-                    setAiProviderId(pid);
-                    setAiModelId(mid);
-                  }}
-                  disabled={aiBusy}
-                  compact
-                  emptyText={t("dbd.aiNoProvider")}
-                />
-              </div>
 
-              {/* AI 设计控制台（与思维导图智能体控制台同款）：思考过程 / 输出进度 / 实时预览，
-                  长生成时一眼看清「它现在在干什么」；跑完后保留摘要可回看。
-                  画布上同时能看到表一张张长出来（流式落图）。 */}
+              {/* 进度明细：思考/输出字数、实时预览、完成摘要 */}
               {aiBusy || aiProgress.length > 0 ? (
-                <div className="overflow-hidden rounded-ctl border border-white/10 bg-slate-950/50">
-                  <div className="flex items-center gap-1.5 border-b border-white/5 px-2 py-1.5">
-                    <Brain className={`h-3 w-3 ${aiBusy ? "animate-pulse text-cyan-300" : "text-slate-500"}`} />
-                    <span className="text-micro font-semibold uppercase tracking-wide text-slate-400">{t("dbd.aiConsole")}</span>
-                    <span className={`ml-auto text-micro ${aiBusy ? "text-cyan-300" : aiAborted ? "text-amber-300" : "text-emerald-300"}`}>
-                      {aiBusy ? t("dbd.aiWorking") : aiAborted ? t("dbd.aiCancelled") : t("dbd.aiDoneShort")}
-                    </span>
+                <div className="space-y-1.5 rounded-ctl border border-white/10 bg-slate-950/40 p-2">
+                  <div className="flex items-center gap-1.5 text-micro text-slate-300">
+                    <Sparkles className="h-3 w-3 shrink-0 text-cyan-300" />
+                    {t("dbd.aiStart")}
                   </div>
-                  <div className="space-y-1 p-2">
-                    <div className="flex items-center gap-1.5 text-micro text-slate-300">
-                      <Sparkles className="h-3 w-3 shrink-0 text-cyan-300" />
-                      {t("dbd.aiStart")}
+                  {aiThinkFinal ? (
+                    <div className="flex items-center gap-1.5 text-micro text-fuchsia-200/90">
+                      <Brain className={`h-3 w-3 shrink-0 text-fuchsia-300 ${aiBusy && !aiThinkFinal.done ? "animate-pulse" : ""}`} />
+                      {aiThinkFinal.done
+                        ? t("dbd.aiThought", { count: aiThinkFinal.length })
+                        : t("dbd.aiThinkingChars", { count: aiThinkFinal.length })}
                     </div>
-                    {/* 思考过程：推理模型先想再写，思考块单独一行（结束时定格总字数） */}
-                    {aiThinkFinal ? (
-                      <div className="flex items-center gap-1.5 text-micro text-fuchsia-200/90">
-                        <Brain className={`h-3 w-3 shrink-0 text-fuchsia-300 ${aiBusy && !aiThinkFinal.done ? "animate-pulse" : ""}`} />
-                        {aiThinkFinal.done
-                          ? t("dbd.aiThought", { count: aiThinkFinal.length })
-                          : t("dbd.aiThinkingChars", { count: aiThinkFinal.length })}
-                      </div>
-                    ) : null}
-                    {/* 正文输出：累计字数（运行中实时跳，结束后定格） */}
-                    {aiStream ? (
-                      <div className="flex items-center gap-1.5 text-micro text-emerald-200/90">
-                        <Terminal className="h-3 w-3 shrink-0 text-emerald-300" />
-                        {t("dbd.aiWritingChars", { count: aiStream.length })}
-                      </div>
-                    ) : null}
-                    {/* 实时预览：正文优先（emerald），否则思考尾部（fuchsia）—— 光标闪烁表示还在动 */}
-                    {aiBusy && (aiStream || aiReasoning) ? (
-                      <div
-                        className={`max-h-20 overflow-y-auto whitespace-pre-wrap rounded border px-1.5 py-1 font-mono text-[8px] leading-3.5 ${
-                          aiStream
-                            ? "border-emerald-400/15 bg-emerald-400/[0.03] text-emerald-100/80"
-                            : "border-fuchsia-400/15 bg-fuchsia-400/[0.03] text-fuchsia-100/80"
-                        }`}
-                      >
-                        {(aiStream ?? aiReasoning)!.text || "…"}
-                        <span className={`ml-0.5 inline-block h-2 w-1 animate-pulse align-middle ${aiStream ? "bg-emerald-300" : "bg-fuchsia-300"}`} />
-                      </div>
-                    ) : null}
-                    {/* 刚启动还没收到任何帧：转圈占位，别让用户以为卡死 */}
-                    {aiBusy && !aiReasoning && !aiStream ? (
-                      <div className="flex items-center gap-1.5 pl-1">
-                        <Loader2 className="h-3 w-3 animate-spin text-slate-400" />
-                        <span className="text-micro text-slate-500">{t("dbd.aiThinking")}</span>
-                      </div>
-                    ) : null}
-                    {!aiBusy && aiStream && !aiAborted ? (
+                  ) : null}
+                  {aiStream ? (
+                    <div className="flex items-center gap-1.5 text-micro text-emerald-200/90">
+                      <Terminal className="h-3 w-3 shrink-0 text-emerald-300" />
+                      {t("dbd.aiWritingChars", { count: aiStream.length })}
+                    </div>
+                  ) : null}
+                  {aiBusy && (aiStream || aiReasoning) ? (
+                    <div
+                      className={`max-h-32 overflow-y-auto whitespace-pre-wrap rounded border px-1.5 py-1 font-mono text-[8px] leading-3.5 ${
+                        aiStream
+                          ? "border-emerald-400/15 bg-emerald-400/[0.03] text-emerald-100/80"
+                          : "border-fuchsia-400/15 bg-fuchsia-400/[0.03] text-fuchsia-100/80"
+                      }`}
+                    >
+                      {(aiStream ?? aiReasoning)!.text || "…"}
+                      <span className={`ml-0.5 inline-block h-2 w-1 animate-pulse align-middle ${aiStream ? "bg-emerald-300" : "bg-fuchsia-300"}`} />
+                    </div>
+                  ) : null}
+                  {aiBusy && !aiReasoning && !aiStream ? (
+                    <div className="flex items-center gap-1.5 pl-1">
+                      <Loader2 className="h-3 w-3 animate-spin text-slate-400" />
+                      <span className="text-micro text-slate-500">{t("dbd.aiThinking")}</span>
+                    </div>
+                  ) : null}
+                  {!aiBusy && aiStream && !aiAborted ? (
+                    <>
                       <div className="flex items-center gap-1.5 text-micro text-emerald-300">
                         <Check className="h-3 w-3 shrink-0" />
                         {t("dbd.aiFinished")}
                       </div>
-                    ) : null}
-                  </div>
+                      <div className="text-micro text-emerald-300/80">
+                        {t("dbd.aiDone", { count: doc.nodes.length })}
+                      </div>
+                    </>
+                  ) : null}
                 </div>
               ) : null}
               {aiErr ? <p className="break-words text-micro text-rose-400">{aiErr}</p> : null}
             </div>
 
+            {/* ② 状态与设置：紧贴输入框上方，一行看得见「在干什么 用哪个模型」 */}
             <div className="flex flex-shrink-0 items-center gap-2 border-t border-white/5 px-3 py-2">
-              <button
-                onClick={() => void runAi()}
-                disabled={aiBusy || !aiText.trim() || aiProviders.length === 0}
-                className="ui-btn ui-btn-primary px-3 py-1 text-caption disabled:opacity-40"
-              >
-                {aiBusy ? t("dbd.aiBusy") : t("dbd.aiGenerate")}
-              </button>
-              {aiBusy ? (
-                <button onClick={() => void cancelAi()} className="ui-btn px-2 py-1 text-caption">
-                  <Ban className="h-3 w-3" /> {t("dbd.aiCancel")}
+              <Brain className={`h-3.5 w-3.5 flex-shrink-0 ${aiBusy ? "animate-pulse text-cyan-300" : "text-slate-500"}`} />
+              <span className={`shrink-0 text-micro font-semibold ${
+                aiBusy ? "text-cyan-300" : aiAborted ? "text-amber-300" : "text-emerald-300"
+              }`}>
+                {aiBusy ? t("dbd.aiWorking") : aiAborted ? t("dbd.aiCancelled") : t("dbd.aiDoneShort")}
+              </span>
+              <span className="ml-auto shrink-0 text-micro text-slate-500">{t("dbd.aiModel")}</span>
+              {/* 模型选择器用 AI 模块的共享组件（与思维导图 Agent、API 智能导入同一套 UI） */}
+              <ModelSelector
+                providers={aiProviders as unknown as ProviderLike[]}
+                providerId={aiProviderId}
+                modelId={aiModelId}
+                onSelect={(pid, mid) => {
+                  setAiProviderId(pid);
+                  setAiModelId(mid);
+                }}
+                disabled={aiBusy}
+                compact
+                emptyText={t("dbd.aiNoProvider")}
+              />
+            </div>
+
+            {/* ③ 输入区：固定在底部 */}
+            <div className="flex flex-shrink-0 flex-col gap-2 border-t border-white/5 p-3">
+              <textarea
+                value={aiText}
+                onChange={(e) => setAiText(e.target.value)}
+                rows={4}
+                placeholder={t("dbd.aiPh")}
+                className="w-full resize-none rounded-ctl bg-black/30 px-2 py-1.5 text-caption text-slate-200 outline-none placeholder:text-slate-600"
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => void runAi()}
+                  disabled={aiBusy || !aiText.trim() || aiProviders.length === 0}
+                  className="ui-btn ui-btn-primary px-3 py-1 text-caption disabled:opacity-40"
+                >
+                  {aiBusy ? t("dbd.aiBusy") : t("dbd.aiGenerate")}
                 </button>
-              ) : null}
-              {!aiBusy && aiProviders.length === 0 ? (
-                <span className="min-w-0 truncate text-micro text-amber-400">{t("dbd.aiNoProvider")}</span>
-              ) : null}
+                {aiBusy ? (
+                  <button onClick={() => void cancelAi()} className="ui-btn px-2 py-1 text-caption">
+                    <Ban className="h-3 w-3" /> {t("dbd.aiCancel")}
+                  </button>
+                ) : null}
+                {!aiBusy && aiProviders.length === 0 ? (
+                  <span className="min-w-0 truncate text-micro text-amber-400">{t("dbd.aiNoProvider")}</span>
+                ) : null}
+              </div>
             </div>
           </div>
           {/* 左缘拖宽把手：与思维导图右栏同一套逻辑（拖动方向相反） */}

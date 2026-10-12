@@ -108,6 +108,7 @@
     "tagFilter": "Filter by tag",
     "aiGenerate": "AI",
     "aiTitle": "AI Schema Designer",
+    "aiPaneLayoutHint": "Conversation · Status & settings · Input",
     "aiHint": "Describe what you need — the AI parses it, designs tables and relations, and draws them onto the canvas. The more specific (entities, relations, required fields, constraints), the better; keep asking to modify the result.",
     "aiModifyHint": "Canvas has {{count}} tables: to modify this design just ask (e.g. \"add a status column to orders\"); for a fresh design say \"design a new …\".",
     "aiPh": "e.g. a blog system: users publish articles and like them, articles belong to categories with a name and sort order…",
