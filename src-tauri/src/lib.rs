@@ -1181,6 +1181,10 @@ commands::node_manager::npm_init,
                 commands::node_manager::get_node_projects_dir,
                 commands::node_manager::update_node_projects_dir,
                 commands::node_manager::npm_check_update,
+                // 服务模块的 Docker 运行方式（环境检测 + 端口/密码配置）
+                commands::node_manager::docker_env_check,
+                commands::node_manager::docker_service_config,
+                commands::node_manager::docker_save_service_config,
 
                 // ---- 启动器模块（复刻 DawnLauncher） ----
                 commands::launcher::commands::launcher_get_classifications,

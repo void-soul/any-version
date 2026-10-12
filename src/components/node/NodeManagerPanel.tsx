@@ -37,6 +37,8 @@ import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { Note } from "../shared/Note";
+import { SharedModal } from "../shared/Modal";
+import { SharedButton } from "../shared/Button";
 
 // ---- 类型（与后端 node_manager.rs 对应，serde camelCase）----
 
@@ -70,6 +72,14 @@ interface NodeProjectDef {
   initCmd?: string[];
   /** 初始化完成标记（`~` 可展开）；空 = 不做判定 */
   initMarker?: string;
+  /** Docker 运行方式专属配置（runtime === "docker" 时存在） */
+  docker?: {
+    project: string;
+    healthPort: number;
+    volumes: string[];
+    /** 「执行命令」落到哪个容器；空 = 不支持执行命令 */
+    execService: string;
+  } | null;
 }
 
 interface DepCheck {
@@ -104,6 +114,31 @@ interface NodeProjectStatus {
   initAvailable: boolean;
   /** 是否已完成初始化；未配置 initCmd/initMarker 的服务恒为 true */
   initialized: boolean;
+  /** docker 服务：在跑的容器数；非 docker 恒为 0 */
+  containers?: number;
+}
+
+/// 本机 Docker 环境（后端 docker_env_check；与具体服务无关）
+interface DockerEnv {
+  cli: boolean;
+  cliVersion: string;
+  compose: boolean;
+  composeVersion: string;
+  daemonRunning: boolean;
+  /** 一句话结论，环境条直接显示 */
+  summary: string;
+  error: string;
+}
+
+/// 某个 docker 服务的可编辑配置（端口 / 数据库密码）
+interface DockerServiceConfig {
+  id: string;
+  port: number;
+  pgPassword: string;
+  dir: string;
+  composePath: string;
+  envPath: string;
+  prepared: boolean;
 }
 
 interface NodeUpdateInfo {
@@ -144,8 +179,11 @@ const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
 };
 
 /// 渲染 webPath，替换 {port} 占位符（与后端 NodeProjectDef::resolved_web_path 一致）。
-function resolvedWebPath(p: NodeProjectDef): string {
-  return p.webPath.replace("{port}", String(p.defaultPort));
+///
+/// docker 服务必须传入**配置里的实际端口**：用户可能在配置弹窗里改过端口，
+/// 那时 defaultPort 只是初始默认值，拿它拼 URL 会打开一个没人监听的地址。
+function resolvedWebPath(p: NodeProjectDef, port?: number | null): string {
+  return p.webPath.replace("{port}", String(port ?? p.defaultPort));
 }
 
 /// 服务管理固定标签页 id（不可关闭）
@@ -161,6 +199,10 @@ export default function NodeManagerPanel() {
   const [projects, setProjects] = useState<NodeProjectDef[]>([]);
   const [loaded, setLoaded] = useState(false); // 首次列表是否已加载完成
   const [deps, setDeps] = useState<Record<string, DepCheckResult>>({});
+  /// 本机 Docker 环境（含 docker 服务时才有值）
+  const [dockerEnv, setDockerEnv] = useState<DockerEnv | null>(null);
+  /// 正在编辑端口 / 数据库密码的 docker 服务
+  const [configTarget, setConfigTarget] = useState<NodeProjectDef | null>(null);
   const [statuses, setStatuses] = useState<Record<string, NodeProjectStatus>>(
     {},
   );
@@ -194,6 +236,16 @@ export default function NodeManagerPanel() {
     }
   }, []);
 
+  /// Docker 环境：探测要跑 3 条 docker 命令（约数百毫秒），所以只在
+  /// 「列表里确有 docker 服务」或「刚操作过 docker 服务」时刷新，不挂在 4s 轮询上。
+  const refreshDockerEnv = useCallback(async () => {
+    try {
+      setDockerEnv(await invoke<DockerEnv>("docker_env_check"));
+    } catch {
+      setDockerEnv(null);
+    }
+  }, []);
+
   const refreshStatus = useCallback(async (id: string) => {
     try {
       const s = await invoke<NodeProjectStatus>("npm_status", {
@@ -215,7 +267,9 @@ export default function NodeManagerPanel() {
       refreshDeps(p.id);
       refreshStatus(p.id);
     }
-  }, [refreshDeps, refreshStatus]);
+    // 有 docker 服务才探测本机 Docker 环境（否则每次刷新都白跑几条 docker 命令）
+    if (list.some((p) => p.runtime === "docker")) void refreshDockerEnv();
+  }, [refreshDeps, refreshStatus, refreshDockerEnv]);
 
   useEffect(() => {
     refreshAll();
@@ -315,6 +369,8 @@ export default function NodeManagerPanel() {
     try {
       await invoke(`npm_${action}`, { projectId: project.id });
       await refreshStatus(project.id);
+      // 操作可能改变了 Docker 环境（刚装/刚启动 Docker Desktop 等），顺手重探一次
+      if (project.runtime === "docker") void refreshDockerEnv();
     } catch (e) {
       setError((prev) => ({
         ...prev,
@@ -440,7 +496,7 @@ export default function NodeManagerPanel() {
             ...prev,
             [project.id]: t("nodeproj.serviceStateHint", {
               label: t("nodeproj.notRunning"),
-              path: resolvedWebPath(project),
+              path: resolvedWebPath(project, st?.port),
             }),
           }));
           return;
@@ -480,7 +536,7 @@ export default function NodeManagerPanel() {
             : t("nodeproj.notRunning");
       setError((prev) => ({
         ...prev,
-        [project.id]: t("nodeproj.serviceStateHint", { label: stateLabel, path: resolvedWebPath(project) }),
+        [project.id]: t("nodeproj.serviceStateHint", { label: stateLabel, path: resolvedWebPath(project, st?.port) }),
       }));
       return;
     }
@@ -630,6 +686,8 @@ export default function NodeManagerPanel() {
               updateInfo={updateInfo[manageSelected.id]}
               checkingUpdate={checkingUpdate === manageSelected.id}
               consoleUrl={consoleUrls[manageSelected.id]}
+              dockerEnv={dockerEnv}
+              onConfig={(p) => setConfigTarget(p)}
               onAction={runAction}
               onExec={execCommand}
               onInit={initProject}
@@ -735,7 +793,7 @@ export default function NodeManagerPanel() {
               managePage
             ) : activeTab ? (
               <iframe
-                src={consoleUrls[activeTab.id] || resolvedWebPath(activeTab)}
+                src={consoleUrls[activeTab.id] || resolvedWebPath(activeTab, statuses[activeTab.id]?.port)}
                 key={`${activeTab.id}:${tabReload[activeTab.id] ?? 0}`}
                 className="w-full h-full border-0 bg-white"
                 title={activeTab.displayName}
@@ -749,7 +807,123 @@ export default function NodeManagerPanel() {
         </div>
       )}
 
+      {/* docker 服务的端口 / 数据库密码配置 */}
+      {configTarget && (
+        <DockerConfigDialog
+          project={configTarget}
+          onClose={() => setConfigTarget(null)}
+          onSaved={() => {
+            void refreshStatus(configTarget.id);
+            void refreshDockerEnv();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/// docker 服务的配置弹窗：改对外端口与数据库密码。
+///
+/// 为什么不做成卡片内联编辑：这两项都要写回配置并**重建容器**才生效，
+/// 属于「改错了要收拾」的操作，单独一步确认更稳妥；而且端口被占时
+/// 用户需要一个明确的地方去改（否则只能手改数据目录里的文件）。
+function DockerConfigDialog({
+  project,
+  onClose,
+  onSaved,
+}: {
+  project: NodeProjectDef;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { t } = useTranslation();
+  const [dir, setDir] = useState("");
+  const [port, setPort] = useState("");
+  const [pg, setPg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    void invoke<DockerServiceConfig>("docker_service_config", { projectId: project.id })
+      .then((c) => {
+        setDir(c.dir);
+        setPort(String(c.port));
+        setPg(c.pgPassword);
+      })
+      .catch((e) => setMsg({ ok: false, text: String(e) }));
+  }, [project.id]);
+
+  const save = async () => {
+    const p = Math.round(Number(port));
+    if (!Number.isFinite(p) || p <= 0) {
+      setMsg({ ok: false, text: t("nodeproj.configPortInvalid") });
+      return;
+    }
+    setBusy(true);
+    setMsg(null);
+    try {
+      const c = await invoke<DockerServiceConfig>("docker_save_service_config", {
+        projectId: project.id,
+        port: p,
+        pgPassword: pg,
+      });
+      setPort(String(c.port));
+      setPg(c.pgPassword);
+      setMsg({ ok: true, text: t("nodeproj.configSaved") });
+      onSaved();
+    } catch (e) {
+      setMsg({ ok: false, text: typeof e === "string" ? e : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <SharedModal
+      open
+      onClose={onClose}
+      title={t("nodeproj.configTitle", { name: project.displayName })}
+      width={520}
+      footer={
+        <>
+          <SharedButton onClick={onClose} variant="secondary">
+            {t("common.cancel")}
+          </SharedButton>
+          <SharedButton onClick={() => void save()} variant="primary" disabled={busy}>
+            {t("common.save")}
+          </SharedButton>
+        </>
+      }
+    >
+      <div className="space-y-3 text-body">
+        <label className="block space-y-1">
+          <span className="text-slate-400">{t("nodeproj.configPort")}</span>
+          <input
+            value={port}
+            onChange={(e) => setPort(e.target.value)}
+            inputMode="numeric"
+            className="w-full rounded-ctl bg-white/5 border border-white/10 px-2.5 py-1.5 text-slate-100 outline-none focus:border-[var(--module-accent-ring)]"
+          />
+        </label>
+        <label className="block space-y-1">
+          <span className="text-slate-400">{t("nodeproj.configPgPassword")}</span>
+          <input
+            value={pg}
+            onChange={(e) => setPg(e.target.value)}
+            spellCheck={false}
+            className="w-full rounded-ctl bg-white/5 border border-white/10 px-2.5 py-1.5 font-mono text-slate-100 outline-none focus:border-[var(--module-accent-ring)]"
+          />
+        </label>
+        {dir && <div className="break-all font-mono text-tiny text-slate-500">{dir}</div>}
+        <Note tone="warn" title={t("nodeproj.configPwWarnTitle")}>
+          <p>{t("nodeproj.configPwWarn")}</p>
+        </Note>
+        <p className="text-tiny text-slate-500">{t("nodeproj.configApplyHint")}</p>
+        {msg && (
+          <div className={`text-tiny ${msg.ok ? "text-emerald-400" : "text-red-400"}`}>{msg.text}</div>
+        )}
+      </div>
+    </SharedModal>
   );
 }
 
@@ -769,6 +943,8 @@ function ProjectCard({
   updateInfo,
   checkingUpdate,
   consoleUrl,
+  dockerEnv,
+  onConfig,
   onAction,
   onExec,
   onInit,
@@ -792,6 +968,9 @@ function ProjectCard({
   checkingUpdate: boolean;
   /// 最近捕获的控制台 URL（带凭据主页地址）；未捕获为 undefined。
   consoleUrl?: string;
+  /// 本机 Docker 环境（docker 服务的环境条用它，替代 git/node/pm 三行）
+  dockerEnv?: DockerEnv | null;
+  onConfig: (p: NodeProjectDef) => void;
   onAction: (p: NodeProjectDef, action: string) => void;
   onExec: (p: NodeProjectDef, command: string) => void;
   onInit: (p: NodeProjectDef) => void;
@@ -808,6 +987,8 @@ function ProjectCard({
   const isNpx = !!project.npxPackage?.trim();
   // pip 包模式：配置了 pipPackage，直接从 PyPI 安装（无需 clone）
   const isPip = !!project.pipPackage?.trim();
+  // Docker 运行方式：服务由 docker compose 托管（安装=拉镜像，启动=compose up -d）
+  const isDocker = project.runtime === "docker";
   // 控制台 URL 模式：服务通过启动输出里打印的带 token 地址访问（iframe 不可用）
   const consoleUrlMode = !!project.consoleUrlPattern?.trim();
   const installed = st?.installed;
@@ -917,37 +1098,72 @@ function ProjectCard({
           )}
         </div>
         <div className="flex items-center gap-1.5 text-tiny text-slate-500 font-mono flex-shrink-0">
-          {st?.pid && (
-            <span className="flex items-center gap-1">
-              <Terminal className="w-3 h-3" /> PID {st.pid}
-            </span>
-          )}
-          {isNpx ? (
-            <span className="flex items-center gap-1" title={project.npxPackage}>
-              <Package className="w-3 h-3" /> {project.npxPackage}
-              {st?.localVersion && (
-                <span className="text-slate-600">v{st.localVersion}</span>
-              )}
-            </span>
+          {isDocker ? (
+            <>
+              {/* 容器化服务没有本地 PID：「几个容器在跑」才是有用的信息 */}
+              <span className="flex items-center gap-1">
+                <Boxes className="w-3 h-3" /> {t("nodeproj.containerCount", { n: st?.containers ?? 0 })}
+              </span>
+              {project.docker?.project ? (
+                <span className="text-slate-600">{project.docker.project}</span>
+              ) : null}
+            </>
           ) : (
-            <span className="flex items-center gap-1">
-              <GitBranch className="w-3 h-3" /> {st?.gitVersion ?? "—"}
-            </span>
+            <>
+              {st?.pid && (
+                <span className="flex items-center gap-1">
+                  <Terminal className="w-3 h-3" /> PID {st.pid}
+                </span>
+              )}
+              {isNpx ? (
+                <span className="flex items-center gap-1" title={project.npxPackage}>
+                  <Package className="w-3 h-3" /> {project.npxPackage}
+                  {st?.localVersion && (
+                    <span className="text-slate-600">v{st.localVersion}</span>
+                  )}
+                </span>
+              ) : (
+                <span className="flex items-center gap-1">
+                  <GitBranch className="w-3 h-3" /> {st?.gitVersion ?? "—"}
+                </span>
+              )}
+            </>
           )}
         </div>
       </div>
 
-      {/* 环境检测条 */}
+      {/* 环境检测条：docker 服务看的是**本机 Docker**（CLI / compose / 引擎），
+          而不是 git / node / pnpm —— 那三样对容器化服务没有任何意义 */}
       <div className="px-5 pb-2 flex flex-wrap items-center gap-3 text-tiny">
-        {!isNpx && !isPip && <EnvBadge dep={d?.git} label="git" />}
-        <EnvBadge
-          dep={d?.node}
-          label={`${project.runtime === "python" ? "python" : "node"} ${project.nodeRequirement || ""}`.trim()}
-        />
-        <EnvBadge
-          dep={d?.packageManager}
-          label={isNpx ? "npm" : isPip ? "pip" : project.packageManager}
-        />
+        {isDocker ? (
+          <>
+            <EnvBadge dep={dockerDep(dockerEnv?.cliVersion ?? "", !!dockerEnv?.cli)} label="docker" />
+            <EnvBadge dep={dockerDep(dockerEnv?.composeVersion ?? "", !!dockerEnv?.compose)} label="compose" />
+            <EnvBadge dep={dockerDep("", !!dockerEnv?.daemonRunning)} label={t("nodeproj.dockerEngine")} />
+            {dockerEnv && !(dockerEnv.cli && dockerEnv.daemonRunning && dockerEnv.compose) && (
+              // 未就绪时把结论（以及原文错误）摆出来：
+              // Windows 上「装了 Docker Desktop 但没启动」是最常见的卡点
+              <span
+                className="min-w-0 truncate text-amber-400"
+                title={dockerEnv.error || dockerEnv.summary}
+              >
+                {dockerEnv.summary}
+              </span>
+            )}
+          </>
+        ) : (
+          <>
+            {!isNpx && !isPip && <EnvBadge dep={d?.git} label="git" />}
+            <EnvBadge
+              dep={d?.node}
+              label={`${project.runtime === "python" ? "python" : "node"} ${project.nodeRequirement || ""}`.trim()}
+            />
+            <EnvBadge
+              dep={d?.packageManager}
+              label={isNpx ? "npm" : isPip ? "pip" : project.packageManager}
+            />
+          </>
+        )}
         {st?.port && <span className="text-slate-600">{t("nodeproj.portText", { port: st.port })}</span>}
         <label
           className="flex items-center gap-1 text-tiny text-slate-400 hover:text-slate-200 cursor-pointer select-none"
@@ -1171,7 +1387,9 @@ function ProjectCard({
         </div>
       )}
 
-      {installed && (
+      {/* docker 服务：只在定义里声明了 execService 时才给「执行命令」
+          （没声明就说明作者没打算开放容器壳，猜一个容器名会在错误的容器里执行） */}
+      {installed && (!isDocker || !!project.docker?.execService?.trim()) && (
         <div className="px-5 py-2 flex items-center gap-2">
           <div className="flex-1 flex items-center gap-1.5 bg-black/20 border border-white/10 rounded-ctl px-2.5 py-1.5 focus-within:border-[var(--module-accent)] transition-all">
             <Terminal className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
@@ -1206,7 +1424,7 @@ function ProjectCard({
             onClick={() => onAction(project, "install")}
             icon={Download}
             color="bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)]"
-            label={t("nodeproj.install")}
+            label={isDocker ? t("nodeproj.pullImage") : t("nodeproj.install")}
           />
           <ActionButton
             disabled={!canUpgrade || isBusy || running}
@@ -1214,9 +1432,20 @@ function ProjectCard({
             onClick={() => onAction(project, "upgrade")}
             icon={RefreshCw}
             color="bg-slate-700 hover:bg-slate-600"
-            label={t("nodeproj.upgrade")}
+            label={isDocker ? t("nodeproj.updateImage") : t("nodeproj.upgrade")}
           />
-          {!isNpx && (
+          {isDocker && (
+            <ActionButton
+              disabled={isBusy}
+              busy={false}
+              onClick={() => onConfig(project)}
+              icon={Settings2}
+              color="bg-slate-700 hover:bg-slate-600"
+              label={t("nodeproj.configBtn")}
+              title={t("nodeproj.configTitle")}
+            />
+          )}
+          {!isNpx && !isDocker && (
             <ActionButton
               disabled={!canInstallDeps || isBusy || running}
               busy={isBusy && busy === `install_deps:${project.id}`}
@@ -1308,12 +1537,31 @@ function ProjectCard({
           onAction(project, "uninstall");
         }}
         title={t("nodeproj.uninstallConfirmTitle")}
-        desc={t("nodeproj.uninstallConfirmDesc", { name: project.displayName })}
+        desc={
+          isDocker
+            ? // 说清楚「删了什么、留了什么」：容器化服务的卸载是可恢复的，
+              // 但用户看到「卸载」两个字时最容易慌的就是数据
+              t("nodeproj.uninstallConfirmDescDocker", { name: project.displayName })
+            : t("nodeproj.uninstallConfirmDesc", { name: project.displayName })
+        }
         confirmText={t("nodeproj.uninstall")}
         danger
       />
     </div>
   );
+}
+
+/// 把 Docker 环境探测结果包装成 EnvBadge 需要的形状 —— 复用同一套徽章视觉，
+/// 不另造一套（docker 服务的环境条与其它服务保持一致的心智）。
+function dockerDep(version: string, ok: boolean): DepCheck {
+  return {
+    name: "docker",
+    exists: ok,
+    path: null,
+    version: version || null,
+    satisfies: ok,
+    requirement: null,
+  };
 }
 
 function EnvBadge({ dep, label }: { dep?: DepCheck; label: string }) {

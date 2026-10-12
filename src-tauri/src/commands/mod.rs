@@ -23,6 +23,8 @@ pub mod file_io;
 pub mod mihomo;
 pub mod tasks;
 pub mod node_manager;
+/// 服务模块的 Docker 运行方式（通用 compose 封装，供 node_manager 使用）
+pub mod docker;
 pub mod launcher;
 pub mod clipboard;
 pub mod otp;

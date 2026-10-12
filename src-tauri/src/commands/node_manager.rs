@@ -104,6 +104,39 @@ pub struct NodeProjectDef {
     /// 初始化完成标记：`~` 已展开，路径存在即视为已初始化；空表示不做判定。
     #[serde(default)]
     pub init_marker: String,
+    /// Docker 运行方式专属配置（`runtime == "docker"` 时必填）。
+    /// 通用实现在 `commands/docker.rs`（不针对任何具体服务）。
+    #[serde(default)]
+    pub docker: Option<DockerSpec>,
+}
+
+/// Docker 运行方式专属配置。
+///
+/// 模板（`compose` / `env`）写在定义文件里，而不是要求用户先 `git clone` 仓库：
+/// 这类自托管服务通常只需要一份 compose，而且像 ARTEX 的仓库已声明为「最后一版源码备份」。
+/// 模板在安装时渲染到 `<数据目录>/docker/<id>/`，占位符见 `docker::render_template`。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DockerSpec {
+    /// compose 项目名（`docker compose -p`）：与用户自己的 compose 项目隔离，避免串台。
+    /// 空 = 用服务 id。
+    #[serde(default)]
+    pub project: String,
+    /// 对外端口（容器端口可与服务端口不同）；0 = 用 defaultPort
+    #[serde(default)]
+    pub health_port: u16,
+    /// 需要持久化的挂载目录名（相对服务目录），安装时创建
+    #[serde(default)]
+    pub volumes: Vec<String>,
+    /// compose 模板（含 `{{port}}` / `{{pg_password}}` / `{{dir}}` 占位符）
+    #[serde(default)]
+    pub compose: String,
+    /// `.env` 模板（占位符同上）
+    #[serde(default)]
+    pub env: String,
+    /// 「执行命令」落到哪个容器（compose 里的服务名）；空 = 该服务不支持执行命令
+    #[serde(default)]
+    pub exec_service: String,
 }
 
 impl NodeProjectDef {
@@ -120,8 +153,10 @@ fn default_true() -> bool { true }
 
 impl NodeProjectDef {
     /// 渲染 webPath，替换 {port} 占位符。
+    /// 端口用 `effective_port()`：docker 服务的对外端口可能是 healthPort，
+    /// 用户还可能在配置弹窗里改过（改后的值在 kira.json 里，由状态接口带回前端）。
     pub fn resolved_web_path(&self) -> String {
-        self.web_path.replace("{port}", &self.default_port.to_string())
+        self.web_path.replace("{port}", &self.effective_port().to_string())
     }
 
     /// 托管目录：{node_projects_dir}/{id}
@@ -139,6 +174,39 @@ impl NodeProjectDef {
     /// 是否为 Python 运行时（runtime = "python"）：venv + pip，不走 pnpm/npm。
     pub fn is_python(&self) -> bool {
         self.runtime.trim().eq_ignore_ascii_case("python")
+    }
+
+    /// 是否为 Docker 运行时（runtime = "docker"）：服务由 `docker compose` 托管，
+    /// 本机需有可用的 Docker Desktop。与 node / python 并列的第三种运行方式。
+    pub fn is_docker(&self) -> bool {
+        self.runtime.trim().eq_ignore_ascii_case("docker") && self.docker.is_some()
+    }
+
+    /// 服务对外端口：docker 用 `healthPort`（容器端口可与服务端口不同），其余用 defaultPort。
+    pub fn effective_port(&self) -> u16 {
+        self.docker
+            .as_ref()
+            .map(|d| d.health_port)
+            .filter(|p| *p > 0)
+            .unwrap_or(self.default_port)
+    }
+
+    /// 投影成 docker 层的输入 —— `docker.rs` 因此不必知道本结构长什么样，
+    /// 这里加字段也不会连带改它。
+    pub fn docker_spec(&self) -> Option<super::docker::ServiceSpec<'_>> {
+        let d = self.docker.as_ref()?;
+        Some(super::docker::ServiceSpec {
+            id: &self.id,
+            port: self.effective_port(),
+            project: if d.project.trim().is_empty() {
+                self.id.as_str()
+            } else {
+                d.project.as_str()
+            },
+            volumes: &d.volumes,
+            compose_tpl: &d.compose,
+            env_tpl: &d.env,
+        })
     }
 
     /// 是否为 pip 包模式（配置了 pipPackage）：直接从 PyPI 安装，无需 git clone。
@@ -244,6 +312,13 @@ impl NodeProjectDef {
     /// 判断是否已安装：git 模式看 package.json；npx 模式看 node_modules 里的包；
     /// pip 包模式看安装标记 `.pip-package.json`；Python git 项目看 .venv / .deps 运行时。
     pub fn installed(&self) -> bool {
+        // docker 服务的「安装」产物是渲染出来的 compose 文件，它落在数据目录
+        // （`<data>/docker/<id>`）而不是 node-projects 托管目录里。
+        if self.is_docker() {
+            return super::docker::docker_dir(&self.id)
+                .join("docker-compose.yml")
+                .is_file();
+        }
         self.installed_in(&self.managed_dir())
     }
 
@@ -318,6 +393,9 @@ pub struct NodeProjectStatus {
     /// port_conflict 时占用进程名（前端明确展示「端口 X 被 <proc> 占用」）。
     #[serde(default)]
     pub conflict_process: Option<String>,
+    /// docker 服务：在跑的容器数（`docker compose ps -q` 的行数）；非 docker 恒为 0
+    #[serde(default)]
+    pub containers: usize,
     /// 是否已配置首次初始化命令（前端据此决定是否显示「初始化」入口）。
     #[serde(default)]
     pub init_available: bool,
@@ -1769,9 +1847,264 @@ fn ensure_deps_ready(def: &NodeProjectDef) -> Result<DepCheckResult, String> {
     Ok(deps)
 }
 
+// ─── Docker 运行方式（runtime = "docker"）───
+//
+// 与进程模式的差别只有「怎么起」：安装 = 生成 compose + 拉镜像，启动 = `compose up -d`，
+// 停止 = `compose down`。其余契约全部复用（事件名、状态结构、自启 id 前缀），
+// 所以前端不必维护两套逻辑，Docker 相关的通用能力都在 commands/docker.rs。
+
+/// 跑一条 `docker compose` 子命令；输出逐行走既有 `npm-log` 事件，前端日志区无需改动。
+fn docker_compose_run(
+    app: &tauri::AppHandle,
+    def: &NodeProjectDef,
+    phase: &str,
+    sub: &[&str],
+) -> Result<(), String> {
+    let dir = crate::commands::docker::docker_dir(&def.id);
+    let spec = def.docker_spec().ok_or("该服务缺少 docker 配置")?;
+    let args = crate::commands::docker::compose_args(spec.project, &dir, sub);
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (ok, last_err, _out) = run_capture_live(
+        app,
+        &def.id,
+        phase,
+        "docker",
+        &arg_refs,
+        Some(&dir),
+        &[],
+        None,
+    );
+    if ok {
+        return Ok(());
+    }
+    let msg = last_err.trim();
+    Err(format!(
+        "docker {} 失败: {}",
+        sub.first().copied().unwrap_or("compose"),
+        if msg.is_empty() { "未知错误" } else { msg }
+    ))
+}
+
+/// Docker 就绪检查：把「没装 / daemon 没起 / 缺 compose」分开说清楚。
+///
+/// Windows 上最常见的是第二种（装了 Docker Desktop 但没启动），笼统报「失败」
+/// 用户无法自救，所以三种情况各给一句话。
+fn ensure_docker_ready() -> Result<(), String> {
+    let env = crate::commands::docker::check_env();
+    if env.cli && env.daemon_running && env.compose {
+        return Ok(());
+    }
+    let detail = env.error.trim();
+    Err(if detail.is_empty() {
+        env.summary
+    } else {
+        format!("{}\n{}", env.summary, detail)
+    })
+}
+
+fn docker_install(app: &tauri::AppHandle, def: &NodeProjectDef) -> Result<(), String> {
+    ensure_docker_ready()?;
+    let spec = def.docker_spec().ok_or("该服务缺少 docker 配置")?;
+    let dir = crate::commands::docker::docker_dir(&def.id);
+    emit_progress(app, &def.id, "prepare", "正在生成 compose 配置…");
+    let cfg = crate::commands::docker::prepare_in(&dir, &spec)?;
+    emit_progress(
+        app,
+        &def.id,
+        "pull",
+        "正在拉取镜像（首次较慢，请耐心等待）…",
+    );
+    docker_compose_run(app, def, "pull", &["pull"])?;
+    emit_progress(app, &def.id, "done", &format!("镜像就绪，端口 {}", cfg.port));
+    Ok(())
+}
+
+fn docker_start(app: &tauri::AppHandle, def: &NodeProjectDef) -> Result<(), String> {
+    ensure_docker_ready()?;
+    let spec = def.docker_spec().ok_or("该服务缺少 docker 配置")?;
+    // 启动前重渲一次：用户可能刚在配置弹窗里改过端口/密码
+    let dir = crate::commands::docker::docker_dir(&def.id);
+    let cfg = crate::commands::docker::prepare_in(&dir, &spec)?;
+    let port = cfg.port;
+
+    docker_compose_run(app, def, "up", &["up", "-d"])?;
+
+    // 等端口监听再返回：否则前端会立刻显示「未运行」（与进程模式同一策略）。
+    // 容器首次启动可能要初始化数据库，给 180s。
+    let deadline = Instant::now() + Duration::from_secs(180);
+    while Instant::now() < deadline {
+        if crate::commands::utils::port_owner_pid(port).is_some() {
+            emit_progress(
+                app,
+                &def.id,
+                "ready",
+                &format!("服务已就绪：{}", def.web_path.replace("{port}", &port.to_string())),
+            );
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    Err(format!(
+        "容器已启动，但 180 秒内端口 {} 仍未监听：请展开日志查看容器输出",
+        port
+    ))
+}
+
+fn docker_stop(app: &tauri::AppHandle, def: &NodeProjectDef) -> Result<(), String> {
+    docker_compose_run(app, def, "down", &["down"])?;
+    // PID 记录是进程模式的产物，容器由 daemon 持有；清掉避免状态判定残留
+    if let Some(m) = running_pids().as_mut() {
+        m.remove(&def.id);
+    }
+    Ok(())
+}
+
+fn docker_upgrade(app: &tauri::AppHandle, def: &NodeProjectDef) -> Result<(), String> {
+    ensure_docker_ready()?;
+    let spec = def.docker_spec().ok_or("该服务缺少 docker 配置")?;
+    let dir = crate::commands::docker::docker_dir(&def.id);
+    crate::commands::docker::prepare_in(&dir, &spec)?;
+    emit_progress(app, &def.id, "pull", "正在拉取最新镜像…");
+    docker_compose_run(app, def, "pull", &["pull"])?;
+    emit_progress(app, &def.id, "up", "正在用新镜像重建容器…");
+    docker_compose_run(app, def, "up", &["up", "-d"])?;
+    emit_progress(app, &def.id, "done", "已更新到最新镜像");
+    Ok(())
+}
+
+/// 卸载：停容器 + 删**渲染产物**（compose / .env）。
+///
+/// 刻意不删 `kira.json`（里面有数据库密码）与数据目录：postgres 数据卷是**用当时那个
+/// 密码**初始化的，密码一换，卷就再也连不上——那等于把用户数据变成砖。删除后
+/// `installed()` 重新为 false，再装一次会沿用同一密码，数据照旧可用。
+fn docker_uninstall(app: &tauri::AppHandle, def: &NodeProjectDef) -> Result<(), String> {
+    let dir = crate::commands::docker::docker_dir(&def.id);
+    if dir.join("docker-compose.yml").is_file() {
+        // down 需要 compose 文件在，先停再删
+        let _ = docker_compose_run(app, def, "down", &["down"]);
+    }
+    for name in ["docker-compose.yml", ".env"] {
+        let p = dir.join(name);
+        if p.exists() {
+            fs::remove_file(&p).map_err(|e| format!("删除 {} 失败: {}", p.display(), e))?;
+        }
+    }
+    emit_progress(app, &def.id, "done", "已卸载（数据与数据库密码保留）");
+    Ok(())
+}
+
+/// docker 服务的状态快照。
+///
+/// 状态判定用「在跑的容器数 + 端口探活」：容器数来自 `compose ps -q`（一行一个 id，
+/// 比解析表格/JSON 稳定）；容器没跑但端口被占 = 有别人的进程占了那个端口，
+/// 与「没启动」必须分开（前者用户得改端口或停掉占用者）。
+fn docker_status_for(def: &NodeProjectDef) -> NodeProjectStatus {
+    let dir = crate::commands::docker::docker_dir(&def.id);
+    let mut containers = 0usize;
+    let mut error: Option<String> = None;
+    let mut port = def.default_port;
+
+    if let Some(spec) = def.docker_spec() {
+        // 端口以**配置里的**为准（用户可能在弹窗里改过；定义里的 healthPort 只是默认值），
+        // 否则改完端口后状态探测会去盯一个没人监听的旧端口，界面永远显示「未运行」。
+        port = crate::commands::docker::read_config_in(&dir, &spec).port;
+        if dir.join("docker-compose.yml").is_file() {
+            let args = crate::commands::docker::compose_args(spec.project, &dir, &["ps", "-q"]);
+            let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+            let out = crate::commands::docker::probe("docker", &arg_refs);
+            containers = crate::commands::docker::parse_ps_ids(&out.stdout);
+            // 查不到容器但命令失败（daemon 没起等）：把原因带给界面，别只显示「未运行」
+            if !out.ok && containers == 0 {
+                let env = crate::commands::docker::check_env();
+                if !env.daemon_running {
+                    error = Some(env.summary);
+                }
+            }
+        }
+    }
+
+    let owner = crate::commands::utils::port_owner_pid(port);
+    let status = crate::commands::docker::compose_state(containers, owner.is_some());
+    let conflict_process = if status == "port_conflict" {
+        super::port::find_port_owner(&port.to_string()).map(|o| o.process_name)
+    } else {
+        None
+    };
+
+    NodeProjectStatus {
+        id: def.id.clone(),
+        display_name: def.display_name.clone(),
+        installed: def.installed(),
+        status: if def.installed() {
+            status.to_string()
+        } else {
+            "not_installed".to_string()
+        },
+        port: Some(port),
+        pid: None,
+        git_version: None,
+        local_version: None,
+        error,
+        conflict_process,
+        containers,
+        init_available: def.has_init(),
+        initialized: def.initialized(),
+    }
+}
+
+/// 本机 Docker 环境（前端环境条用；与具体服务无关）。
+#[tauri::command]
+pub fn docker_env_check() -> crate::commands::docker::DockerEnv {
+    crate::commands::docker::check_env()
+}
+
+/// 某个 docker 服务的可编辑配置（端口 / 数据库密码 / 配置目录）。
+#[tauri::command]
+pub fn docker_service_config(
+    project_id: String,
+) -> Result<crate::commands::docker::DockerServiceConfig, String> {
+    let def = find_project(&project_id).ok_or_else(|| format!("未找到项目: {}", project_id))?;
+    let spec = def
+        .docker_spec()
+        .ok_or_else(|| format!("{} 不是 Docker 服务", def.display_name))?;
+    Ok(crate::commands::docker::read_config_in(
+        &crate::commands::docker::docker_dir(&def.id),
+        &spec,
+    ))
+}
+
+/// 保存端口 / 数据库密码并重渲 compose。
+///
+/// 改密码会让**已有数据卷连不上**（postgres 只在初始化时用该密码建库），
+/// 所以前端必须提示「需要删掉数据卷重建」——这个后果不该由后端静默兜底。
+#[tauri::command]
+pub fn docker_save_service_config(
+    project_id: String,
+    port: u16,
+    pg_password: String,
+) -> Result<crate::commands::docker::DockerServiceConfig, String> {
+    let def = find_project(&project_id).ok_or_else(|| format!("未找到项目: {}", project_id))?;
+    let spec = def
+        .docker_spec()
+        .ok_or_else(|| format!("{} 不是 Docker 服务", def.display_name))?;
+    crate::commands::docker::save_config_in(
+        &crate::commands::docker::docker_dir(&def.id),
+        &spec,
+        port,
+        &pg_password,
+    )
+}
+
 #[tauri::command]
 pub async fn npm_install(app: tauri::AppHandle, project_id: String) -> Result<(), String> {
     let def = find_project(&project_id).ok_or_else(|| format!("未找到项目: {}", project_id))?;
+    // docker 服务：不依赖本机 Node/git，改走「生成 compose + 拉镜像」
+    if def.is_docker() {
+        if def.installed() {
+            return Err("项目已安装，如需更新请使用「升级」".to_string());
+        }
+        return docker_install(&app, &def);
+    }
     ensure_deps_ready(&def)?;
 
     let dir = def.managed_dir();
@@ -1841,6 +2174,10 @@ pub async fn npm_upgrade(app: tauri::AppHandle, project_id: String) -> Result<()
     let def = find_project(&project_id).ok_or_else(|| format!("未找到项目: {}", project_id))?;
     if !def.installed() {
         return Err("项目尚未安装，请先安装".to_string());
+    }
+    // docker 服务：升级 = 拉新镜像 + 用新镜像重建容器（数据卷不动）
+    if def.is_docker() {
+        return docker_upgrade(&app, &def);
     }
     ensure_deps_ready(&def)?;
 
@@ -2023,6 +2360,24 @@ pub async fn npm_exec(
     if !def.installed() {
         return Err("项目尚未安装，请先「安装」".to_string());
     }
+    // docker 服务：命令在容器里执行（需在定义里声明 execService；未声明则明确拒绝，
+    // 而不是猜一个容器名 —— 猜错会在错误的容器上执行命令）
+    if def.is_docker() {
+        let svc = def
+            .docker
+            .as_ref()
+            .map(|d| d.exec_service.trim().to_string())
+            .unwrap_or_default();
+        if svc.is_empty() {
+            return Err("该服务未开放「执行命令」".to_string());
+        }
+        return docker_compose_run(
+            &app,
+            &def,
+            "exec",
+            &["exec", "-T", svc.as_str(), "sh", "-lc", command.as_str()],
+        );
+    }
     let cwd = if def.is_npx() {
         def.npx_runtime_dir()
     } else {
@@ -2186,6 +2541,10 @@ pub async fn npm_start(app: tauri::AppHandle, project_id: String) -> Result<(), 
     let def = find_project(&project_id).ok_or_else(|| format!("未找到项目: {}", project_id))?;
     if !def.installed() {
         return Err("项目尚未安装，请先安装".to_string());
+    }
+    // docker 服务没有 startCmd（由容器自带入口），启动 = compose up -d
+    if def.is_docker() {
+        return docker_start(&app, &def);
     }
     if def.start_cmd.is_empty() {
         return Err("该项目未配置启动命令".to_string());
@@ -2425,16 +2784,24 @@ pub async fn npm_start(app: tauri::AppHandle, project_id: String) -> Result<(), 
 }
 
 #[tauri::command]
-pub async fn npm_stop(project_id: String) -> Result<(), String> {
+pub async fn npm_stop(app: tauri::AppHandle, project_id: String) -> Result<(), String> {
     let def = find_project(&project_id).ok_or_else(|| format!("未找到项目: {}", project_id))?;
+    // docker 服务的「停止」= compose down（容器由 daemon 持有，没有可 kill 的本地 PID）
+    if def.is_docker() {
+        return docker_stop(&app, &def);
+    }
     stop_project_process(&def)
 }
 
 /// 卸载：停止进程并清空托管目录（{node_projects_dir}/{id}）。
 /// 用于 npx 模式切换 / 重装前一键清理旧目录（含 node_modules 等残留）。
 #[tauri::command]
-pub async fn npm_uninstall(project_id: String) -> Result<(), String> {
+pub async fn npm_uninstall(app: tauri::AppHandle, project_id: String) -> Result<(), String> {
     let def = find_project(&project_id).ok_or_else(|| format!("未找到项目: {}", project_id))?;
+    // docker 服务走另一套「卸载」：停容器 + 删渲染产物，数据与密码都保留（见 docker_uninstall）
+    if def.is_docker() {
+        return docker_uninstall(&app, &def);
+    }
     // 先停止运行中的进程，避免文件被占用导致删除失败
     let _ = stop_project_process(&def);
 
@@ -2627,6 +2994,27 @@ pub async fn npm_open_devtools(project_id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn npm_deps(project_id: String) -> Result<DepCheckResult, String> {
     let def = find_project(&project_id).ok_or_else(|| format!("未找到项目: {}", project_id))?;
+    // docker 服务不依赖 git / node / pnpm：把「依赖就绪」直接映射成 Docker 就绪，
+    // 这样前端原有的「全部就绪」门禁无需为 docker 单独放行。
+    // 细节展示由 docker_env_check 负责（前端对 docker 服务隐藏这三行 git/node/pm）。
+    if def.is_docker() {
+        let env = crate::commands::docker::check_env();
+        let ready = env.cli && env.daemon_running && env.compose;
+        let mk = |name: &str, version: &str| DepCheck {
+            name: name.to_string(),
+            exists: ready,
+            path: None,
+            version: Some(version.to_string()),
+            satisfies: ready,
+            requirement: None,
+        };
+        return Ok(DepCheckResult {
+            git: mk("docker", &env.cli_version),
+            node: mk("compose", &env.compose_version),
+            package_manager: mk("daemon", if env.daemon_running { "running" } else { "" }),
+            all_ready: ready,
+        });
+    }
     Ok(check_deps(&def))
 }
 
@@ -2905,6 +3293,9 @@ pub fn npm_check_update(project_id: String) -> NodeUpdateInfo {
 }
 
 fn status_for(def: &NodeProjectDef) -> NodeProjectStatus {
+    if def.is_docker() {
+        return docker_status_for(def);
+    }
     let installed = def.installed();
     if !installed {
         return NodeProjectStatus {
@@ -2918,6 +3309,7 @@ fn status_for(def: &NodeProjectDef) -> NodeProjectStatus {
             local_version: None,
             error: None,
             conflict_process: None,
+            containers: 0,
             init_available: def.has_init(),
             initialized: def.initialized(),
         };
@@ -2969,6 +3361,7 @@ fn status_for(def: &NodeProjectDef) -> NodeProjectStatus {
         local_version,
         error: None,
         conflict_process,
+        containers: 0,
         init_available: def.has_init(),
         initialized: def.initialized(),
     }
@@ -3080,6 +3473,41 @@ mod tests {
         assert!(version_satisfies("20.5.0", "20"));
     }
 
+    /// ARTEX 的定义文件必须能被解析成完整的 docker 服务。
+    ///
+    /// 为什么需要这条：`serde` 默认**忽略未知字段**，所以模板里拼错一个字段名
+    /// （比如 `healthPort` 写错）会静默丢掉整份配置，界面表现成「声明了 docker
+    /// 类型却什么都不显示」，极难排查。这里把定义文件钉死。
+    #[test]
+    fn artex_definition_is_a_complete_docker_service() {
+        let raw = include_str!("../../../node-projects/artex.json");
+        let def: NodeProjectDef = serde_json::from_str(raw).expect("artex.json 应能解析");
+        assert_eq!(def.id, "artex");
+        assert!(def.is_docker(), "runtime 应为 docker 且 docker 配置非空");
+        assert_eq!(def.effective_port(), 8787);
+
+        let spec = def.docker_spec().expect("应能投影成 docker spec");
+        assert_eq!(spec.project, "kira-artex", "compose 项目名要隔离，别和用户自己的撞");
+        assert!(
+            spec.compose_tpl.contains("mianhuatang11/artex"),
+            "镜像要用自维护源（原 autumn27/artex 已失效）"
+        );
+        assert!(
+            spec.compose_tpl.contains("127.0.0.1:${ARTEX_PORT"),
+            "端口必须只绑回环 —— 这类双用途安全工具不该暴露到局域网"
+        );
+        assert!(!spec.compose_tpl.contains("8787:8787"), "不应残留上游的全网卡端口映射");
+        assert!(
+            spec.compose_tpl.contains("${POSTGRES_PASSWORD}"),
+            "数据库密码要走 .env 变量，不能写死"
+        );
+        assert!(spec.env_tpl.contains("{{pg_password}}"), "env 模板要带密码占位符");
+        assert!(
+            spec.volumes.iter().any(|v| v == "data"),
+            "data 目录必须持久化（jwt.key / SQLite 在里面）"
+        );
+    }
+
     #[test]
     fn test_web_path_render() {
         let def = NodeProjectDef {
@@ -3107,6 +3535,7 @@ mod tests {
             env: HashMap::new(),
             init_cmd: Vec::new(),
             init_marker: String::new(),
+            docker: None,
         };
         assert_eq!(def.resolved_web_path(), "http://127.0.0.1:3080");
     }
@@ -3144,6 +3573,7 @@ mod tests {
             env: HashMap::new(),
             init_cmd: Vec::new(),
             init_marker: String::new(),
+            docker: None,
         }
     }
 
@@ -3528,6 +3958,7 @@ mod tests {
             env: Default::default(),
             init_cmd: Vec::new(),
             init_marker: String::new(),
+            docker: None,
         };
         let root = std::env::temp_dir().join(format!("kira-inst-{}", std::process::id()));
         let deps = root.join(".deps");
