@@ -42,7 +42,7 @@ import {
   Palette,
   Plus,
   Rows3,
-  Table2,
+  ListTree,
   Save,
   Sparkles,
   Terminal,
@@ -839,6 +839,60 @@ export default function DbDesignerPanel() {
     return set;
   }, [doc, selectedId]);
 
+  /**
+   * 表导航的行数据：按引用关系澄清父子并缩进，形成一棵树。
+   * 一张被引用多少次就当作父节点；成环的表同样当根，不会死循环。
+   */
+  const tableTreeRows = useMemo(() => {
+    type Row = { id: string; name: string; color: string; depth: number; related: boolean; relCount: number };
+    if (!doc) return [] as Row[];
+    // 每张表被多少张表引用（from = 引用方）
+    const refCount = new Map<string, number>();
+    for (const r of doc.relations) refCount.set(r.from.node, (refCount.get(r.from.node) ?? 0) + 1);
+    // 选父：引用方最多的那个，这样父表的子节点才能靠近它
+    const parentOf = new Map<string, string>();
+    for (const r of doc.relations) {
+      const cur = parentOf.get(r.from.node);
+      if (cur === undefined || (refCount.get(r.from.node) ?? 0) > (refCount.get(cur) ?? 0)) {
+        parentOf.set(r.from.node, r.to.node);
+      }
+    }
+    const childIds = new Set(parentOf.keys());
+    const relCountOf = (id: string) =>
+      doc.relations.filter((r) => r.from.node === id || r.to.node === id).length;
+    const rows: Row[] = [];
+    const walk = (id: string, depth: number, seen: Set<string>) => {
+      const n = doc.nodes.find((x) => x.id === id);
+      if (!n || seen.has(id)) return;
+      seen.add(id);
+      rows.push({
+        id: n.id,
+        name: n.name,
+        color: n.color ?? "",
+        depth,
+        related: selectedId !== null && relatedIds.has(n.id),
+        relCount: relCountOf(n.id),
+      });
+      for (const r of doc.relations) {
+        if (r.to.node !== id) continue;
+        if (parentOf.get(r.from.node) !== id) continue; // 只展展正确的父子边
+        walk(r.from.node, depth + 1, new Set(seen));
+      }
+    };
+    for (const n of doc.nodes) {
+      if (!childIds.has(n.id)) walk(n.id, 0, new Set());
+    }
+    // 环里的表可能没被任何根走到，补到底部保证每张表都能找到
+    for (const n of doc.nodes) {
+      if (rows.some((x) => x.id === n.id)) continue;
+      rows.push({
+        id: n.id, name: n.name, color: n.color ?? "", depth: 0,
+        related: selectedId !== null && relatedIds.has(n.id),
+        relCount: relCountOf(n.id),
+      });
+    }
+    return rows;
+  }, [doc, selectedId, relatedIds]);
   const rfNodes: Node[] = useMemo(() => {
     if (!doc) return [];
     const cache = nodeObjCache.current;
@@ -846,22 +900,31 @@ export default function DbDesignerPanel() {
     for (const n of visibleNodes) {
       const p = positions[n.id] ?? { x: n.x ?? 0, y: n.y ?? 0 };
       const selected = selectedId === n.id;
-      // 有选中项时，只有它和它的关联表点亮，其余压暗
+      /** 有选中项时，只有它和它的关联表点亮，其余压暗 */
       const related = selectedId !== null && relatedIds.has(n.id);
+      /** 压暗只在「确实选中了某张表」时才做 ——
+       *  没选中是一种状态，不该被当成「这张表跟谁都没关系」。 */
+      const dimmed = selectedId !== null && !selected && !related;
       const expanded = alwaysExpand;
       const measured = measuredMap[n.id];
       const prev = cache.get(n.id);
       const prevObj = prev?.obj;
       const prevData = prevObj?.data as DesignNodeData | undefined;
-      // 缓存键：文档引用 + 节点引用 + 坐标 + 选中/展开态 + 显示模式 + 尺寸。
+      // 缓存键：文档引用 + 节点引用 + 坐标 + 选中/关联/展开态 + 显示模式 + 尺寸。
       // 纯拖动时这些都没变 → 复用旧对象，memo 直接跳过。
+      // ⚠️ 选中/关联态必须进这个判断：选中变化时 doc 与坐标都没变，
+      // 若不比较就会复用旧 data，卡片一直停在旧的高亮状态（表现为「选了表它还是灰的」）。
       if (
         prev &&
         prev.doc === doc &&
         prev.node === n &&
         prev.px === p.x &&
         prev.py === p.y &&
-        prevData?.fieldRows === fieldRows
+        prevData?.fieldRows === fieldRows &&
+        prevData?.selected === selected &&
+        prevData?.related === related &&
+        prevData?.dimmed === dimmed &&
+        prevData?.expanded === expanded
       ) {
         out.push(prev.obj);
         continue;
@@ -872,6 +935,7 @@ export default function DbDesignerPanel() {
         prev!.node !== n ||
         (prevData.selected !== selected) ||
         (prevData.related !== related) ||
+        (prevData.dimmed !== dimmed) ||
         (prevData.expanded !== expanded) ||
         (prevData.fieldRows !== fieldRows);
       const data = (dataChanged
@@ -883,6 +947,7 @@ export default function DbDesignerPanel() {
             expanded,
             selected,
             related,
+            dimmed,
             fieldRows,
           }
         : prevData) as unknown as Record<string, unknown>;
@@ -1440,6 +1505,54 @@ export default function DbDesignerPanel() {
       {/* 左 = 画布（上）+ 对象属性 dock（下）；右 = AI 助手侧栏（思维导图同款右栏）。
           侧栏收起时画布+dock 拿回全宽，展开时左侧让位 —— 画布高度不变。 */}
       <div className="flex min-h-0 flex-1">
+        {/* 表导航（左栏 · 常驻可折叠）：纯文字树，一行一个表，按引用关系缩进。
+            放左栏而不是画布角落的小浮层 —— 浮层会被当成「装饰」而根本没人找。 */}
+        {doc && doc.nodes.length > 0 ? (
+          <div className="flex min-h-0 flex-col border-r border-white/5 bg-white/[0.015]">
+            <button
+              onClick={() => setTableNavOpen((v) => !v)}
+              className="flex items-center gap-1.5 border-b border-white/5 px-2.5 py-2 text-tiny font-semibold text-slate-400 hover:text-slate-200 cursor-pointer"
+              title={t("dbd.tableNavTitle")}
+            >
+              <ListTree className="w-3.5 h-3.5 shrink-0" />
+              {t("dbd.tableNav")}
+              <span className="text-slate-600">{doc.nodes.length}</span>
+              <ChevronDown className={`ml-auto w-3 h-3 transition-transform ${tableNavOpen ? "" : "-rotate-90"}`} />
+            </button>
+            {tableNavOpen ? (
+              <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1">
+                {tableTreeRows.map((r) => (
+                  <button
+                    key={r.id}
+                    onClick={() => {
+                      setSelectedId(r.id);
+                      setCenterTargetId(r.id);
+                      setCenterSignal((s) => s + 1);
+                    }}
+                    className={`flex w-full items-center gap-1 rounded py-1 pr-1.5 text-left text-tiny cursor-pointer transition-colors ${
+                      r.id === selectedId
+                        ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]"
+                        : r.related
+                          ? "text-cyan-300 hover:bg-white/5"
+                          : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
+                    }`}
+                    style={{ paddingLeft: 6 + r.depth * 10 }}
+                    title={r.name}
+                  >
+                    {/* 与画布同源的配色，一眼分出系列 */}
+                    <span
+                      className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                      style={{ background: /^#[0-9a-f]{6}$/i.test(r.color ?? "") ? r.color : "var(--module-accent)" }}
+                    />
+                    <span className="truncate">{r.name}</span>
+                    {r.relCount > 0 ? <span className="ml-auto text-micro text-slate-600">{r.relCount}</span> : null}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* React Flow 必须有确定高度的容器，否则画布高度为 0 */}
         <div className="relative min-h-0 min-w-0 flex-1">
@@ -1491,86 +1604,6 @@ export default function DbDesignerPanel() {
             </div>
           )}
         </div>
-
-        {/* 表导航（画布右下角）：缩略图在几十张表时只是噪音，这里给的是**能点的名字**。
-            点一下 = 选中该表 + 平移过去，随即触发关联高亮与连线动画 ——
-            「这张表跟谁有关系」从此不用在画布上一根根线找。 */}
-        {doc && doc.nodes.length > 0 ? (
-          <div className="pointer-events-auto absolute bottom-3 right-3 z-10">
-            <div className="flex items-stretch overflow-hidden rounded-ctl border border-white/10 bg-slate-900/85 shadow-lg backdrop-blur">
-              <button
-                onClick={() => setTableNavOpen((v) => !v)}
-                className={`flex items-center gap-1 px-2 py-1.5 text-tiny cursor-pointer transition-colors ${
-                  tableNavOpen ? "text-[var(--module-accent)] bg-white/5" : "text-slate-300 hover:text-slate-100"
-                }`}
-                title={t("dbd.tableNavTitle")}
-              >
-                <Table2 className="w-3.5 h-3.5" />
-                {t("dbd.tableNav")}
-                <span className="text-slate-500">{doc.nodes.length}</span>
-                <ChevronDown className={`w-3 h-3 transition-transform ${tableNavOpen ? "rotate-180" : ""}`} />
-              </button>
-            </div>
-
-            {tableNavOpen ? (
-              <div className="mt-1 w-56 max-h-[46vh] overflow-y-auto rounded-ctl border border-white/10 bg-slate-900/92 p-1 shadow-xl backdrop-blur">
-                {/* 有选中项时置顶「它的关联表」：审一张表时最常做的是看它的关联 */}
-                {selectedId && relatedIds.size > 1 ? (
-                  <>
-                    <div className="px-1.5 py-1 text-micro font-semibold uppercase tracking-wide text-slate-500">
-                      {t("dbd.tableNavRelated", { name: doc.nodes.find((n) => n.id === selectedId)?.name ?? "" })}
-                    </div>
-                    {[...relatedIds]
-                      .filter((id) => id !== selectedId)
-                      .map((id) => {
-                        const n = doc.nodes.find((x) => x.id === id);
-                        if (!n) return null;
-                        return (
-                          <button
-                            key={`rel-${id}`}
-                            onClick={() => {
-                              setSelectedId(id);
-                              setCenterTargetId(id);
-                              setCenterSignal((s) => s + 1);
-                            }}
-                            className="w-full truncate rounded px-1.5 py-1 text-left text-tiny text-[var(--module-accent)] hover:bg-white/10 cursor-pointer"
-                          >
-                            {n.name}
-                          </button>
-                        );
-                      })}
-                    <div className="my-1 border-t border-white/5" />
-                  </>
-                ) : null}
-                <div className="px-1.5 py-1 text-micro font-semibold uppercase tracking-wide text-slate-500">
-                  {t("dbd.tableNavAll")}
-                </div>
-                {doc.nodes.map((n) => (
-                  <button
-                    key={n.id}
-                    onClick={() => {
-                      setSelectedId(n.id);
-                      setCenterTargetId(n.id);
-                      setCenterSignal((s) => s + 1);
-                    }}
-                    className={`flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-tiny cursor-pointer transition-colors ${
-                      n.id === selectedId
-                        ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]"
-                        : "text-slate-300 hover:bg-white/10"
-                    }`}
-                  >
-                    {/* 与画布同源的配色：导航栏里也能分出系列 */}
-                    <span
-                      className="w-2 h-2 rounded-full flex-shrink-0"
-                      style={{ background: /^#[0-9a-f]{6}$/i.test(n.color ?? "") ? n.color : "var(--module-accent)" }}
-                    />
-                    <span className="truncate flex-1">{n.name}</span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
 
         {/* 拖拽分隔线：上下拖动调整 dock 高度（↑↓ 键也能微调），高度记到 localStorage。
             收起时整条隐藏 —— 只剩一条边没必要再能拖。 */}

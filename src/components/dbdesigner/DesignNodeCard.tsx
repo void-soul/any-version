@@ -50,7 +50,7 @@ export const handleAllPk = "pk-all";
 
 function DesignNodeCardInner({ data }: NodeProps) {
   const d = data as unknown as DesignNodeData;
-  const { node, relationFields, expanded, selected, fieldRows, fkFields, related } = d;
+  const { node, relationFields, expanded, selected, fieldRows, fkFields, related, dimmed } = d;
   const isView = node.kind === "view";
   const fields = node.table?.fields ?? [];
   /** 表配色：图标 / 表名 / 表头底 / 整卡底 / 左侧色条都用它；没设置就回退模块强调色。
@@ -59,11 +59,10 @@ function DesignNodeCardInner({ data }: NodeProps) {
   const rawColor = /^#[0-9a-f]{6}$/i.test(node.color ?? "") ? (node.color as string) : "";
   const tint = rawColor || "var(--module-accent)";
   /**
-   * 选中高亮三档：选中本身 / 与它有关联的表 / 与它无关的表。
-   * 「有选中项时把无关的压暗」是关键 —— 表一多时注意力应该只落在
-   * 「这张表跟谁有关系」上，而不是在一堆同样显眼的卡片里找线头。
-   */
-  const dimmed = !selected && !related;
+ * 选中高亮三档：选中本身 / 与它有关联的表 / 与它无关的表。
+ * `dimmed` 由面板侧算好后传进来 —— **不能在卡片里自己判断**：
+ * 「没选中任何表」也是一种正常状态，不能被当成「这张表跟谁都没关系」而整片压暗。
+ */
   /**
    * 折叠态显示哪些字段：
    *   keys —— 只主键 + 外键（「这张表靠什么关联」一眼看到，杂字段不占地方）

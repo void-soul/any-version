@@ -15,10 +15,15 @@ import { groupByForeignKey } from "./series";
 
 /** 节点卡片宽度（与 DesignNodeCard 的 w-[288px] 对齐；改那边记得改这里） */
 const CARD_W = 288;
-const GAP_X = 88;
-const GAP_Y = 44;
+/**
+ * 层间距（X 方向）：卡片 288 宽，**留够走线的走廊**。
+ * 早先只留 88，连线没有走廊可用，只能贴着卡片绕、或者干脆垂直穿越一堆表 ——
+ * 间距不够时，再好的分层算法都会被连线噪声淹没。
+ */
+const GAP_X = 200;
+const GAP_Y = 64;
 /** 两个系列块之间的纵向间距：给连线留出走线的余量 */
-const GAP_SERIES = 140;
+const GAP_SERIES = 180;
 const PAD = 40;
 /** 卡片高度估算：字段一行 ≈ 18px，表头 ≈ 46px（与卡片实际样式同量级即可，宁可高估） */
 const ROW_H = 18;
@@ -52,8 +57,10 @@ interface GroupLayout {
 /**
  * 单个系列内部：BFS 分层 + 层内「兄弟相邻」网格。
  *
- * 父表在左、子表在右，深度用 BFS 首次到达的层数（用「首次到达」而非「最长链」
- * 是有意的：后者遇 A→B→A 的环会死循环，BFS 天然只访问一次）。
+ * 层号用**最长路径**而不是 BFS 最短路径：BFS 会把「直连父节点的子表」和
+ * 「隔了两层的孙表」放进同一层，于是父子之间出现一条横跨整层的回折线。
+ * 最长路径保证「子节点严格比父节点深一层」，每一根连线都只往右走一段，不折返。
+ * 成环靠「只认第一次到达 + 迭代收敛」兜底，不会死循环。
  *
  * 层内再按「父节点是谁」排序：同一个父的子表连着排。早期直接按文档顺序铺网格，
  * 一个父表的几个子表被拆到网格不同角落，从父表拉出的线就成了扇形乱麻 ——
@@ -79,6 +86,8 @@ function layoutGroup(
     isChild.add(r.from.node);
   }
 
+  // 层号 = 从根出发的最长路径长度。逐轮松弛：有更深的来路就下沉，
+  // 用「本轮是否还在变」收敛，成环时最多多跑一轮就停（不会死循环）。
   const depth = new Map<string, number>();
   const parentOf = new Map<string, string | null>();
   const queue: string[] = [];
@@ -95,15 +104,28 @@ function layoutGroup(
     parentOf.set(group[0].id, null);
     queue.push(group[0].id);
   }
-  while (queue.length > 0) {
-    const id = queue.shift()!;
-    const d = depth.get(id) ?? 0;
-    for (const child of children.get(id) ?? []) {
-      if (depth.has(child)) continue; // 只认第一次到达，环不会死循环
-      depth.set(child, d + 1);
-      parentOf.set(child, id);
-      queue.push(child);
+  for (const n of group) {
+    if (!depth.has(n.id)) {
+      depth.set(n.id, 0);
+      parentOf.set(n.id, null);
     }
+  }
+  for (let round = 0; round < group.length; round++) {
+    let changed = false;
+    for (const n of group) {
+      const d = depth.get(n.id) ?? 0;
+      for (const child of children.get(n.id) ?? []) {
+        // 子节点必须比父节点深一层：比现在更深才更新
+        if ((depth.get(child) ?? 0) <= d) {
+          if ((depth.get(child) ?? 0) < d + 1) {
+            depth.set(child, d + 1);
+            parentOf.set(child, n.id);
+            changed = true;
+          }
+        }
+      }
+    }
+    if (!changed) break;
   }
   for (const n of group) {
     if (!depth.has(n.id)) {
