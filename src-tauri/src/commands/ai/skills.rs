@@ -1,10 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tauri::Emitter;
-use crate::commands::ai_registry::registry;
 use crate::commands::config::get_data_dir;
 use crate::commands::cache::create_junction;
 use super::config::load_ai_config;
@@ -16,9 +15,14 @@ fn skills_path() -> PathBuf {
     get_data_dir().join("skills.json")
 }
 
-/// 默认技能仓库：`~/.agents/skills`（与 skills.sh 生态对齐）。
+/// 默认技能仓库：Kira 数据目录下的 `skills` 子目录。
+///
+/// 刻意**不用** `~/.agents/skills`：那个目录是 claude-code / codex-cli / opencode /
+/// cursor / cline / firebender 的原生扫描目录，放进去的技能会对**所有**项目全局生效，
+/// 每次会话都把全部技能的 name + description 注入上下文（正文虽是按需读取，但描述常驻）。
+/// 放进 Kira 自己的数据目录后，只有显式安装给某个项目的技能才会生效。
 pub(crate) fn default_skills_dir() -> PathBuf {
-    home_dir().join(".agents").join("skills")
+    get_data_dir().join("skills")
 }
 
 /// 取 HOME 目录（兼容 Windows `USERPROFILE` / Unix `HOME`）
@@ -59,11 +63,21 @@ pub(crate) fn resolve_skills_dir(cfg_value: &str) -> PathBuf {
 }
 
 /// 当前技能仓库路径。
-/// 作为 skills.sh 的 GUI，托管仓库即 skills.sh 公共仓库（默认 ~/.agents/skills），
-/// 由 AiConfig.skills_dir 配置；非空时回退到默认（deprecated 字段，GUI 不再暴露）。
+/// 默认是 Kira 数据目录下的 `skills`；`AiConfig.skills_dir` 非空时用用户指定的目录。
 pub(crate) fn skills_dir() -> PathBuf {
     let cfg = load_ai_config();
-    resolve_skills_dir(&cfg.skills_dir)
+    let configured = cfg.skills_dir.trim();
+    if configured.is_empty() {
+        default_skills_dir()
+    } else {
+        resolve_skills_dir(configured)
+    }
+}
+
+/// 当前生效的技能库目录（前端要如实显示「技能装到哪了」）。
+#[tauri::command]
+pub fn get_skills_dir() -> String {
+    skills_dir().to_string_lossy().to_string()
 }
 
 // ─── Manifest 读写 ───
@@ -83,6 +97,334 @@ pub(crate) fn load_skills() -> SkillsFile {
 pub(crate) fn save_skills(skills: &SkillsFile) -> Result<(), String> {
     let data = serde_json::to_string_pretty(skills).map_err(|e| e.to_string())?;
     crate::commands::config::atomic_write_file(&skills_path(), data.as_bytes())
+}
+
+// ─── 项目（安装作用域） ───
+//
+// 技能装给项目 = junction 到 `<项目>/.agents/skills/<技能 id>`。
+// 早先的模型是「按工具」（给某个 IDE / 全局装一份），现已改为「按项目」：
+// 真正需要技能的是项目，IDE 只是读取技能的宿主。
+
+/// 项目条目：本质就是一个目录路径。
+///
+/// 刻意**不存**「这个项目装了哪些技能」—— 安装状态靠扫描目标目录推断。
+/// 持久化清单与磁盘实况必然会漂移（用户手动删 junction、技能库删技能、移动项目目录），
+/// 扫描推断则永远等于真实状态。
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillProject {
+    pub id: String,
+    /// 规范化后的绝对路径（add_project 时转绝对路径并去重）
+    pub path: String,
+    /// 目录名，仅用于列表展示
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub added_at: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct ProjectsFile {
+    #[serde(default)]
+    pub projects: Vec<SkillProject>,
+}
+
+fn projects_path() -> PathBuf {
+    get_data_dir().join("projects.json")
+}
+
+fn load_projects() -> ProjectsFile {
+    load_projects_from(&projects_path())
+}
+
+/// 读写分离出「路径可注入」的版本：单测必须能指向临时目录，
+/// 否则测试会往用户真实的数据目录里写 projects.json。
+fn load_projects_from(path: &Path) -> ProjectsFile {
+    if let Ok(data) = fs::read_to_string(path) {
+        if let Ok(v) = serde_json::from_str::<ProjectsFile>(&data) {
+            return v;
+        }
+    }
+    ProjectsFile::default()
+}
+
+fn save_projects(f: &ProjectsFile) -> Result<(), String> {
+    save_projects_to(&projects_path(), f)
+}
+
+fn save_projects_to(path: &Path, f: &ProjectsFile) -> Result<(), String> {
+    let data = serde_json::to_string_pretty(f).map_err(|e| e.to_string())?;
+    crate::commands::config::atomic_write_file(path, data.as_bytes())
+}
+
+/// 列出全部项目（安装作用域）。
+#[tauri::command]
+pub fn list_projects() -> Vec<SkillProject> {
+    load_projects().projects
+}
+
+/// 添加项目：只收「存在且确实是目录」的路径，规范化后按同一路径去重。
+#[tauri::command]
+pub fn add_project(path: String) -> Result<SkillProject, String> {
+    add_project_at(&projects_path(), &path)
+}
+
+fn add_project_at(file: &Path, raw: &str) -> Result<SkillProject, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("项目路径不能为空".to_string());
+    }
+    let abs = if Path::new(trimmed).is_absolute() {
+        PathBuf::from(trimmed)
+    } else {
+        std::env::current_dir().unwrap_or_default().join(trimmed)
+    };
+    if !abs.is_dir() {
+        return Err(format!("不是有效的目录：{}", abs.display()));
+    }
+    let mut f = load_projects_from(file);
+    let norm = normalize_path(&abs.to_string_lossy());
+    if f.projects.iter().any(|p| normalize_path(&p.path) == norm) {
+        return Err("该项目已添加".to_string());
+    }
+    let project = SkillProject {
+        id: gen_project_id(),
+        path: abs.to_string_lossy().to_string(),
+        name: abs
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        added_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+    };
+    f.projects.push(project.clone());
+    save_projects_to(file, &f)?;
+    Ok(project)
+}
+
+/// 移除项目条目：**只删清单里的这一行**，项目目录里的 `.agents/skills` 一概不动
+/// （junction 是技能库指向项目的链接，删它等于删技能的入口，需用户自己另行卸载）。
+#[tauri::command]
+pub fn remove_project(id: String) -> Result<(), String> {
+    remove_project_at(&projects_path(), &id)
+}
+
+fn remove_project_at(file: &Path, id: &str) -> Result<(), String> {
+    let mut f = load_projects_from(file);
+    let before = f.projects.len();
+    f.projects.retain(|p| p.id != id);
+    if f.projects.len() == before {
+        return Err("项目不存在".to_string());
+    }
+    save_projects_to(file, &f)
+}
+
+/// 项目 id：时间戳 + 进程号（同进程内纳秒级不重复，与 temp_clone_dir 同一风格）。
+fn gen_project_id() -> String {
+    let stamp = chrono::Local::now().timestamp_nanos_opt().unwrap_or(0);
+    format!("p{}_{}", std::process::id(), stamp)
+}
+
+// ─── 安装到项目（junction） ───
+//
+// 安装 = 在 `<项目>/.agents/skills/<技能id>` 建一个指向技能库该技能的目录联接。
+// 卸载 = 只删链接本身。两者都不在项目目录里放任何实体文件，所以「装给项目」
+// 不会让技能副本散落到各处，技能库一改，所有项目立刻同步。
+
+/// 解析项目记录 → `<项目>/.agents/skills`，顺带校验项目目录还在。
+fn resolve_project_skills_dir(project_id: &str) -> Result<PathBuf, String> {
+    resolve_project_skills_dir_in(&projects_path(), project_id)
+}
+
+/// 同上，但项目清单路径可注入（单测用；否则测试会写用户真实的数据目录）。
+fn resolve_project_skills_dir_in(file: &Path, project_id: &str) -> Result<PathBuf, String> {
+    let f = load_projects_from(file);
+    let p = f
+        .projects
+        .iter()
+        .find(|p| p.id == project_id)
+        .ok_or_else(|| "项目不存在".to_string())?;
+    if !Path::new(&p.path).is_dir() {
+        return Err(format!(
+            "项目目录不存在或已被移动：{}（请移除后重新添加）",
+            p.path
+        ));
+    }
+    Ok(Path::new(&p.path).join(".agents").join("skills"))
+}
+
+/// 这个路径是不是「指向技能库内某个技能」的 junction？返回那个技能 id。
+///
+/// 用 `read_link` 解析真实目标，而不是「目录名在技能库里存在就算」——
+/// 后者会把用户自己建的同名链接、以及指错了位置的链接误判成已安装。
+/// 悬空 junction（目标已删）返回 None：它是链接，但不再指向任何现存技能。
+fn junction_target_skill(link: &Path, store: &Path) -> Option<String> {
+    // symlink_metadata 而非 metadata：读链接自己而不是跟随后的目标（悬空时会失败）
+    if !fs::symlink_metadata(link)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let raw = fs::read_link(link).ok()?;
+    // 相对目标按链接所在目录解析（mklink /J 总给绝对路径，但手工建的可能是相对）
+    let target = if raw.is_absolute() {
+        raw
+    } else {
+        link.parent()?.join(raw)
+    };
+    // 两边都 canonicalize：展开 8.3 短名（%TEMP% 常是 ADMINI~1 形式），
+    // 否则「技能库记的是长名、链接里存的是短名」就会匹配不上。
+    // canonicalize 对悬空目标会失败，退回原路径即可（后续 is_dir() 会判为 broken）。
+    let t = fs::canonicalize(&target).unwrap_or(target);
+    let s = fs::canonicalize(store).unwrap_or_else(|_| store.to_path_buf());
+    // 自己归一分隔符：normalize_path 只统一大小写与**末尾**分隔符，中间的反斜杠不管，
+    // 直接拿它做 prefix 匹配会永远失败。
+    let slashes = |p: &str| p.replace('\\', "/").to_lowercase();
+    let t = slashes(&t.to_string_lossy());
+    let s = slashes(&s.to_string_lossy());
+    let prefix = format!("{}/", s.trim_end_matches('/'));
+    let id = t.strip_prefix(&prefix)?.split('/').next()?.to_string();
+    if id.is_empty() {
+        None
+    } else {
+        Some(id)
+    }
+}
+
+/// 把技能装到项目。返回 junction 的实际路径。
+#[tauri::command]
+pub fn install_skill_to_project(skill_id: String, project_id: String) -> Result<String, String> {
+    install_into(&skills_dir(), &projects_path(), &skill_id, &project_id)
+}
+
+fn install_into(store: &Path, projects_file: &Path, skill_id: &str, project_id: &str) -> Result<String, String> {
+    let skill_dir = store.join(skill_id);
+    if !skill_dir.is_dir() {
+        return Err(format!("技能库中不存在技能「{}」", skill_id));
+    }
+    let dir = resolve_project_skills_dir_in(projects_file, project_id)?;
+    fs::create_dir_all(&dir).map_err(|e| format!("创建 {} 失败: {}", dir.display(), e))?;
+    let link = dir.join(skill_id);
+
+    // 前置检查必须自己做，**不能交给 create_junction**：它对「已存在的非链接目录」
+    // 会直接 remove_dir_all 递归删除（cache.rs:133）。用户手工放的同名技能目录
+    // 若被那样删掉，就是无声的数据丢失。
+    if let Ok(md) = fs::symlink_metadata(&link) {
+        if !md.file_type().is_symlink() {
+            return Err(format!(
+                "{} 已是真实目录，为避免覆盖你的数据已拒绝安装。请先改名或删除它。",
+                link.display()
+            ));
+        }
+        // 是链接：已正确指向本技能则幂等成功
+        if junction_target_skill(&link, store).as_deref() == Some(skill_id) {
+            return Ok(link.to_string_lossy().to_string());
+        }
+        // 指向别处 / 悬空：交给 create_junction 删链接后重建
+    }
+
+    // junction 跨本地卷可行，但不支持网络路径（UNC）：先拦一道，避免 mklink 报错难懂
+    if skill_dir.to_string_lossy().starts_with(r"\\") {
+        return Err("技能库位于网络路径（UNC）时无法创建目录联接，请把技能库移到本地磁盘".to_string());
+    }
+    create_junction(&link, &skill_dir).map_err(|e| format!("安装失败: {}", e))?;
+    Ok(link.to_string_lossy().to_string())
+}
+
+/// 从项目卸载技能：**只删链接本身**。
+///
+/// Windows 上删 junction 必须用 remove_dir —— 若用会跟随删除的操作，
+/// 删掉的会是技能库里的实体技能内容。这里刻意不用 remove_dir_all。
+#[tauri::command]
+pub fn remove_skill_from_project(skill_id: String, project_id: String) -> Result<(), String> {
+    uninstall_from(&projects_path(), &skill_id, &project_id)
+}
+
+fn uninstall_from(projects_file: &Path, skill_id: &str, project_id: &str) -> Result<(), String> {
+    let dir = resolve_project_skills_dir_in(projects_file, project_id)?;
+    let link = dir.join(skill_id);
+    let md = fs::symlink_metadata(&link).map_err(|_| format!("该项目未安装技能「{}」", skill_id))?;
+    if !md.file_type().is_symlink() {
+        return Err(format!(
+            "{} 不是安装产生的链接（是真实目录），已拒绝删除",
+            link.display()
+        ));
+    }
+    if fs::remove_dir(&link).is_err() {
+        // 占用 / 权限等情况下 remove_dir 可能失败，rmdir 同样只删链接本身
+        fs::remove_file(&link).map_err(|e| format!("卸载失败: {}", e))?;
+    }
+    Ok(())
+}
+
+/// 项目里已安装的技能（扫描推断，不持久化）。
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSkillEntry {
+    pub skill_id: String,
+    pub name: String,
+    pub description: String,
+    /// `linked` 已生效 · `broken` 悬空（技能库里的技能已被删除）
+    pub state: String,
+}
+
+/// 列出某个项目装了什么：扫 `.agents/skills`，看哪些是指向技能库的 junction。
+///
+/// 状态不落盘 —— 清单与实况必然会漂移（用户手动删链接、技能库删技能、移动项目），
+/// 扫描推断则永远等于磁盘真实状态。
+#[tauri::command]
+pub fn list_project_skills(project_id: String) -> Result<Vec<ProjectSkillEntry>, String> {
+    list_installed(&skills_dir(), &projects_path(), &project_id)
+}
+
+fn list_installed(store: &Path, projects_file: &Path, project_id: &str) -> Result<Vec<ProjectSkillEntry>, String> {
+    let dir = resolve_project_skills_dir_in(projects_file, project_id)?;
+    let mut out: Vec<ProjectSkillEntry> = Vec::new();
+    let entries = match fs::read_dir(&dir) {
+        Ok(e) => e,
+        // 项目还没装过任何技能（.agents/skills 不存在）：返回空而不是报错
+        Err(_) => return Ok(out),
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let fallback_id = entry.file_name().to_string_lossy().to_string();
+        if fallback_id.starts_with('.') {
+            continue;
+        }
+        if !fs::symlink_metadata(&path)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            // 真实目录：既不是我装的，也不是 junction（可能是用户自己的），不认
+            continue;
+        }
+        let target_id = junction_target_skill(&path, store);
+        let (skill_id, state) = match target_id {
+            Some(id) if store.join(&id).is_dir() => (id, "linked"),
+            // 是链接但目标已不在技能库 → 悬空，UI 要能标出来并给清理入口
+            _ => (fallback_id.clone(), "broken"),
+        };
+        let (name, description) = match state {
+            "linked" => {
+                let md = store.join(&skill_id).join("SKILL.md");
+                if md.exists() {
+                    let c = fs::read_to_string(&md).unwrap_or_default();
+                    parse_skill_md(&c, &skill_id)
+                } else {
+                    (skill_id.clone(), String::new())
+                }
+            }
+            _ => (fallback_id.clone(), String::new()),
+        };
+        out.push(ProjectSkillEntry {
+            skill_id,
+            name,
+            description,
+            state: state.to_string(),
+        });
+    }
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(out)
 }
 
 // ─── 技能元数据（分类/标签）读写 ───
@@ -170,42 +512,6 @@ fn parse_skill_md(content: &str, folder_name: &str) -> (String, String) {
 
 // ─── 数据结构 ───
 
-/// 技能工具信息（用于前端勾选目标工具 / MCP 工具列表）
-#[derive(Serialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct SkillToolInfo {
-    pub id: String,
-    pub label: String,
-}
-
-/// 工具技能目录管理状态
-#[derive(Serialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct SkillToolStatusView {
-    pub tool_id: String,
-    pub label: String,
-    pub skills_dir: String,
-    /// "managed" | "unmanaged" | "empty"
-    pub status: String,
-    pub skill_count: usize,
-    /// 用户设置中是否开启软链接安装
-    pub symlink_enabled: bool,
-    /// 该工具是否原生读取公共技能库 ~/.agents/skills
-    pub reads_agents_skills: bool,
-    /// 该工具中已 per-skill 部署（junction 指向仓库）的技能数量
-    #[serde(default)]
-    pub deployed_count: usize,
-}
-
-/// 一键管理所有工具的结果
-#[derive(Serialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct ManageAllResult {
-    pub managed_count: usize,
-    pub skipped_count: usize,
-    pub errors: Vec<String>,
-}
-
 /// 技能条目（简化版总览）
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -253,369 +559,11 @@ fn emit_install_progress(
     );
 }
 
-// ─── 工具技能目录管理（整目录 junction） ───
-
-/// 解析某工具的技能目录路径（取 skills-scan.json 中该工具的第一个目录）
-fn resolve_tool_skills_dir(tool_id: &str) -> Option<PathBuf> {
-    let reg = registry();
-    let scan = reg.skills_scan();
-    scan.tool_skills_dirs.get(tool_id).and_then(|dirs| dirs.first()).map(|d| {
-        let home = home_dir();
-        let resolved = if d.starts_with("~/") {
-            home.join(&d[2..])
-        } else if d.starts_with('~') {
-            home.join(&d[1..])
-        } else {
-            PathBuf::from(d)
-        };
-        resolved
-    })
-}
-
 /// 判断路径是否为 junction/symlink
 fn is_junction(path: &PathBuf) -> bool {
     fs::symlink_metadata(path)
         .map(|m| m.file_type().is_symlink())
         .unwrap_or(false)
-}
-
-/// 扫描各工具技能目录的管理状态
-#[tauri::command]
-pub fn get_skill_tools_status() -> Result<Vec<SkillToolStatusView>, String> {
-    let reg = registry();
-    let scan = reg.skills_scan();
-    let ai_cfg = load_ai_config();
-    let mut out: Vec<SkillToolStatusView> = Vec::new();
-
-    for tool_id in scan.tool_skills_dirs.keys() {
-        let label = reg.get_tool_config(tool_id)
-            .map(|c| c.display_name.clone())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| tool_id.clone());
-
-        let dir = match resolve_tool_skills_dir(tool_id) {
-            Some(d) => d,
-            None => continue,
-        };
-
-        let (status, skill_count) = if !dir.exists() {
-            ("empty".to_string(), 0)
-        } else if is_junction(&dir) {
-            let count = count_skills_in_dir(&dir);
-            ("managed".to_string(), count)
-        } else {
-            let count = count_skills_in_dir(&dir);
-            if count == 0 {
-                ("empty".to_string(), 0)
-            } else {
-                ("unmanaged".to_string(), count)
-            }
-        };
-
-        let reads_agents = scan.reads_agents_skills.iter().any(|t| t == tool_id);
-        // 若用户专门配置过，以用户配置为准；否则原生读取公共库的默认不弹软链接（即 false）
-        let symlink_enabled = ai_cfg.tool_symlinks.get(tool_id)
-            .cloned()
-            .unwrap_or(!reads_agents);
-
-        // per-skill 已部署数量（junction 指向仓库的技能）
-        let deployed_count = get_tool_deployed_skills(tool_id.clone()).unwrap_or_default().len();
-
-        out.push(SkillToolStatusView {
-            tool_id: tool_id.clone(),
-            label,
-            skills_dir: dir.to_string_lossy().to_string(),
-            status,
-            skill_count,
-            symlink_enabled,
-            reads_agents_skills: reads_agents,
-            deployed_count,
-        });
-    }
-
-    out.sort_by(|a, b| a.label.cmp(&b.label));
-    Ok(out)
-}
-
-/// 切换工具的软链接部署开关（保存并自动解除或创建 junction）
-#[tauri::command]
-pub fn toggle_tool_symlink_setting(tool_id: String, enabled: bool) -> Result<(), String> {
-    let mut cfg = load_ai_config();
-    cfg.tool_symlinks.insert(tool_id.clone(), enabled);
-    let _ = super::config::save_ai_config_to_file(&cfg);
-
-    if enabled {
-        let _ = manage_tool_skills_forced(tool_id);
-    } else {
-        let _ = unmanage_tool_skills(tool_id);
-    }
-    Ok(())
-}
-
-/// 强制创建/恢复软链接（不受 reads_agents_skills 阻断）
-fn manage_tool_skills_forced(tool_id: String) -> Result<(), String> {
-    let store = skills_dir();
-    let _ = fs::create_dir_all(&store);
-
-    let dir = resolve_tool_skills_dir(&tool_id)
-        .ok_or_else(|| format!("工具 {} 未配置技能目录", tool_id))?;
-
-    if dir.exists() && is_junction(&dir) {
-        return Ok(());
-    }
-
-    if dir.exists() && dir.is_dir() {
-        if let Ok(entries) = fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if !path.is_dir() { continue; }
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with('.') { continue; }
-                let dest = store.join(&name);
-                if !dest.exists() {
-                    let _ = copy_dir_recursive(&path, &dest);
-                }
-            }
-        }
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    if let Some(parent) = dir.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-
-    // 关键：junction 方向必须是「工具目录(link) → 公共技能仓库(target)」。
-    // 曾误写为 create_junction(&store, &dir)：会把公共仓库 store 当作 link，
-    // 而 store 是真实目录 → create_junction 内部 remove_dir_all(store) 会清空整个
-    // ~/.agents/skills 技能库，再建一个指向已删除工具目录的悬空 junction（数据丢失）。
-    create_junction(&dir, &store).map_err(|e| format!("创建软链接失败: {}", e))
-}
-
-/// 统计目录中的技能数量（子目录数，跳过文件和隐藏目录）
-fn count_skills_in_dir(dir: &PathBuf) -> usize {
-    if !dir.exists() {
-        return 0;
-    }
-    fs::read_dir(dir)
-        .map(|entries| {
-            entries.flatten()
-                .filter(|e| {
-                    let name = e.file_name().to_string_lossy().to_string();
-                    e.path().is_dir() && !name.starts_with('.')
-                })
-                .count()
-        })
-        .unwrap_or(0)
-}
-
-/// 将某工具的技能目录纳入管理：迁移内容到仓库 + 创建整目录 junction
-#[tauri::command]
-pub fn manage_tool_skills(tool_id: String) -> Result<(), String> {
-    let reg = registry();
-    let scan = reg.skills_scan();
-    let ai_cfg = load_ai_config();
-
-    let reads_agents = scan.reads_agents_skills.iter().any(|t| t == &tool_id);
-    let symlink_enabled = ai_cfg.tool_symlinks.get(&tool_id)
-        .cloned()
-        .unwrap_or(!reads_agents);
-
-    // 若用户未开启该工具软链接（或原生读公共库且未手动开软链接），确保清理软链接
-    if !symlink_enabled {
-        if let Some(d) = resolve_tool_skills_dir(&tool_id) {
-            if d.exists() && is_junction(&d) {
-                let _ = unmanage_tool_skills(tool_id.clone());
-            }
-        }
-        return Ok(());
-    }
-
-    manage_tool_skills_forced(tool_id)
-}
-
-/// 取消管理：移除 junction，重建为空目录
-#[tauri::command]
-pub fn unmanage_tool_skills(tool_id: String) -> Result<(), String> {
-    let dir = resolve_tool_skills_dir(&tool_id)
-        .ok_or_else(|| format!("工具 {} 未配置技能目录", tool_id))?;
-
-    if !dir.exists() {
-        return Ok(());
-    }
-
-    if is_junction(&dir) {
-        fs::remove_dir(&dir).map_err(|e| format!("移除 junction 失败: {}", e))?;
-    }
-
-    // 重建为空目录
-    fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败: {}", e))?;
-    Ok(())
-}
-
-/// 一键管理所有工具
-#[tauri::command]
-pub fn manage_all_tool_skills() -> Result<ManageAllResult, String> {
-    let reg = registry();
-    let scan = reg.skills_scan();
-    let mut managed_count = 0;
-    let mut skipped_count = 0;
-    let mut errors: Vec<String> = Vec::new();
-
-    for tool_id in scan.tool_skills_dirs.keys() {
-        // universal agent 原生读取 ~/.agents/skills，junction 会导致重复技能告警；
-        // 若历史上已创建 junction，这里移除它（清理告警）；否则直接跳过。
-        if scan.reads_agents_skills.iter().any(|t| t == tool_id) {
-            if let Some(d) = resolve_tool_skills_dir(tool_id) {
-                if d.exists() && is_junction(&d) {
-                    let _ = unmanage_tool_skills(tool_id.clone());
-                    skipped_count += 1;
-                }
-            }
-            continue;
-        }
-
-        let dir = match resolve_tool_skills_dir(tool_id) {
-            Some(d) => d,
-            None => continue,
-        };
-
-        // 已管理 → 跳过
-        if dir.exists() && is_junction(&dir) {
-            skipped_count += 1;
-            continue;
-        }
-
-        match manage_tool_skills(tool_id.clone()) {
-            Ok(()) => managed_count += 1,
-            Err(e) => errors.push(format!("{}: {}", tool_id, e)),
-        }
-    }
-
-    Ok(ManageAllResult { managed_count, skipped_count, errors })
-}
-
-// ─── 单技能按工具部署（per-skill junction，非破坏性） ───
-//
-// 与「整目录 junction」（manage_tool_skills_forced）互补：
-// - 整目录 junction：工具技能目录整体成为指向仓库的链接，仓库里所有技能对工具可见，
-//   但会接管/迁移工具目录原有内容。
-// - per-skill junction：工具技能目录保持真实目录，仅为「要部署的技能」在目录内建
-//   {skill_id} → 仓库/{skill_id} 的 junction。可选择性部署、不破坏用户自有技能，
-//   与注册表预留的 get_tool_skill_dir / resolve_skill_junction_target 对应（此前未接线）。
-
-/// 部署单个技能到某工具：在工具技能目录内为该技能创建 junction → 仓库技能目录。
-/// 非破坏性：目标若已是 junction 则重建（更新指向）；若是用户真实目录则拒绝覆盖。
-#[tauri::command]
-pub fn deploy_skill_to_tool(tool_id: String, skill_id: String) -> Result<(), String> {
-    let store = skills_dir();
-    let skill_src = store.join(&skill_id);
-    if !skill_src.exists() || !skill_src.is_dir() {
-        return Err(format!("技能仓库中不存在技能「{}」", skill_id));
-    }
-    let tool_dir = resolve_tool_skills_dir(&tool_id)
-        .ok_or_else(|| format!("工具 {} 未配置技能目录", tool_id))?;
-    let _ = fs::create_dir_all(&tool_dir);
-    let link = tool_dir.join(&skill_id);
-    if link.exists() || link.is_symlink() {
-        if is_junction(&link) {
-            // 已部署：移除旧 junction 后重建（更新指向）
-            fs::remove_dir(&link).map_err(|e| format!("移除旧软链接失败: {}", e))?;
-        } else {
-            // 用户真实目录：保护数据，拒绝覆盖
-            return Err(format!(
-                "工具技能目录中已存在同名真实目录「{}」（非软链接），为避免覆盖用户数据已拒绝部署。请先手动移除该目录。",
-                skill_id
-            ));
-        }
-    }
-    create_junction(&link, &skill_src).map_err(|e| format!("创建软链接失败: {}", e))
-}
-
-/// 从某工具移除单个技能部署：仅移除 junction，绝不删除用户真实目录。
-#[tauri::command]
-pub fn undeploy_skill_from_tool(tool_id: String, skill_id: String) -> Result<(), String> {
-    let tool_dir = resolve_tool_skills_dir(&tool_id)
-        .ok_or_else(|| format!("工具 {} 未配置技能目录", tool_id))?;
-    let link = tool_dir.join(&skill_id);
-    if is_junction(&link) {
-        fs::remove_dir(&link).map_err(|e| format!("移除软链接失败: {}", e))?;
-    } else if link.exists() {
-        return Err(format!(
-            "「{}」是真实目录（非软链接），不会自动删除用户数据，请手动处理",
-            skill_id
-        ));
-    }
-    Ok(())
-}
-
-/// 列出某工具中「已部署」（junction 且指向技能仓库内技能）的技能 id 列表。
-#[tauri::command]
-pub fn get_tool_deployed_skills(tool_id: String) -> Result<Vec<String>, String> {
-    let tool_dir = resolve_tool_skills_dir(&tool_id)
-        .ok_or_else(|| format!("工具 {} 未配置技能目录", tool_id))?;
-    if !tool_dir.exists() {
-        return Ok(Vec::new());
-    }
-    let store = skills_dir();
-    let mut out: Vec<String> = Vec::new();
-    if let Ok(entries) = fs::read_dir(&tool_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !is_junction(&path) {
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') {
-                continue;
-            }
-            // 仅统计指向仓库内技能的 junction（排除指向别处的链接）
-            if store.join(&name).exists() {
-                out.push(name);
-            }
-        }
-    }
-    out.sort();
-    Ok(out)
-}
-
-/// 一键把技能仓库内全部技能部署到某工具（逐个 per-skill junction，非破坏性）。
-/// 返回成功部署的数量；与用户真实目录冲突的技能自动跳过。
-#[tauri::command]
-pub fn deploy_all_skills_to_tool(tool_id: String) -> Result<usize, String> {
-    let store = skills_dir();
-    if !store.exists() {
-        return Ok(0);
-    }
-    let mut count = 0usize;
-    if let Ok(entries) = fs::read_dir(&store) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') {
-                continue;
-            }
-            if deploy_skill_to_tool(tool_id.clone(), name).is_ok() {
-                count += 1;
-            }
-        }
-    }
-    Ok(count)
-}
-
-/// 一键移除某工具中全部「已部署」的仓库技能（仅移除 junction）。返回移除数量。
-#[tauri::command]
-pub fn undeploy_all_skills_from_tool(tool_id: String) -> Result<usize, String> {
-    let deployed = get_tool_deployed_skills(tool_id.clone())?;
-    let mut count = 0usize;
-    for id in deployed {
-        if undeploy_skill_from_tool(tool_id.clone(), id).is_ok() {
-            count += 1;
-        }
-    }
-    Ok(count)
 }
 
 // ─── 技能列表（仓库扫描） ───
@@ -1346,7 +1294,11 @@ fn copy_dir_recursive(src: &PathBuf, dest: &PathBuf) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{find_skill_root, source_to_url, split_source_subdir, PRESET_SKILL_SOURCES};
+    use super::{
+        add_project_at, default_skills_dir, find_skill_root, install_into, list_installed,
+        load_projects_from, remove_project_at, source_to_url, split_source_subdir, uninstall_from,
+        PRESET_SKILL_SOURCES,
+    };
     use std::path::{Path, PathBuf};
 
     /// `owner/repo` 要补成完整 URL 才能喂给 `git ls-remote`；已是 URL 的不能被二次拼接。
@@ -1457,6 +1409,209 @@ mod tests {
         std::fs::write(dir.join("README.md"), "no skill").unwrap();
         assert!(find_skill_root(&dir, None).is_err());
     }
+
+    // ─── 项目（安装作用域） ───
+
+    /// 设计不变量：默认技能库**不能**是 `~/.agents/skills`。
+    ///
+    /// 那是 claude-code / codex-cli / opencode / cursor / cline / firebender 的原生扫描目录，
+    /// 放进去的技能会对**所有**项目全局生效，每次会话都注入全部 name + description。
+    /// 这条测试是为了防止有人日后"顺手改回默认值"。
+    #[test]
+    fn default_skills_dir_avoids_native_agent_scan_dir() {
+        let d = default_skills_dir().to_string_lossy().replace('\\', "/");
+        assert!(
+            !d.ends_with("/.agents/skills"),
+            "默认技能库不能落在原生扫描目录：{}",
+            d
+        );
+        assert!(d.ends_with("/skills"), "默认技能库应是数据目录下的 skills：{}", d);
+    }
+
+    #[test]
+    fn add_project_rejects_empty_and_non_directory() {
+        let base = temp_dir("add-invalid");
+        let file = base.join("projects.json");
+        assert!(add_project_at(&file, "   ").is_err(), "空路径应被拒");
+        let not_dir = base.join("a.txt");
+        std::fs::write(&not_dir, "x").unwrap();
+        assert!(
+            add_project_at(&file, &not_dir.to_string_lossy()).is_err(),
+            "文件不是目录，应被拒"
+        );
+        assert!(!file.exists(), "被拒时不应留下 projects.json");
+    }
+
+    #[test]
+    fn add_project_persists_and_dedupes() {
+        let base = temp_dir("add-ok");
+        let file = base.join("projects.json");
+        let proj = base.join("my-app");
+        std::fs::create_dir_all(&proj).unwrap();
+
+        let p = add_project_at(&file, &proj.to_string_lossy()).expect("应添加成功");
+        assert_eq!(p.name, "my-app");
+        assert!(!p.id.is_empty(), "项目必须有 id");
+
+        // 重新从文件读回：验证落盘 + 反序列化
+        let loaded = load_projects_from(&file);
+        assert_eq!(loaded.projects.len(), 1);
+        assert_eq!(loaded.projects[0].id, p.id);
+
+        // 同一目录再添一次必须被拒
+        assert!(add_project_at(&file, &proj.to_string_lossy()).is_err());
+        // 多一个尾分隔符仍是同一路径，也应被拒
+        let with_sep = format!("{}{}", proj.to_string_lossy(), std::path::MAIN_SEPARATOR);
+        assert!(add_project_at(&file, &with_sep).is_err());
+    }
+
+    #[test]
+    fn remove_project_only_touches_manifest() {
+        let base = temp_dir("rm-project");
+        let file = base.join("projects.json");
+        let proj = base.join("app");
+        std::fs::create_dir_all(&proj).unwrap();
+        let p = add_project_at(&file, &proj.to_string_lossy()).unwrap();
+
+        assert!(remove_project_at(&file, "no-such-id").is_err(), "删不存在的 id 应报错");
+        remove_project_at(&file, &p.id).unwrap();
+        assert!(load_projects_from(&file).projects.is_empty());
+        assert!(proj.is_dir(), "移除项目条目不应删除项目目录");
+    }
+
+    // ─── 安装到项目 ───
+
+    /// 建一套隔离环境：技能库 store + 项目 proj + 项目清单，返回 (base, store, 清单, 项目id)。
+    fn setup_project_env(name: &str) -> (PathBuf, PathBuf, PathBuf, String) {
+        let base = temp_dir(name);
+        let store = base.join("store");
+        std::fs::create_dir_all(&store).unwrap();
+        let proj = base.join("proj");
+        std::fs::create_dir_all(&proj).unwrap();
+        let file = base.join("projects.json");
+        let p = add_project_at(&file, &proj.to_string_lossy()).unwrap();
+        (base, store, file, p.id)
+    }
+
+    fn make_skill(store: &Path, id: &str) {
+        let d = store.join(id);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(
+            d.join("SKILL.md"),
+            format!("---\nname: {}\ndescription: demo {}\n---\n", id, id),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn install_rejects_unknown_skill_or_project() {
+        let (_base, store, file, pid) = setup_project_env("unknown");
+        make_skill(&store, "demo");
+        assert!(install_into(&store, &file, "nope", &pid).is_err(), "技能库没有该技能");
+        assert!(
+            install_into(&store, &file, "demo", "no-such-project").is_err(),
+            "项目不存在应报错"
+        );
+    }
+
+    /// 安装 → 幂等 → 卸载 → 悬空识别，一条龙。
+    ///
+    /// 依赖真实 junction（Windows `mklink /J`），故限定 Windows。
+    #[cfg(windows)]
+    #[test]
+    fn project_skill_lifecycle() {
+        let (_base, store, file, pid) = setup_project_env("lifecycle");
+        make_skill(&store, "demo");
+
+        // 没装过时列表为空，且**不报错**（.agents/skills 还不存在）
+        assert!(list_installed(&store, &file, &pid).unwrap().is_empty());
+
+        let link = install_into(&store, &file, "demo", &pid).expect("应安装成功");
+        assert!(
+            Path::new(&link).join("SKILL.md").is_file(),
+            "junction 应能穿透读到 SKILL.md"
+        );
+
+        let list = list_installed(&store, &file, &pid).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].state, "linked");
+        assert_eq!(list[0].name, "demo", "名称应来自 SKILL.md 的 frontmatter");
+
+        // 幂等：重复安装不报错、列表不重复
+        install_into(&store, &file, "demo", &pid).expect("重复安装应幂等");
+        assert_eq!(list_installed(&store, &file, &pid).unwrap().len(), 1);
+
+        // 卸载：链接消失，**技能库内容必须还在**
+        uninstall_from(&file, "demo", &pid).unwrap();
+        assert!(!Path::new(&link).exists(), "链接应被删除");
+        assert!(
+            store.join("demo").join("SKILL.md").is_file(),
+            "卸载绝不能删掉技能库里的实体内容"
+        );
+        assert!(list_installed(&store, &file, &pid).unwrap().is_empty());
+
+        // 悬空：装好后把技能库里的技能删掉，UI 必须能识别出来
+        install_into(&store, &file, "demo", &pid).unwrap();
+        std::fs::remove_dir_all(store.join("demo")).unwrap();
+        let list = list_installed(&store, &file, &pid).unwrap();
+        assert_eq!(list.len(), 1, "悬空链接仍应被列出，否则用户看不到残留");
+        assert_eq!(list[0].state, "broken");
+    }
+
+    /// 回归测试：`create_junction` 对已存在的**真实目录**会 `remove_dir_all` 递归删除
+    /// （cache.rs:133）。安装流程必须自己先拦下来，否则用户手工放的技能目录会被无声删掉。
+    #[cfg(windows)]
+    #[test]
+    fn install_refuses_to_overwrite_real_directory() {
+        let (base, store, file, pid) = setup_project_env("conflict");
+        make_skill(&store, "demo");
+        let skills_dir = base.join("proj").join(".agents").join("skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+        let real = skills_dir.join("demo");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(real.join("MY_FILE.txt"), "precious").unwrap();
+
+        let err = install_into(&store, &file, "demo", &pid).unwrap_err();
+        assert!(err.contains("真实目录"), "错误信息要说明原因: {}", err);
+        assert!(
+            real.join("MY_FILE.txt").is_file(),
+            "拒绝覆盖时绝不能删掉用户目录"
+        );
+    }
+
+    /// 卸载同理：真实目录不是我们装的，拒绝删。
+    #[cfg(windows)]
+    #[test]
+    fn uninstall_refuses_to_delete_real_directory() {
+        let (base, store, file, pid) = setup_project_env("uninstall-real");
+        make_skill(&store, "demo");
+        let skills_dir = base.join("proj").join(".agents").join("skills");
+        std::fs::create_dir_all(skills_dir.join("demo")).unwrap();
+        std::fs::write(skills_dir.join("demo").join("MY_FILE.txt"), "keep").unwrap();
+
+        assert!(uninstall_from(&file, "demo", &pid).is_err(), "不应删除真实目录");
+        assert!(skills_dir.join("demo").join("MY_FILE.txt").is_file());
+    }
+
+    /// 技能库与项目路径含空格时也要能装。
+    ///
+    /// `create_junction` 走 `Command::args()` 而不是拼命令字符串，Rust 会自行正确引用，
+    /// 所以这里不需要额外加引号 —— 这条测试把该结论锁住，防止将来"顺手补引号"反而弄坏。
+    #[cfg(windows)]
+    #[test]
+    fn install_works_with_spaces_in_paths() {
+        let base = temp_dir("with space");
+        let store = base.join("my skills");
+        std::fs::create_dir_all(&store).unwrap();
+        make_skill(&store, "demo");
+        let proj = base.join("my project");
+        std::fs::create_dir_all(&proj).unwrap();
+        let file = base.join("projects.json");
+        let p = add_project_at(&file, &proj.to_string_lossy()).unwrap();
+
+        let link = install_into(&store, &file, "demo", &p.id).expect("含空格路径应能安装");
+        assert!(Path::new(&link).join("SKILL.md").is_file());
+    }
 }
 
 // ─── 内置技能（随 Kira 分发） ───
@@ -1552,16 +1707,19 @@ pub fn list_builtin_skills() -> Vec<BuiltinSkillView> {
 /// 目录由用户在前端选（例如 ~/.agents/skills、某个 AI 工具的技能目录），
 /// 后端不猜、也不偷偷装进公共仓库。
 #[tauri::command]
-pub fn install_builtin_skill(skill_id: String, target_dir: String) -> Result<String, String> {
+pub fn install_builtin_skill(skill_id: String) -> Result<String, String> {
+    // 装进技能库即可 —— 装完它就是一个普通技能，由用户显式安装给某个项目。
+    // 早先这里要求用户先选一个目标目录（通常是 ~/.agents/skills，装完即全局生效），
+    // 那正是上下文暴涨的来源，已随「项目」模型一起取消。
+    install_builtin_into(&skill_id, &skills_dir())
+}
+
+/// 目标目录可注入的版本（单测必须能指向临时目录，否则会往真实技能库里写）。
+fn install_builtin_into(skill_id: &str, target: &Path) -> Result<String, String> {
     let skill = BUILTIN_SKILLS
         .iter()
         .find(|s| s.id == skill_id)
         .ok_or_else(|| format!("没有内置技能「{}」", skill_id))?;
-
-    let target = PathBuf::from(target_dir.trim());
-    if target.as_os_str().is_empty() {
-        return Err("未选择安装目录".to_string());
-    }
 
     let dest = target.join(skill.id);
     if dest.exists() {
@@ -1570,7 +1728,7 @@ pub fn install_builtin_skill(skill_id: String, target_dir: String) -> Result<Str
             .unwrap_or(true);
         if occupied {
             return Err(format!(
-                "目标目录已存在同名技能：{}（不覆盖，请换目录或先删掉它）",
+                "技能库中已存在同名技能：{}（不覆盖，请先删掉它）",
                 dest.display()
             ));
         }
@@ -1620,28 +1778,16 @@ mod builtin_skill_tests {
     fn install_writes_every_file_and_refuses_overwrite() {
         let dir = std::env::temp_dir().join(format!("kira-builtin-skill-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
-        let installed = install_builtin_skill(
-            "mindmap-import".to_string(),
-            dir.to_string_lossy().to_string(),
-        )
-        .expect("首次安装应成功");
+        let installed = install_builtin_into("mindmap-import", &dir).expect("首次安装应成功");
         let root = PathBuf::from(&installed);
         assert!(root.join("SKILL.md").exists(), "SKILL.md 未落盘");
         assert!(root.join("references").join("schema.md").exists(), "schema.md 未落盘");
         assert!(root.join("scripts").join("validate.py").exists(), "validate.py 未落盘");
 
         // 已存在且非空 → 拒绝（不能覆盖用户的技能）
-        assert!(install_builtin_skill(
-            "mindmap-import".to_string(),
-            dir.to_string_lossy().to_string()
-        )
-        .is_err());
+        assert!(install_builtin_into("mindmap-import", &dir).is_err());
         // 未知 id → 拒绝
-        assert!(
-            install_builtin_skill("nope".to_string(), dir.to_string_lossy().to_string()).is_err()
-        );
-        // 空目录 → 拒绝
-        assert!(install_builtin_skill("mindmap-import".to_string(), String::new()).is_err());
+        assert!(install_builtin_into("nope", &dir).is_err());
 
         let _ = fs::remove_dir_all(&dir);
     }

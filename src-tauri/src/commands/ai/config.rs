@@ -81,7 +81,6 @@ pub(crate) fn load_ai_config() -> AiConfig {
         rectifier: RectifierConfig::default(),
         headroom: HeadroomConfig::default(),
         optimizer: OptimizerConfig::default(),
-        tool_symlinks: std::collections::HashMap::new(),
         route_chain: Vec::new(),
         aggregate: AggregateConfig::default(),
     }
@@ -529,7 +528,6 @@ mod tests {
             headroom: HeadroomConfig::default(),
             optimizer: OptimizerConfig::default(),
             skills_dir: String::new(),
-            tool_symlinks: std::collections::HashMap::new(),
             route_chain: Vec::new(),
             aggregate: AggregateConfig::default(),
         };

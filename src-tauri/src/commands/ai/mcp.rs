@@ -5,9 +5,19 @@ use std::path::PathBuf;
 use serde_json::{Map, Value};
 use crate::commands::ai_registry::registry;
 use crate::commands::config::get_data_dir;
-use super::skills::SkillToolInfo;
 
 // ─── 数据模型 ───
+
+/// 可部署 MCP 的工具条目（id + 显示名）。
+///
+/// 原先借用技能模块的 `SkillToolInfo`，但技能模块已按「项目」重构、不再有工具维度，
+/// 这个两字段结构就与技能无关了，留在本模块更内聚。
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct McpToolInfo {
+    pub id: String,
+    pub label: String,
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -410,17 +420,17 @@ fn reverse_translate(name: &str, entry: &Value) -> DiscoveredMcp {
     }
 }
 
-/// 可部署 MCP 的工具列表（由 mcp-config.json 驱动），复用技能工具信息结构
+/// 可部署 MCP 的工具列表（由 mcp-config.json 驱动）
 #[tauri::command]
-pub fn get_mcp_tools() -> Result<Vec<SkillToolInfo>, String> {
+pub fn get_mcp_tools() -> Result<Vec<McpToolInfo>, String> {
     let reg = registry();
-    let mut tools: Vec<SkillToolInfo> = Vec::new();
+    let mut tools: Vec<McpToolInfo> = Vec::new();
     for id in reg.mcp_tool_ids() {
         let label = reg.get_tool_config(&id)
             .map(|c| c.display_name.clone())
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| id.to_string());
-        tools.push(SkillToolInfo { id: id.clone(), label });
+        tools.push(McpToolInfo { id: id.clone(), label });
     }
     tools.sort_by(|a, b| a.label.cmp(&b.label));
     Ok(tools)

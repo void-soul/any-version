@@ -6,11 +6,10 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { listen as listenEvent } from '@tauri-apps/api/event';
 import { Note, ResultNote } from '../shared/Note';
 import {
-  Search, Tag, Boxes, Store, Download, Trash2,
+  Search, Tag, Store, Download, Trash2,
   CheckCircle, AlertTriangle, ExternalLink, X, Package, Loader2,
-  ChevronDown, Settings2, Filter, Link2, Unlink, Sparkles
+  ChevronDown, Settings2, Filter, Unlink, Sparkles, FolderOpen, Plus, Link2
 } from 'lucide-react';
-import { DetectedAiTool } from './types';
 import { alertError } from "../shared/ThemedAlert";
 
 // ─── 类型 ───
@@ -42,40 +41,37 @@ interface SkillEntry {
   tags: string[];
 }
 
-interface SkillToolStatusView {
-  toolId: string;
-  label: string;
-  skillsDir: string;
-  /** 'managed' | 'unmanaged' | 'empty' */
-  status: string;
-  skillCount: number;
-  symlinkEnabled: boolean;
-  readsAgentsSkills: boolean;
-  /** per-skill 已部署（junction 指向仓库）的技能数量 */
-  deployedCount?: number;
-}
-
-/** 内置技能（随 Kira 分发，可装到用户指定目录） */
+/** 内置技能（随 Kira 分发，装进技能库后由用户安装给项目） */
 interface BuiltinSkillView {
   id: string;
   name: string;
   description: string;
 }
 
-type TabKey = 'skills' | 'tools' | 'market' | 'builtin';
+/** 项目 = 一个目录，技能装给它就只在该目录生效（后端 list_projects / add_project） */
+interface SkillProject {
+  id: string;
+  path: string;
+  name: string;
+  addedAt: string;
+}
+
+/** 项目里已安装的技能（后端 list_project_skills；camelCase） */
+interface ProjectSkillEntry {
+  skillId: string;
+  name: string;
+  description: string;
+  /** 'linked' 已生效 · 'broken' 悬空（技能库里的技能已被删除） */
+  state: string;
+}
+
+type TabKey = 'skills' | 'projects';
 
 const MARKET_SOURCES = [
   { name: 'skills.sh 官网', desc: 'Agent Skills 官方生态与规范', url: 'https://skills.sh' },
   { name: 'Anthropic 官方 Skills', desc: 'anthropics/skills 仓库示例技能', url: 'https://github.com/anthropics/skills' },
   { name: 'GitHub 主题搜索', desc: '搜索社区维护的 agentskills 仓库', url: 'https://github.com/search?q=agentskills&type=repositories' },
 ];
-
-function StatusBadge({ status }: { status: string }) {
-  const { t } = useTranslation();
-  if (status === 'managed') return <span className="px-1.5 py-0.5 rounded text-micro font-semibold bg-emerald-500/15 text-emerald-400">{t("skillmgr.statusLinked")}</span>;
-  if (status === 'unmanaged') return <span className="px-1.5 py-0.5 rounded text-micro font-semibold bg-amber-500/15 text-amber-400">{t("skillmgr.statusPrivate")}</span>;
-  return <span className="px-1.5 py-0.5 rounded text-micro font-semibold bg-slate-500/15 text-slate-400">{t("skillmgr.statusUnmanaged")}</span>;
-}
 
 export default function SkillManager() {
   const { t } = useTranslation();
@@ -94,100 +90,6 @@ export default function SkillManager() {
   const [savingMeta, setSavingMeta] = useState(false);
   const [skillMsg, setSkillMsg] = useState<{ id: string; msg: string; ok: boolean } | null>(null);
 
-  // ── 工具数据 ──
-  const [tools, setTools] = useState<DetectedAiTool[]>([]);
-  const [toolStatus, setToolStatus] = useState<SkillToolStatusView[]>([]);
-  const [_toolLoading, setToolLoading] = useState(true);
-  const [toolMsg, setToolMsg] = useState<{ id: string; msg: string; ok: boolean } | null>(null);
-  const [togglingToolId, setTogglingToolId] = useState<string | null>(null);
-
-  // ── per-skill 部署（junction 指向仓库，非破坏性） ──
-  // toolId -> 已部署技能 id 列表；deployingKey = "toolId:skillId" 或 "toolId:*"（全量）
-  const [deployedMap, setDeployedMap] = useState<Record<string, string[]>>({});
-  const [deployingKey, setDeployingKey] = useState<string | null>(null);
-  const [deployTargetSkill, setDeployTargetSkill] = useState<string | null>(null); // 卡片内展开部署选择的技能
-
-  const loadDeployed = async () => {
-    try {
-      const list = await invoke<SkillToolStatusView[]>('get_skill_tools_status');
-      const map: Record<string, string[]> = {};
-      for (const s of list) {
-        const ids = await invoke<string[]>('get_tool_deployed_skills', { toolId: s.toolId });
-        map[s.toolId] = ids;
-      }
-      setDeployedMap(map);
-    } catch (e) {
-      console.error('加载技能部署状态失败:', e);
-    }
-  };
-
-  const setDeployMsg = (key: string, msg: string, ok: boolean) => {
-    // 复用 skillMsg / toolMsg：技能级消息挂到技能 id，工具级挂到工具 id
-    if (key.endsWith(':*')) {
-      setToolMsg({ id: key.slice(0, -2), msg, ok });
-    } else {
-      setSkillMsg({ id: key.split(':')[1], msg, ok });
-    }
-  };
-
-  const deploySkillToTool = async (skillId: string, toolId: string) => {
-    const key = `${toolId}:${skillId}`;
-    setDeployingKey(key);
-    try {
-      await invoke('deploy_skill_to_tool', { toolId, skillId });
-      setDeployMsg(key, t('skillmgr.deployedTo', { tool: toolId }), true);
-      setDeployedMap((m) => ({ ...m, [toolId]: [...new Set([...(m[toolId] || []), skillId])] }));
-      loadTools();
-    } catch (e) {
-      setDeployMsg(key, String(e), false);
-    } finally {
-      setDeployingKey(null);
-    }
-  };
-
-  const undeploySkillFromTool = async (skillId: string, toolId: string) => {
-    const key = `${toolId}:${skillId}`;
-    setDeployingKey(key);
-    try {
-      await invoke('undeploy_skill_from_tool', { toolId, skillId });
-      setDeployMsg(key, t('skillmgr.undeployedFrom', { tool: toolId }), true);
-      setDeployedMap((m) => ({ ...m, [toolId]: (m[toolId] || []).filter((x) => x !== skillId) }));
-      loadTools();
-    } catch (e) {
-      setDeployMsg(key, String(e), false);
-    } finally {
-      setDeployingKey(null);
-    }
-  };
-
-  const deployAllToTool = async (toolId: string) => {
-    setDeployingKey(`${toolId}:*`);
-    try {
-      const n = await invoke<number>('deploy_all_skills_to_tool', { toolId });
-      setToolMsg({ id: toolId, msg: t('skillmgr.deployAllDone', { count: n }), ok: true });
-      await loadDeployed();
-      loadTools();
-    } catch (e) {
-      setToolMsg({ id: toolId, msg: String(e), ok: false });
-    } finally {
-      setDeployingKey(null);
-    }
-  };
-
-  const undeployAllFromTool = async (toolId: string) => {
-    setDeployingKey(`${toolId}:*`);
-    try {
-      const n = await invoke<number>('undeploy_all_skills_from_tool', { toolId });
-      setToolMsg({ id: toolId, msg: t('skillmgr.undeployAllDone', { count: n }), ok: true });
-      await loadDeployed();
-      loadTools();
-    } catch (e) {
-      setToolMsg({ id: toolId, msg: String(e), ok: false });
-    } finally {
-      setDeployingKey(null);
-    }
-  };
-
   // ── 市场安装 ──
   const [installInput, setInstallInput] = useState('');
   const [installing, setInstalling] = useState(false);
@@ -203,6 +105,22 @@ export default function SkillManager() {
   const [builtins, setBuiltins] = useState<BuiltinSkillView[]>([]);
   const [builtinBusy, setBuiltinBusy] = useState<string | null>(null);
   const [builtinResult, setBuiltinResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  // 市场 / 内置技能并入技能库 tab，按需展开（它们只是「获取技能的渠道」，不是并列的管理维度）
+  const [showMarket, setShowMarket] = useState(false);
+  const [showBuiltin, setShowBuiltin] = useState(false);
+
+  // ── 项目（技能的作用域） ──
+  const [projects, setProjects] = useState<SkillProject[]>([]);
+  /** 技能库实际路径（如实显示，别让用户猜装到哪了） */
+  const [skillsDir, setSkillsDir] = useState('');
+  const [projMsg, setProjMsg] = useState<{ id: string; msg: string; ok: boolean } | null>(null);
+  /** 展开查看某个项目装了哪些技能 */
+  const [expandedProj, setExpandedProj] = useState<string | null>(null);
+  /** projectId -> 该项目已装的技能（展开时才拉） */
+  const [projSkills, setProjSkills] = useState<Record<string, ProjectSkillEntry[]>>({});
+  /** projectId -> 技能库的技能勾选状态 */
+  const [picked, setPicked] = useState<Record<string, Set<string>>>({});
+  const [projBusy, setProjBusy] = useState<string | null>(null);
 
   // ── 加载 ──
   const loadSkills = async () => {
@@ -213,28 +131,37 @@ export default function SkillManager() {
     } catch (e) {
       console.error("加载 AI 技能概览失败:", e);
     }
+    try {
+      setSkillsDir(await invoke<string>('get_skills_dir'));
+    } catch {
+      setSkillsDir('');
+    }
     setSkillLoading(false);
   };
 
-  const loadTools = async () => {
-    setToolLoading(true);
+  const loadProjects = async () => {
     try {
-      const [t, s] = await Promise.all([
-        invoke<DetectedAiTool[]>('detect_ai_tools'),
-        invoke<SkillToolStatusView[]>('get_skill_tools_status'),
-      ]);
-      setTools(t);
-      setToolStatus(s);
+      setProjects(await invoke<SkillProject[]>('list_projects'));
     } catch (e) {
-      console.error("加载 AI 工具检测状态失败:", e);
+      console.error("加载项目列表失败:", e);
     }
-    setToolLoading(false);
+  };
+
+  /** 展开项目时按需拉它的技能清单（不预先拉所有项目的，避免无用 IO） */
+  const loadProjectSkills = async (pid: string) => {
+    try {
+      const list = await invoke<ProjectSkillEntry[]>('list_project_skills', { projectId: pid });
+      setProjSkills((m) => ({ ...m, [pid]: list }));
+      // 勾选状态 = 已安装的技能
+      setPicked((m) => ({ ...m, [pid]: new Set(list.filter((e) => e.state === 'linked').map((e) => e.skillId)) }));
+    } catch (e: any) {
+      setProjMsg({ id: pid, msg: String(e), ok: false });
+    }
   };
 
   useEffect(() => {
     loadSkills();
-    loadTools();
-    loadDeployed();
+    loadProjects();
     invoke<BuiltinSkillView[]>('list_builtin_skills')
       .then(setBuiltins)
       .catch(() => setBuiltins([]));
@@ -247,7 +174,6 @@ export default function SkillManager() {
       if (e.payload.stage === 'done') {
         setInstalling(false);
         loadSkills();
-        loadTools();
       }
     });
     return () => { unlisten.then((fn) => fn()); };
@@ -290,7 +216,6 @@ export default function SkillManager() {
       await invoke('uninstall_skill', { skillId: id });
       setSkillMsg({ id, msg: t("skillmgr.deleted"), ok: true });
       loadSkills();
-      loadTools();
     } catch (e: any) {
       setSkillMsg({ id, msg: String(e), ok: false });
     }
@@ -329,32 +254,6 @@ export default function SkillManager() {
 
   const removeTag = (t: string) => setEdTags(edTags.filter((x) => x !== t));
 
-  // 工具软链接开关控制
-  const toggleSymlink = async (toolId: string, currentEnabled: boolean) => {
-    setToolMsg(null);
-    setTogglingToolId(toolId);
-    const nextEnabled = !currentEnabled;
-    try {
-      await invoke('toggle_tool_symlink_setting', { toolId, enabled: nextEnabled });
-      setToolMsg({
-        id: toolId,
-        msg: nextEnabled ? t("skillmgr.symlinkOn") : t("skillmgr.symlinkOff"),
-        ok: true,
-      });
-      await loadTools();
-    } catch (e: any) {
-      setToolMsg({ id: toolId, msg: String(e), ok: false });
-    } finally {
-      setTogglingToolId(null);
-    }
-  };
-
-  // 工具 + 状态合并
-  const toolRows = useMemo(() => {
-    const statusMap = new Map(toolStatus.map((s) => [s.toolId, s]));
-    return tools.map((t) => ({ tool: t, status: statusMap.get(t.id) }));
-  }, [tools, toolStatus]);
-
   /** 预置来源：进来就拉一次，失败就静默（不给用户添噪音） */
   useEffect(() => {
     invoke<SkillSourceItem[]>('get_skill_sources').then(setSources).catch(() => setSources([]));
@@ -387,20 +286,124 @@ export default function SkillManager() {
     }
   };
 
-  // 安装内置技能：目录由用户选（后端不猜，也不偷偷装进公共仓库）
+  // 安装内置技能：直接落进技能库。装完它就是普通技能，由用户显式安装给某个项目
   const installBuiltin = async (id: string) => {
-    const picked = await open({ directory: true, title: t("skillmgr.builtinPickDir") });
-    if (typeof picked !== 'string') return;
     setBuiltinBusy(id);
     setBuiltinResult(null);
     try {
-      const path = await invoke<string>('install_builtin_skill', { skillId: id, targetDir: picked });
+      const path = await invoke<string>('install_builtin_skill', { skillId: id });
       setBuiltinResult({ ok: true, msg: t("skillmgr.builtinInstalled", { path }) });
       loadSkills();
     } catch (e: any) {
       setBuiltinResult({ ok: false, msg: String(e) });
     }
     setBuiltinBusy(null);
+  };
+
+  // ── 项目操作 ──
+
+  /** 添加项目：让用户直接选一个目录 */
+  const addProject = async () => {
+    try {
+      const picked = await open({ directory: true, multiple: false, title: t("skillmgr.projPickTitle") });
+      if (typeof picked !== 'string' || !picked) return;
+      await invoke('add_project', { path: picked });
+      await loadProjects();
+      setProjMsg({ id: '*', msg: t("skillmgr.projAdded", { name: picked.split(/[\\/]/).filter(Boolean).pop() }), ok: true });
+    } catch (e: any) {
+      setProjMsg({ id: '*', msg: String(e), ok: false });
+    }
+  };
+
+  /** 移除项目条目（只删记录，项目目录里的 .agents/skills 一概不动） */
+  const removeProject = async (p: SkillProject) => {
+    if (!confirm(t("skillmgr.projRemoveConfirm", { name: p.name || p.path }))) return;
+    try {
+      await invoke('remove_project', { id: p.id });
+      setProjMsg({ id: p.id, msg: t("skillmgr.projRemoved"), ok: true });
+      setExpandedProj((cur) => (cur === p.id ? null : cur));
+      await loadProjects();
+    } catch (e: any) {
+      setProjMsg({ id: p.id, msg: String(e), ok: false });
+    }
+  };
+
+  const toggleExpand = async (p: SkillProject) => {
+    if (expandedProj === p.id) {
+      setExpandedProj(null);
+      return;
+    }
+    setExpandedProj(p.id);
+    if (!projSkills[p.id]) await loadProjectSkills(p.id);
+  };
+
+  const togglePick = (pid: string, skillId: string) => {
+    setPicked((m) => {
+      const next = new Set(m[pid] || []);
+      if (next.has(skillId)) next.delete(skillId);
+      else next.add(skillId);
+      return { ...m, [pid]: next };
+    });
+  };
+
+  /**
+   * 按勾选差异批量安装/卸载。
+   *
+   * 勾选是「期望状态」，与实况的差异即本次要做的动作 —— 这样用户勾一下就够，
+   * 不必为每个技能点一次「装/卸」。
+   */
+  const applyPicks = async (p: SkillProject) => {
+    const installed = new Set((projSkills[p.id] || []).filter((e) => e.state === 'linked').map((e) => e.skillId));
+    const want = picked[p.id] || new Set<string>();
+    const toInstall = [...want].filter((id) => !installed.has(id));
+    const toRemove = [...installed].filter((id) => !want.has(id));
+    if (toInstall.length === 0 && toRemove.length === 0) {
+      setProjMsg({ id: p.id, msg: t("skillmgr.projNoChange"), ok: true });
+      return;
+    }
+    setProjBusy(p.id);
+    const errors: string[] = [];
+    for (const id of toInstall) {
+      try {
+        await invoke('install_skill_to_project', { skillId: id, projectId: p.id });
+      } catch (e: any) {
+        errors.push(`${id}: ${String(e)}`);
+      }
+    }
+    for (const id of toRemove) {
+      try {
+        await invoke('remove_skill_from_project', { skillId: id, projectId: p.id });
+      } catch (e: any) {
+        errors.push(`${id}: ${String(e)}`);
+      }
+    }
+    setProjBusy(null);
+    await loadProjectSkills(p.id);
+    if (errors.length === 0) {
+      setProjMsg({
+        id: p.id,
+        msg: t("skillmgr.projApplied", { add: toInstall.length, del: toRemove.length }),
+        ok: true,
+      });
+    } else {
+      setProjMsg({ id: p.id, msg: errors.join('；'), ok: false });
+    }
+  };
+
+  /** 清掉悬空链接（技能库里的技能已被删除，junction 还留在项目里） */
+  const cleanupBroken = async (p: SkillProject) => {
+    const broken = (projSkills[p.id] || []).filter((e) => e.state === 'broken');
+    if (broken.length === 0) return;
+    setProjBusy(p.id);
+    for (const e of broken) {
+      try {
+        await invoke('remove_skill_from_project', { skillId: e.skillId, projectId: p.id });
+      } catch (e: any) {
+        setProjMsg({ id: p.id, msg: String(e), ok: false });
+      }
+    }
+    setProjBusy(null);
+    await loadProjectSkills(p.id);
   };
 
   return (
@@ -410,9 +413,7 @@ export default function SkillManager() {
         <div className="flex items-center gap-1">
           {([
             { k: 'skills' as TabKey, label: t("skillmgr.tabSkills"), icon: Package },
-            { k: 'tools' as TabKey, label: t("skillmgr.tabTools"), icon: Boxes },
-            { k: 'market' as TabKey, label: t("skillmgr.tabMarket"), icon: Store },
-            { k: 'builtin' as TabKey, label: t("skillmgr.tabBuiltin"), icon: Sparkles },
+            { k: 'projects' as TabKey, label: t("skillmgr.tabProjects"), icon: FolderOpen },
           ]).map(({ k, label, icon: Icon }) => (
             <button
               key={k}
@@ -428,12 +429,155 @@ export default function SkillManager() {
             </button>
           ))}
         </div>
-        <div className="text-tiny text-slate-500 font-mono">
-          {t("skillmgr.publicSkillsDir")}<code className="text-slate-400">~/.agents/skills</code>
+        <div className="text-tiny text-slate-500 font-mono truncate max-w-[50%]" title={skillsDir}>
+          {t("skillmgr.libraryDir")}<code className="text-slate-400">{skillsDir || '…'}</code>
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">
+        {/* ════════ 项目 Tab ════════ */}
+        {tab === 'projects' && (
+          <div className="space-y-3 max-w-4xl">
+            <Note tone="info" title={t("skillmgr.projHintTitle")}>
+              <p>{t("skillmgr.projHint1")}</p>
+            </Note>
+
+            <div className="flex items-center justify-between">
+              <span className="text-body font-bold text-slate-300">{t("skillmgr.projTitle")}</span>
+              <button
+                onClick={() => void addProject()}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-body font-semibold text-white cursor-pointer transition-all"
+              >
+                <Plus className="w-3.5 h-3.5" /> {t("skillmgr.projAdd")}
+              </button>
+            </div>
+
+            {projMsg?.id === '*' && (
+              <div className={`p-2.5 rounded-ctl text-body flex items-center gap-2 ${projMsg.ok ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+                {projMsg.ok ? <CheckCircle className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
+                <span className="break-all">{projMsg.msg}</span>
+              </div>
+            )}
+
+            {projects.length === 0 ? (
+              <div className="text-center py-16 text-slate-500 text-sm">{t("skillmgr.projEmpty")}</div>
+            ) : (
+              <div className="space-y-2.5">
+                {projects.map((p) => {
+                  const expanded = expandedProj === p.id;
+                  const installed = projSkills[p.id] || [];
+                  const linkedCount = installed.filter((e) => e.state === 'linked').length;
+                  const broken = installed.filter((e) => e.state === 'broken');
+                  const want = picked[p.id] || new Set<string>();
+                  // 勾选的是「期望状态」；与实况有差异才算脏，禁用「应用」按钮
+                  const dirty = expanded && (() => {
+                    const cur = new Set(installed.filter((e) => e.state === 'linked').map((e) => e.skillId));
+                    if (cur.size !== want.size) return true;
+                    for (const id of cur) if (!want.has(id)) return true;
+                    return false;
+                  })();
+                  return (
+                    <div key={p.id} className="rounded-card bg-white/[0.03] border border-white/10 overflow-hidden">
+                      <div className="flex items-center justify-between gap-3 p-3.5">
+                        <button
+                          onClick={() => void toggleExpand(p)}
+                          className="flex items-center gap-3 min-w-0 flex-1 text-left cursor-pointer"
+                        >
+                          <span className="flex-shrink-0 w-8 h-8 rounded-ctl bg-white/5 border border-white/10 flex items-center justify-center">
+                            <FolderOpen className="w-4 h-4 text-[var(--module-accent)]" />
+                          </span>
+                          <span className="min-w-0">
+                            <span className="flex items-center gap-2">
+                              <span className="text-body font-semibold text-slate-100 truncate">{p.name || p.path}</span>
+                              <span className="px-1.5 py-0.5 rounded text-micro font-semibold bg-emerald-500/15 text-emerald-400 flex-shrink-0">
+                                {linkedCount}
+                              </span>
+                              {broken.length > 0 && (
+                                <span className="px-1.5 py-0.5 rounded text-micro font-semibold bg-amber-500/15 text-amber-400 flex-shrink-0">
+                                  {t("skillmgr.projBrokenBadge", { count: broken.length })}
+                                </span>
+                              )}
+                            </span>
+                            <span className="block text-tiny text-slate-500 font-mono truncate mt-0.5">{p.path}</span>
+                          </span>
+                          <ChevronDown className={`w-3.5 h-3.5 text-slate-500 flex-shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+                        </button>
+                        <button
+                          onClick={() => void removeProject(p)}
+                          disabled={projBusy === p.id}
+                          className="text-slate-500 hover:text-red-400 cursor-pointer disabled:opacity-40 flex-shrink-0"
+                          title={t("skillmgr.projRemove")}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      {expanded && (
+                        <div className="border-t border-white/5 p-3.5 space-y-3">
+                          {/* 悬空链接：技能库里的技能已被删除，项目里的 junction 还留着 */}
+                          {broken.length > 0 && (
+                            <div className="p-2.5 rounded-ctl bg-amber-500/10 text-amber-400 text-tiny flex items-center justify-between gap-2">
+                              <span className="min-w-0 break-words">{t("skillmgr.projBrokenHint", { names: broken.map((b) => b.skillId).join('、') })}</span>
+                              <button
+                                onClick={() => void cleanupBroken(p)}
+                                disabled={projBusy === p.id}
+                                className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 flex items-center gap-1 cursor-pointer disabled:opacity-50 flex-shrink-0"
+                              >
+                                <Unlink className="w-3 h-3" /> {t("skillmgr.projBrokenClean")}
+                              </button>
+                            </div>
+                          )}
+
+                          {/* 勾选 = 期望状态；点「应用」才批量增删，避免每装一个技能点一次 */}
+                          {skills.length === 0 ? (
+                            <div className="text-tiny text-slate-500">{t("skillmgr.projNoSkills")}</div>
+                          ) : (
+                            <>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 max-h-64 overflow-y-auto">
+                                {skills.map((s) => {
+                                  const on = want.has(s.id);
+                                  return (
+                                    <button
+                                      key={s.id}
+                                      onClick={() => togglePick(p.id, s.id)}
+                                      className={`flex items-center gap-1.5 px-2 py-1.5 rounded-ctl text-left cursor-pointer transition-colors ${
+                                        on ? 'bg-emerald-500/15 text-emerald-300' : 'bg-white/5 text-slate-400 hover:bg-white/10'
+                                      }`}
+                                      title={s.description || s.id}
+                                    >
+                                      <span className={`w-3 h-3 rounded-sm flex-shrink-0 border ${on ? 'bg-emerald-500 border-emerald-400' : 'border-white/20'}`} />
+                                      <span className="text-tiny truncate">{s.name || s.id}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              <div className="flex items-center justify-end gap-2 pt-1">
+                                <span className="text-micro text-slate-500">{t("skillmgr.projPicked", { n: want.size })}</span>
+                                <button
+                                  onClick={() => void applyPicks(p)}
+                                  disabled={!dirty || projBusy === p.id}
+                                  className="flex items-center gap-1 px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-40 disabled:bg-slate-700 text-body font-semibold text-white cursor-pointer transition-all"
+                                >
+                                  {projBusy === p.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />}
+                                  {t("skillmgr.projApply")}
+                                </button>
+                              </div>
+                            </>
+                          )}
+
+                          {projMsg?.id === p.id && (
+                            <div className={`text-tiny break-all ${projMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>{projMsg.msg}</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ════════ 技能 Tab ════════ */}
         {tab === 'skills' && (
           <div className="space-y-3">
@@ -490,10 +634,24 @@ export default function SkillManager() {
               </div>
             )}
 
-            {/* 概览数据提示 */}
-            <div className="flex items-center justify-between text-tiny text-slate-500">
+            {/* 概览数据提示 + 获取渠道入口 */}
+            <div className="flex items-center justify-between gap-2 text-tiny text-slate-500">
               <span>{skillLoading ? t("skillmgr.loading") : `${t("skillmgr.skillsCount", { count: filtered.length })}${hasFilter ? t("skillmgr.filteredCount", { total: skills.length }) : ''}`}</span>
-              <span>{t("skillmgr.source")}<code className="text-slate-400">~/.agents/skills</code></span>
+              <div className="flex items-center gap-2">
+                <span className="truncate max-w-[240px]" title={skillsDir}>{t("skillmgr.source")}<code className="text-slate-400">{skillsDir || '…'}</code></span>
+                <button
+                  onClick={() => { setShowMarket((v) => !v); setShowBuiltin(false); }}
+                  className={`flex items-center gap-1 px-2 py-1 rounded-ctl cursor-pointer transition-colors ${showMarket ? 'bg-[var(--module-accent-soft)] text-[var(--module-accent)]' : 'bg-white/5 hover:bg-white/10 text-slate-300'}`}
+                >
+                  <Store className="w-3 h-3" /> {t("skillmgr.tabMarket")}
+                </button>
+                <button
+                  onClick={() => { setShowBuiltin((v) => !v); setShowMarket(false); }}
+                  className={`flex items-center gap-1 px-2 py-1 rounded-ctl cursor-pointer transition-colors ${showBuiltin ? 'bg-[var(--module-accent-soft)] text-[var(--module-accent)]' : 'bg-white/5 hover:bg-white/10 text-slate-300'}`}
+                >
+                  <Sparkles className="w-3 h-3" /> {t("skillmgr.tabBuiltin")}
+                </button>
+              </div>
             </div>
 
             {/* 技能网格 */}
@@ -532,13 +690,6 @@ export default function SkillManager() {
                   <div className="flex items-center justify-between pt-2 border-t border-white/5 text-tiny text-slate-500">
                     <span>{s.installMethod === 'managed' ? t("skillmgr.managedLib") : s.installMethod}</span>
                     <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => setDeployTargetSkill(deployTargetSkill === s.id ? null : s.id)}
-                        className={`cursor-pointer ${deployTargetSkill === s.id ? 'text-[var(--module-accent)]' : 'text-slate-400 hover:text-[var(--module-accent)]'}`}
-                        title={t("skillmgr.deployToTool")}
-                      >
-                        <Link2 className="w-3.5 h-3.5" />
-                      </button>
                       <button onClick={() => openEdit(s)} className="text-slate-400 hover:text-[var(--module-accent)] cursor-pointer">
                         <Settings2 className="w-3.5 h-3.5" />
                       </button>
@@ -547,178 +698,14 @@ export default function SkillManager() {
                       </button>
                     </div>
                   </div>
-                  {deployTargetSkill === s.id && (
-                    <div className="rounded-ctl bg-black/20 border border-white/5 p-2 space-y-1">
-                      <div className="text-micro text-slate-500 font-semibold">{t("skillmgr.deployToTool")}</div>
-                      {toolStatus.length === 0 && (
-                        <div className="text-micro text-slate-600">{t("skillmgr.noTools")}</div>
-                      )}
-                      {toolStatus.map((ts) => {
-                        const deployed = (deployedMap[ts.toolId] || []).includes(s.id);
-                        const busy = deployingKey === `${ts.toolId}:${s.id}`;
-                        return (
-                          <div key={ts.toolId} className="flex items-center justify-between gap-2">
-                            <span className="text-tiny text-slate-300 truncate" title={ts.skillsDir}>
-                              {ts.label}
-                            </span>
-                            <button
-                              disabled={busy}
-                              onClick={() => (deployed ? undeploySkillFromTool(s.id, ts.toolId) : deploySkillToTool(s.id, ts.toolId))}
-                              className={`flex items-center gap-1 px-2 py-0.5 rounded text-micro font-semibold cursor-pointer transition disabled:opacity-50 ${
-                                deployed
-                                  ? 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
-                                  : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-slate-200'
-                              }`}
-                            >
-                              {busy ? (
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                              ) : deployed ? (
-                                <><Unlink className="w-2.5 h-2.5" />{t("skillmgr.deployedUndeploy")}</>
-                              ) : (
-                                <><Link2 className="w-2.5 h-2.5" />{t("skillmgr.deployedDeploy")}</>
-                              )}
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
                   {skillMsg?.id === s.id && (
                     <div className={`text-tiny ${skillMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>{skillMsg.msg}</div>
                   )}
                 </div>
               ))}
             </div>
-          </div>
-        )}
-
-        {/* ════════ 工具 + 软链接集成 Tab ════════ */}
-        {tab === 'tools' && (
-          <div className="space-y-4 max-w-4xl">
-            {/* 提示警示区块 —— 这块样式被全软件采纳为统一提示组件（shared/Note） */}
-            <Note tone="warn" title={t("skillmgr.symlinkWarnTitle")}>
-              <p>
-                {t("skillmgr.symlinkWarn1")}
-                {t("skillmgr.symlinkWarn2")}
-              </p>
-              <p className="text-tiny text-slate-400">{t("skillmgr.symlinkWarn3")}</p>
-            </Note>
-
-            {/* 工具状态与软链接开关列表 */}
-            <div className="space-y-2">
-              <div className="text-body font-bold text-slate-300 px-1">{t("skillmgr.toolsTitle")}</div>
-              <div className="grid grid-cols-1 gap-2.5">
-                {toolRows.map(({ tool, status }) => {
-                  const st = status?.status || 'empty';
-                  const isSymlinkOn = status?.symlinkEnabled ?? false;
-                  const readsAgents = status?.readsAgentsSkills ?? false;
-                  const nickname = tool.nickname || tool.display_name;
-                  const showOrigName = tool.nickname && tool.nickname !== tool.display_name;
-
-                  return (
-                    <div key={tool.id} className="rounded-card bg-white/[0.03] border border-white/10 p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:border-white/20 transition-all">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className="flex-shrink-0 w-8 h-8 rounded-ctl bg-white/5 border border-white/10 flex items-center justify-center text-base">
-                          {tool.avatar || '🤖'}
-                        </span>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-body font-semibold text-slate-100 truncate">{nickname}</span>
-                            {showOrigName && (
-                              <span className="text-tiny text-slate-500 font-normal truncate">({tool.display_name})</span>
-                            )}
-                            <StatusBadge status={st} />
-                          </div>
-                          <div className="text-tiny text-slate-500 font-mono truncate mt-0.5">
-                            {tool.id} · <span className="text-slate-400">{status?.skillsDir || t("skillmgr.noSkillPath")}</span>
-                          </div>
-                          {readsAgents && (
-                            <div className="text-micro text-cyan-400/80 flex items-center gap-1 mt-0.5">
-                              <span>{t("skillmgr.builtinHint")}</span>
-                            </div>
-                          )}
-                          {/* per-skill 部署：部署仓库全部技能到此工具 / 移除（非破坏性，不动用户自有技能） */}
-                          <div className="flex items-center gap-2 mt-1.5">
-                            <span className="text-micro text-slate-500 font-mono">
-                              {t("skillmgr.deployedCount", { count: (deployedMap[tool.id] || []).length })}
-                            </span>
-                            <button
-                              onClick={() => deployAllToTool(tool.id)}
-                              disabled={deployingKey === `${tool.id}:*`}
-                              className="flex items-center gap-1 px-2 py-0.5 rounded text-micro font-semibold bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white cursor-pointer transition disabled:opacity-50"
-                              title={t("skillmgr.deployAllTitle")}
-                            >
-                              {deployingKey === `${tool.id}:*` ? (
-                                <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                              ) : (
-                                <Link2 className="w-2.5 h-2.5" />
-                              )}
-                              {t("skillmgr.deployAll")}
-                            </button>
-                            <button
-                              onClick={() => undeployAllFromTool(tool.id)}
-                              disabled={deployingKey === `${tool.id}:*` || (deployedMap[tool.id] || []).length === 0}
-                              className="flex items-center gap-1 px-2 py-0.5 rounded text-micro font-semibold bg-white/5 text-slate-400 hover:bg-white/10 hover:text-red-300 cursor-pointer transition disabled:opacity-40"
-                              title={t("skillmgr.undeployAllTitle")}
-                            >
-                              <Unlink className="w-2.5 h-2.5" />
-                              {t("skillmgr.undeployAll")}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-3 self-end md:self-auto flex-shrink-0 border-t md:border-t-0 pt-2 md:pt-0 border-white/5">
-                        <div className="text-right">
-                          <div className="text-tiny text-slate-400">{t("skillmgr.symlinkStatus")}</div>
-                          <div className="text-micro text-slate-500 font-mono">
-                            {isSymlinkOn ? (
-                              <span className="text-emerald-400 font-semibold flex items-center gap-1"><Link2 className="w-2.5 h-2.5" /> {t("skillmgr.linkedPublic")}</span>
-                            ) : (
-                              <span className="text-slate-500 flex items-center gap-1"><Unlink className="w-2.5 h-2.5" /> {t("skillmgr.disabledSymlink")}</span>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* 软链接开关 Toggle */}
-                        <button
-                          onClick={() => toggleSymlink(tool.id, isSymlinkOn)}
-                          disabled={togglingToolId === tool.id}
-                          className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed ${
-                            isSymlinkOn ? 'bg-[var(--module-accent)]' : 'bg-slate-700'
-                          }`}
-                          title={isSymlinkOn ? t("skillmgr.symlinkOnTitle") : t("skillmgr.symlinkOffTitle")}
-                        >
-                          {togglingToolId === tool.id ? (
-                            <span className="absolute inset-0 flex items-center justify-center">
-                              <Loader2 className="w-3 h-3 text-white animate-spin" />
-                            </span>
-                          ) : (
-                            <span
-                              className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                                isSymlinkOn ? 'translate-x-4' : 'translate-x-0'
-                              }`}
-                            />
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {toolMsg && (
-              <div className={`p-2.5 rounded-ctl text-body flex items-center gap-2 ${toolMsg.ok ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
-                {toolMsg.ok ? <CheckCircle className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
-                <span>{toolMsg.msg}</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ════════ 市场 Tab ════════ */}
-        {tab === 'market' && (
+        {/* ════════ 从市场获取 ════════ */}
+        {showMarket && (
           <div className="space-y-4 max-w-3xl">
             <div className="rounded-card bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] border border-[var(--module-accent-ring)] p-3.5 text-caption text-[color-mix(in_srgb,var(--module-accent)_80%,transparent)] leading-relaxed">
               {t("skillmgr.marketHint1")}
@@ -823,8 +810,9 @@ export default function SkillManager() {
           </div>
         )}
 
-        {/* ════════ 内置技能 Tab ════════ */}
-        {tab === 'builtin' && (
+
+        {/* ════════ 内置技能 ════════ */}
+        {showBuiltin && (
           <div className="space-y-4 max-w-4xl">
             <Note tone="info" title={t("skillmgr.builtinTitle")}>
               <p>{t("skillmgr.builtinHint1")}</p>
@@ -861,6 +849,10 @@ export default function SkillManager() {
             {builtinResult && <ResultNote ok={builtinResult.ok} message={builtinResult.msg} />}
           </div>
         )}
+
+          </div>
+        )}
+
       </div>
 
       {/* 编辑分类/标签弹窗 */}
