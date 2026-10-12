@@ -3,6 +3,9 @@ packages:
 overrides:
   dompurify: ^3.4.13
   nanoid: ^3.3.18
+  # GHSA-68fv-2mgg-jv7q（high）：source-map-js < 1.2.2 可被特制 sourcemap 触发事件循环 DoS，
+  # 经 postcss / @tailwindcss/node 进入依赖树。CI 的 audit --audit-level=high 会拦。
+  source-map-js: ^1.2.2
 allowBuilds:
   esbuild: false
 minimumReleaseAgeExclude:
