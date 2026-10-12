@@ -1494,16 +1494,35 @@ export default function DbDesignerPanel() {
         {/* 表导航（左栏 · 常驻可折叠）：纯文字树，一行一个表，按引用关系缩进。
             放左栏而不是画布角落的小浮层 —— 浮层会被当成「装饰」而根本没人找。 */}
         {doc && doc.nodes.length > 0 ? (
-          <div className="flex min-h-0 flex-col border-r border-white/5 bg-white/[0.015]">
+          /* 宽度必须**显式给**：早先靠内容撑开，展开时列宽等于最长表名（`truncate`
+             因此永远不生效，表名越长画布被挤得越窄）；收起后表名虽然卸载了，但标题行
+             「表 + 表数 + 箭头」仍撑出约 85px 的空条，白占画布。现在展开固定 208px、
+             收起只留 32px 一竖条（图标 + 表数 + 折叠箭头竖排）。 */
+          <div
+            className={`flex min-h-0 flex-col border-r border-white/5 bg-white/[0.015] ${
+              tableNavOpen ? "w-52" : "w-8 shrink-0"
+            }`}
+          >
             <button
               onClick={() => setTableNavOpen((v) => !v)}
-              className="flex items-center gap-1.5 border-b border-white/5 px-2.5 py-2 text-tiny font-semibold text-slate-400 hover:text-slate-200 cursor-pointer"
+              className={`flex shrink-0 border-b border-white/5 text-tiny font-semibold text-slate-400 hover:text-slate-200 cursor-pointer ${
+                tableNavOpen ? "items-center gap-1.5 px-2.5 py-2" : "flex-col items-center gap-0.5 px-0 py-1.5"
+              }`}
               title={t("dbd.tableNavTitle")}
             >
               <ListTree className="w-3.5 h-3.5 shrink-0" />
-              {t("dbd.tableNav")}
-              <span className="text-slate-600">{doc.nodes.length}</span>
-              <ChevronDown className={`ml-auto w-3 h-3 transition-transform ${tableNavOpen ? "" : "-rotate-90"}`} />
+              {tableNavOpen ? (
+                <>
+                  {t("dbd.tableNav")}
+                  <span className="text-slate-600">{doc.nodes.length}</span>
+                  <ChevronDown className="ml-auto w-3 h-3 transition-transform" />
+                </>
+              ) : (
+                <>
+                  <span className="text-micro leading-none text-slate-600">{doc.nodes.length}</span>
+                  <ChevronDown className="w-3 h-3 -rotate-90 transition-transform" />
+                </>
+              )}
             </button>
             {tableNavOpen ? (
               <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1">
