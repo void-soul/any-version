@@ -57,6 +57,7 @@ import DesignNodeCard, {
   type DesignNodeData,
 } from "./DesignNodeCard";
 import FieldTable from "./FieldTable";
+import { NODE_COLORS } from "./nodeColors";
 import { ModelSelector } from "../ai/ModelSelector";
 import type { ProviderLike } from "../ai/ModelSelector";
 import { useAiPanelWidth } from "../ai/paneWidth";
@@ -157,8 +158,7 @@ interface AiProviderLike {
   models?: { id: string; name?: string }[];
 }
 
-/** 表配色预设（点一下取消；不选 = 用模块强调色） */
-const NODE_COLORS = ["#0ea5e9", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#14b8a6"];
+
 
 /**
  * 同系列自动配色：给每个节点挑一个颜色。
