@@ -967,16 +967,27 @@ export default function DbDesignerPanel() {
       const c = doc.nodes.find((n) => n.id === id)?.color ?? "";
       return /^#[0-9a-f]{6}$/i.test(c) ? c : "var(--module-accent)";
     };
-    /** 关联高亮色 = 青（与卡片侧同一语义用同一色：选中紫红、关联青）。
-     *  早先这里用子表的身份色，于是「关联」在节点上是青、在连线上是表色，语义打架。 */
-    const HL_RELATED = "var(--cyan, var(--vex-cyan, var(--vex-fallback-cyan)))";
+    /** 关联连线的高亮规则与卡片一致：**优先用外键所在那张表自己的颜色**，
+     *  没设色才回退青色。早先这里与卡片都硬用青色，于是红表被套一圈青霓虹 ——
+     *  两个色相对着干。跟随表色后，节点环、表头、连线是同一个颜色。 */
+    const HL_RELATED_FALLBACK = "var(--cyan, var(--vex-cyan, var(--vex-fallback-cyan)))";
+    /** 表自己的颜色（用户选色/同系列配色）；未设色返回空串 */
+    const ownColorOf = (id: string) => {
+      const c = doc.nodes.find((n) => n.id === id)?.color ?? "";
+      return /^#[0-9a-f]{6}$/i.test(c) ? c : "";
+    };
     // 只画「两端都在画布上」的关系：被标签筛掉的表，它的连线也该消失
     const onCanvas = new Set(visibleNodes.map((n) => n.id));
     return doc.relations.filter((r) => onCanvas.has(r.from.node) && onCanvas.has(r.to.node)).map((r) => {
       // 选中关联高亮：这条线是否与当前选中表相连
       const related = selectedId !== null && (r.from.node === selectedId || r.to.node === selectedId);
       const dimmed = selectedId !== null && !related;
-      const stroke = related ? HL_RELATED : dimmed ? "rgba(148,163,184,0.18)" : colorOf(r.from.node);
+      const own = ownColorOf(r.from.node);
+      const stroke = related
+        ? own || HL_RELATED_FALLBACK
+        : dimmed
+          ? "rgba(148,163,184,0.18)"
+          : colorOf(r.from.node);
       return {
         id: r.id,
         // 画成「父 → 子」：箭头指向多端（外键所在表），与 PowerDesigner 的观感一致
@@ -994,9 +1005,10 @@ export default function DbDesignerPanel() {
         // 挂一串「A.b → C.d」反而盖住线，密集时糊成一片。
         style: {
           stroke,
-          // 关联线更粗 + 泛一层青色辉光，节点与连线的「点亮」是同一套语言
+          // 关联线更粗 + 泛一层同色辉光（辉光色 = 线色 = 该表自己的颜色），
+          // 节点环、表头、连线是同一套语言
           strokeWidth: related ? 2.6 : dimmed ? 1 : 1.5,
-          ...(related ? { filter: `drop-shadow(0 0 3px ${HL_RELATED})` } : null),
+          ...(related ? { filter: `drop-shadow(0 0 3px ${stroke})` } : null),
         },
         zIndex: related ? 10 : 0,
         markerEnd: { type: MarkerType.ArrowClosed, color: stroke },

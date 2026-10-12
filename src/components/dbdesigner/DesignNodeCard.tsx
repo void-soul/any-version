@@ -60,29 +60,40 @@ function DesignNodeCardInner({ data }: NodeProps) {
   const rawColor = /^#[0-9a-f]{6}$/i.test(node.color ?? "") ? (node.color as string) : "";
   const tint = rawColor || "var(--module-accent)";
   /**
-   * 高亮双色分层（全站 duo-tone 的用法）：
-   *   选中 = 主色（默认紫红）—— 最亮的一档，「我点的就是它」
-   *   关联 = 青色 —— 亮度同样够，但色相不同，「跟它有关的」
-   * 刻意**不让表色接管高亮**：高亮是「状态」语义，不是这张表的身份。
-   * 若由表色决定，一张深色的表被选中时反而比别的表更暗，高亮就白做了 ——
-   * 表的身份色仍由左侧色带与表头底（非高亮时）表达。
+   * 高亮色 = **这张表自己的颜色**（同系列自动配色或用户选的色）；没设色才回退
+   * （选中→主色，关联→青）。
+   *
+   * 早先固定用主色/青，理由是「怕深色表被高亮后反而更暗」。但那会**色相打架**：
+   * 红的表被套一圈青霓虹，两个色相对着干，看着就是错的。改为跟随表色后，
+   * 高亮环与卡片、左侧色带、它的连线是同一个颜色 —— 一整套语言自洽。
+   *
+   * 档位因此改用**强度**区分（描边粗细 + 辉光层数 + 表头浓度），不再靠色相；
+   * 选中档再把表色往白里提 12%，暗色表也能看清环。
    *
    * 三档里的 `dimmed` 由面板侧算好后传进来，**不能在卡片里自己判断**：
    * 「没选中任何表」也是一种正常状态，不该被当成「这张表跟谁都没关系」而整片压暗。
    */
-  const HL_SELECT = "var(--module-accent, var(--vex-fallback-primary))";
-  const HL_RELATED = "var(--cyan, var(--vex-cyan, var(--vex-fallback-cyan)))";
-  /** 霓虹环：贴边一层实描边 + 两三层渐远外辉光；选中比关联更亮、更宽 */
-  const ring = selected
-    ? `0 0 0 2px ${HL_SELECT}, 0 0 6px color-mix(in srgb, ${HL_SELECT} 60%, transparent), 0 0 18px color-mix(in srgb, ${HL_SELECT} 42%, transparent), 0 0 40px color-mix(in srgb, ${HL_SELECT} 22%, transparent)`
+  const HL_FALLBACK_SELECT = "var(--module-accent, var(--vex-fallback-primary))";
+  const HL_FALLBACK_RELATED = "var(--cyan, var(--vex-cyan, var(--vex-fallback-cyan)))";
+  /** 本卡片当前的高亮色（未高亮时为空串） */
+  const hlColor = selected
+    ? rawColor
+      ? `color-mix(in srgb, ${rawColor} 88%, white 12%)`
+      : HL_FALLBACK_SELECT
     : related
-      ? `0 0 0 1px ${HL_RELATED}, 0 0 8px color-mix(in srgb, ${HL_RELATED} 48%, transparent), 0 0 26px color-mix(in srgb, ${HL_RELATED} 26%, transparent)`
+      ? rawColor || HL_FALLBACK_RELATED
+      : "";
+  /** 霓虹环：贴边一层实描边 + 两三层渐远外辉光；选中更粗、辉光更多层 */
+  const ring = selected
+    ? `0 0 0 2px ${hlColor}, 0 0 6px color-mix(in srgb, ${hlColor} 60%, transparent), 0 0 18px color-mix(in srgb, ${hlColor} 42%, transparent), 0 0 40px color-mix(in srgb, ${hlColor} 22%, transparent)`
+    : related
+      ? `0 0 0 1px ${hlColor}, 0 0 8px color-mix(in srgb, ${hlColor} 48%, transparent), 0 0 26px color-mix(in srgb, ${hlColor} 26%, transparent)`
       : "";
   /** 文字霓虹辉光：高亮档才有，选中更亮 */
   const textGlow = selected
-    ? `0 0 6px color-mix(in srgb, ${HL_SELECT} 90%, transparent), 0 0 16px color-mix(in srgb, ${HL_SELECT} 55%, transparent)`
+    ? `0 0 6px color-mix(in srgb, ${hlColor} 90%, transparent), 0 0 16px color-mix(in srgb, ${hlColor} 55%, transparent)`
     : related
-      ? `0 0 8px color-mix(in srgb, ${HL_RELATED} 60%, transparent)`
+      ? `0 0 8px color-mix(in srgb, ${hlColor} 60%, transparent)`
       : "";
   /**
    * 显示哪些字段行：
@@ -105,8 +116,8 @@ function DesignNodeCardInner({ data }: NodeProps) {
       style={{
         // 选色后：整卡底色混入 6% 的表色，让颜色落在「卡身」上，而不只是左侧一条色带
         ...(rawColor ? { background: `color-mix(in srgb, ${rawColor} 6%, var(--color-surface-panel))` } : null),
-        // 高亮：描边 + 霓虹环（内联写，压过原本的 shadow-lg；颜色只取状态色）
-        ...(ring ? { borderColor: selected ? HL_SELECT : HL_RELATED, boxShadow: ring } : null),
+        // 高亮：描边 + 霓虹环（内联写，压过原本的 shadow-lg）；颜色跟随表色（见 hlColor 注释）
+        ...(ring ? { borderColor: hlColor, boxShadow: ring } : null),
       }}
     >
       {/* 表配色：左侧一条竖色带，一眼分出这张表属于哪一组（不用读标签文字） */}
@@ -127,12 +138,13 @@ function DesignNodeCardInner({ data }: NodeProps) {
 
       <div
         className="relative flex items-center gap-1.5 border-b border-white/10 px-2.5 py-1.5"
-        // 表头底：高亮时用状态色（选中最浓，是「点亮」最显眼的一块）；否则混入 16% 表色
+        // 表头底：高亮时用同一个高亮色（选中最浓，是「点亮」最显眼的一块）；
+        // 未高亮时混入 16% 表色（表的身份），没有表色就用极淡的白
         style={{
           background: selected
-            ? `color-mix(in srgb, ${HL_SELECT} 26%, transparent)`
+            ? `color-mix(in srgb, ${hlColor} 26%, transparent)`
             : related
-              ? `color-mix(in srgb, ${HL_RELATED} 14%, transparent)`
+              ? `color-mix(in srgb, ${hlColor} 14%, transparent)`
               : rawColor
                 ? `color-mix(in srgb, ${rawColor} 16%, transparent)`
                 : "rgb(255 255 255 / 0.04)",
@@ -146,9 +158,7 @@ function DesignNodeCardInner({ data }: NodeProps) {
             // 图标保持表色（身份），高亮时再加一层同色辉光
             style={{
               color: tint,
-              ...(ring
-                ? { filter: `drop-shadow(0 0 4px ${selected ? HL_SELECT : HL_RELATED})` }
-                : null),
+              ...(ring ? { filter: `drop-shadow(0 0 4px ${hlColor})` } : null),
             }}
           />
         )}
