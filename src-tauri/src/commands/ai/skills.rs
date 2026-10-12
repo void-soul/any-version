@@ -306,21 +306,21 @@ fn install_into(store: &Path, projects_file: &Path, skill_id: &str, project_id: 
     fs::create_dir_all(&dir).map_err(|e| format!("创建 {} 失败: {}", dir.display(), e))?;
     let link = dir.join(skill_id);
 
-    // 前置检查必须自己做，**不能交给 create_junction**：它对「已存在的非链接目录」
-    // 会直接 remove_dir_all 递归删除（cache.rs:133）。用户手工放的同名技能目录
-    // 若被那样删掉，就是无声的数据丢失。
+    // 三种前置状态：真实目录（覆盖）/ 已正确链接（幂等）/ 指向别处或悬空（重建）
     if let Ok(md) = fs::symlink_metadata(&link) {
         if !md.file_type().is_symlink() {
-            return Err(format!(
-                "{} 已是真实目录，为避免覆盖你的数据已拒绝安装。请先改名或删除它。",
-                link.display()
-            ));
+            // 真实目录 = 项目自带的同名技能：**允许覆盖**，先整个删掉再建链接。
+            // 不可逆操作，所以 UI 在应用前必须把「会被替换的真实目录」列给用户确认。
+            // （早先这里是拒绝，因为怕无声吃掉用户数据；现在用户明确要求同名可覆盖。）
+            fs::remove_dir_all(&link)
+                .map_err(|e| format!("无法替换已存在的目录 {}: {}", link.display(), e))?;
+        } else {
+            // 是链接：已正确指向本技能则幂等成功
+            if junction_target_skill(&link, store).as_deref() == Some(skill_id) {
+                return Ok(link.to_string_lossy().to_string());
+            }
+            // 指向别处 / 悬空：交给 create_junction 删链接后重建
         }
-        // 是链接：已正确指向本技能则幂等成功
-        if junction_target_skill(&link, store).as_deref() == Some(skill_id) {
-            return Ok(link.to_string_lossy().to_string());
-        }
-        // 指向别处 / 悬空：交给 create_junction 删链接后重建
     }
 
     // junction 跨本地卷可行，但不支持网络路径（UNC）：先拦一道，避免 mklink 报错难懂
@@ -331,10 +331,12 @@ fn install_into(store: &Path, projects_file: &Path, skill_id: &str, project_id: 
     Ok(link.to_string_lossy().to_string())
 }
 
-/// 从项目卸载技能：**只删链接本身**。
+/// 从项目卸载技能。
 ///
-/// Windows 上删 junction 必须用 remove_dir —— 若用会跟随删除的操作，
-/// 删掉的会是技能库里的实体技能内容。这里刻意不用 remove_dir_all。
+/// - **链接**（指向技能库）：只删链接本身。Windows 上删 junction 必须用 remove_dir ——
+///   若用会跟随删除的操作，删掉的会是**技能库里的实体技能内容**。这里刻意不用 remove_dir_all。
+/// - **真实目录**（项目自带的技能）：按用户要求与链接同等对待，整个删除。
+///   不可逆，UI 必须先把「会被删除的真实目录」列出来让用户确认。
 #[tauri::command]
 pub fn remove_skill_from_project(skill_id: String, project_id: String) -> Result<(), String> {
     uninstall_from(&projects_path(), &skill_id, &project_id)
@@ -344,15 +346,13 @@ fn uninstall_from(projects_file: &Path, skill_id: &str, project_id: &str) -> Res
     let dir = resolve_project_skills_dir_in(projects_file, project_id)?;
     let link = dir.join(skill_id);
     let md = fs::symlink_metadata(&link).map_err(|_| format!("该项目未安装技能「{}」", skill_id))?;
-    if !md.file_type().is_symlink() {
-        return Err(format!(
-            "{} 不是安装产生的链接（是真实目录），已拒绝删除",
-            link.display()
-        ));
-    }
-    if fs::remove_dir(&link).is_err() {
-        // 占用 / 权限等情况下 remove_dir 可能失败，rmdir 同样只删链接本身
-        fs::remove_file(&link).map_err(|e| format!("卸载失败: {}", e))?;
+    if md.file_type().is_symlink() {
+        if fs::remove_dir(&link).is_err() {
+            // 占用 / 权限等情况下 remove_dir 可能失败，rmdir 同样只删链接本身
+            fs::remove_file(&link).map_err(|e| format!("卸载失败: {}", e))?;
+        }
+    } else {
+        fs::remove_dir_all(&link).map_err(|e| format!("卸载失败 {}: {}", link.display(), e))?;
     }
     Ok(())
 }
@@ -364,7 +364,7 @@ pub struct ProjectSkillEntry {
     pub skill_id: String,
     pub name: String,
     pub description: String,
-    /// `linked` 已生效 · `broken` 悬空（技能库里的技能已被删除）
+    /// `linked` 指向技能库的链接 · `local` 项目自带的真实目录 · `broken` 悬空链接（技能库里的技能已被删除）
     pub state: String,
 }
 
@@ -395,7 +395,22 @@ fn list_installed(store: &Path, projects_file: &Path, project_id: &str) -> Resul
             .map(|m| m.file_type().is_symlink())
             .unwrap_or(false)
         {
-            // 真实目录：既不是我装的，也不是 junction（可能是用户自己的），不认
+            // 真实目录 = 项目**自带**的技能（用户手工维护、没进技能库）。
+            // 同样要认出来：不然它在 UI 上完全隐形，用户既看不到也清不掉。
+            // 名字/描述就地读它自己的 SKILL.md，不去技能库找。
+            let md = path.join("SKILL.md");
+            let (name, description) = if md.is_file() {
+                let c = fs::read_to_string(&md).unwrap_or_default();
+                parse_skill_md(&c, &fallback_id)
+            } else {
+                (fallback_id.clone(), String::new())
+            };
+            out.push(ProjectSkillEntry {
+                skill_id: fallback_id.clone(),
+                name,
+                description,
+                state: "local".to_string(),
+            });
             continue;
         }
         let target_id = junction_target_skill(&path, store);
@@ -1559,39 +1574,66 @@ mod tests {
         assert_eq!(list[0].state, "broken");
     }
 
-    /// 回归测试：`create_junction` 对已存在的**真实目录**会 `remove_dir_all` 递归删除
-    /// （cache.rs:133）。安装流程必须自己先拦下来，否则用户手工放的技能目录会被无声删掉。
+    /// 项目自带的真实目录也要被列出来（state=`local`），名字取自它自己的 SKILL.md。
+    /// 不列出来的话它在 UI 上完全隐形，用户既看不到也清不掉。
     #[cfg(windows)]
     #[test]
-    fn install_refuses_to_overwrite_real_directory() {
-        let (base, store, file, pid) = setup_project_env("conflict");
+    fn list_includes_local_real_directory_skills() {
+        let (base, store, file, pid) = setup_project_env("local-listed");
+        make_skill(&store, "from-library");
+        let skills_dir = base.join("proj").join(".agents").join("skills");
+        let real = skills_dir.join("project-own");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(
+            real.join("SKILL.md"),
+            "---\nname: Project Own\ndescription: 手写的技能\n---\n",
+        )
+        .unwrap();
+
+        let list = list_installed(&store, &file, &pid).unwrap();
+        assert_eq!(list.len(), 1, "项目自带技能应出现在列表里");
+        assert_eq!(list[0].state, "local");
+        assert_eq!(list[0].skill_id, "project-own");
+        assert_eq!(list[0].name, "Project Own", "名称应读它自己的 SKILL.md");
+        assert_eq!(list[0].description, "手写的技能");
+    }
+
+    /// 同名覆盖：项目里已有同名**真实目录**时允许覆盖 —— 删掉旧目录、建 junction。
+    ///
+    /// 不可逆，所以 UI 必须在应用前把「会被替换的真实目录」列给用户确认。
+    #[cfg(windows)]
+    #[test]
+    fn install_overwrites_real_directory() {
+        let (base, store, file, pid) = setup_project_env("overwrite");
         make_skill(&store, "demo");
         let skills_dir = base.join("proj").join(".agents").join("skills");
         std::fs::create_dir_all(&skills_dir).unwrap();
         let real = skills_dir.join("demo");
         std::fs::create_dir_all(&real).unwrap();
-        std::fs::write(real.join("MY_FILE.txt"), "precious").unwrap();
+        std::fs::write(real.join("MY_FILE.txt"), "old").unwrap();
 
-        let err = install_into(&store, &file, "demo", &pid).unwrap_err();
-        assert!(err.contains("真实目录"), "错误信息要说明原因: {}", err);
+        let link = install_into(&store, &file, "demo", &pid).expect("同名真实目录应被覆盖");
+        assert!(Path::new(&link).join("SKILL.md").is_file(), "应变成指向技能库的 junction");
         assert!(
-            real.join("MY_FILE.txt").is_file(),
-            "拒绝覆盖时绝不能删掉用户目录"
+            !real.join("MY_FILE.txt").exists(),
+            "旧目录内容随覆盖一并移除"
         );
     }
 
-    /// 卸载同理：真实目录不是我们装的，拒绝删。
+    /// 卸载同理：真实目录与链接同等对待，整个删除。
     #[cfg(windows)]
     #[test]
-    fn uninstall_refuses_to_delete_real_directory() {
+    fn uninstall_deletes_real_directory() {
         let (base, store, file, pid) = setup_project_env("uninstall-real");
         make_skill(&store, "demo");
         let skills_dir = base.join("proj").join(".agents").join("skills");
         std::fs::create_dir_all(skills_dir.join("demo")).unwrap();
-        std::fs::write(skills_dir.join("demo").join("MY_FILE.txt"), "keep").unwrap();
+        std::fs::write(skills_dir.join("demo").join("MY_FILE.txt"), "bye").unwrap();
 
-        assert!(uninstall_from(&file, "demo", &pid).is_err(), "不应删除真实目录");
-        assert!(skills_dir.join("demo").join("MY_FILE.txt").is_file());
+        uninstall_from(&file, "demo", &pid).expect("真实目录应被删除");
+        assert!(!skills_dir.join("demo").exists(), "目录应整个删掉");
+        // 关键：技能库本体不能被牵连（只有链接才该这样，真实目录不会碰到技能库）
+        assert!(store.join("demo").join("SKILL.md").is_file(), "技能库本体不受影响");
     }
 
     /// 技能库与项目路径含空格时也要能装。

@@ -2910,7 +2910,13 @@
     "projApply": "Apply changes",
     "projBrokenBadge": "{{count}} broken",
     "projBrokenHint": "These skills were deleted from the library but the links remain in the project: {{names}}",
-    "projBrokenClean": "Clean up"
+    "projBrokenClean": "Clean up",
+    "projLocalBadge": "{{count}} local",
+    "projLocalTitle": "Skills that came with the project (not in the library)",
+    "projLocalRemove": "Delete this directory",
+    "projLocalRemoveConfirm": "Delete the project's own skill \"{{name}}\"?\nThe directory and everything in it will be removed — this cannot be undone.",
+    "projLocalRemoved": "Deleted the project's own skill \"{{name}}\"",
+    "projReplaceConfirm": "Ticking these replaces the project's same-named directories with the library versions; their contents will be lost:\n{{names}}\n\nContinue?"
   },
   "toollaunch": {
     "officialOnly": "Official models only",

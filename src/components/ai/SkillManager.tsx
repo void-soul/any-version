@@ -61,7 +61,10 @@ interface ProjectSkillEntry {
   skillId: string;
   name: string;
   description: string;
-  /** 'linked' 已生效 · 'broken' 悬空（技能库里的技能已被删除） */
+  /**
+   * 'linked' 指向技能库的链接 · 'local' 项目自带的真实目录 · 'broken' 悬空链接
+   * （技能库里的技能已被删除，链接还留着）
+   */
   state: string;
 }
 
@@ -351,14 +354,25 @@ export default function SkillManager() {
    *
    * 勾选是「期望状态」，与实况的差异即本次要做的动作 —— 这样用户勾一下就够，
    * 不必为每个技能点一次「装/卸」。
+   *
+   * 勾上「项目里已有同名自带技能」= 用技能库那份**替换**掉它（后端会删掉原目录），
+   * 这种不可逆操作要先确认。
    */
   const applyPicks = async (p: SkillProject) => {
-    const installed = new Set((projSkills[p.id] || []).filter((e) => e.state === 'linked').map((e) => e.skillId));
+    const entries = projSkills[p.id] || [];
+    const installed = new Set(entries.filter((e) => e.state !== 'broken').map((e) => e.skillId));
     const want = picked[p.id] || new Set<string>();
     const toInstall = [...want].filter((id) => !installed.has(id));
     const toRemove = [...installed].filter((id) => !want.has(id));
     if (toInstall.length === 0 && toRemove.length === 0) {
       setProjMsg({ id: p.id, msg: t("skillmgr.projNoChange"), ok: true });
+      return;
+    }
+    // 勾上的技能在项目里已有同名真实目录 → 会被整目录替换掉，先问一句
+    const replacing = toInstall.filter((id) =>
+      entries.some((e) => e.skillId === id && e.state === 'local'),
+    );
+    if (replacing.length > 0 && !confirm(t("skillmgr.projReplaceConfirm", { names: replacing.join('、') }))) {
       return;
     }
     setProjBusy(p.id);
@@ -387,6 +401,21 @@ export default function SkillManager() {
       });
     } else {
       setProjMsg({ id: p.id, msg: errors.join('；'), ok: false });
+    }
+  };
+
+  /** 删除项目自带的技能：后端会整个删掉该目录，动手前必须确认 */
+  const removeLocalSkill = async (p: SkillProject, e: ProjectSkillEntry) => {
+    if (!confirm(t("skillmgr.projLocalRemoveConfirm", { name: e.name || e.skillId }))) return;
+    setProjBusy(p.id);
+    try {
+      await invoke('remove_skill_from_project', { skillId: e.skillId, projectId: p.id });
+      await loadProjectSkills(p.id);
+      setProjMsg({ id: p.id, msg: t("skillmgr.projLocalRemoved", { name: e.name || e.skillId }), ok: true });
+    } catch (err: any) {
+      setProjMsg({ id: p.id, msg: String(err), ok: false });
+    } finally {
+      setProjBusy(null);
     }
   };
 
@@ -467,11 +496,12 @@ export default function SkillManager() {
                   const expanded = expandedProj === p.id;
                   const installed = projSkills[p.id] || [];
                   const linkedCount = installed.filter((e) => e.state === 'linked').length;
+                  const locals = installed.filter((e) => e.state === 'local');
                   const broken = installed.filter((e) => e.state === 'broken');
                   const want = picked[p.id] || new Set<string>();
                   // 勾选的是「期望状态」；与实况有差异才算脏，禁用「应用」按钮
                   const dirty = expanded && (() => {
-                    const cur = new Set(installed.filter((e) => e.state === 'linked').map((e) => e.skillId));
+                    const cur = new Set(installed.filter((e) => e.state !== 'broken').map((e) => e.skillId));
                     if (cur.size !== want.size) return true;
                     for (const id of cur) if (!want.has(id)) return true;
                     return false;
@@ -492,6 +522,11 @@ export default function SkillManager() {
                               <span className="px-1.5 py-0.5 rounded text-micro font-semibold bg-emerald-500/15 text-emerald-400 flex-shrink-0">
                                 {linkedCount}
                               </span>
+                              {locals.length > 0 && (
+                                <span className="px-1.5 py-0.5 rounded text-micro font-semibold bg-sky-500/15 text-sky-400 flex-shrink-0">
+                                  {t("skillmgr.projLocalBadge", { count: locals.length })}
+                                </span>
+                              )}
                               {broken.length > 0 && (
                                 <span className="px-1.5 py-0.5 rounded text-micro font-semibold bg-amber-500/15 text-amber-400 flex-shrink-0">
                                   {t("skillmgr.projBrokenBadge", { count: broken.length })}
@@ -525,6 +560,28 @@ export default function SkillManager() {
                               >
                                 <Unlink className="w-3 h-3" /> {t("skillmgr.projBrokenClean")}
                               </button>
+                            </div>
+                          )}
+
+                          {/* 项目自带的技能：真实目录，不归技能库管。列出并可删（删除会整个删掉目录）。 */}
+                          {locals.length > 0 && (
+                            <div className="rounded-ctl bg-sky-500/[0.04] border border-sky-400/10 p-2 space-y-1">
+                              <div className="text-micro text-sky-300/80">{t("skillmgr.projLocalTitle")}</div>
+                              {locals.map((e) => (
+                                <div key={e.skillId} className="flex items-center justify-between gap-2">
+                                  <span className="text-tiny text-slate-300 truncate" title={e.description || e.skillId}>
+                                    {e.name || e.skillId}
+                                  </span>
+                                  <button
+                                    onClick={() => void removeLocalSkill(p, e)}
+                                    disabled={projBusy === p.id}
+                                    className="text-slate-500 hover:text-red-400 cursor-pointer disabled:opacity-40 flex-shrink-0"
+                                    title={t("skillmgr.projLocalRemove")}
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ))}
                             </div>
                           )}
 

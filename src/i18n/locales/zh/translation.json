@@ -2914,7 +2914,13 @@
     "projApply": "应用更改",
     "projBrokenBadge": "{{count}} 个失效",
     "projBrokenHint": "这些技能已从技能库删除，但项目里的链接还留着：{{names}}",
-    "projBrokenClean": "清理失效链接"
+    "projBrokenClean": "清理失效链接",
+    "projLocalBadge": "{{count}} 个自带",
+    "projLocalTitle": "项目自带技能（不在技能库里）",
+    "projLocalRemove": "删除这个目录",
+    "projLocalRemoveConfirm": "删除项目自带的技能「{{name}}」？\n该目录及其内容会被整个删除，无法恢复。",
+    "projLocalRemoved": "已删除项目自带技能「{{name}}」",
+    "projReplaceConfirm": "勾选后会用技能库里的版本替换掉项目里的同名目录，原有内容将丢失：\n{{names}}\n\n确定继续？"
   },
   "toollaunch": {
     "officialOnly": "仅支持官方模型",
