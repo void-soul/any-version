@@ -15,7 +15,7 @@ pub mod sync;
 #[cfg(test)]
 mod tests {
     use super::models::*;
-    use super::store::{relation_fields, rename_field, validate};
+    use super::store::{normalize_naming, relation_fields, rename_field, validate};
     use super::export::{export_outline, export_sql};
 
     fn ty(base: &str) -> DbLogicalType {
@@ -61,7 +61,7 @@ mod tests {
                         fields: vec![DbField {
                             pk: true,
                             auto_increment: true,
-                            ..field("id", "bigint")
+                            ..field("user_id", "bigint")
                         }],
                         indexes: vec![],
                     }),
@@ -77,7 +77,7 @@ mod tests {
                     y: 0.0,
                     table: Some(DbTableBody {
                         fields: vec![
-                            DbField { pk: true, auto_increment: true, ..field("id", "bigint") },
+                            DbField { pk: true, auto_increment: true, ..field("order_id", "bigint") },
                             no,
                             uid,
                         ],
@@ -95,7 +95,7 @@ mod tests {
                 id: "r1".to_string(),
                 name: "订单属于用户".to_string(),
                 from: DbRelationEnd { node: "n_order".to_string(), field: "uid".to_string() },
-                to: DbRelationEnd { node: "n_user".to_string(), field: "id".to_string() },
+                to: DbRelationEnd { node: "n_user".to_string(), field: "user_id".to_string() },
                 kind: "1-n".to_string(),
                 on_delete: "CASCADE".to_string(),
                 on_update: "CASCADE".to_string(),
@@ -106,7 +106,62 @@ mod tests {
     }
 
     #[test]
-    fn sample_document_is_valid() {
+fn naming_rules_reject_bare_id_and_generic_names() {
+    let mut doc = sample("mysql");
+    // 主键应为 order_id，守着 id 就应报错
+    doc.nodes[1].table.as_mut().unwrap().fields[0].name = "id".to_string();
+    doc.relations[0].to.field = "id".to_string();
+    let errs = validate(&doc).errors.join("\n");
+    assert!(errs.contains("主键应命名为 order_id"), "{}", errs);
+
+    // 裸 name 需要补表名前缀
+    let mut doc = sample("mysql");
+    doc.nodes[1].table.as_mut().unwrap().fields[1].name = "name".to_string();
+    let errs = validate(&doc).errors.join("\n");
+    assert!(errs.contains("应改为 order_name"), "{}", errs);
+}
+
+#[test]
+fn foreign_key_without_index_is_rejected() {
+    let mut doc = sample("mysql");
+    // 抽掉 uid 的索引：每次关联都要全表扫
+    doc.nodes[1].table.as_mut().unwrap().indexes.clear();
+    let errs = validate(&doc).errors.join("\n");
+    assert!(errs.contains("没有索引"), "{}", errs);
+}
+
+#[test]
+fn normalize_fixes_pk_name_cascades_references_and_adds_fk_index() {
+    let mut doc = sample("mysql");
+    // 回归当初的不合规样本：两张表主键都是 id、还有裸 name、外键无索引
+    doc.nodes[0].table.as_mut().unwrap().fields[0].name = "id".to_string();
+    doc.nodes[1].table.as_mut().unwrap().fields[0].name = "id".to_string();
+    doc.nodes[1].table.as_mut().unwrap().fields[1].name = "name".to_string();
+    doc.nodes[1].table.as_mut().unwrap().indexes.clear();
+    doc.relations[0].to.field = "id".to_string();
+
+    let rep = normalize_naming(&mut doc);
+    assert_eq!(rep.renamed_pk.len(), 2, "{:?}", rep.renamed_pk);
+    assert_eq!(rep.added_index.len(), 1, "{:?}", rep.added_index);
+    // 主键改名后指向它的关联端必须跟着改，否则变成悬空引用
+    assert_eq!(doc.relations[0].to.field, "user_id");
+    let r = validate(&doc);
+    assert!(r.is_ok(), "{:?}", r.errors);
+}
+
+#[test]
+fn normalize_skips_rename_when_target_name_taken() {
+    let mut doc = sample("mysql");
+    // user_id 已存在：主键再改名会撞名，必须跳过而不是覆盖
+    doc.nodes[0].table.as_mut().unwrap().fields[0].name = "id".to_string();
+    doc.nodes[0].table.as_mut().unwrap().fields.push(field("user_id", "bigint"));
+    doc.relations[0].to.field = "id".to_string();
+    let rep = normalize_naming(&mut doc);
+    assert!(rep.renamed_pk.is_empty(), "{:?}", rep.renamed_pk);
+    assert!(!rep.skipped.is_empty(), "{:?}", rep.skipped);
+}
+
+    #[test] fn sample_document_is_valid() {
         let r = validate(&sample("mysql"));
         assert!(r.is_ok(), "errors={:?}", r.errors);
     }
@@ -158,7 +213,7 @@ mod tests {
     fn relation_fields_lists_only_fields_used_by_relations() {
         let doc = sample("mysql");
         assert_eq!(relation_fields(&doc, "n_order"), vec!["uid".to_string()]);
-        assert_eq!(relation_fields(&doc, "n_user"), vec!["id".to_string()]);
+        assert_eq!(relation_fields(&doc, "n_user"), vec!["user_id".to_string()]);
     }
 
     #[test]
@@ -166,9 +221,9 @@ mod tests {
         let sql = export_sql(&sample("mysql")).unwrap();
         assert!(sql.contains("CREATE TABLE `orders` ("), "{}", sql);
         assert!(sql.contains("`no` VARCHAR(32) NOT NULL COMMENT"), "{}", sql);
-        assert!(sql.contains("`id` BIGINT NOT NULL AUTO_INCREMENT"), "{}", sql);
-        assert!(sql.contains("PRIMARY KEY (`id`)"), "{}", sql);
-        assert!(sql.contains("CONSTRAINT `fk_orders_uid` FOREIGN KEY (`uid`) REFERENCES `users` (`id`)"), "{}", sql);
+        assert!(sql.contains("`order_id` BIGINT NOT NULL AUTO_INCREMENT"), "{}", sql);
+        assert!(sql.contains("PRIMARY KEY (`order_id`)"), "{}", sql);
+        assert!(sql.contains("CONSTRAINT `fk_orders_uid` FOREIGN KEY (`uid`) REFERENCES `users` (`user_id`)"), "{}", sql);
         // 外键只能建在 from（多）端：父表不该被挂上外键
         assert!(!sql.contains("REFERENCES `orders`"), "父表被误建外键: {}", sql);
         assert!(sql.contains("ON DELETE CASCADE"), "{}", sql);
@@ -180,7 +235,7 @@ mod tests {
     fn postgres_export_uses_quotes_serial_and_comment_statements() {
         let sql = export_sql(&sample("postgres")).unwrap();
         assert!(sql.contains("CREATE TABLE \"orders\" ("), "{}", sql);
-        assert!(sql.contains("\"id\" BIGSERIAL"), "{}", sql);
+        assert!(sql.contains("\"order_id\" BIGSERIAL"), "{}", sql);
         assert!(sql.contains("COMMENT ON TABLE \"orders\" IS '订单主表';"), "{}", sql);
         assert!(sql.contains("ALTER TABLE \"orders\" ADD CONSTRAINT \"fk_orders_uid\""), "{}", sql);
         // 索引在建表语句之外
@@ -190,9 +245,9 @@ mod tests {
     #[test]
     fn sqlite_export_inlines_autoincrement_pk_and_lowers_comments() {
         let sql = export_sql(&sample("sqlite")).unwrap();
-        assert!(sql.contains("\"id\" INTEGER PRIMARY KEY AUTOINCREMENT"), "{}", sql);
-        assert!(!sql.contains("PRIMARY KEY (\"id\")"), "SQLite 单列自增主键不该再有独立 PK 行: {}", sql);
-        assert!(sql.contains("FOREIGN KEY (\"uid\") REFERENCES \"users\" (\"id\")"), "{}", sql);
+        assert!(sql.contains("\"order_id\" INTEGER PRIMARY KEY AUTOINCREMENT"), "{}", sql);
+        assert!(!sql.contains("PRIMARY KEY (\"order_id\")"), "SQLite 单列自增主键不该再有独立 PK 行: {}", sql);
+        assert!(sql.contains("FOREIGN KEY (\"uid\") REFERENCES \"users\" (\"user_id\")"), "{}", sql);
         assert!(sql.contains("-- 表 orders：订单主表"), "{}", sql);
     }
 
@@ -219,7 +274,7 @@ mod tests {
     fn enum_becomes_check_constraint_outside_mysql() {
         let mut doc = sample("postgres");
         doc.nodes[0].table.as_mut().unwrap().fields.push(DbField {
-            name: "status".to_string(),
+            name: "user_status".to_string(),
             r#type: DbLogicalType {
                 base: "enum".to_string(),
                 values: vec!["new".to_string(), "paid".to_string()],
@@ -233,11 +288,11 @@ mod tests {
             unique: false,
         });
         let sql = export_sql(&doc).unwrap();
-        assert!(sql.contains("CHECK (\"status\" IN ('new', 'paid'))"), "{}", sql);
+        assert!(sql.contains("CHECK (\"user_status\" IN ('new', 'paid'))"), "{}", sql);
 
         let mut mysql = sample("mysql");
         mysql.nodes[0].table.as_mut().unwrap().fields.push(DbField {
-            name: "status".to_string(),
+            name: "user_status".to_string(),
             r#type: DbLogicalType {
                 base: "enum".to_string(),
                 values: vec!["new".to_string(), "paid".to_string()],
@@ -265,7 +320,7 @@ mod tests {
             x: 0.0,
             y: 200.0,
             table: Some(DbTableBody {
-                fields: vec![DbField { pk: true, auto_increment: true, ..field("id", "bigint") }],
+                fields: vec![DbField { pk: true, auto_increment: true, ..field("tag_id", "bigint") }],
                 indexes: vec![],
             }),
             view: None,
@@ -274,8 +329,8 @@ mod tests {
         doc.relations.push(DbDesignRelation {
             id: "r2".to_string(),
             name: String::new(),
-            from: DbRelationEnd { node: "n_order".to_string(), field: "id".to_string() },
-            to: DbRelationEnd { node: "n_tag".to_string(), field: "id".to_string() },
+            from: DbRelationEnd { node: "n_order".to_string(), field: "order_id".to_string() },
+            to: DbRelationEnd { node: "n_tag".to_string(), field: "tag_id".to_string() },
             kind: "n-n".to_string(),
             on_delete: "CASCADE".to_string(),
             on_update: "CASCADE".to_string(),
@@ -283,8 +338,9 @@ mod tests {
         });
         let sql = export_sql(&doc).unwrap();
         assert!(sql.contains("CREATE TABLE `orders_tags` ("), "{}", sql);
-        assert!(sql.contains("PRIMARY KEY (`orders_id`, `tags_id`)"), "{}", sql);
-        assert!(sql.contains("REFERENCES `tags` (`id`)"), "{}", sql);
+        // 中间表列名 = 父表名 + 外键字段名
+        assert!(sql.contains("PRIMARY KEY (`orders_order_id`, `tags_tag_id`)"), "{}", sql);
+        assert!(sql.contains("REFERENCES `tags` (`tag_id`)"), "{}", sql);
     }
 
     #[test]

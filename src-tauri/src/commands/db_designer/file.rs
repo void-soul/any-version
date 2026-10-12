@@ -124,7 +124,7 @@ mod tests {
             y: 0.0,
             table: Some(DbTableBody {
                 fields: vec![DbField {
-                    name: "id".to_string(),
+                    name: "order_id".to_string(),
                     r#type: DbLogicalType { base: "bigint".into(), ..Default::default() },
                     nullable: false,
                     default: None,

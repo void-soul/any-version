@@ -9,7 +9,7 @@
 use rusqlite::Connection;
 
 use super::models::*;
-use super::store::validate;
+use super::store::{normalize_naming, validate};
 
 /// 生成节点 / 关联 id。
 ///
@@ -394,6 +394,15 @@ pub fn reverse_ddl(text: &str, dialect: &str, name: &str) -> Result<DbDesignDocu
             mirror: false,
         });
     }
+
+    // 外来数据不可能天然满足命名规范（真实库里主键就叫 id、字段就叫 name），
+    // 而命名规范是 error 级、会阻断后续保存/导出 —— 所以在这里就地规范化一次，
+    // 否则用户逆向一个真实的库就会陷入「满屏报错且导不出来」的死锁。
+    // 外来数据不可能天然满足命名规范（真实库里主键就叫 id、字段就叫 name），
+    // 而命名规范是 error 级、会阻断后续保存/导出 —— 所以在这里就地规范化一次，
+    // 否则用户逆向一个真实的库就会陷入「满屏报错且导不出来」的死锁。
+    // 规范化改了什么，由前端在载入后展示（返回值里带明细）。
+    let _normalized = normalize_naming(&mut doc);
 
     let report = validate(&doc);
     if !report.is_ok() {
@@ -1091,6 +1100,9 @@ pub fn reverse_sqlite(path: &str, name: &str) -> Result<DbDesignDocument, String
         }
     }
 
+    // 与 DDL 路径同一个理由：真实 SQLite 库的主键就叫 id、字段就叫 name，
+    // 不规范化的话用户逆向完会直接卡在校验上，连导出都做不了
+    let _normalized = normalize_naming(&mut doc);
     Ok(doc)
 }
 
@@ -1139,7 +1151,8 @@ mod tests {
         let idx = users.table.as_ref().unwrap().indexes.clone();
         assert_eq!(idx.len(), 1);
         assert_eq!(idx[0].kind, "unique");
-        assert_eq!(idx[0].fields, vec!["name".to_string()]);
+        // 解析完统一做过命名规范化：裸名 name → user_name
+        assert_eq!(idx[0].fields, vec!["user_name".to_string()]);
 
         let orders = doc.nodes.iter().find(|n| n.name == "orders").unwrap();
         let of = &orders.table.as_ref().unwrap().fields;
@@ -1161,7 +1174,7 @@ mod tests {
         assert_eq!(doc.node(&r.from.node).unwrap().name, "orders");
         assert_eq!(r.from.field, "uid");
         assert_eq!(doc.node(&r.to.node).unwrap().name, "users");
-        assert_eq!(r.to.field, "id");
+        assert_eq!(r.to.field, "user_id"); // 已规范化：主键 id → user_id
         assert_eq!(r.on_delete, "CASCADE");
 
         // 视图
@@ -1218,7 +1231,8 @@ mod tests {
         let doc = reverse_ddl(ddl, "mysql", "t").unwrap();
         let t = doc.nodes[0].table.as_ref().unwrap();
         let idx = t.indexes.iter().find(|i| i.name == "idx_51").expect("idx_51");
-        assert_eq!(idx.fields, vec!["openid".to_string(), "user_status".to_string()]);
+        // openid 是本表主键且属裸名 → 规范化为 base_user_id
+        assert_eq!(idx.fields, vec!["base_user_id".to_string(), "user_status".to_string()]);
         assert_eq!(idx.kind, "unique");
         let idx2 = t.indexes.iter().find(|i| i.name == "idx_52").expect("idx_52");
         assert_eq!(idx2.fields, vec!["user_status".to_string()]);
