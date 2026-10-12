@@ -155,7 +155,10 @@ fn transfer_local_sessions(
             source_uid
         );
     } else {
-        // WorkBuddy 的会话合并不产生冲突分支（共享库重映射语义），收集器只为满足签名
+        // WorkBuddy 的会话合并不产生可裁决冲突（共享库重映射语义）：
+        // 共用的合并函数遇到「两侧都改过」时照旧保留目标版本、不覆盖、不写基线，
+        // 但不记成 conflict —— 否则会出现「切换说有冲突 → 列表里是 codebuddy 会话 →
+        // 点处理冲突说没有冲突」的三段自相矛盾（处理端对 WorkBuddy 恒返回空）。
         let mut pending_conflicts: Vec<PendingConflict> = Vec::new();
         for (label, extension_data_dir) in extension_roots {
             report.scanned_workspaces += codebuddy::sync_history_between_accounts(
@@ -166,6 +169,7 @@ fn transfer_local_sessions(
                 progress,
                 &mut tracker,
                 &mut pending_conflicts,
+                codebuddy::ConflictPolicy::Suppressed,
             )?;
         }
     }

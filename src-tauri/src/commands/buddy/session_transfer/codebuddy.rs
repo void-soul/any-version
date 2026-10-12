@@ -169,6 +169,7 @@ fn transfer_local_sessions(
         progress,
         &mut tracker,
         &mut pending_conflicts,
+        ConflictPolicy::Resolvable,
     )?;
     report.updated_session_rows = remap_session_vscdb_user_id(
         &user_data_dir.join("codebuddy-sessions.vscdb"),
@@ -823,8 +824,10 @@ pub(crate) fn validate_uid(uid: &str) -> Result<(), String> {
 }
 
 /// 合并来源账号 history 目录到目标账号（逐 IDE、逐工作区）。
-/// 返回扫描到的工作区数；逐会话结局写入 `tracker`，冲突详情追加进 `pending_conflicts`
-/// （WorkBuddy 也复用本函数，但它不会产生冲突分支）。
+/// 返回扫描到的工作区数；逐会话结局写入 `tracker`，冲突详情追加进 `pending_conflicts`。
+///
+/// `conflict_policy` 见 [`ConflictPolicy`]：WorkBuddy 复用本函数但不产生冲突分支，
+/// 两侧都改过时保留目标版本并记 skipped，而不是报一个「处理不了」的冲突。
 pub(super) fn sync_history_between_accounts(
     extension_data_dir: &Path,
     source_uid: &str,
@@ -833,6 +836,7 @@ pub(super) fn sync_history_between_accounts(
     progress: TransferProgress,
     tracker: &mut SyncTracker,
     pending_conflicts: &mut Vec<PendingConflict>,
+    conflict_policy: ConflictPolicy,
 ) -> Result<usize, String> {
     let source_outer = extension_data_dir.join(source_uid);
     if !source_outer.is_dir() {
@@ -920,6 +924,7 @@ pub(super) fn sync_history_between_accounts(
                 tracker,
                 &scan,
                 pending_conflicts,
+                conflict_policy,
             )?;
             scanned_workspaces += 1;
             emit_switch_progress(
@@ -1133,6 +1138,25 @@ pub(crate) struct ConflictScanContext {
     pub target_uid: String,
 }
 
+/// 「两侧都改过」时的处置策略。
+///
+/// CodeBuddy CN 走 `Resolvable`：记 conflict、落盘待裁决，用户切换完后可逐条
+/// 合并 / 覆盖 / 保留。
+///
+/// WorkBuddy 走 `Suppressed`：它的合并是共享库重映射语义，**不产生可裁决冲突** ——
+/// 但共用的 `merge_workspace_history` 仍会按三分支判定。以前这里把冲突记进了
+/// 台账（切换回报「有 N 个冲突」、明细里列出来），而 `buddy_list_session_conflicts`
+/// 对 WorkBuddy 恒返回空、裁决命令直接报错，于是用户看到的是：
+/// **「说有冲突 → 列表里却是 codebuddy 会话 → 点处理说没有冲突」**。
+/// 数据行为不变（仍然保留目标版本、不覆盖），只是不再报一个处理不了的冲突。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConflictPolicy {
+    /// 记冲突并落盘，等待用户裁决
+    Resolvable,
+    /// 不产生冲突：两侧都改过时保留目标版本，记 skipped
+    Suppressed,
+}
+
 /// 合并单个工作区：会话目录 + index.json（去重、取新、保留 current）+ 辅助目录。
 fn merge_workspace_history(
     source_workspace: &Path,
@@ -1144,6 +1168,7 @@ fn merge_workspace_history(
     tracker: &mut SyncTracker,
     scan: &ConflictScanContext,
     pending_conflicts: &mut Vec<PendingConflict>,
+    conflict_policy: ConflictPolicy,
 ) -> Result<(), String> {
     let workspace_label = workspace_name.to_string_lossy().to_string();
     // 哈希目录名对用户毫无意义（一串 32 位 MD5），能还原就还原成真实项目路径；
@@ -1294,6 +1319,19 @@ fn merge_workspace_history(
                         continue;
                     }
                     SyncDecision::Conflict => {
+                        // WorkBuddy（共享库重映射语义）：不产生可裁决冲突。
+                        // 数据行为与冲突分支完全一致 —— 保留目标版本、不覆盖、不写基线
+                        // （下次切换若仍两侧偏离会再判一次）；只是不报「处理不了的冲突」。
+                        if conflict_policy == ConflictPolicy::Suppressed {
+                            tracker.record(
+                                id,
+                                &label,
+                                SessionSyncStatus::Skipped,
+                                "bothChangedKept",
+                                None,
+                            );
+                            continue;
+                        }
                         eprintln!(
                             "[Buddy SessionTransfer] 会话两侧都有更新，保留目标版本并记为冲突: id={}, source={}, target={}",
                             id, source_stamp, target_stamp
@@ -2498,7 +2536,7 @@ mod tests {
             &backup_root,
             no_progress(),
             &mut tracker,
-            &mut Vec::new(),
+            &mut Vec::new(),            ConflictPolicy::Resolvable,
         )
         .unwrap();
         assert_eq!(scanned, 1);
@@ -2550,7 +2588,7 @@ mod tests {
             &dest.join("backup"),
             no_progress(),
             &mut tracker,
-            &mut Vec::new(),
+            &mut Vec::new(),            ConflictPolicy::Resolvable,
         )
         .unwrap();
         assert_eq!(scanned, 1);
@@ -2657,7 +2695,10 @@ mod tests {
         assert_ne!(a, b, "不同工作区的同一会话 id 不能共用基线");
         assert_ne!(
             a,
-            super::super::super::session_sync::baseline_key(&workspace_namespace("Cursor", "ws-a"), "conv-1")
+            super::super::super::session_sync::baseline_key(
+                &workspace_namespace("Cursor", "ws-a"),
+                "conv-1",
+            )
         );
         // 命名空间为空时退化成会话 id 本身（WorkBuddy 那边的既有行为）
         assert_eq!(super::super::super::session_sync::baseline_key("", "conv-1"), "conv-1");
@@ -2685,7 +2726,7 @@ mod tests {
         let mut first = SyncTracker::new(std::collections::BTreeMap::new());
         sync_history_between_accounts(
             &data_root, "source", "target", &backup_root, no_progress(), &mut first,
-            &mut Vec::new(),
+            &mut Vec::new(),            ConflictPolicy::Resolvable,
         )
         .unwrap();
         let (first_summary, baseline) = first.finish();
@@ -2695,7 +2736,7 @@ mod tests {
         let mut second = SyncTracker::new(baseline);
         sync_history_between_accounts(
             &data_root, "source", "target", &backup_root, no_progress(), &mut second,
-            &mut Vec::new(),
+            &mut Vec::new(),            ConflictPolicy::Resolvable,
         )
         .unwrap();
         let (second_summary, _) = second.finish();
@@ -2703,5 +2744,65 @@ mod tests {
         assert_eq!(second_summary.skipped, 1);
         assert_eq!(second_summary.copied, 0);
         assert!(second_summary.unchanged);
+    }
+    /// 回归：WorkBuddy 不得报出「处理不了」的冲突。
+    ///
+    /// 用户报过：切 WorkBuddy 账号提示「会话冲突」，但列表里是 codebuddy 会话，点处理冲突又说没有冲突。
+    /// 根因：共用的合并函数会把「两侧都改过」记成 conflict 进台账，而处理端对 WorkBuddy 恒返回空。
+    #[test]
+    fn workbuddy_policy_reports_no_conflict_for_both_changed() {
+        // 造「两侧都改过」的现场，并给一份**两侧都偏离**的基线 ——
+        // 没有基线时 decide_sync 走 Apply（首次同步），压根不会判成冲突，测试就空过了。
+        let baseline_for = || {
+            let mut b = std::collections::BTreeMap::new();
+            b.insert(
+                super::super::super::session_sync::baseline_key(
+                    &workspace_namespace("VSCode", "ws"),
+                    "conv-1",
+                ),
+                "stale-fingerprint".to_string(),
+            );
+            b
+        };
+
+        let dest = make_temp();
+        let (data_root, _conflict) = conflict_fixture(&dest, 1_700_000_000_000, 1_699_000_000_000);
+        let mut tracker = SyncTracker::new(baseline_for());
+        sync_history_between_accounts(
+            &data_root,
+            "src-uid",
+            "dst-uid",
+            &dest.join("backup"),
+            no_progress(),
+            &mut tracker,
+            &mut Vec::new(),
+            ConflictPolicy::Suppressed,
+        )
+        .unwrap();
+        let (summary, _) = tracker.finish();
+        assert_eq!(
+            summary.conflict, 0,
+            "WorkBuddy 不得报冲突（处理端对它恒返回空），否则前端会出现「有冲突 → 列表里是 codebuddy 会话 → 点处理说没有冲突」"
+        );
+        assert_eq!(summary.skipped, 1, "两侧都改过时仍要保留目标版本（记为跳过）");
+
+        // 反证：同一现场 + 同一基线，CodeBuddy 的策略必须照常记冲突。
+        // 少了这一句，上面那条会因为「场景压根没触发冲突」而空过。
+        let dest2 = make_temp();
+        let (data_root2, _) = conflict_fixture(&dest2, 1_700_000_000_000, 1_699_000_000_000);
+        let mut tracker2 = SyncTracker::new(baseline_for());
+        sync_history_between_accounts(
+            &data_root2,
+            "src-uid",
+            "dst-uid",
+            &dest2.join("backup"),
+            no_progress(),
+            &mut tracker2,
+            &mut Vec::new(),
+            ConflictPolicy::Resolvable,
+        )
+        .unwrap();
+        let (summary2, _) = tracker2.finish();
+        assert_eq!(summary2.conflict, 1, "CodeBuddy 侧必须照常记冲突");
     }
 }
