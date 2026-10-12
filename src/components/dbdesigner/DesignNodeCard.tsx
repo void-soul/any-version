@@ -60,15 +60,34 @@ function DesignNodeCardInner({ data }: NodeProps) {
   const rawColor = /^#[0-9a-f]{6}$/i.test(node.color ?? "") ? (node.color as string) : "";
   const tint = rawColor || "var(--module-accent)";
   /**
- * 选中高亮三档：选中本身 / 与它有关联的表 / 与它无关的表。
- * `dimmed` 由面板侧算好后传进来 —— **不能在卡片里自己判断**：
- * 「没选中任何表」也是一种正常状态，不能被当成「这张表跟谁都没关系」而整片压暗。
- */
+   * 高亮双色分层（全站 duo-tone 的用法）：
+   *   选中 = 主色（默认紫红）—— 最亮的一档，「我点的就是它」
+   *   关联 = 青色 —— 亮度同样够，但色相不同，「跟它有关的」
+   * 刻意**不让表色接管高亮**：高亮是「状态」语义，不是这张表的身份。
+   * 若由表色决定，一张深色的表被选中时反而比别的表更暗，高亮就白做了 ——
+   * 表的身份色仍由左侧色带与表头底（非高亮时）表达。
+   *
+   * 三档里的 `dimmed` 由面板侧算好后传进来，**不能在卡片里自己判断**：
+   * 「没选中任何表」也是一种正常状态，不该被当成「这张表跟谁都没关系」而整片压暗。
+   */
+  const HL_SELECT = "var(--module-accent, var(--vex-fallback-primary))";
+  const HL_RELATED = "var(--cyan, var(--vex-cyan, var(--vex-fallback-cyan)))";
+  /** 霓虹环：贴边一层实描边 + 两三层渐远外辉光；选中比关联更亮、更宽 */
+  const ring = selected
+    ? `0 0 0 2px ${HL_SELECT}, 0 0 6px color-mix(in srgb, ${HL_SELECT} 60%, transparent), 0 0 18px color-mix(in srgb, ${HL_SELECT} 42%, transparent), 0 0 40px color-mix(in srgb, ${HL_SELECT} 22%, transparent)`
+    : related
+      ? `0 0 0 1px ${HL_RELATED}, 0 0 8px color-mix(in srgb, ${HL_RELATED} 48%, transparent), 0 0 26px color-mix(in srgb, ${HL_RELATED} 26%, transparent)`
+      : "";
+  /** 文字霓虹辉光：高亮档才有，选中更亮 */
+  const textGlow = selected
+    ? `0 0 6px color-mix(in srgb, ${HL_SELECT} 90%, transparent), 0 0 16px color-mix(in srgb, ${HL_SELECT} 55%, transparent)`
+    : related
+      ? `0 0 8px color-mix(in srgb, ${HL_RELATED} 60%, transparent)`
+      : "";
   /**
-   * 折叠态显示哪些字段：
-   *   keys —— 只主键 + 外键（「这张表靠什么关联」一眼看到，杂字段不占地方）
-   *   all  —— 全部字段
-   * 展开态（hover / 选中）一律显示全部：要看细节的时候不该再被筛选挡住。
+   * 显示哪些字段行：
+   *   keys —— 只主键 + 外键 + 关联字段（「这张表靠什么关联」一眼看到，杂字段不占地方）
+   *   all  —— 全部字段，视图卡片同时展开 SQL 全文
    */
   const shown = expanded
     ? fields
@@ -80,23 +99,15 @@ function DesignNodeCardInner({ data }: NodeProps) {
 
   return (
     <div
-      className={`group relative w-[288px] overflow-hidden rounded-card border bg-surface-panel shadow-lg transition-all ${
-        selected
-          ? "border-[var(--module-accent)] shadow-[0_0_0_1px_var(--module-accent),0_0_18px_-2px_var(--module-accent)]"
-          : related
-            ? "border-[var(--module-accent)]/60 shadow-[0_0_12px_-4px_var(--module-accent)]"
-            : "border-white/10"
-      } ${dimmed ? "opacity-40" : "opacity-100"}`}
-      // 选色后：整卡底色混入 6% 的表色（选中时边框也换成表色），
-      // 让颜色落在「卡身」上，而不只是左侧一条色带
-      style={
-        rawColor
-          ? {
-              background: `color-mix(in srgb, ${rawColor} 6%, var(--color-surface-panel))`,
-              ...(selected ? { borderColor: rawColor } : null),
-            }
-          : undefined
-      }
+      className={`group relative w-[288px] overflow-hidden rounded-card border bg-surface-panel transition-all ${
+        ring ? "" : "border-white/10 shadow-lg"
+      } ${dimmed ? "opacity-35" : "opacity-100"}`}
+      style={{
+        // 选色后：整卡底色混入 6% 的表色，让颜色落在「卡身」上，而不只是左侧一条色带
+        ...(rawColor ? { background: `color-mix(in srgb, ${rawColor} 6%, var(--color-surface-panel))` } : null),
+        // 高亮：描边 + 霓虹环（内联写，压过原本的 shadow-lg；颜色只取状态色）
+        ...(ring ? { borderColor: selected ? HL_SELECT : HL_RELATED, boxShadow: ring } : null),
+      }}
     >
       {/* 表配色：左侧一条竖色带，一眼分出这张表属于哪一组（不用读标签文字） */}
       <div className="absolute inset-y-0 left-0 w-[3px]" style={{ background: tint }} />
@@ -115,19 +126,40 @@ function DesignNodeCardInner({ data }: NodeProps) {
       />
 
       <div
-        className="relative flex items-center gap-1.5 border-b border-white/10 bg-white/[0.04] px-2.5 py-1.5"
-        // 表头底：混入 16% 的表色 —— 表头是配色最显眼的部分
-        style={rawColor ? { background: `color-mix(in srgb, ${rawColor} 16%, transparent)` } : undefined}
+        className="relative flex items-center gap-1.5 border-b border-white/10 px-2.5 py-1.5"
+        // 表头底：高亮时用状态色（选中最浓，是「点亮」最显眼的一块）；否则混入 16% 表色
+        style={{
+          background: selected
+            ? `color-mix(in srgb, ${HL_SELECT} 26%, transparent)`
+            : related
+              ? `color-mix(in srgb, ${HL_RELATED} 14%, transparent)`
+              : rawColor
+                ? `color-mix(in srgb, ${rawColor} 16%, transparent)`
+                : "rgb(255 255 255 / 0.04)",
+        }}
       >
         {isView ? (
           <Eye className="h-3.5 w-3.5 flex-shrink-0 text-sky-400" />
         ) : (
-          <Database className="h-3.5 w-3.5 flex-shrink-0" style={{ color: tint }} />
+          <Database
+            className="h-3.5 w-3.5 flex-shrink-0"
+            // 图标保持表色（身份），高亮时再加一层同色辉光
+            style={{
+              color: tint,
+              ...(ring
+                ? { filter: `drop-shadow(0 0 4px ${selected ? HL_SELECT : HL_RELATED})` }
+                : null),
+            }}
+          />
         )}
         <span
           className="min-w-0 flex-1 truncate text-body font-semibold text-slate-100"
-          // 表名用表色（仅显式选色时；不选色保持默认白）
-          style={rawColor ? { color: rawColor } : undefined}
+          // 表名：高亮时叠霓虹辉光（字本身也更亮），选色时字色仍保持表色
+          style={{
+            ...(selected && !rawColor ? { color: "#fdeff7" } : null),
+            ...(rawColor ? { color: rawColor } : null),
+            ...(textGlow ? { textShadow: textGlow } : null),
+          }}
         >
           {node.name}
         </span>
