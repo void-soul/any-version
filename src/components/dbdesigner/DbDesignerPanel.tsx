@@ -42,6 +42,7 @@ import {
   Palette,
   Plus,
   Rows3,
+  Table2,
   Save,
   Sparkles,
   Terminal,
@@ -98,6 +99,26 @@ function FitOnSignal({ signal }: { signal: number }) {
       void fitView({ padding: 0.15, duration: 260 });
     }
   }, [signal, fitView]);
+  return null;
+}
+
+/**
+ * 把画布平移到某个节点并居中。
+ *
+ * 表一多，在画布上「找到那张表」就得拖来拖去 —— 这是导航列表存在的原因。
+ * 单独做成信号组件：定位需要 `useReactFlow`，而它只能在 ReactFlowProvider 内调用，
+ * 面板本体在 Provider 之外。
+ */
+function CenterOnSignal({ signal, nodeId }: { signal: number; nodeId: string | null }) {
+  const { setCenter, getNode } = useReactFlow();
+  useEffect(() => {
+    if (signal <= 0 || !nodeId) return;
+    const n = getNode(nodeId);
+    if (!n) return;
+    const w = n.measured?.width ?? n.width ?? 288;
+    const h = n.measured?.height ?? n.height ?? 200;
+    void setCenter(n.position.x + w / 2, n.position.y + h / 2, { zoom: 1, duration: 320 });
+  }, [signal, nodeId, setCenter, getNode]);
   return null;
 }
 
@@ -195,6 +216,10 @@ export default function DbDesignerPanel() {
   const [alwaysExpand, setAlwaysExpand] = useState<boolean>(() => localStorage.getItem(EXPAND_KEY) === "1");
   /** 布局变化计数：+1 就让画布重新适应视野（自动布局后必须做，否则停在角落） */
   const [fitSignal, setFitSignal] = useState(0);
+  /** 表导航：点表名 → 选中它 + 画布平移过去（表一多，画布上「找到那张表」全靠拖） */
+  const [centerSignal, setCenterSignal] = useState(0);
+  const [centerTargetId, setCenterTargetId] = useState<string | null>(null);
+  const [tableNavOpen, setTableNavOpen] = useState(false);
   /** 连线样式（曲线 / 直角折线 / 直线）：与思维导图、JSON 图共用一份偏好 */
   const [edgeStyle, setEdgeStyle] = useEdgeStyle();
   const [report, setReport] = useState<ValidationReport | null>(null);
@@ -798,6 +823,22 @@ export default function DbDesignerPanel() {
     return doc.nodes.filter((n) => (n.tags ?? []).some((tag) => tagFilter.includes(tag)));
   }, [doc, tagFilter]);
 
+  /**
+   * 与当前选中表直接相关的节点集合（选中项自己也算）。
+   * 供节点卡片画高亮、供「只看关联」筛选用 —— 表一多时这是唯一能快速
+   * 看清「这张表跟谁有关系」的办法。
+   */
+  const relatedIds = useMemo(() => {
+    const set = new Set<string>();
+    if (!doc || !selectedId) return set;
+    set.add(selectedId);
+    for (const r of doc.relations) {
+      if (r.from.node === selectedId) set.add(r.to.node);
+      else if (r.to.node === selectedId) set.add(r.from.node);
+    }
+    return set;
+  }, [doc, selectedId]);
+
   const rfNodes: Node[] = useMemo(() => {
     if (!doc) return [];
     const cache = nodeObjCache.current;
@@ -805,6 +846,8 @@ export default function DbDesignerPanel() {
     for (const n of visibleNodes) {
       const p = positions[n.id] ?? { x: n.x ?? 0, y: n.y ?? 0 };
       const selected = selectedId === n.id;
+      // 有选中项时，只有它和它的关联表点亮，其余压暗
+      const related = selectedId !== null && relatedIds.has(n.id);
       const expanded = alwaysExpand;
       const measured = measuredMap[n.id];
       const prev = cache.get(n.id);
@@ -828,6 +871,7 @@ export default function DbDesignerPanel() {
         prev!.doc !== doc ||
         prev!.node !== n ||
         (prevData.selected !== selected) ||
+        (prevData.related !== related) ||
         (prevData.expanded !== expanded) ||
         (prevData.fieldRows !== fieldRows);
       const data = (dataChanged
@@ -838,6 +882,7 @@ export default function DbDesignerPanel() {
             fkFields: fkFieldsOf(doc, n.id),
             expanded,
             selected,
+            related,
             fieldRows,
           }
         : prevData) as unknown as Record<string, unknown>;
@@ -848,7 +893,7 @@ export default function DbDesignerPanel() {
       out.push(obj);
     }
     return out;
-  }, [doc, positions, selectedId, measuredMap, fieldRows, alwaysExpand, visibleNodes]);
+  }, [doc, positions, selectedId, relatedIds, measuredMap, fieldRows, alwaysExpand, visibleNodes]);
 
   const rfEdges: Edge[] = useMemo(() => {
     if (!doc) return [];
@@ -860,7 +905,10 @@ export default function DbDesignerPanel() {
     // 只画「两端都在画布上」的关系：被标签筛掉的表，它的连线也该消失
     const onCanvas = new Set(visibleNodes.map((n) => n.id));
     return doc.relations.filter((r) => onCanvas.has(r.from.node) && onCanvas.has(r.to.node)).map((r) => {
-      const stroke = colorOf(r.from.node);
+      // 选中关联高亮：这条线是否与当前选中表相连
+      const related = selectedId !== null && (r.from.node === selectedId || r.to.node === selectedId);
+      const dimmed = selectedId !== null && !related;
+      const stroke = related ? colorOf(r.from.node) : dimmed ? "rgba(148,163,184,0.18)" : colorOf(r.from.node);
       return {
         id: r.id,
         // 画成「父 → 子」：箭头指向多端（外键所在表），与 PowerDesigner 的观感一致
@@ -871,14 +919,22 @@ export default function DbDesignerPanel() {
         // 复合主键时 A 的 3 个主键各有各的线，各自指向 B 里自己那一列。
         targetHandle: handleFieldIn(r.from.field),
         type: edgeStyle,
-        animated: r.kind === "n-n",
+        // 多对多常驻流动；选中表的关联线也流动 —— 静态图里「哪几条线跟我有关」
+        // 只能靠眼睛扫，流动一眼就分出来了
+        animated: r.kind === "n-n" || related,
         // 不画连线文字：线的两端就落在具体字段上，谁引用谁一眼看得出来；
         // 挂一串「A.b → C.d」反而盖住线，密集时糊成一片。
-        style: { stroke, strokeWidth: 1.5 },
+        style: {
+          stroke,
+          strokeWidth: related ? 2.4 : dimmed ? 1 : 1.5,
+          // 未选中的线整体压暗，把注意力收到选中表的关系上
+          opacity: dimmed ? 1 : 1,
+        },
+        zIndex: related ? 10 : 0,
         markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
       };
     });
-  }, [doc, edgeStyle, visibleNodes]);
+  }, [doc, edgeStyle, visibleNodes, selectedId]);
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     // 位置：一次性写本地覆盖（思维导图同款，避免每帧重建文档）
@@ -1421,6 +1477,7 @@ export default function DbDesignerPanel() {
                     快捷键（滚轮缩放 / 空格拖拽 / 双击适应）仍可用。 */}
                 <Background gap={16} size={1} color="rgba(148,163,184,0.15)" />
                 <FitOnSignal signal={fitSignal} />
+                <CenterOnSignal signal={centerSignal} nodeId={centerTargetId} />
               </ReactFlow>
             </ReactFlowProvider>
           ) : (
@@ -1434,6 +1491,86 @@ export default function DbDesignerPanel() {
             </div>
           )}
         </div>
+
+        {/* 表导航（画布右下角）：缩略图在几十张表时只是噪音，这里给的是**能点的名字**。
+            点一下 = 选中该表 + 平移过去，随即触发关联高亮与连线动画 ——
+            「这张表跟谁有关系」从此不用在画布上一根根线找。 */}
+        {doc && doc.nodes.length > 0 ? (
+          <div className="pointer-events-auto absolute bottom-3 right-3 z-10">
+            <div className="flex items-stretch overflow-hidden rounded-ctl border border-white/10 bg-slate-900/85 shadow-lg backdrop-blur">
+              <button
+                onClick={() => setTableNavOpen((v) => !v)}
+                className={`flex items-center gap-1 px-2 py-1.5 text-tiny cursor-pointer transition-colors ${
+                  tableNavOpen ? "text-[var(--module-accent)] bg-white/5" : "text-slate-300 hover:text-slate-100"
+                }`}
+                title={t("dbd.tableNavTitle")}
+              >
+                <Table2 className="w-3.5 h-3.5" />
+                {t("dbd.tableNav")}
+                <span className="text-slate-500">{doc.nodes.length}</span>
+                <ChevronDown className={`w-3 h-3 transition-transform ${tableNavOpen ? "rotate-180" : ""}`} />
+              </button>
+            </div>
+
+            {tableNavOpen ? (
+              <div className="mt-1 w-56 max-h-[46vh] overflow-y-auto rounded-ctl border border-white/10 bg-slate-900/92 p-1 shadow-xl backdrop-blur">
+                {/* 有选中项时置顶「它的关联表」：审一张表时最常做的是看它的关联 */}
+                {selectedId && relatedIds.size > 1 ? (
+                  <>
+                    <div className="px-1.5 py-1 text-micro font-semibold uppercase tracking-wide text-slate-500">
+                      {t("dbd.tableNavRelated", { name: doc.nodes.find((n) => n.id === selectedId)?.name ?? "" })}
+                    </div>
+                    {[...relatedIds]
+                      .filter((id) => id !== selectedId)
+                      .map((id) => {
+                        const n = doc.nodes.find((x) => x.id === id);
+                        if (!n) return null;
+                        return (
+                          <button
+                            key={`rel-${id}`}
+                            onClick={() => {
+                              setSelectedId(id);
+                              setCenterTargetId(id);
+                              setCenterSignal((s) => s + 1);
+                            }}
+                            className="w-full truncate rounded px-1.5 py-1 text-left text-tiny text-[var(--module-accent)] hover:bg-white/10 cursor-pointer"
+                          >
+                            {n.name}
+                          </button>
+                        );
+                      })}
+                    <div className="my-1 border-t border-white/5" />
+                  </>
+                ) : null}
+                <div className="px-1.5 py-1 text-micro font-semibold uppercase tracking-wide text-slate-500">
+                  {t("dbd.tableNavAll")}
+                </div>
+                {doc.nodes.map((n) => (
+                  <button
+                    key={n.id}
+                    onClick={() => {
+                      setSelectedId(n.id);
+                      setCenterTargetId(n.id);
+                      setCenterSignal((s) => s + 1);
+                    }}
+                    className={`flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-tiny cursor-pointer transition-colors ${
+                      n.id === selectedId
+                        ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]"
+                        : "text-slate-300 hover:bg-white/10"
+                    }`}
+                  >
+                    {/* 与画布同源的配色：导航栏里也能分出系列 */}
+                    <span
+                      className="w-2 h-2 rounded-full flex-shrink-0"
+                      style={{ background: /^#[0-9a-f]{6}$/i.test(n.color ?? "") ? n.color : "var(--module-accent)" }}
+                    />
+                    <span className="truncate flex-1">{n.name}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         {/* 拖拽分隔线：上下拖动调整 dock 高度（↑↓ 键也能微调），高度记到 localStorage。
             收起时整条隐藏 —— 只剩一条边没必要再能拖。 */}

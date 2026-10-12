@@ -26,6 +26,12 @@ export interface DesignNodeData extends Record<string, unknown> {
   fieldRows: FieldRowMode;
   /** 外键字段名（B 侧「多」端那一列）—— fieldRows="keys" 时用它筛 */
   fkFields: string[];
+  /**
+   * 与「当前选中表」存在关联（直接引用或被引用）。
+   * 选中某张表时用它把关联表点亮、其余压暗 —— 表一多，静态图里
+   * 「哪几张跟我有关」只能靠眼睛一根根线扫。
+   */
+  related: boolean;
 }
 
 export const HANDLE_TABLE = "table";
@@ -44,7 +50,7 @@ export const handleAllPk = "pk-all";
 
 function DesignNodeCardInner({ data }: NodeProps) {
   const d = data as unknown as DesignNodeData;
-  const { node, relationFields, expanded, selected, fieldRows, fkFields } = d;
+  const { node, relationFields, expanded, selected, fieldRows, fkFields, related } = d;
   const isView = node.kind === "view";
   const fields = node.table?.fields ?? [];
   /** 表配色：图标 / 表名 / 表头底 / 整卡底 / 左侧色条都用它；没设置就回退模块强调色。
@@ -52,6 +58,12 @@ function DesignNodeCardInner({ data }: NodeProps) {
    *  CSS 变量拼不了 alpha 值，所以两者分开。 */
   const rawColor = /^#[0-9a-f]{6}$/i.test(node.color ?? "") ? (node.color as string) : "";
   const tint = rawColor || "var(--module-accent)";
+  /**
+   * 选中高亮三档：选中本身 / 与它有关联的表 / 与它无关的表。
+   * 「有选中项时把无关的压暗」是关键 —— 表一多时注意力应该只落在
+   * 「这张表跟谁有关系」上，而不是在一堆同样显眼的卡片里找线头。
+   */
+  const dimmed = !selected && !related;
   /**
    * 折叠态显示哪些字段：
    *   keys —— 只主键 + 外键（「这张表靠什么关联」一眼看到，杂字段不占地方）
@@ -68,9 +80,13 @@ function DesignNodeCardInner({ data }: NodeProps) {
 
   return (
     <div
-      className={`group relative w-[288px] overflow-hidden rounded-card border bg-surface-panel shadow-lg transition-shadow ${
-        selected ? "border-[var(--module-accent)]" : "border-white/10"
-      }`}
+      className={`group relative w-[288px] overflow-hidden rounded-card border bg-surface-panel shadow-lg transition-all ${
+        selected
+          ? "border-[var(--module-accent)] shadow-[0_0_0_1px_var(--module-accent),0_0_18px_-2px_var(--module-accent)]"
+          : related
+            ? "border-[var(--module-accent)]/60 shadow-[0_0_12px_-4px_var(--module-accent)]"
+            : "border-white/10"
+      } ${dimmed ? "opacity-40" : "opacity-100"}`}
       // 选色后：整卡底色混入 6% 的表色（选中时边框也换成表色），
       // 让颜色落在「卡身」上，而不只是左侧一条色带
       style={
