@@ -2013,9 +2013,10 @@ fn docker_status_for(def: &NodeProjectDef) -> NodeProjectStatus {
             let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
             let out = crate::commands::docker::probe("docker", &arg_refs);
             containers = crate::commands::docker::parse_ps_ids(&out.stdout);
-            // 查不到容器但命令失败（daemon 没起等）：把原因带给界面，别只显示「未运行」
+            // 查不到容器但命令失败（daemon 没起等）：把原因带给界面，别只显示「未运行」。
+            // 用带缓存的探测：状态每 4 秒查一次，而引擎没起时 docker 命令要等超时。
             if !out.ok && containers == 0 {
-                let env = crate::commands::docker::check_env();
+                let env = crate::commands::docker::check_env_cached();
                 if !env.daemon_running {
                     error = Some(env.summary);
                 }

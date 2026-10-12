@@ -166,6 +166,33 @@ pub fn check_env() -> DockerEnv {
     env_from_outputs(&cli, &compose, &info)
 }
 
+/// 状态轮询用的带缓存版本（TTL 5 秒）。
+///
+/// 为什么需要：状态每 4 秒查一次，而**引擎没启动时** `docker info` 要等到连接超时
+/// 才返回 —— 不缓存的话轮询会被这几秒的超时拖垮，界面跟着卡。
+/// 安装/启动前的前置检查仍走 `check_env()` 取实时值：用户可能刚点开 Docker Desktop，
+/// 拿 5 秒前的「没在运行」去拦他是错的。
+pub fn check_env_cached() -> DockerEnv {
+    use std::sync::Mutex;
+    use std::time::Instant;
+    static CACHE: Mutex<Option<(Instant, DockerEnv)>> = Mutex::new(None);
+    const TTL: std::time::Duration = std::time::Duration::from_secs(5);
+
+    let mut guard = match CACHE.lock() {
+        Ok(g) => g,
+        // 锁中毒时直接实时探测，绝不因为缓存机制把功能弄坏
+        Err(_) => return check_env(),
+    };
+    if let Some((at, cached)) = guard.as_ref() {
+        if at.elapsed() < TTL {
+            return cached.clone();
+        }
+    }
+    let fresh = check_env();
+    *guard = Some((Instant::now(), fresh.clone()));
+    fresh
+}
+
 // ─── 模板与本地配置 ───
 
 /// 用户对模板变量的覆盖（持久化在 `<dir>/kira.json`）。
