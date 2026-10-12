@@ -2910,6 +2910,7 @@
     "libCollapse": "折取技能库",
     "libExpand": "展开技能库",
     "libPickedBadge": "已勾 {{n}} 个",
+    "libOnlyMissing": "只看未装",
     "projHint1": "左侧勾选项目（作为安装目标）→ 右侧勾选技能 → 点「批量安装」。Kira 会在每个项目的 .agents/skills 下建目录联接：同名已存在则覆盖，没有则新增。项目自带的技能也会列出来，可查看 SKILL.md、批量删除。",
     "projAddShort": "添加",
     "projPickAsTarget": "勾选它 = 本次批量安装的目标项目",

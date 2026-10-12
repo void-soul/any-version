@@ -2906,6 +2906,7 @@
     "libCollapse": "Collapse library",
     "libExpand": "Expand library",
     "libPickedBadge": "{{n}} ticked",
+    "libOnlyMissing": "Not installed yet",
     "projHint1": "Tick projects on the left (install targets) → tick skills on the right → press Install. Kira links them into each project's .agents/skills: same-named entries are overwritten, missing ones are added. Project-owned skills are listed too — view their SKILL.md, delete in bulk.",
     "projAddShort": "Add",
     "projPickAsTarget": "Tick it = install target for this batch",

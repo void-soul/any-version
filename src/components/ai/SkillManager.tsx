@@ -8,7 +8,7 @@ import { Note, ResultNote } from '../shared/Note';
 import {
   Search, Tag, Store, Download, Trash2,
   CheckCircle, AlertTriangle, ExternalLink, X, Package, Loader2,
-  ChevronDown, Settings2, Filter, Unlink, Sparkles, FolderOpen, Plus, Link2
+  ChevronDown, Settings2, Filter, Unlink, Sparkles, FolderOpen, Plus, Link2, FileText
 } from 'lucide-react';
 import { alertError } from "../shared/ThemedAlert";
 import { MarkdownRenderer } from "./MarkdownRenderer";
@@ -127,6 +127,8 @@ export default function SkillManager() {
   const [dirDialog, setDirDialog] = useState<{ path: string; busy: boolean; msg: string | null } | null>(null);
   /** 技能库网格是否折叠（折叠后只留标题栏 + 操作条，勾选与批量安装照常可用） */
   const [libCollapsed, setLibCollapsed] = useState(false);
+  /** 项目页技能库：只看尚未装到（勾选的）项目里的技能 */
+  const [onlyMissing, setOnlyMissing] = useState(false);
   const [projMsg, setProjMsg] = useState<{ id: string; msg: string; ok: boolean } | null>(null);
   /** 右侧正在查看的项目（左侧点谁看谁） */
   const [selProject, setSelProject] = useState<string | null>(null);
@@ -227,6 +229,24 @@ export default function SkillManager() {
 
   const hasFilter = search || selCat || selTags.length > 0;
   const clearFilter = () => { setSearch(''); setSelCat(null); setSelTags([]); };
+
+  /**
+   * 项目页技能库列表的最终结果：先按搜索/分类/标签筛（与技能库页共享），
+   * 再按「只看未装」过滤掉已经装到目标项目里的技能。
+   */
+  const libFiltered = useMemo(() => {
+    if (!onlyMissing) return filtered;
+    // 目标 = 当前勾选的项目；没勾就以正在查看的项目为准（还没勾时也能筛）
+    const targets = pickedProjects.size > 0 ? [...pickedProjects] : selProject ? [selProject] : [];
+    if (targets.length === 0) return filtered;
+    const installed = new Set<string>();
+    for (const pid of targets) {
+      for (const e of projSkills[pid] || []) {
+        if (e.state === 'linked') installed.add(e.skillId);
+      }
+    }
+    return filtered.filter((s) => !installed.has(s.id));
+  }, [filtered, onlyMissing, pickedProjects, selProject, projSkills]);
 
   // 卸载技能
   const removeSkill = async (id: string) => {
@@ -519,6 +539,20 @@ export default function SkillManager() {
     }
   };
 
+  /** 打开技能库里某个技能的 SKILL.md 预览（与项目内预览共用同一个弹窗） */
+  const openLibPreview = async (skillId: string, name: string) => {
+    setPreviewBusy(true);
+    setPreview({ name, md: '' });
+    try {
+      const md = await invoke<string>('get_library_skill_md', { skillId });
+      setPreview({ name, md });
+    } catch (err: any) {
+      setPreview({ name, md: String(err) });
+    } finally {
+      setPreviewBusy(false);
+    }
+  };
+
   /** 清掉悬空链接（技能库里的技能已被删除，junction 还留在项目里） */
   const cleanupBroken = async (pid: string) => {
     const broken = (projSkills[pid] || []).filter((e) => e.state === 'broken');
@@ -605,7 +639,7 @@ export default function SkillManager() {
                 </button>
                 {!libCollapsed && (
                   <button
-                    onClick={() => toggleAllLib(filtered)}
+                    onClick={() => toggleAllLib(libFiltered)}
                     className="px-2 py-0.5 rounded text-micro bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer flex-shrink-0"
                   >
                     {t("skillmgr.projSelectAll")}
@@ -617,25 +651,80 @@ export default function SkillManager() {
                 skills.length === 0 ? (
                   <div className="text-tiny text-slate-500 py-4 text-center">{t("skillmgr.projNoSkills")}</div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-1.5 max-h-64 overflow-y-auto">
-                    {filtered.map((s) => {
-                      const on = pickedLib.has(s.id);
-                      return (
+                  <>
+                    {/* 筛选：搜索与技能库页共享同一份状态，两边筛选结果一致 */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="relative flex-1 min-w-[160px]">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
+                        <input
+                          value={search}
+                          onChange={(e) => setSearch(e.target.value)}
+                          placeholder={t("skillmgr.searchPh")}
+                          className="w-full pl-8 pr-2 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-body text-slate-200 placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent-ring)]"
+                        />
+                      </div>
+                      <button
+                        onClick={() => setOnlyMissing((v) => !v)}
+                        title={t("skillmgr.libOnlyMissing")}
+                        className={`flex items-center gap-1 px-2 py-1.5 rounded-ctl text-tiny cursor-pointer transition-colors ${
+                          onlyMissing
+                            ? 'bg-[var(--module-accent-soft)] text-[var(--module-accent)]'
+                            : 'bg-white/5 hover:bg-white/10 text-slate-300'
+                        }`}
+                      >
+                        <Filter className="w-3 h-3" /> {t("skillmgr.libOnlyMissing")}
+                      </button>
+                      {hasFilter && (
                         <button
-                          key={s.id}
-                          onClick={() => toggleLibPick(s.id)}
-                          className={`flex items-center gap-1.5 px-2 py-1.5 rounded-ctl text-left cursor-pointer transition-colors ${
-                            on ? 'bg-emerald-500/15 text-emerald-300' : 'bg-white/5 text-slate-400 hover:bg-white/10'
-                          }`}
-                          title={s.description || s.id}
+                          onClick={clearFilter}
+                          className="px-2 py-1.5 rounded-ctl bg-white/5 hover:bg-white/10 text-tiny text-slate-400 flex items-center gap-1 cursor-pointer"
                         >
-                          <span className={`w-3 h-3 rounded-sm flex-shrink-0 border ${on ? 'bg-emerald-500 border-emerald-400' : 'border-white/20'}`} />
-                          <span className="text-tiny truncate flex-1">{s.name || s.id}</span>
-                          <span className="text-micro text-slate-500 font-mono flex-shrink-0">{t("skillmgr.skillChars", { n: s.skillMdChars })}</span>
+                          <X className="w-3 h-3" /> {t("skillmgr.clearFilter")}
                         </button>
-                      );
-                    })}
-                  </div>
+                      )}
+                    </div>
+
+                    {libFiltered.length === 0 ? (
+                      <div className="text-tiny text-slate-500 py-6 text-center">{t("skillmgr.emptyFiltered")}</div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-1.5 max-h-64 overflow-y-auto">
+                        {libFiltered.map((s) => {
+                          const on = pickedLib.has(s.id);
+                          return (
+                            <div
+                              key={s.id}
+                              className={`flex items-center gap-1 px-1.5 py-1 rounded-ctl transition-colors ${
+                                on ? 'bg-emerald-500/15' : 'bg-white/5 hover:bg-white/10'
+                              }`}
+                            >
+                              <button
+                                onClick={() => toggleLibPick(s.id)}
+                                className="flex items-center gap-1.5 min-w-0 flex-1 text-left cursor-pointer"
+                                title={s.description || s.id}
+                              >
+                                <span className={`w-3 h-3 rounded-sm flex-shrink-0 border ${on ? 'bg-emerald-500 border-emerald-400' : 'border-white/20'}`} />
+                                <span className={`text-tiny truncate flex-1 ${on ? 'text-emerald-300' : 'text-slate-400'}`}>
+                                  {s.name || s.id}
+                                </span>
+                                <span className="text-micro text-slate-500 font-mono flex-shrink-0">
+                                  {t("skillmgr.skillChars", { n: s.skillMdChars })}
+                                </span>
+                              </button>
+                              {/* 勾选与查看分开两个按钮：整个 item 点一下就切换勾选，
+                                  看文档必须是显式动作，否则误触会打断选择节奏 */}
+                              <button
+                                onClick={() => void openLibPreview(s.id, s.name || s.id)}
+                                className="p-0.5 rounded text-slate-600 hover:text-[var(--module-accent)] cursor-pointer flex-shrink-0"
+                                title={t("skillmgr.projViewMd")}
+                              >
+                                <FileText className="w-3 h-3" />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
                 )
               )}
 
@@ -962,6 +1051,13 @@ export default function SkillManager() {
                   <div className="flex items-center justify-between pt-2 border-t border-white/5 text-tiny text-slate-500">
                     <span>{s.installMethod === 'managed' ? t("skillmgr.managedLib") : s.installMethod}</span>
                     <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => void openLibPreview(s.id, s.name || s.id)}
+                        className="text-slate-400 hover:text-[var(--module-accent)] cursor-pointer"
+                        title={t("skillmgr.projViewMd")}
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                      </button>
                       <button onClick={() => openEdit(s)} className="text-slate-400 hover:text-[var(--module-accent)] cursor-pointer">
                         <Settings2 className="w-3.5 h-3.5" />
                       </button>

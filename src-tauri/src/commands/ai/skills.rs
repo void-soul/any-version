@@ -556,6 +556,16 @@ pub fn get_project_skill_md(project_id: String, skill_id: String) -> Result<Stri
     fs::read_to_string(&path).map_err(|e| format!("{} 读取失败: {}", path.display(), e))
 }
 
+/// 取技能库里某个技能的 SKILL.md 全文，供 UI 渲染预览。
+///
+/// 与 `get_project_skill_md` 分开而不是合并成一个带可选参数的命令：两个入口的
+/// 失败语义不同（项目里可能是悬空链接，技能库里是真的没这个技能），分开报错更准。
+#[tauri::command]
+pub fn get_library_skill_md(skill_id: String) -> Result<String, String> {
+    let path = skills_dir().join(&skill_id).join("SKILL.md");
+    fs::read_to_string(&path).map_err(|e| format!("{} 读取失败: {}", path.display(), e))
+}
+
 /// 列出某个项目装了什么：扫 `.agents/skills`，看哪些是指向技能库的 junction。
 ///
 /// 状态不落盘 —— 清单与实况必然会漂移（用户手动删链接、技能库删技能、移动项目），
