@@ -480,6 +480,34 @@ pub fn get_resource_dir() -> Option<PathBuf> {
     RESOURCE_DIR.get().cloned()
 }
 
+/// 展开用户目录与环境变量：把 `~/x`、`%USERPROFILE%\x` 变成绝对路径。
+///
+/// 只做字面替换，**不做「相对路径兜底到数据目录」**——那是技能库路径特有的语义
+/// （`resolve_skills_dir` 的职责）。这里保持「用户写什么就是什么」，
+/// 相对路径就原样返回，交给调用方判断它存不存在。
+///
+/// 为什么需要它：用户从别的工具复制过来的路径十有八九带 `~` 或 `%USERPROFILE%`，
+/// 直接当字面路径用会得到「目录不存在」，而用户看着自己填的没错。
+pub fn expand_user_path(raw: &str) -> std::path::PathBuf {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return std::path::PathBuf::new();
+    }
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_default();
+    let expanded = if let Some(rest) = raw.strip_prefix("~/") {
+        format!("{}{}", home.trim_end_matches(['/', '\\']), rest)
+    } else if raw == "~" {
+        home.clone()
+    } else {
+        raw.replace("%USERPROFILE%", &home)
+            .replace("%LOCALAPPDATA%", &std::env::var("LOCALAPPDATA").unwrap_or_default())
+            .replace("%APPDATA%", &std::env::var("APPDATA").unwrap_or_default())
+    };
+    std::path::PathBuf::from(expanded)
+}
+
 /// 开发构建下的**仓库根目录**（`src-tauri` 的上一级）；生产构建恒为 `None`。
 ///
 /// 三个定义注册表（`ai-tools` / `projects` / `node-projects`）都要用它把**仓库源目录**

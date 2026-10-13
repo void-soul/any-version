@@ -150,7 +150,10 @@ pub fn get_mcp_presets() -> Vec<McpPreset> {
 mod tests {
     use super::mcp_presets;
     use crate::commands::ai_registry::registry;
-    use super::{project_servers_of, translate, write_project_mcp, McpServer};
+    use super::{
+        classify_source, detect_launch, parse_runner_source, pick_package_bin,
+        pick_declared_server, project_servers_of, translate, write_project_mcp, McpServer,
+    };
     use serde_json::{json, Map, Value};
     use std::collections::HashMap;
     use std::fs;
@@ -161,6 +164,115 @@ mod tests {
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    // ─── 来源解析（纯函数 + 探测） ───
+
+    /// 四种形态必须各归各位，**判错的后果是不对称的**：
+    /// 把 `D:/tools/mcp` 判成 repo 会去GitHub clone 一个不存在的仓库；
+    /// 把 `owner/repo` 判成 local 则只报「不是目录」，用户完全看不懂哪里错了。
+    #[test]
+    fn classify_source_tells_the_four_forms_apart() {
+        assert_eq!(classify_source("npx -y @scope/server-mcp@latest"), Some("npx"));
+        assert_eq!(classify_source("pnpm dlx something"), Some("npx"));
+        assert_eq!(classify_source("owner/repo"), Some("repo"));
+        assert_eq!(classify_source("https://github.com/o/r"), Some("http"));
+        // Windows 路径 / UNC / 家目录：斜杠方向跟 owner/repo 相反，要先判掉
+        assert_eq!(classify_source(r"D:\tools\mcp-server"), Some("local"));
+        assert_eq!(classify_source(r"\\srv\share\mcp"), Some("local"));
+        assert_eq!(classify_source("~/mcp/server"), Some("local"));
+        assert_eq!(classify_source("./server"), Some("local"));
+        // 正斜杠的 Windows 路径（用户从别处复制来的常见形态）
+        assert_eq!(classify_source("D:/tools/mcp-server"), Some("local"));
+        // 包运行器优先于路径判定：`D:\tools\npx foo` 的首 token 不是 npx，落到 local
+        assert_eq!(classify_source(r"D:\tools\npx foo"), Some("local"));
+        assert_eq!(classify_source("随便写点什么"), None);
+        assert_eq!(classify_source("   "), None);
+    }
+
+    /// 命令行形态要拆成 Kira 能直接用的 command/args，名称剥掉作用域与版本修饰
+    /// ——它会拼进 `mcpServers.<name>` 这个键。
+    #[test]
+    fn parse_runner_source_splits_command_and_derives_name() {
+        let (name, cmd, args) = parse_runner_source("npx -y @modelcontextprotocol/server-filesystem@latest");
+        assert_eq!(cmd, "npx");
+        assert_eq!(args, vec!["-y", "@modelcontextprotocol/server-filesystem@latest"]);
+        assert_eq!(name, "server-filesystem");
+
+        let (name2, _, args2) = parse_runner_source("npx  some-pkg");
+        assert_eq!(name2, "some-pkg");
+        assert_eq!(args2, vec!["some-pkg"]);
+
+        // 只给了运行器名：名称退回运行器名（命令侧会另行报错「后面要跟包名」）
+        let (name3, _, args3) = parse_runner_source("npx");
+        assert_eq!(name3, "npx");
+        assert!(args3.is_empty());
+    }
+
+    #[test]
+    fn pick_package_bin_supports_both_json_shapes() {
+        assert_eq!(
+            pick_package_bin(&json!({ "bin": "./bin/cli.js" })).as_deref(),
+            Some("./bin/cli.js")
+        );
+        assert_eq!(
+            pick_package_bin(&json!({ "bin": { "srv": "dist/index.js" } })).as_deref(),
+            Some("dist/index.js")
+        );
+        // 没声明 bin 就该返回 None，而不是去猜 main —— 猜出来的入口多半是库的而不是 server 的
+        assert_eq!(pick_package_bin(&json!({ "main": "index.js" })), None);
+        assert_eq!(pick_package_bin(&json!({})), None);
+    }
+
+    #[test]
+    fn pick_declared_server_reads_first_mcp_servers_entry() {
+        let doc = json!({
+            "mcpServers": {
+                "demo": { "command": "node", "args": ["server.js", "--port", "3000"] }
+            }
+        });
+        let (cmd, args) = pick_declared_server(&doc).expect("应读到声明");
+        assert_eq!(cmd, "node");
+        assert_eq!(args, vec!["server.js", "--port", "3000"]);
+        // 没有 command（只有 url 的远程 server）不该被当成可启动项
+        assert_eq!(pick_declared_server(&json!({ "mcpServers": { "r": { "url": "https://x" } } })), None);
+        assert_eq!(pick_declared_server(&json!({})), None);
+    }
+
+    /// 探测的三种结局：mcp.json 声明 / package.json bin / **探不到**。
+    /// 第三种是刻意设计的行为，不是缺陷：宁可留空让用户填，也不要给一个看着能跑的命令。
+    #[test]
+    fn detect_launch_prefers_declaration_then_falls_back_to_package_bin() {
+        let dir = tmp_dir("detect");
+        let root = dir.join("repo");
+        fs::create_dir_all(&root).unwrap();
+
+        // 空目录：探不到
+        assert_eq!(detect_launch(&root), None);
+
+        // package.json 的 bin → node <绝对路径>
+        fs::write(
+            root.join("package.json"),
+            r#"{"name":"srv","bin":"./bin/index.js"}"#,
+        )
+        .unwrap();
+        let (cmd, args) = detect_launch(&root).expect("应从 bin 探测到");
+        assert_eq!(cmd, "node");
+        assert_eq!(args.len(), 1);
+        assert!(args[0].ends_with("bin\\index.js") || args[0].ends_with("bin/index.js"));
+        assert!(!args[0].contains("/./"), "前导 ./ 必须去掉，否则 node 找不到：{}", args[0]);
+
+        // 仓库自带 mcp.json 时以它为准（那是作者对「怎么启动自己」的明确声明）
+        fs::write(
+            root.join("mcp.json"),
+            r#"{"mcpServers":{"self":{"command":"python","args":["-m","srv"]}}}"#,
+        )
+        .unwrap();
+        let (cmd2, args2) = detect_launch(&root).expect("应从 mcp.json 探测到");
+        assert_eq!(cmd2, "python");
+        assert_eq!(args2, vec!["-m", "srv"]);
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     fn server(name: &str) -> McpServer {
@@ -611,6 +723,305 @@ pub fn install_mcp_to_project(project_id: String, server_id: String) -> Result<u
 pub fn remove_mcp_from_project(project_id: String, name: String) -> Result<usize, String> {
     let path = project_mcp_path(&project_id)?;
     write_project_mcp(&path, &name, None)
+}
+
+// ─── 从来源解析 MCP（npx 包 / owner-repo / 本地路径 / URL） ───
+
+/// 来源解析出来的启动草稿。
+///
+/// 是**草稿**而不是直接落库：自动探测出来的命令总有猜错的可能，
+/// 让用户先看见、再入库，出了错他还记得这行是 Kira 填的还是自己填的。
+#[derive(Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct McpSourceDraft {
+    /// npx | repo | local | http
+    pub kind: String,
+    /// 建议名称（用户可改）
+    pub name: String,
+    pub transport: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub url: String,
+    /// 仓库克隆后的目录 / 用户给的本地目录。探测到的命令以它为工作目录。
+    pub local_path: String,
+    /// 探测说明。探测不到时**如实告诉用户要自己填**，不要给一个看起来像成功的空命令。
+    pub note: String,
+}
+
+/// 判断输入属于哪种形态。**纯函数**：只按字面形状判，不碰磁盘，所以能写单测。
+///
+/// 顺序不是随意的，每一步都在排除上一步会误判的那类输入：
+/// 1. URL —— `https://` 开头；
+/// 2. 包运行器 —— **第一个 token 就是可执行名**（`npx`/`pnpm`/`bunx`/`uvx`/`npm`）。
+///    必须排在路径判定前面，否则 `D:\tools\npx` 的首 token 不是 `npx`，自然落到第 3 步；
+/// 3. 路径 —— 含反斜杠或盘符冒号（`D:\…`、`\\srv\share`）、`~` 开头、`./`/`../` 开头。
+///    必须排在 repo 前面，否则 `D:/tools/mcp-server` 会被当成 GitHub 仓库去 clone；
+/// 4. 剩下的「含斜杠」就是 `owner/repo`。
+fn classify_source(source: &str) -> Option<&'static str> {
+    let s = source.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let lower = s.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        return Some("http");
+    }
+    let first = s.split_whitespace().next().unwrap_or("");
+    if matches!(first, "npx" | "npm" | "pnpm" | "bunx" | "uvx") {
+        return Some("npx");
+    }
+    if s.contains('\\') || s.contains(':') || s.starts_with('~') || s.starts_with("./") || s.starts_with("../") {
+        return Some("local");
+    }
+    if s.contains('/') {
+        return Some("repo");
+    }
+    None
+}
+
+/// 把命令行形态拆成 `(建议名, 命令, 参数)`。**纯函数**。
+///
+/// 名称取第一个非 flag 的 token，并剥掉作用域与版本修饰：`@scope/pkg@latest` → `pkg`。
+/// 剥作用域是因为 Kira 的条目名会拼进配置键（`mcpServers.<name>`），
+/// `@` 和 `/` 在里面都不是好字符。
+fn parse_runner_source(src: &str) -> (String, String, Vec<String>) {
+    let mut it = src.trim().split_whitespace();
+    let command = it.next().unwrap_or("").to_string();
+    let args: Vec<String> = it.map(str::to_string).collect();
+    let name = args
+        .iter()
+        .find(|a| !a.starts_with('-'))
+        .map(|a| {
+            a.rsplit('/')
+                .next()
+                .unwrap_or(a)
+                .split('@')
+                .next()
+                .unwrap_or(a)
+                .to_string()
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| command.clone());
+    (name, command, args)
+}
+
+/// 从 `package.json` 的 `bin` 字段挑可执行入口（`string` 与 `{name: path}` 两种写法都支持）。纯函数。
+fn pick_package_bin(pkg: &Value) -> Option<String> {
+    match pkg.get("bin")? {
+        Value::String(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+        Value::Object(map) => map
+            .values()
+            .find_map(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        _ => None,
+    }
+}
+
+/// 从仓库自带的 `mcp.json` 里取第一个 server 的启动命令。纯函数。
+fn pick_declared_server(doc: &Value) -> Option<(String, Vec<String>)> {
+    let first = doc.get("mcpServers")?.as_object()?.values().next()?;
+    let cmd = first.get("command")?.as_str()?.trim().to_string();
+    if cmd.is_empty() {
+        return None;
+    }
+    let args = first
+        .get("args")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    Some((cmd, args))
+}
+
+/// 在一个目录里探测 MCP 服务器的启动命令。**探测不到就返回 `None`**，不猜。
+///
+/// 只认两种有明确约定的声明：
+/// 1. 仓库根的 `mcp.json` / `.mcp.json` —— `mcpServers` 里第一条的 `command`/`args`；
+/// 2. `package.json` 的 `bin` —— 包自己声明了可执行入口，走 `node <入口>`。
+///
+/// 刻意**不猜**「`main` 字段」「README 里的 npx 命令」这类弱信号：猜出来的命令看着能跑，
+/// 实际会在用户保存后第一次用时才炸，而那时他已经不记得这行是 Kira 填的了。
+fn detect_launch(root: &Path) -> Option<(String, Vec<String>)> {
+    for name in ["mcp.json", ".mcp.json"] {
+        if let Ok(text) = fs::read_to_string(root.join(name)) {
+            if let Ok(doc) = serde_json::from_str::<Value>(&text) {
+                if let Some(hit) = pick_declared_server(&doc) {
+                    return Some(hit);
+                }
+            }
+        }
+    }
+    let text = fs::read_to_string(root.join("package.json")).ok()?;
+    let pkg = serde_json::from_str::<Value>(&text).ok()?;
+    let entry = pick_package_bin(&pkg)?;
+    // bin 常写成 `./bin/index.js`，而 node 要的是可直接解析的路径
+    let entry = entry.trim_start_matches("./");
+    Some((
+        "node".to_string(),
+        vec![root.join(entry).to_string_lossy().to_string()],
+    ))
+}
+
+/// 仓库克隆缓存根目录（`<数据目录>/mcp-repos`）。
+///
+/// 命名用 `mcp-repos` 而不是 `mcp`：同一目录下已经有一个 `mcp.json` 文件，
+/// 再来个 `mcp` 目录太容易看错。
+fn mcp_repos_dir() -> PathBuf {
+    get_data_dir().join("mcp-repos")
+}
+
+fn temp_mcp_clone_dir() -> PathBuf {
+    let stamp = chrono::Local::now().timestamp_nanos_opt().unwrap_or(0);
+    get_data_dir().join(format!("_temp_mcp_clone_{}_{}", std::process::id(), stamp))
+}
+
+/// 把 `owner/repo`（或完整 URL）浅克隆进缓存目录，返回本地路径。
+///
+/// 先克隆到临时目录、成功后再换到最终位置：直接往最终目录克隆的话，中途失败会留下
+/// 一个半截目录，下次再装会命中它、以为已经装好了（而且 `--depth 1` 的半截 clone
+/// 报错还很难懂）。
+async fn clone_mcp_repo(base: &str) -> Result<PathBuf, String> {
+    let url = if base.starts_with("http://") || base.starts_with("https://") {
+        base.to_string()
+    } else {
+        format!("https://github.com/{}", base)
+    };
+    fs::create_dir_all(mcp_repos_dir()).map_err(|e| format!("创建克隆目录失败: {}", e))?;
+    let dest = mcp_repos_dir().join(base.trim_matches('/').replace(['/', '\\'], "__"));
+    let temp = temp_mcp_clone_dir();
+
+    let mut cmd = tokio::process::Command::new("git");
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000);
+    let output = cmd
+        .args(crate::commands::utils::with_git_long_paths(&[
+            "clone",
+            "--depth",
+            "1",
+            &url,
+        ]))
+        .arg(&temp)
+        .output()
+        .await
+        .map_err(|e| format!("git clone 失败: {}", e))?;
+    if !output.status.success() {
+        let _ = fs::remove_dir_all(&temp);
+        // 一定要把 stderr 带出来：clone 失败的原因全在里面（仓库不存在 / 私库没鉴权），
+        // 只报「clone 失败」等于让用户自己猜
+        return Err(format!(
+            "git clone 失败: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    // 换到最终位置。已有旧克隆整体替换：**路径不变**，已装进项目的 MCP 仍指向这里。
+    if dest.exists() {
+        fs::remove_dir_all(&dest).map_err(|e| format!("清理旧克隆 {} 失败: {}", dest.display(), e))?;
+    }
+    fs::rename(&temp, &dest).map_err(|e| format!("移动到 {} 失败: {}", dest.display(), e))?;
+    Ok(dest)
+}
+
+/// 从来源解析一份 MCP 启动草稿（**只解析，不写库**）。
+///
+/// 支持四种形态：`npx -y pkg@latest` / `npx pkg` / `owner/repo`（可带 `#子目录`）/ 本地目录路径，
+/// 另加 `http(s)://` 地址。仓库与本地路径会尽力探测启动命令，探测不到就把路径给你、命令留空。
+#[tauri::command]
+pub async fn resolve_mcp_source(source: String) -> Result<McpSourceDraft, String> {
+    let raw = source.trim();
+    let kind = classify_source(raw).ok_or_else(|| {
+        "认不出这是什么来源。支持：`npx -y 包名`、`owner/repo`、本地目录路径、http(s) 地址".to_string()
+    })?;
+
+    if kind == "http" {
+        let url = raw.to_string();
+        let name = url
+            .rsplit('/')
+            .find(|s| !s.is_empty())
+            .unwrap_or("mcp-server")
+            .split(['?', '#'])
+            .next()
+            .unwrap_or("mcp-server")
+            .to_string();
+        return Ok(McpSourceDraft {
+            kind: kind.to_string(),
+            name,
+            transport: "http".to_string(),
+            url,
+            ..Default::default()
+        });
+    }
+
+    if kind == "npx" {
+        let (name, command, args) = parse_runner_source(raw);
+        if args.is_empty() {
+            return Err("命令后面要跟包名，例如 `npx -y @scope/server`".to_string());
+        }
+        return Ok(McpSourceDraft {
+            kind: kind.to_string(),
+            name,
+            transport: "stdio".to_string(),
+            command,
+            args,
+            ..Default::default()
+        });
+    }
+
+    // repo / local：都需要一个真实目录才能探测
+    let (base, subdir) = super::skills::split_source_subdir(raw);
+    let (root, detected) = if kind == "repo" {
+        let cloned = clone_mcp_repo(&base).await?;
+        let hit = detect_launch(&cloned);
+        (cloned, hit)
+    } else {
+        let dir = crate::commands::utils::expand_user_path(&base);
+        if !dir.is_dir() {
+            return Err(format!("{} 不是已存在的目录", dir.display()));
+        }
+        let hit = detect_launch(&dir);
+        (dir, hit)
+    };
+    let local_path = match &subdir {
+        Some(sub) => root.join(sub),
+        None => root.clone(),
+    };
+    // 带子目录时要在子目录里再探一次（monorepo 的 server 常常在子包里）
+    let detected = match (&detected, &subdir) {
+        (None, Some(_)) => detect_launch(&local_path),
+        _ => detected,
+    };
+
+    let name = match kind {
+        "repo" => base
+            .rsplit('/')
+            .next()
+            .unwrap_or("mcp-repo")
+            .trim()
+            .to_string(),
+        _ => local_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "mcp-server".to_string()),
+    };
+    let note = match &detected {
+        Some((cmd, _)) => format!("已探测到启动命令：{} {}", cmd, local_path.display()),
+        None => format!(
+            "没能自动探测出启动命令（{} 里既没有 mcp.json 的 mcpServers，也没有 package.json 的 bin），请手动填写命令与参数。",
+            local_path.display()
+        ),
+    };
+    let (command, args) = detected.unwrap_or_default();
+    Ok(McpSourceDraft {
+        kind: kind.to_string(),
+        name,
+        transport: "stdio".to_string(),
+        command,
+        args,
+        url: String::new(),
+        local_path: local_path.to_string_lossy().to_string(),
+        note,
+    })
 }
 
 // ─── 一次性迁移：把全局配置里的 MCP 收进仓库 ───

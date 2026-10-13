@@ -4221,7 +4221,11 @@
     "projectInstalledTitle": "项目内已装",
     "pickProject": "在左侧选择一个项目",
     "globalReadFail": "读取各工具的全局 MCP 配置失败：{{err}}",
-    "projMcpCountHint": "本项目已装 {{n}} 个 MCP"
+    "projMcpCountHint": "本项目已装 {{n}} 个 MCP",
+    "sourceLabel": "来源（命令 / 仓库 / 路径 / 地址）",
+    "sourcePh": "npx -y @scope/server@latest · 或 owner/repo · 或 D:\\tools\\mcp · 或 https://…",
+    "sourceResolve": "解析",
+    "sourceOk": "已解析，可直接保存或继续调整下方字段"
   },
   "tranpanel": {
     "title": "翻译",

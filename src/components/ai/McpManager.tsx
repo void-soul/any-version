@@ -12,13 +12,28 @@ import {
   Edit3,
   Link2,
   Check,
-  X,
   Search,
   FolderOpen,
   ChevronDown,
+  Wand2,
 } from "lucide-react";
 import { alertError, theamedAlert } from "../shared/ThemedAlert";
 import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
+import { SharedModal } from "../shared/Modal";
+
+/** 后端 resolve_mcp_source 的草稿（camelCase） */
+interface McpSourceDraft {
+  /** npx | repo | local | http */
+  kind: string;
+  name: string;
+  transport: string;
+  command: string;
+  args: string[];
+  url: string;
+  localPath: string;
+  /** 探测说明（探测不到时提示用户自己填命令） */
+  note: string;
+}
 
 interface McpServer {
   id: string;
@@ -167,6 +182,10 @@ export default function McpManager() {
   const [fHeaders, setFHeaders] = useState("");
   const [fEnabled, setFEnabled] = useState(true);
   const [fDescription, setFDescription] = useState("");
+  /** 来源输入（命令 / 仓库 / 本地路径 / URL） */
+  const [fSource, setFSource] = useState("");
+  const [resolving, setResolving] = useState(false);
+  const [sourceMsg, setSourceMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
   // MCP 服务器预设（后端静态清单，只在挂载时取一次）
   const [presets, setPresets] = useState<McpPreset[]>([]);
@@ -250,6 +269,42 @@ export default function McpManager() {
     setFHeaders("");
     setFEnabled(true);
     setFDescription("");
+    setFSource("");
+    setSourceMsg(null);
+  };
+
+  const closeForm = () => {
+    setShowForm(false);
+    resetForm();
+  };
+
+  /**
+   * 解析来源并预填表单。
+   *
+   * 只预填、**不落库**：仓库探测出来的命令有猜错的可能，用户得先看见再决定。
+   * 后端探测不到时会把 note 一起带回来（说明要自己填命令），这里如实显示，
+   * 而不是给一个空表单让用户以为是加载失败。
+   */
+  const resolveSource = async () => {
+    const source = fSource.trim();
+    if (!source) return;
+    setResolving(true);
+    setSourceMsg(null);
+    try {
+      const draft = await invoke<McpSourceDraft>("resolve_mcp_source", { source });
+      setFName(draft.name);
+      setFTransport(draft.transport || "stdio");
+      setFCommand(draft.command || "");
+      setFArgs(draft.args.join("\n"));
+      setFUrl(draft.url || "");
+      // 本地/仓库来源的工作目录就是那个目录：node 相对路径的 require 依赖它
+      if (draft.localPath) setFCwd(draft.localPath);
+      setSourceMsg({ ok: true, text: draft.note || t("mcp.sourceOk") });
+    } catch (e) {
+      setSourceMsg({ ok: false, text: String(e) });
+    } finally {
+      setResolving(false);
+    }
   };
 
   const openAdd = () => {
@@ -424,17 +479,69 @@ export default function McpManager() {
         </div>
       </div>
 
-      {/* 添加 / 编辑表单 */}
-      {showForm && (
-        <div className="p-3 rounded-card bg-slate-900/40 border border-[var(--module-accent-ring)] space-y-3">
-          <div className="flex items-center justify-between">
-            <h4 className="text-body font-bold text-[var(--module-accent)] flex items-center gap-1.5">
-              <Plug className="w-3.5 h-3.5" /> {editingId ? t("mcp.editServer") : t("mcp.addMcpServer")}
-            </h4>
-            <button onClick={() => { setShowForm(false); resetForm(); }} className="text-slate-500 hover:text-slate-300 cursor-pointer">
-              <X className="w-4 h-4" />
+      {/* 添加 / 编辑表单。原来是页头下方一块行内展开卡片：它会把下面的仓库列表整个顶下去，
+          而「添加」是个一次性的短流程，不该长期占着版面。改成共享弹框。 */}
+      <SharedModal
+        open={showForm}
+        onClose={closeForm}
+        title={
+          <span className="flex items-center gap-1.5">
+            <Plug className="w-3.5 h-3.5" />
+            {editingId ? t("mcp.editServer") : t("mcp.addMcpServer")}
+          </span>
+        }
+        width={560}
+        bodyClass="space-y-3"
+        footer={
+          <>
+            <button
+              onClick={closeForm}
+              className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-tiny text-slate-400 hover:text-white cursor-pointer"
+            >
+              {t("mcp.cancel")}
             </button>
-          </div>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="px-4 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-40 text-white text-tiny font-semibold cursor-pointer flex items-center gap-1"
+            >
+              {saving ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+              {saving ? t("mcp.saving") : t("mcp.saveDeploy")}
+            </button>
+          </>
+        }
+      >
+          {/* 来源：一行命令或一个地址填了就能装。解析只预填表单，落库仍由用户点保存确认——
+              自动探测的命令总有猜错的可能，先让用户看见再入库。 */}
+          {!editingId && (
+            <div className="rounded-ctl border border-white/10 bg-black/20 p-2.5 space-y-2">
+              <label className="text-micro text-slate-500 block">
+                {t("mcp.sourceLabel")}
+              </label>
+              <div className="flex gap-1.5">
+                <input
+                  value={fSource}
+                  onChange={(e) => { setFSource(e.target.value); setSourceMsg(null); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") void resolveSource(); }}
+                  placeholder={t("mcp.sourcePh")}
+                  className="flex-1 ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
+                />
+                <button
+                  onClick={() => void resolveSource()}
+                  disabled={resolving || !fSource.trim()}
+                  className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-tiny text-slate-300 hover:text-white disabled:opacity-40 cursor-pointer flex items-center gap-1 flex-shrink-0"
+                >
+                  {resolving ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                  {t("mcp.sourceResolve")}
+                </button>
+              </div>
+              {sourceMsg && (
+                <p className={`text-micro leading-relaxed ${sourceMsg.ok ? "text-slate-400" : "text-rose-400"}`}>
+                  {sourceMsg.text}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* 从预设添加：只预填表单，落库/改动仍由用户确认 */}
           {!editingId && presets.length > 0 && (
@@ -561,25 +668,7 @@ export default function McpManager() {
             <input type="checkbox" checked={fEnabled} onChange={(e) => setFEnabled(e.target.checked)} className="accent-[var(--module-accent)]" />
             {t("mcp.globalEnable")}
           </label>
-
-          <div className="flex justify-end gap-2 pt-1">
-            <button
-              onClick={() => { setShowForm(false); resetForm(); }}
-              className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-tiny text-slate-400 hover:text-white cursor-pointer"
-            >
-              {t("mcp.cancel")}
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="px-4 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-40 text-white text-tiny font-semibold cursor-pointer flex items-center gap-1"
-            >
-              {saving ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-              {saving ? t("mcp.saving") : t("mcp.saveDeploy")}
-            </button>
-          </div>
-        </div>
-      )}
+      </SharedModal>
 
       {/* 顶部通栏：MCP 仓库（可折叠）。折叠后仍看得见条数、也照样点得了添加 */}
       <div className="rounded-card bg-white/[0.02] border border-white/10 p-3 space-y-2">

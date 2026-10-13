@@ -794,6 +794,8 @@ pub fn run() {
             commands::ai::mcp::list_project_mcps,
             commands::ai::mcp::install_mcp_to_project,
             commands::ai::mcp::remove_mcp_from_project,
+            // 从来源（npx / owner-repo / 本地路径 / URL）解析启动草稿
+            commands::ai::mcp::resolve_mcp_source,
             // 一次性迁移：把全局配置里的条目收进仓库并从全局文件删除
             commands::ai::mcp::list_global_mcp,
             commands::ai::mcp::migrate_global_mcp,

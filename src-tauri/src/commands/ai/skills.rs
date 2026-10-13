@@ -1222,7 +1222,7 @@ pub struct SkillMetaItemDto {
 ///
 /// 一个仓库里放多个技能时需要指定装哪个；也是「技能 id 与目录名不一致」时的补救入口
 /// （参考 cc-switch「support mismatched skillId directories / preserve source path during updates」）。
-fn split_source_subdir(source: &str) -> (String, Option<String>) {
+pub(crate) fn split_source_subdir(source: &str) -> (String, Option<String>) {
     match source.split_once('#') {
         Some((base, sub)) => {
             let base = base.trim();

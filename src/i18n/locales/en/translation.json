@@ -4221,7 +4221,11 @@
     "installConfirmProjects": "Install this MCP into: {{list}}?",
     "installedToProjects": "Installed into {{n}} project(s)",
     "globalReadFail": "Failed to read the global MCP configs: {{err}}",
-    "projMcpCountHint": "{{n}} MCP server(s) installed in this project"
+    "projMcpCountHint": "{{n}} MCP server(s) installed in this project",
+    "sourceLabel": "Source (command / repo / path / URL)",
+    "sourcePh": "npx -y @scope/server@latest · owner/repo · D:\\tools\\mcp · https://…",
+    "sourceResolve": "Resolve",
+    "sourceOk": "Resolved — save as is, or tweak the fields below"
   },
   "tranpanel": {
     "title": "Translate",
