@@ -405,16 +405,58 @@ mod tests {
             );
             assert!(!k.is_empty(), "{} 的 mcp 键不应为空", id);
         }
-        // 已登记就能真的读到条目：读不到时用户会看到「明明配了 6 个却只看到 1 个」，
-        // 而界面上因为整块条件是 length > 0，看起来像功能没做
+        // 读全局配置这条路必须能跑通（不报错）；有没有条目取决于用户机器上装了什么，
+// 所以**不能**断言非空——那是拿机器状态当断言，换台机器就挂，既证明不了对也证明不了错。
+        // 「配了 N 个就该拿到 N 个」这个真正要守的不变量，由下面的纯函数测试确定性覆盖。
         let list = super::list_global_mcp().expect("list_global_mcp 应成功");
-        assert!(!list.is_empty(), "至少应能读到本机的 MCP 条目");
         for d in &list {
             assert!(
                 !d.tool_id.is_empty(),
                 "每条都必须带上来源工具 id（迁移界面要靠它显示来源）"
             );
         }
+    }
+
+    /// 配了 N 个就该拿到 N 个 —— 这条才是「用户明明配了 6 个却只看到 1 个」的真正守卫。
+    ///
+    /// 用纯函数测，不读磁盘：全局配置文件在用户 home 下，有没有条目全看机器状态。
+    #[test]
+    fn tool_config_yields_every_configured_server_with_its_source_tool() {
+        let val: Value = serde_json::from_str(
+            r#"{
+                "mcpServers": {
+                    "alpha": { "command": "npx", "args": ["-y", "alpha"] },
+                    "beta": { "command": "node", "args": ["beta.js"] },
+                    "gamma": { "type": "http", "url": "https://example.com/mcp" }
+                }
+            }"#,
+        )
+        .expect("测试用的 JSON 应合法");
+
+        let list = super::parse_tool_mcp_entries("codebuddy", &val, "mcpServers");
+        assert_eq!(list.len(), 3, "配了 3 个就该拿到 3 个，不能只出来 1 个");
+        assert!(
+            list.iter().all(|d| d.tool_id == "codebuddy"),
+            "每条都要带上来源工具 id，否则迁移界面显示不出来自谁"
+        );
+        assert!(
+            list.iter().any(|d| d.name == "gamma" && !d.url.is_empty()),
+            "http 形态的条目要解析出 url"
+        );
+
+        // 坏条目跳过而不是让整份配置解析失败：一个写错的条目不该连累其余的
+        let messy: Value = serde_json::from_str(
+            r#"{ "mcpServers": { "ok": { "command": "npx" }, "bad": "not-an-object" } }"#,
+        )
+        .unwrap();
+        let got = super::parse_tool_mcp_entries("codebuddy", &messy, "mcpServers");
+        assert_eq!(got.len(), 1, "非对象的条目应被跳过，其余照常解析");
+
+        // 没有这个键 / 压根不是对象：返回空而不是报错
+        let empty = super::parse_tool_mcp_entries("codebuddy", &json!({}), "mcpServers");
+        assert!(empty.is_empty());
+        let not_obj = super::parse_tool_mcp_entries("codebuddy", &json!("nope"), "mcpServers");
+        assert!(not_obj.is_empty());
     }
 
     #[test]
@@ -1030,6 +1072,33 @@ pub async fn resolve_mcp_source(source: String) -> Result<McpSourceDraft, String
 ///
 /// 用途是一次性清理：这些条目对所有项目生效，是「上下文被污染」的根源。
 /// 迁移后它们从全局文件里消失，改由各项目按需引入。
+/// 从单个工具的全局配置里解析 MCP 条目。**纯函数**：不碰磁盘、不查注册表。
+///
+/// 与 `list_global_mcp` 拆开是为了能确定性地测「配了 N 个就该拿到 N 个」。
+/// 直接测 `list_global_mcp` 只能读用户 home 目录下的真实文件，有没有条目全看机器状态——
+/// 于是想在测试里守这个不变量，就只能断言「结果非空」，而这条在没配过全局 MCP 的
+/// 机器上必然失败（既不能证明代码对，也不能证明代码错）。
+fn parse_tool_mcp_entries(tool_id: &str, val: &Value, mcp_key: &str) -> Vec<DiscoveredMcp> {
+    if !val.is_object() {
+        return Vec::new();
+    }
+    let Some(servers) = val.get(mcp_key).and_then(|m| m.as_object()) else {
+        return Vec::new();
+    };
+    let mut out: Vec<DiscoveredMcp> = Vec::new();
+    for (name, entry) in servers {
+        if !entry.is_object() {
+            continue;
+        }
+        let mut d = reverse_translate(name, entry);
+        // tool_id 必须补上：`reverse_translate` 只负责解析条目内容，不认识它来自哪个工具。
+        // 漏了它迁移界面就不知道每条来自谁（也会让 React key 退化成只有 name）
+        d.tool_id = tool_id.to_string();
+        out.push(d);
+    }
+    out
+}
+
 #[tauri::command]
 pub fn list_global_mcp() -> Result<Vec<DiscoveredMcp>, String> {
     let store = load_store();
@@ -1043,23 +1112,12 @@ pub fn list_global_mcp() -> Result<Vec<DiscoveredMcp>, String> {
         }
         let Ok(text) = fs::read_to_string(&path) else { continue };
         let Ok(val) = serde_json::from_str::<Value>(&text) else { continue };
-        if !val.is_object() {
-            continue;
-        }
-        let Some(servers) = val.get(&mcp_key).and_then(|m| m.as_object()) else { continue };
-        for (name, entry) in servers {
-            if !entry.is_object() {
-                continue;
-            }
-            let key = format!("{}:{}", tool_id, name);
+        for mut d in parse_tool_mcp_entries(&tool_id, &val, &mcp_key) {
+            let key = format!("{}:{}", tool_id, d.name);
             if !seen.insert(key) {
                 continue;
             }
-            let mut d = reverse_translate(name, entry);
-            // tool_id 必须补上：`reverse_translate` 只负责解析条目内容，不认识它来自哪个工具。
-            // 漏了它迁移界面就不知道每条来自谁（也会让 React key退化成只有 name）
-            d.tool_id = tool_id.clone();
-            d.already_managed = store.servers.iter().any(|s| s.name == *name);
+            d.already_managed = store.servers.iter().any(|s| s.name == d.name);
             out.push(d);
         }
     }
