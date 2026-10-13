@@ -12,6 +12,7 @@ import {
   Check,
   X,
   Search,
+  FolderOpen,
 } from "lucide-react";
 import { alertError, theamedAlert } from "../shared/ThemedAlert";
 
@@ -31,9 +32,23 @@ interface McpServer {
   installMethod: string;
 }
 
-interface McpToolInfo {
+/** 项目里已装的 MCP（后端 list_project_mcps） */
+interface ProjectMcp {
+  /** 在 `<项目>/.mcp.json` 里的键名 */
+  name: string;
+  transport: string;
+  command: string;
+  args: string[];
+  url: string;
+  /** 仓库里有同名定义 = 受管；否则是用户手写的「项目自带」 */
+  managed: boolean;
+}
+
+/** 项目（复用技能那边同一个 projects.json，后端 list_projects） */
+interface SkillProject {
   id: string;
-  label: string;
+  path: string;
+  name: string;
 }
 
 interface DiscoveredMcp {
@@ -91,12 +106,19 @@ const TRANSPORT_KEY: Record<string, string> = {
 export default function McpManager() {
   const { t } = useTranslation();
   const [servers, setServers] = useState<McpServer[]>([]);
-  const [mcpTools, setMcpTools] = useState<McpToolInfo[]>([]);
-  const [discovered, setDiscovered] = useState<DiscoveredMcp[]>([]);
+  /** 全局配置里现存的 MCP（一次性清理用；只读列举） */
+  const [globalList, setGlobalList] = useState<DiscoveredMcp[]>([]);
+  /** 勾选要收进仓库的全局条目 */
+  const [pickedGlobal, setPickedGlobal] = useState<Set<string>>(new Set());
+  const [migrating, setMigrating] = useState(false);
+  /** 项目维度：MCP 按项目安装，不再全局部署 */
+  const [projects, setProjects] = useState<SkillProject[]>([]);
+  const [selProject, setSelProject] = useState<string>("");
+  const [projMcps, setProjMcps] = useState<ProjectMcp[]>([]);
+  const [projBusy, setProjBusy] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [togglingMap, setTogglingMap] = useState<Record<string, boolean>>({});
 
   // 表单状态
   const [fName, setFName] = useState("");
@@ -121,14 +143,16 @@ export default function McpManager() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [srv, tools, disc] = await Promise.all([
+      const [srv, glob, projs] = await Promise.all([
         invoke<McpServer[]>("get_mcp_servers"),
-        invoke<McpToolInfo[]>("get_mcp_tools"),
-        invoke<DiscoveredMcp[]>("get_discovered_mcp"),
+        invoke<DiscoveredMcp[]>("list_global_mcp").catch(() => [] as DiscoveredMcp[]),
+        invoke<SkillProject[]>("list_projects").catch(() => [] as SkillProject[]),
       ]);
       setServers(srv);
-      setMcpTools(tools);
-      setDiscovered(disc.filter((d) => !d.alreadyManaged));
+      // 已经收进仓库的条目不再重复提示迁移
+      setGlobalList(glob.filter((d) => !d.alreadyManaged));
+      setProjects(projs);
+      setSelProject((cur) => (cur && projs.some((p) => p.id === cur) ? cur : projs[0]?.id ?? ""));
     } catch (e) {
       console.error(e);
     } finally {
@@ -137,6 +161,24 @@ export default function McpManager() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  /// 读当前项目的 `.mcp.json`
+  const loadProjMcps = useCallback(async (pid: string) => {
+    if (!pid) {
+      setProjMcps([]);
+      return;
+    }
+    try {
+      setProjMcps(await invoke<ProjectMcp[]>("list_project_mcps", { projectId: pid }));
+    } catch (e: any) {
+      // 项目文件解析失败必须如实报错，不能当成「没装任何 MCP」——
+      // 后者会让用户以为功能坏了，而文件里其实有配置
+      setProjMcps([]);
+      alertError(String(e));
+    }
+  }, []);
+
+  useEffect(() => { void loadProjMcps(selProject); }, [selProject, loadProjMcps]);
 
   const resetForm = () => {
     setEditingId(null);
@@ -233,21 +275,56 @@ export default function McpManager() {
     } catch (e: any) { alertError(t("mcp.deleteFail", { err: String(e) })); }
   };
 
-  const handleAdopt = async (d: DiscoveredMcp) => {
+  /// 装给当前项目 / 从当前项目移除
+  const installToProject = async (id: string) => {
+    if (!selProject) return;
+    setProjBusy(id);
     try {
-      await invoke("adopt_mcp_server", { toolId: d.toolId, name: d.name });
-      await load();
-    } catch (e: any) { alertError(t("mcp.adoptFail", { err: String(e) })); }
+      await invoke("install_mcp_to_project", { projectId: selProject, serverId: id });
+      await loadProjMcps(selProject);
+    } catch (e: any) {
+      alertError(t("mcp.opFail", { err: String(e) }));
+    } finally {
+      setProjBusy("");
+    }
   };
 
-  const handleToggle = async (id: string, toolId: string, current: boolean) => {
-    const key = `${id}:${toolId}`;
-    setTogglingMap((p) => ({ ...p, [key]: true }));
+  const removeFromProject = async (name: string, managed: boolean) => {
+    if (!selProject) return;
+    // 项目自带（手写）的条目删掉用户会心疼，必须说清这是什么
+    if (!managed && !confirm(t("mcp.removeLocalConfirm", { name }))) return;
+    setProjBusy(name);
     try {
-      await invoke("toggle_mcp_tool", { id, toolId, enabled: !current });
+      await invoke("remove_mcp_from_project", { projectId: selProject, name });
+      await loadProjMcps(selProject);
+    } catch (e: any) {
+      alertError(t("mcp.opFail", { err: String(e) }));
+    } finally {
+      setProjBusy("");
+    }
+  };
+
+  /// 一次性迁移：把勾选的全局条目收进仓库，并从全局配置文件里删掉它们
+  const runMigrate = async () => {
+    if (pickedGlobal.size === 0) return;
+    const msg = t("mcp.migrateConfirm", { n: pickedGlobal.size });
+    if (!confirm(msg)) return;
+    setMigrating(true);
+    try {
+      const r = await invoke<{ imported: string[]; filesUpdated: number; failed: string[] }>(
+        "migrate_global_mcp",
+        { names: [...pickedGlobal] },
+      );
+      setPickedGlobal(new Set());
       await load();
-    } catch (e: any) { alertError(t("mcp.opFail", { err: String(e) })); }
-    finally { setTogglingMap((p) => ({ ...p, [key]: false })); }
+      if (r.failed.length > 0) {
+        alertError(t("mcp.migratePartial", { failed: r.failed.join("；") }));
+      }
+    } catch (e: any) {
+      alertError(t("mcp.opFail", { err: String(e) }));
+    } finally {
+      setMigrating(false);
+    }
   };
 
   if (loading) {
@@ -488,30 +565,26 @@ export default function McpManager() {
                       : s.url}
                   </p>
 
-                  <div className="flex items-center gap-3 mt-3 pt-2 border-t border-white/[0.03]">
-                    <span className="text-micro text-slate-500 flex-shrink-0">{t("mcp.deployTo")}</span>
-                    <div className="flex flex-wrap gap-1.5">
-                      {mcpTools.map((t) => {
-                        const enabled = s.enabledTools.includes(t.id);
-                        const key = `${s.id}:${t.id}`;
-                        const toggling = togglingMap[key] || false;
-                        return (
-                          <button
-                            key={t.id}
-                            onClick={() => handleToggle(s.id, t.id, enabled)}
-                            disabled={toggling || !s.enabled}
-                            className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-micro font-semibold cursor-pointer transition-all border disabled:opacity-40 disabled:cursor-not-allowed ${
-                              enabled
-                                ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-400"
-                                : "bg-slate-800 border-white/5 text-slate-600 hover:text-slate-400 hover:border-white/10"
-                            }`}
-                          >
-                            <span className={`w-1.5 h-1.5 rounded-full ${enabled ? "bg-emerald-400" : "bg-slate-600"}`} />
-                            {t.label}
-                          </button>
-                        );
-                      })}
-                    </div>
+                  <div className="flex items-center gap-2 mt-3 pt-2 border-t border-white/[0.03]">
+                    <span className="text-micro text-slate-500 flex-shrink-0">{t("mcp.forProject")}</span>
+                    {(() => {
+                      const installed = projMcps.find((p) => p.managed && p.name === s.name);
+                      const busy = projBusy === s.id;
+                      return (
+                        <button
+                          onClick={() => (installed ? removeFromProject(s.name, true) : installToProject(s.id))}
+                          disabled={!selProject || busy}
+                          className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-micro font-semibold cursor-pointer transition-all border disabled:opacity-40 disabled:cursor-not-allowed ${
+                            installed
+                              ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-400"
+                              : "bg-slate-800 border-white/5 text-slate-400 hover:text-slate-200 hover:border-white/15"
+                          }`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${installed ? "bg-emerald-400" : "bg-slate-600"}`} />
+                          {installed ? t("mcp.installedIn", { name: projects.find((p) => p.id === selProject)?.name ?? "" }) : t("mcp.installToProject")}
+                        </button>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>
@@ -520,40 +593,117 @@ export default function McpManager() {
         </div>
       )}
 
-      {/* 发现：工具配置里已有、但尚未由 Kira 托管的服务器 */}
-      {discovered.length > 0 && (
-        <div className="p-3 rounded-card bg-amber-500/5 border border-amber-500/20 space-y-2">
-          <div className="flex items-center gap-1.5 text-tiny font-bold text-amber-300">
-            <Search className="w-3.5 h-3.5" /> {t("mcp.discover", { count: discovered.length })}
-            <span className="text-micro font-normal text-slate-500 ml-1">{t("mcp.discoverHint")}</span>
-          </div>
-          <div className="space-y-1.5">
-            {discovered.map((d) => (
-              <div key={`${d.toolId}:${d.name}`} className="flex items-center gap-2 rounded-ctl bg-slate-900/40 border border-white/5 px-2.5 py-1.5">
-                <Plug className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
-                <span className="text-tiny font-bold text-slate-200 font-mono truncate">{d.name}</span>
-                <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400 flex-shrink-0">
-                  {t(`mcp.${TRANSPORT_KEY[d.transport] || d.transport}`) || d.transport}
-                </span>
-                <span className="text-micro text-slate-500 truncate flex-1">
-                  {mcpTools.find((t) => t.id === d.toolId)?.label ?? d.toolId}
-                </span>
-                <button
-                  onClick={() => handleAdopt(d)}
-                  className="px-2 py-1 rounded-md text-micro font-semibold bg-amber-600 hover:bg-amber-500 text-white cursor-pointer transition-all flex items-center gap-1 flex-shrink-0"
-                >
-                  <Link2 className="w-2.5 h-2.5" /> {t("mcp.adopt")}
-                </button>
+      {/* 项目维度：已装 / 可装。放在仓库列表之后，作为「装给谁」的那一栏 */}
+      <div className="p-3 rounded-card bg-white/[0.02] border border-white/10 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-body font-bold text-slate-300 flex items-center gap-1.5">
+            <FolderOpen className="w-3.5 h-3.5" /> {t("mcp.projectScope")}
+          </span>
+          {projects.length > 0 && (
+            <select
+              value={selProject}
+              onChange={(e) => setSelProject(e.target.value)}
+              className="appearance-none px-2 py-1 rounded-ctl bg-slate-800 border border-white/10 text-tiny text-slate-200 focus:outline-none focus:border-[var(--module-accent-ring)] cursor-pointer max-w-[240px]"
+            >
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>{p.name || p.path}</option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        {projects.length === 0 ? (
+          <p className="text-tiny text-slate-500">{t("mcp.noProjects")}</p>
+        ) : (
+          <>
+            {projMcps.length === 0 ? (
+              <p className="text-tiny text-slate-500">{t("mcp.projectNone")}</p>
+            ) : (
+              <div className="space-y-1">
+                {projMcps.map((m) => (
+                  <div key={m.name} className="flex items-center gap-2 rounded-ctl bg-slate-900/40 border border-white/5 px-2.5 py-1.5">
+                    <Plug className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                    <span className="text-tiny font-bold text-slate-200 font-mono truncate">{m.name}</span>
+                    <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400 flex-shrink-0">
+                      {t(`mcp.${TRANSPORT_KEY[m.transport] || m.transport}`) || m.transport}
+                    </span>
+                    {!m.managed && (
+                      <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-white/5 text-slate-400 flex-shrink-0"
+                        title={t("mcp.localHint")}>
+                        {t("mcp.fromProject")}
+                      </span>
+                    )}
+                    <span className="text-micro text-slate-500 truncate flex-1 font-mono">
+                      {m.url || `${m.command} ${m.args.join(" ")}`.trim()}
+                    </span>
+                    <button
+                      onClick={() => removeFromProject(m.name, m.managed)}
+                      disabled={projBusy === m.name}
+                      className="p-1 rounded text-slate-600 hover:text-red-400 hover:bg-red-500/10 cursor-pointer transition-all disabled:opacity-40 flex-shrink-0"
+                      title={t("mcp.removeFromProject")}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
+            <p className="text-micro text-slate-500">
+              {t("mcp.projectFileHint", { name: ".mcp.json" })}
+            </p>
+          </>
+        )}
+      </div>
+
+      {/* 一次性清理：全局配置里的 MCP 对所有项目生效，是上下文被污染的根源 */}
+      {globalList.length > 0 && (
+        <div className="p-3 rounded-card bg-amber-500/5 border border-amber-500/20 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-tiny font-bold text-amber-300 flex items-center gap-1.5">
+              <Search className="w-3.5 h-3.5" /> {t("mcp.globalTitle", { count: globalList.length })}
+            </span>
+            <button
+              onClick={() => void runMigrate()}
+              disabled={pickedGlobal.size === 0 || migrating}
+              className="px-2.5 py-1 rounded-md text-micro font-semibold bg-amber-600 hover:bg-amber-500 text-white cursor-pointer transition-all flex items-center gap-1 disabled:opacity-40"
+            >
+              {migrating ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Link2 className="w-3 h-3" />}
+              {t("mcp.migrate", { n: pickedGlobal.size })}
+            </button>
+          </div>
+          <p className="text-micro text-slate-500">{t("mcp.globalHint")}</p>
+          <div className="space-y-1">
+            {globalList.map((d) => {
+              const on = pickedGlobal.has(d.name);
+              return (
+                <button
+                  key={`${d.toolId}:${d.name}`}
+                  onClick={() => setPickedGlobal((p) => {
+                    const next = new Set(p);
+                    on ? next.delete(d.name) : next.add(d.name);
+                    return next;
+                  })}
+                  className={`w-full flex items-center gap-2 rounded-ctl border px-2.5 py-1.5 cursor-pointer transition-all text-left ${
+                    on ? "bg-amber-500/10 border-amber-500/30" : "bg-slate-900/40 border-white/5 hover:border-white/15"
+                  }`}
+                >
+                  <span className={`w-3 h-3 rounded-sm flex-shrink-0 border ${on ? "bg-amber-400 border-amber-300" : "border-white/20"}`} />
+                  <span className="text-tiny font-bold text-slate-200 font-mono truncate">{d.name}</span>
+                  <span className="text-micro text-slate-500 truncate flex-1 font-mono">
+                    {d.url || `${d.command} ${d.args.join(" ")}`.trim()}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
 
       {/* Info */}
       <div className="p-3 rounded-card bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] border border-[var(--module-accent-ring)] text-tiny text-slate-400 space-y-1">
-        <p className="font-semibold text-[var(--module-accent)]">{t("mcp.aboutDeploy")}</p>
-        <p>{t("mcp.aboutDeployDesc")}</p>
+        <p className="font-semibold text-[var(--module-accent)]">{t("mcp.aboutScope")}</p>
+        <p>{t("mcp.aboutScopeDesc")}</p>
+        <p className="text-amber-300/90">{t("mcp.aboutTrust")}</p>
       </div>
     </div>
   );
