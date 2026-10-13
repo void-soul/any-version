@@ -43,21 +43,6 @@ interface SkillEntry {
   tags: string[];
   /** SKILL.md 字符数：描述每次会话常驻，这个数字就是该技能的成本量级 */
   skillMdChars: number;
-  /** 所属技能库的绝对路径（一个库 = 一个 tab） */
-  store: string;
-  /** 所属库的显示名（目录名） */
-  storeName: string;
-}
-
-/** 技能库根目录（一个 = 一个 tab） */
-interface SkillStore {
-  path: string;
-  name: string;
-  /** 第一个库：新增技能默认装进它 */
-  isDefault: boolean;
-  /** 目录是否已存在（配了路径但还没建目录时为 false） */
-  exists: boolean;
-  skillCount: number;
 }
 
 /** 内置技能（随 Kira 分发，装进技能库后由用户安装给项目） */
@@ -162,15 +147,6 @@ export default function SkillManager() {
   const [dirDialog, setDirDialog] = useState<{ path: string; busy: boolean; msg: string | null } | null>(null);
   /** 技能库网格是否折叠（折叠后只留标题栏 + 操作条，勾选与批量安装照常可用） */
   const [libCollapsed, setLibCollapsed] = useState(false);
-  /** 技能库根目录（一个库 = 一个 tab） */
-  const [stores, setStores] = useState<SkillStore[]>([]);
-  /** 当前所在的库（绝对路径；为空表示不过滤） */
-  const [activeStore, setActiveStore] = useState<string>('');
-  /** 新增库的输入与结果提示 */
-  const [addStoreInput, setAddStoreInput] = useState('');
-  const [showAddStore, setShowAddStore] = useState(false);
-  const [addStoreBusy, setAddStoreBusy] = useState(false);
-  const [addStoreMsg, setAddStoreMsg] = useState<{ ok: boolean; text: string } | null>(null);
   /** 项目页技能库：只看尚未装到（勾选的）项目里的技能 */
   const [onlyMissing, setOnlyMissing] = useState(false);
   const [projMsg, setProjMsg] = useState<{ id: string; msg: string; ok: boolean } | null>(null);
@@ -191,29 +167,7 @@ export default function SkillManager() {
   const [previewBusy, setPreviewBusy] = useState(false);
   const [projBusy, setProjBusy] = useState<string | null>(null);
 
-  /**
-   * 某个技能**实际所在**的库。
-   *
-   * 命令不能只吃「当前 tab」：同名技能可能同时存在于多个库里，只给 id 会让后端去猜
-   * （它按「有该技能的库」挑，碰到两个都有就挑第一个）。这里按 id 精确查表。
-   */
-  const storeOf = (id: string) => skills.find((s) => s.id === id)?.store ?? activeStore;
-
   // ── 加载 ──
-  /** 载入技能库列表，并把「当前所在库」落在第一个库上 */
-  const loadStores = async (): Promise<SkillStore[]> => {
-    try {
-      const list = await invoke<SkillStore[]>('list_skill_stores');
-      setStores(list);
-      setSkillsDir(list.find((s) => s.isDefault)?.path ?? list[0]?.path ?? '');
-      setActiveStore((cur) => (cur && list.some((s) => s.path === cur) ? cur : list[0]?.path ?? ''));
-      return list;
-    } catch (e) {
-      console.error("加载技能库列表失败:", e);
-      return [];
-    }
-  };
-
   const loadSkills = async () => {
     setSkillLoading(true);
     try {
@@ -227,40 +181,7 @@ export default function SkillManager() {
     } catch {
       setSkillsDir('');
     }
-    await loadStores();
     setSkillLoading(false);
-  };
-
-  /** 追加一个技能库目录（只记配置，不搬文件） */
-  const addStore = async () => {
-    const path = addStoreInput.trim();
-    if (!path) return;
-    setAddStoreBusy(true);
-    setAddStoreMsg(null);
-    try {
-      const list = await invoke<SkillStore[]>('add_skill_store', { path });
-      setStores(list);
-      setAddStoreInput('');
-      const added = list.find((s) => s.path !== activeStore && s.name === path.split(/[\\/]/).pop());
-      setActiveStore(added?.path ?? activeStore);
-      setAddStoreMsg({ ok: true, text: '已添加' });
-      await loadSkills();
-    } catch (e) {
-      setAddStoreMsg({ ok: false, text: String(e) });
-    } finally {
-      setAddStoreBusy(false);
-    }
-  };
-
-  /** 移除一个追加的库（只删配置记录，目录与已装 junction 都不动） */
-  const removeStore = async (path: string) => {
-    try {
-      const list = await invoke<SkillStore[]>('remove_skill_store', { path });
-      setStores(list);
-      await loadSkills();
-    } catch (e) {
-      setAddStoreMsg({ ok: false, text: String(e) });
-    }
   };
 
   const loadProjects = async () => {
@@ -336,9 +257,6 @@ export default function SkillManager() {
   // 筛选技能列表
   const filtered = useMemo(() => {
     return skills.filter((s) => {
-      // 先按当前所在的技能库切分：不同库里的同名技能各归各的，
-      // 混在一张列表里就会出现两个一模一样的条目，用户无从下手
-      if (activeStore && s.store && s.store !== activeStore) return false;
       if (search.trim()) {
         const q = search.toLowerCase();
         const m = s.id.toLowerCase().includes(q) || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q);
@@ -348,7 +266,7 @@ export default function SkillManager() {
       if (selTags.length > 0 && !selTags.every((t) => s.tags.includes(t))) return false;
       return true;
     });
-  }, [skills, search, selCat, selTags, activeStore]);
+  }, [skills, search, selCat, selTags]);
 
   const hasFilter = search || selCat || selTags.length > 0;
   const clearFilter = () => { setSearch(''); setSelCat(null); setSelTags([]); };
@@ -375,7 +293,7 @@ export default function SkillManager() {
   const removeSkill = async (id: string) => {
     if (!confirm(t("skillmgr.uninstallConfirm", { id }))) return;
     try {
-      await invoke('uninstall_skill', { skillId: id, store: storeOf(id) });
+      await invoke('uninstall_skill', { skillId: id });
       setSkillMsg({ id, msg: t("skillmgr.deleted"), ok: true });
       loadSkills();
     } catch (e: any) {
@@ -389,11 +307,10 @@ export default function SkillManager() {
     setSavingMeta(true);
     try {
       await invoke('update_skill_meta', {
-            skillId: editing.id,
-            category: edCat.trim(),
-            tags: edTags,
-            store: storeOf(editing.id),
-          });
+        skillId: editing.id,
+        category: edCat.trim(),
+        tags: edTags,
+      });
       setEditing(null);
       loadSkills();
     } catch (e: any) {
@@ -442,7 +359,7 @@ export default function SkillManager() {
     setInstallLog(t("skillmgr.installStart") + '\n');
     setInstallErr('');
     try {
-      await invoke('install_skill_from_online', { source: src, store: activeStore });
+      await invoke('install_skill_from_online', { source: src });
     } catch (e: any) {
       setInstalling(false);
       setInstallErr(String(e));
@@ -454,7 +371,7 @@ export default function SkillManager() {
     setBuiltinBusy(id);
     setBuiltinResult(null);
     try {
-      const path = await invoke<string>('install_builtin_skill', { skillId: id, store: activeStore });
+      const path = await invoke<string>('install_builtin_skill', { skillId: id });
       setBuiltinResult({ ok: true, msg: t("skillmgr.builtinInstalled", { path }) });
       loadSkills();
     } catch (e: any) {
@@ -597,7 +514,7 @@ export default function SkillManager() {
     for (const pid of targets) {
       for (const sid of wanted) {
         try {
-          await invoke('install_skill_to_project', { skillId: sid, projectId: pid, store: storeOf(sid) });
+          await invoke('install_skill_to_project', { skillId: sid, projectId: pid });
           n += 1;
         } catch (e: any) {
           errors.push(`${sid} → ${projects.find((p) => p.id === pid)?.name || pid}: ${String(e)}`);
@@ -671,7 +588,7 @@ export default function SkillManager() {
     setPreviewBusy(true);
     setPreview({ name, md: '' });
     try {
-      const md = await invoke<string>('get_library_skill_md', { skillId, store: storeOf(skillId) });
+      const md = await invoke<string>('get_library_skill_md', { skillId });
       setPreview({ name, md });
     } catch (err: any) {
       setPreview({ name, md: String(err) });
@@ -774,80 +691,6 @@ export default function SkillManager() {
                   </button>
                 )}
               </div>
-
-              {/* 技能库 tabs：一个库 = 一个 tab。安装 / 卸载 / 编辑都作用于「当前所在的那个库」，
-                  同名技能在不同库里各存一份（各带各的分类标签），互不干扰 */}
-              {!libCollapsed && stores.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5 pt-2">
-                  {stores.map((s) => {
-                    const active = s.path === activeStore;
-                    return (
-                      <button
-                        key={s.path}
-                        onClick={() => setActiveStore(s.path)}
-                        title={s.path}
-                        className={`px-2 py-0.5 rounded text-tiny cursor-pointer border transition ${
-                          active
-                            ? "bg-[var(--module-accent)]/15 border-[var(--module-accent)]/50 text-slate-100"
-                            : "bg-white/5 border-white/10 text-slate-400 hover:bg-white/10"
-                        }`}
-                      >
-                        {s.name}
-                        <span className="ml-1 text-micro text-slate-500">{s.skillCount}</span>
-                        {!s.exists && <span className="ml-1 text-micro text-amber-400">⚠</span>}
-                      </button>
-                    );
-                  })}
-                  {!stores.find((s) => s.path === activeStore)?.isDefault && (
-                    <button
-                      onClick={() => activeStore && void removeStore(activeStore)}
-                      className="px-2 py-0.5 rounded text-micro bg-white/5 border border-white/10 text-slate-400 hover:text-rose-300 cursor-pointer"
-                      title={t("skillmgr.storeRemoveHint")}
-                    >
-                      {t("skillmgr.storeRemove")}
-                    </button>
-                  )}
-                  {!showAddStore ? (
-                    <button
-                      onClick={() => setShowAddStore(true)}
-                      className="px-2 py-0.5 rounded text-micro bg-white/5 border border-dashed border-white/15 text-slate-400 hover:bg-white/10 cursor-pointer"
-                      title={t("skillmgr.storeAddHint")}
-                    >
-                      + {t("skillmgr.storeAdd")}
-                    </button>
-                  ) : (
-                    <>
-                      <input
-                        autoFocus
-                        value={addStoreInput}
-                        onChange={(e) => setAddStoreInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') void addStore();
-                          if (e.key === 'Escape') { setShowAddStore(false); setAddStoreInput(''); }
-                        }}
-                        placeholder="D:\skills\team"
-                        className="px-2 py-0.5 rounded text-tiny bg-black/30 border border-white/15 text-slate-200 outline-none focus:border-[var(--module-accent)] min-w-[180px]"
-                      />
-                      <button
-                        onClick={() => void addStore()}
-                        disabled={addStoreBusy}
-                        className="px-2 py-0.5 rounded text-micro bg-[var(--module-accent)]/20 text-slate-100 hover:bg-[var(--module-accent)]/30 cursor-pointer disabled:opacity-50"
-                      >
-                        {t("common.confirm")}
-                      </button>
-                      <button
-                        onClick={() => { setShowAddStore(false); setAddStoreInput(''); setAddStoreMsg(null); }}
-                        className="px-2 py-0.5 rounded text-micro bg-white/5 text-slate-400 hover:bg-white/10 cursor-pointer"
-                      >
-                        {t("common.cancel")}
-                      </button>
-                    </>
-                  )}
-                  {addStoreMsg && (
-                    <span className={`text-micro ${addStoreMsg.ok ? 'text-emerald-400' : 'text-rose-400'}`}>{addStoreMsg.text}</span>
-                  )}
-                </div>
-              )}
 
               {!libCollapsed && (
                 skills.length === 0 ? (

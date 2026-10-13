@@ -2960,10 +2960,6 @@
     "projNoSkills": "技能库还是空的，先到「技能库」页添加技能。",
     "projBrokenHint": "这些技能已从技能库删除，但项目里的链接还留着：{{names}}",
     "projBrokenClean": "清理失效链接",
-    "storeAdd": "添加技能库",
-    "storeRemove": "移除当前库",
-    "storeAddHint": "添加一个技能库根目录（只记配置，不搬文件）",
-    "storeRemoveHint": "只从列表移除这个库，不删除目录与已装技能的链接",
     "projCountHint": "技能 {{linked}} 个来自技能库 · {{local}} 个项目自带",
     "projCountBrokenHint": "{{n}} 个悬空链接（技能库里的技能已被删除，链接还留在项目里）",
     "projCountRefresh": "重新统计各项目的技能数"
