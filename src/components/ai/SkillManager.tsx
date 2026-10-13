@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+﻿import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { openPath, openUrl } from '@tauri-apps/plugin-opener';
@@ -711,12 +711,7 @@ export default function SkillManager() {
       <div className="flex-1 overflow-y-auto p-4">
 {/* ════════ 项目 Tab ════════ */}
         {tab === 'projects' && (
-          <div className="space-y-3">
-            <Note tone="info" title={t("skillmgr.projHintTitle")}>
-              <p>{t("skillmgr.projHint1")}</p>
-            </Note>
-
-            {projMsg?.id === '*' && (
+          <div className="space-y-3">{projMsg?.id === '*' && (
               <div className={`p-2.5 rounded-ctl text-body flex items-center gap-2 ${projMsg.ok ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
                 {projMsg.ok ? <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" /> : <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />}
                 <span className="break-all">{projMsg.msg}</span>
@@ -831,7 +826,7 @@ export default function SkillManager() {
                     {libFiltered.length === 0 ? (
                       <div className="text-tiny text-slate-500 py-6 text-center">{t("skillmgr.emptyFiltered")}</div>
                     ) : (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-1.5 max-h-64 overflow-y-auto">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 max-h-72 overflow-y-auto">
                         {libFiltered.map((s) => {
                           const on = pickedLib.has(s.id);
                           return (

@@ -375,7 +375,7 @@ export default function McpManager() {
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-sm font-bold text-white">{t("mcp.title")}</h3>
-          <p className="text-tiny text-slate-500 mt-0.5">{t("mcp.subtitle")}</p>
+          
         </div>
         <div className="flex gap-2">
           <button
@@ -581,70 +581,51 @@ export default function McpManager() {
         </div>
       ) : (
         <div className="space-y-2">
-          {servers.map((s) => (
-            <div key={s.id} className="rounded-card bg-slate-900/30 border border-white/5 p-4 hover:border-white/10 transition-all">
-              <div className="flex items-start gap-3">
-                <div className="p-2 rounded-ctl bg-[var(--module-accent-soft)] flex-shrink-0">
-                  <Plug className="w-4 h-4 text-[var(--module-accent)]" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-body font-bold text-slate-200">{s.name}</span>
-                    <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400">
-                      {t(`mcp.${TRANSPORT_KEY[s.transport] || s.transport}`) || s.transport}
-                    </span>
-                    {!s.enabled && (
-                      <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-slate-600/30 text-slate-400">{t("mcp.disabled")}</span>
-                    )}
-                    <div className="flex items-center gap-0.5 ml-auto flex-shrink-0">
-                      <button
-                        onClick={() => openEdit(s)}
-                        className="p-1 rounded text-slate-600 hover:text-[var(--module-accent)] hover:bg-blue-500/10 cursor-pointer transition-all"
-                        title={t("mcp.edit")}
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(s.id)}
-                        className="p-1 rounded text-slate-600 hover:text-red-400 hover:bg-red-500/10 cursor-pointer transition-all"
-                        title={t("mcp.delete")}
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-
-                  <p className="text-tiny text-slate-400 mt-1 truncate font-mono">
-                    {s.transport === "stdio"
-                      ? `${s.command} ${s.args.join(" ")}`.trim()
-                      : s.url}
-                  </p>
-
-                  <div className="flex items-center gap-2 mt-3 pt-2 border-t border-white/[0.03]">
-                    <span className="text-micro text-slate-500 flex-shrink-0">{t("mcp.forProject")}</span>
-                    {(() => {
-                      const installed = projMcps.find((p) => p.managed && p.name === s.name);
-                      const busy = projBusy === s.id;
-                      return (
-                        <button
-                          onClick={() => (installed ? removeFromProject(s.name, true) : installToProject(s.id))}
-                          disabled={!selProject || busy}
-                          className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-micro font-semibold cursor-pointer transition-all border disabled:opacity-40 disabled:cursor-not-allowed ${
-                            installed
-                              ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-400"
-                              : "bg-slate-800 border-white/5 text-slate-400 hover:text-slate-200 hover:border-white/15"
-                          }`}
-                        >
-                          <span className={`w-1.5 h-1.5 rounded-full ${installed ? "bg-emerald-400" : "bg-slate-600"}`} />
-                          {installed ? t("mcp.installedIn", { name: projects.find((p) => p.id === selProject)?.name ?? "" }) : t("mcp.installToProject")}
-                        </button>
-                      );
-                    })()}
-                  </div>
-                </div>
+          {servers.map((s) => {
+            const installed = projMcps.find((p) => p.managed && p.name === s.name);
+            const busy = projBusy === s.id;
+            return (
+              /* 单行紧凑：与技能库列表同一套节奏。原先每条一张p-4 卡片 + 三行，
+                 六个 MCP 就要占满整屏，真正的信息（名字 / 传输方式 / 装没装）反而被摊薄。 */
+              <div
+                key={s.id}
+                className="flex items-center gap-1.5 px-1.5 py-1 rounded-ctl bg-white/[0.03] hover:bg-white/[0.06] transition-colors"
+              >
+                <Plug className="w-3 h-3 text-[var(--module-accent)] flex-shrink-0" />
+                <span className="text-tiny font-semibold text-slate-200 truncate flex-shrink-0 max-w-[38%]">
+                  {s.name}
+                </span>
+                <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400 flex-shrink-0">
+                  {t(`mcp.${TRANSPORT_KEY[s.transport] || s.transport}`) || s.transport}
+                </span>
+                <span className="text-micro text-slate-500 truncate flex-1 font-mono" title={s.transport === "stdio" ? `${s.command} ${s.args.join(" ")}`.trim() : s.url}>
+                  {s.transport === "stdio" ? `${s.command} ${s.args.join(" ")}`.trim() : s.url}
+                </span>
+                <button
+                  onClick={() => (installed ? removeFromProject(s.name, true) : installToProject(s.id))}
+                  disabled={!selProject && pickedProjects.size === 0 || busy}
+                  title={installed ? t("mcp.installedIn", { name: projects.find((p) => p.id === selProject)?.name ?? "" }) : t("mcp.installToProject")}
+                  className={`w-3 h-3 rounded-sm flex-shrink-0 border cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                    installed ? "bg-emerald-400 border-emerald-300" : "border-white/20 hover:border-white/40"
+                  }`}
+                />
+                <button
+                  onClick={() => openEdit(s)}
+                  className="text-slate-600 hover:text-[var(--module-accent)] cursor-pointer flex-shrink-0"
+                  title={t("mcp.edit")}
+                >
+                  <Edit3 className="w-3 h-3" />
+                </button>
+                <button
+                  onClick={() => handleDelete(s.id)}
+                  className="text-slate-600 hover:text-red-400 cursor-pointer flex-shrink-0"
+                  title={t("mcp.delete")}
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
         </>
@@ -840,12 +821,6 @@ export default function McpManager() {
         </div>
       )}
 
-      {/* Info */}
-      <div className="p-3 rounded-card bg-[color-mix(in_srgb,var(--module-accent)_5%,transparent)] border border-[var(--module-accent-ring)] text-tiny text-slate-400 space-y-1">
-        <p className="font-semibold text-[var(--module-accent)]">{t("mcp.aboutScope")}</p>
-        <p>{t("mcp.aboutScopeDesc")}</p>
-        <p className="text-amber-300/90">{t("mcp.aboutTrust")}</p>
       </div>
-    </div>
   );
 }
