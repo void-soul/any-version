@@ -414,18 +414,6 @@ pub fn buddy2api_clear_request_logs() {
     crate::proxy::server::clear_request_logs();
 }
 
-/// 2API 的用量统计：只取 `tool_id = buddy2api` 的那部分记录。
-///
-/// 数据来自 `ai_usage` 表（代理层每请求落一条），不是新开一套统计：请求数、成功/失败、
-/// token、缓存命中、输出速度全部复用既有口径，所以和 AI 用量面板里的数字对得上。
-/// 返回的是累计值 —— 服务重启不清零（清空请用 AI 用量面板的「清空」）。
-#[tauri::command]
-pub fn buddy2api_usage_stats() -> Result<crate::commands::ai::models::UsageSummary, String> {
-    crate::commands::ai::usage::get_usage_summary_by_tool_db(
-        crate::commands::ai::usage::tool_ids::BUDDY2API,
-    )
-}
-
 /// 启动前置检查：密钥 / 登录态 / 后端。三项全过才允许启动。
 #[tauri::command]
 pub async fn buddy2api_preflight() -> Result<PreflightReport, String> {
