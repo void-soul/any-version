@@ -110,6 +110,9 @@ export default function McpManager() {
   const [servers, setServers] = useState<McpServer[]>([]);
   /** 全局配置里现存的 MCP（一次性清理用；只读列举） */
   const [globalList, setGlobalList] = useState<DiscoveredMcp[]>([]);
+  /** 读取全局配置失败的原因。刻意**不吞**：之前 `.catch(() => [])` 让整块 UI 静默消失，
+   *  用户看到的是「没有需要迁移的东西」，而不是「读取失败」——两者天差地别。 */
+  const [globalErr, setGlobalErr] = useState<string | null>(null);
   /** 勾选要收进仓库的全局条目 */
   const [pickedGlobal, setPickedGlobal] = useState<Set<string>>(new Set());
   const [migrating, setMigrating] = useState(false);
@@ -153,7 +156,7 @@ export default function McpManager() {
     try {
       const [srv, glob, projs] = await Promise.all([
         invoke<McpServer[]>("get_mcp_servers"),
-        invoke<DiscoveredMcp[]>("list_global_mcp").catch(() => [] as DiscoveredMcp[]),
+        invoke<DiscoveredMcp[]>("list_global_mcp").catch((e) => { setGlobalErr(String(e)); return [] as DiscoveredMcp[]; }),
         invoke<SkillProject[]>("list_projects").catch(() => [] as SkillProject[]),
       ]);
       setServers(srv);
@@ -788,6 +791,12 @@ export default function McpManager() {
       </div>
 
       {/* 一次性清理：全局配置里的 MCP 对所有项目生效，是上下文被污染的根源 */}
+      {globalErr && (
+        <div className="p-2.5 rounded-ctl bg-red-500/10 text-red-400 text-tiny break-all">
+          {t("mcp.globalReadFail", { err: globalErr })}
+        </div>
+      )}
+
       {globalList.length > 0 && (
         <div className="p-3 rounded-card bg-amber-500/5 border border-amber-500/20 space-y-2">
           <div className="flex items-center justify-between gap-2">

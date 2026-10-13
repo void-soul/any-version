@@ -149,6 +149,7 @@ pub fn get_mcp_presets() -> Vec<McpPreset> {
 #[cfg(test)]
 mod tests {
     use super::mcp_presets;
+    use crate::commands::ai_registry::registry;
     use super::{project_servers_of, translate, write_project_mcp, McpServer};
     use serde_json::{json, Map, Value};
     use std::collections::HashMap;
@@ -265,6 +266,43 @@ mod tests {
         let entry = translate(&s, "mcp");
         assert_eq!(entry["url"], json!("https://docs.mcp.cloudflare.com/mcp"));
         assert!(entry.get("command").is_none(), "http 不该带 command");
+    }
+
+    /// 已登记的工具（**尤其 codebuddy**）必须真能解析出它的 MCP 配置路径。
+    ///
+    /// 漏登记的后果特别隐蔽：用户明明在 `~/.codebuddy/mcp.json` 配了 6 个，Kira 却只看到 1 个，
+    /// 而且界面上「全局配置里还有 N 个 MCP」整块**根本不渲染**（条件是 length > 0），
+    /// 看起来像功能没做，而不是数据没读到。
+    #[test]
+    fn registered_tools_expose_their_mcp_config() {
+        let reg = registry();
+        let ids = reg.mcp_tool_ids();
+        assert!(
+            ids.iter().any(|i| i == "codebuddy"),
+            "codebuddy 必须登记在 MCP 工具注册表里，否则读不到 ~/.codebuddy/mcp.json（实测漏过）"
+        );
+        for id in &ids {
+            let (path, _f, k) = reg
+                .get_tool_mcp_config(id)
+                .unwrap_or_else(|| panic!("{} 应能解析出配置", id));
+            assert!(
+                !path.to_string_lossy().contains('~'),
+                "{} 的路径应已展开 ~，实际 {}",
+                id,
+                path.display()
+            );
+            assert!(!k.is_empty(), "{} 的 mcp 键不应为空", id);
+        }
+        // 已登记就能真的读到条目：读不到时用户会看到「明明配了 6 个却只看到 1 个」，
+        // 而界面上因为整块条件是 length > 0，看起来像功能没做
+        let list = super::list_global_mcp().expect("list_global_mcp 应成功");
+        assert!(!list.is_empty(), "至少应能读到本机的 MCP 条目");
+        for d in &list {
+            assert!(
+                !d.tool_id.is_empty(),
+                "每条都必须带上来源工具 id（迁移界面要靠它显示来源）"
+            );
+        }
     }
 
     #[test]
@@ -607,6 +645,9 @@ pub fn list_global_mcp() -> Result<Vec<DiscoveredMcp>, String> {
                 continue;
             }
             let mut d = reverse_translate(name, entry);
+            // tool_id 必须补上：`reverse_translate` 只负责解析条目内容，不认识它来自哪个工具。
+            // 漏了它迁移界面就不知道每条来自谁（也会让 React key退化成只有 name）
+            d.tool_id = tool_id.clone();
             d.already_managed = store.servers.iter().any(|s| s.name == *name);
             out.push(d);
         }
