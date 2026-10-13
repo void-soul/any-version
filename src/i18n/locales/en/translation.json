@@ -2931,7 +2931,7 @@
     "projInstalledTitle": "Skills in this project",
     "projInstalledEmpty": "No skills in this project yet",
     "projBatchDelete": "Delete ticked",
-    "projBatchDeleteConfirm": "Delete {{n}} skill(s)?\n{{links}} of them are links — only the link is removed; project-owned directories are deleted entirely: {{dirs}}\nThis cannot be undone.",
+    "projBatchDeleteConfirm": "{{n}} skill(s) will be removed ({{links}} of them are links — only the link goes away, the library copy stays).\nThis cannot be undone.",
     "projBatchDeleted": "Deleted {{n}}",
     "projPickToDelete": "Tick = queued for deletion",
     "projViewMd": "View SKILL.md",
@@ -2966,7 +2966,10 @@
     "projUnselectAll": "Clear all",
     "projOpenDir": "Open project folder",
     "projOpenFail": "Failed to open the project folder (it may have been moved or deleted)",
-    "libHint": "tick, then install into the projects ticked on the left"
+    "libHint": "tick, then install into the projects ticked on the left",
+    "tabAdd": "Add skill",
+    "projBatchDeleteTitle": "Delete selected skills",
+    "projBatchDeleteDirsHint": "These are real directories owned by the project and will be deleted entirely:"
   },
   "toollaunch": {
     "officialOnly": "Official models only",

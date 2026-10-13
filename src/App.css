@@ -854,18 +854,25 @@ button[class*="module-accent"]:active:not(:disabled) {
 }
 
 /* 原生下拉框深色样式（避免 Windows 下白底白字）
-   .glass-panel select 提高优先级，覆盖组件内的 Tailwind 背景工具类 */
-select,
-.glass-panel select {
-  background-color: color-mix(in srgb, var(--color-surface-deep) 60%, transparent) !important;
-  color: #f1f5f9 !important;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  padding: 0.25rem 0.625rem;
-  font-size: 12px;
-  outline: none;
-  -webkit-appearance: none;
-  appearance: none;
+   .glass-panel select 提高优先级，覆盖组件内的 Tailwind 背景工具类
+
+   **必须包在 @layer components 里**：未分层的样式在层叠中优先于所有 @layer 内的样式
+   （与选择器特异性无关），而 Tailwind v4 把工具类放在 @layer utilities。
+   放在层外时这里的 padding / border-radius 会把组件写的 pl-7 / rounded-ctl 全部吃掉——
+   症状是下拉框左侧的图标压在文字上（图标按 left-2 定位，文字却从 10px 就开始画）。 */
+@layer components {
+  select,
+  .glass-panel select {
+    background-color: color-mix(in srgb, var(--color-surface-deep) 60%, transparent) !important;
+    color: #f1f5f9 !important;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 0.25rem 0.625rem;
+    font-size: 12px;
+    outline: none;
+    -webkit-appearance: none;
+    appearance: none;
+  }
 }
 select:focus,
 .glass-panel select:focus {

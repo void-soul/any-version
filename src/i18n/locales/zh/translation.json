@@ -2937,7 +2937,7 @@
     "projInstalledTitle": "项目内技能",
     "projInstalledEmpty": "该项目还没有技能",
     "projBatchDelete": "删除勾选",
-    "projBatchDeleteConfirm": "删除 {{n}} 个技能？\n其中 {{links}} 个是链接，只删链接本身；项目自带的目录会被整个删除：{{dirs}}\n此操作不可恢复。",
+    "projBatchDeleteConfirm": "将删除 {{n}} 个技能（其中 {{links}} 个是链接，只删链接本身，技能库里那份仍然保留）。\n此操作不可恢复。",
     "projBatchDeleted": "已删除 {{n}} 个",
     "projPickToDelete": "勾选 = 待批量删除",
     "projViewMd": "查看 SKILL.md",
@@ -2972,7 +2972,10 @@
     "projUnselectAll": "全不选",
     "projOpenDir": "打开项目目录",
     "projOpenFail": "打开项目目录失败（项目可能已被移动或删除）",
-    "libHint": "勾选后装到左侧勾选的项目"
+    "libHint": "勾选后装到左侧勾选的项目",
+    "tabAdd": "添加技能",
+    "projBatchDeleteTitle": "删除已勾选的技能",
+    "projBatchDeleteDirsHint": "下面这些是项目自带的真实目录，会被整个删除："
   },
   "toollaunch": {
     "officialOnly": "仅支持官方模型",

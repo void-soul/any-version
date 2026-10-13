@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { alertError } from "../shared/ThemedAlert";
 import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
+import { SharedModal } from "../shared/Modal";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 
 // ─── 类型 ───
@@ -129,7 +130,8 @@ export default function SkillManager() {
   const [builtins, setBuiltins] = useState<BuiltinSkillView[]>([]);
   const [builtinBusy, setBuiltinBusy] = useState<string | null>(null);
   const [builtinResult, setBuiltinResult] = useState<{ ok: boolean; msg: string } | null>(null);
-  // 市场 / 内置技能并入技能库 tab，按需展开（它们只是「获取技能的渠道」，不是并列的管理维度）
+  // 市场 / 内置技能收进「添加技能」弹框（它们只是「获取技能的渠道」，不是并列的管理维度）
+  const [showAdd, setShowAdd] = useState(false);
   const [showMarket, setShowMarket] = useState(false);
   const [showBuiltin, setShowBuiltin] = useState(false);
 
@@ -306,16 +308,23 @@ export default function SkillManager() {
     return filtered.filter((s) => !installed.has(s.id));
   }, [filtered, onlyMissing, pickedProjects, selProject, projSkills]);
 
-  // 卸载技能
-  const removeSkill = async (id: string) => {
-    if (!confirm(t("skillmgr.uninstallConfirm", { id }))) return;
-    try {
-      await invoke('uninstall_skill', { skillId: id });
-      setSkillMsg({ id, msg: t("skillmgr.deleted"), ok: true });
-      loadSkills();
-    } catch (e: any) {
-      setSkillMsg({ id, msg: String(e), ok: false });
-    }
+  // 卸载技能（从技能库里删掉，不影响已装到项目里的 junction 之外的东西）
+  const removeSkill = (id: string) => {
+    setConfirmReq({
+      title: t("common.delete"),
+      desc: t("skillmgr.uninstallConfirm", { id }),
+      confirmText: t("common.delete"),
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await invoke('uninstall_skill', { skillId: id });
+          setSkillMsg({ id, msg: t("skillmgr.deleted"), ok: true });
+          loadSkills();
+        } catch (e: any) {
+          setSkillMsg({ id, msg: String(e), ok: false });
+        }
+      },
+    });
   };
 
   // 保存元数据（分类/标签）
@@ -570,38 +579,62 @@ export default function SkillManager() {
     }
   };
 
-  /** 批量删除勾选的「项目内技能」：链接只删链接，真实目录整个删 */
-  const removePickedInstalled = async () => {
+  /**
+   * 批量删除勾选的「项目内技能」：链接只删链接，真实目录整个删。
+   *
+   * 这是全页最需要讲清楚的一次确认——它会**整目录删除**用户自己写的技能，
+   * 所以确认框里把「哪几个是整目录删」单独列出来，而不是塞进一句话里让人自己找。
+   */
+  const removePickedInstalled = () => {
     const ids = [...pickedInstalled];
     if (ids.length === 0 || !selProject) return;
     const entries = projSkills[selProject] || [];
-    // 有真实目录会被整个删掉，必须先说清楚
     const dirs = entries.filter((e) => pickedInstalled.has(e.skillId) && e.state === 'local');
     const links = ids.length - dirs.length;
-    const msg = t("skillmgr.projBatchDeleteConfirm", {
-      n: ids.length,
-      dirs: dirs.map((d) => d.name || d.skillId).join('、') || '—',
-      links,
+    const target = selProject;
+    setConfirmReq({
+      title: t("skillmgr.projBatchDeleteTitle"),
+      danger: true,
+      width: 460,
+      confirmText: t("common.delete"),
+      desc: (
+        <div className="space-y-2">
+          <p>{t("skillmgr.projBatchDeleteConfirm", { n: ids.length, links })}</p>
+          {dirs.length > 0 && (
+            <div className="rounded-ctl border border-rose-500/30 bg-rose-500/10 p-2 space-y-1">
+              <p className="text-tiny font-semibold text-rose-300">
+                {t("skillmgr.projBatchDeleteDirsHint")}
+              </p>
+              <ul className="text-micro text-rose-200/80 space-y-0.5 list-disc pl-4">
+                {dirs.map((d) => (
+                  <li key={d.skillId} className="truncate">{d.name || d.skillId}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      ),
+      onConfirm: async () => {
+        setProjBusy(target);
+        const errors: string[] = [];
+        for (const id of ids) {
+          try {
+            await invoke('remove_skill_from_project', { skillId: id, projectId: target });
+          } catch (e: any) {
+            errors.push(`${id}: ${String(e)}`);
+          }
+        }
+        setProjBusy(null);
+        setPickedInstalled(new Set());
+        await loadProjectSkills(target);
+        void loadProjCounts();
+        if (errors.length === 0) {
+          setProjMsg({ id: target, msg: t("skillmgr.projBatchDeleted", { n: ids.length }), ok: true });
+        } else {
+          setProjMsg({ id: target, msg: errors.join('；'), ok: false });
+        }
+      },
     });
-    if (!confirm(msg)) return;
-    setProjBusy(selProject);
-    const errors: string[] = [];
-    for (const id of ids) {
-      try {
-        await invoke('remove_skill_from_project', { skillId: id, projectId: selProject });
-      } catch (e: any) {
-        errors.push(`${id}: ${String(e)}`);
-      }
-    }
-    setProjBusy(null);
-    setPickedInstalled(new Set());
-    await loadProjectSkills(selProject);
-    void loadProjCounts();
-    if (errors.length === 0) {
-      setProjMsg({ id: selProject, msg: t("skillmgr.projBatchDeleted", { n: ids.length }), ok: true });
-    } else {
-      setProjMsg({ id: selProject, msg: errors.join('；'), ok: false });
-    }
   };
 
   /** 打开 SKILL.md 预览（按需取全文，避免列表被撑大） */
@@ -988,7 +1021,7 @@ export default function SkillManager() {
                             <span className="ml-1.5 text-micro text-slate-500 font-normal">{viewing?.path}</span>
                           </span>
                           <button
-                            onClick={() => void removePickedInstalled()}
+                            onClick={() => removePickedInstalled()}
                             disabled={pickedInstalled.size === 0 || projBusy === selProject}
                             className="flex items-center gap-1 px-2 py-1 rounded-ctl bg-red-500/15 hover:bg-red-500/25 disabled:opacity-40 text-red-300 text-tiny font-semibold cursor-pointer flex-shrink-0"
                           >
@@ -1186,17 +1219,14 @@ export default function SkillManager() {
               <span>{skillLoading ? t("skillmgr.loading") : `${t("skillmgr.skillsCount", { count: filtered.length })}${hasFilter ? t("skillmgr.filteredCount", { total: skills.length }) : ''}`}</span>
               <div className="flex items-center gap-2">
                 <span className="truncate max-w-[240px]" title={skillsDir}>{t("skillmgr.source")}<code className="text-slate-400">{skillsDir || '…'}</code></span>
+                {/* 市场与内置是「获取技能的渠道」，不是管理维度 —— 页头只留一个「添加技能」入口，
+                    两条渠道收进弹框。原先它们是页头两个 toggle，点开是一大片面板占掉整屏，
+                    而技能列表才是这个页面的正事。 */}
                 <button
-                  onClick={() => { setShowMarket((v) => !v); setShowBuiltin(false); }}
-                  className={`flex items-center gap-1 px-2 py-1 rounded-ctl cursor-pointer transition-colors ${showMarket ? 'bg-[var(--module-accent-soft)] text-[var(--module-accent)]' : 'bg-white/5 hover:bg-white/10 text-slate-300'}`}
+                  onClick={() => { setShowAdd(true); setShowMarket(true); setShowBuiltin(false); }}
+                  className="flex items-center gap-1 px-2 py-1 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white font-semibold cursor-pointer transition-colors"
                 >
-                  <Store className="w-3 h-3" /> {t("skillmgr.tabMarket")}
-                </button>
-                <button
-                  onClick={() => { setShowBuiltin((v) => !v); setShowMarket(false); }}
-                  className={`flex items-center gap-1 px-2 py-1 rounded-ctl cursor-pointer transition-colors ${showBuiltin ? 'bg-[var(--module-accent-soft)] text-[var(--module-accent)]' : 'bg-white/5 hover:bg-white/10 text-slate-300'}`}
-                >
-                  <Sparkles className="w-3 h-3" /> {t("skillmgr.tabBuiltin")}
+                  <Plus className="w-3 h-3" /> {t("skillmgr.tabAdd")}
                 </button>
               </div>
             </div>
@@ -1210,54 +1240,89 @@ export default function SkillManager() {
               </div>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {/*
+              技能列表：**一行一个**，不是卡片网格。
+
+              卡片式排布在这个页面尤其不合适：技能数量多、单个信息量小（名字 + 一句描述），
+              三列网格把每条撑成两块屏幕高，扫一眼只能看到 9 个名字，而这里要做的是
+              **对比**（哪些装过、名字叫什么）。单行能让一屏列出三倍数量。
+              描述与标签移进 hover 的原生 title（信息不丢，只是不再占版面）。
+            */}
+            <div className="divide-y divide-white/5 rounded-card border border-white/10 overflow-hidden">
               {filtered.map((s) => (
-                <div key={s.id} className="rounded-card bg-white/[0.03] border border-white/10 p-3.5 flex flex-col gap-2 hover:border-white/20 transition-all">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold text-slate-100 truncate">{s.name || s.id}</div>
-                      <div className="text-tiny text-slate-500 font-mono truncate">{s.id}</div>
-                    </div>
-                    {s.category && (
-                      <span className="px-1.5 py-0.5 rounded text-micro font-semibold bg-[var(--module-accent-soft)] text-[var(--module-accent)] flex-shrink-0">
-                        {s.category}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-caption text-slate-400 line-clamp-2 min-h-[28px]">{s.description || t("skillmgr.noDesc")}</p>
-                  {s.tags.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {s.tags.map((t) => (
-                        <span key={t} className="px-1.5 py-0.5 rounded text-micro bg-white/5 text-slate-400">
-                          #{t}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex items-center justify-between pt-2 border-t border-white/5 text-tiny text-slate-500">
-                    <span>{s.installMethod === 'managed' ? t("skillmgr.managedLib") : s.installMethod}</span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => void openLibPreview(s.id, s.name || s.id)}
-                        className="text-slate-400 hover:text-[var(--module-accent)] cursor-pointer"
-                        title={t("skillmgr.projViewMd")}
-                      >
-                        <FileText className="w-3.5 h-3.5" />
-                      </button>
-                      <button onClick={() => openEdit(s)} className="text-slate-400 hover:text-[var(--module-accent)] cursor-pointer">
-                        <Settings2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button onClick={() => removeSkill(s.id)} className="text-slate-500 hover:text-red-400 cursor-pointer">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
+                <div
+                  key={s.id}
+                  className="group flex items-center gap-2 px-3 py-1.5 hover:bg-white/[0.04] transition-colors"
+                  title={[
+                    s.name || s.id,
+                    s.id,
+                    s.description || t("skillmgr.noDesc"),
+                    s.category,
+                    s.tags.length > 0 ? `#${s.tags.join(" #")}` : "",
+                    s.installMethod === "managed" ? t("skillmgr.managedLib") : s.installMethod,
+                  ].filter(Boolean).join("\n")}
+                >
+                  <span className="text-tiny font-semibold text-slate-100 truncate flex-shrink-0 max-w-[46%]">
+                    {s.name || s.id}
+                  </span>
+                  {/* 描述仍留在行内：判断「这个技能是干什么的」靠它，全藏进 tooltip 就得逐个悬停 */}
+                  <span className="text-micro text-slate-500 truncate flex-1 min-w-0">
+                    {s.description || ""}
+                  </span>
                   {skillMsg?.id === s.id && (
-                    <div className={`text-tiny ${skillMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>{skillMsg.msg}</div>
+                    <span className={`text-micro flex-shrink-0 ${skillMsg.ok ? "text-emerald-400" : "text-red-400"}`}>
+                      {skillMsg.msg}
+                    </span>
                   )}
+                  <div className="flex items-center gap-2 flex-shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                    <button
+                      onClick={() => void openLibPreview(s.id, s.name || s.id)}
+                      className="text-slate-400 hover:text-[var(--module-accent)] cursor-pointer"
+                      title={t("skillmgr.projViewMd")}
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => openEdit(s)}
+                      className="text-slate-400 hover:text-[var(--module-accent)] cursor-pointer"
+                      title={t("skillmgr.managedLib")}
+                    >
+                      <Settings2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => removeSkill(s.id)}
+                      className="text-slate-500 hover:text-red-400 cursor-pointer"
+                      title={t("common.delete")}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
+        {/* 获取渠道（市场 / 内置）：内容一字未改，只是从页头 toggle 收进了这个弹框 */}
+      <SharedModal
+        open={showAdd}
+        onClose={() => setShowAdd(false)}
+        title={t("skillmgr.tabAdd")}
+        width={720}
+        headerActions={
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => { setShowMarket(true); setShowBuiltin(false); }}
+              className={`flex items-center gap-1 px-2 py-1 rounded-ctl cursor-pointer transition-colors ${showMarket ? 'bg-[var(--module-accent-soft)] text-[var(--module-accent)]' : 'bg-white/5 hover:bg-white/10 text-slate-300'}`}
+            >
+              <Store className="w-3 h-3" /> {t("skillmgr.tabMarket")}
+            </button>
+            <button
+              onClick={() => { setShowBuiltin(true); setShowMarket(false); }}
+              className={`flex items-center gap-1 px-2 py-1 rounded-ctl cursor-pointer transition-colors ${showBuiltin ? 'bg-[var(--module-accent-soft)] text-[var(--module-accent)]' : 'bg-white/5 hover:bg-white/10 text-slate-300'}`}
+            >
+              <Sparkles className="w-3 h-3" /> {t("skillmgr.tabBuiltin")}
+            </button>
+          </div>
+        }
+      >
         {/* ════════ 从市场获取 ════════ */}
         {showMarket && (
           <div className="space-y-4 max-w-3xl">
@@ -1403,6 +1468,7 @@ export default function SkillManager() {
             {builtinResult && <ResultNote ok={builtinResult.ok} message={builtinResult.msg} />}
           </div>
         )}
+      </SharedModal>
 
           </div>
         )}
