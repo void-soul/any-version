@@ -205,6 +205,12 @@ pub struct AiConfig {
     /// 放进去的技能会对所有项目全局生效。详见 `skills::default_skills_dir`。
     #[serde(default)]
     pub skills_dir: String,
+    /// **追加**的技能库目录（第一个库仍是 `skills_dir`，新增技能默认装进它）。
+    ///
+    /// 为什么保留单值的 `skills_dir` 而不是直接改成列表：它是老配置里真实存在的字段，
+    /// 改成列表就得做一次迁移；保留它则旧配置零改动直接生效，新增的库走这个字段。
+    #[serde(default)]
+    pub extra_skills_dirs: Vec<String>,
     /// 路由链（顺序即优先级）；候选 = 供应商实例 + 其模型列表中的模型
     #[serde(default)]
     pub route_chain: Vec<RouteCandidate>,

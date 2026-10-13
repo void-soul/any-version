@@ -794,6 +794,7 @@ mod global_default_tests {
             headroom: Default::default(),
             optimizer: Default::default(),
             skills_dir: String::new(),
+            extra_skills_dirs: Vec::new(),
             route_chain: Vec::new(),
             aggregate: Default::default(),
         }

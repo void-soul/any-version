@@ -65,16 +65,186 @@ pub(crate) fn resolve_skills_dir(cfg_value: &str) -> PathBuf {
 
 /// 当前技能库目录：`AiConfig.skills_dir` 为空时用默认（数据目录下的 skills）。
 ///
+/// 这是**第一个**技能库（也就是「默认库」）：新增技能默认装进它。
 /// 用户可自定义（设置入口在技能管理页），但**默认值刻意避开** `~/.agents/skills`——
 /// 那是原生扫描目录，放进去的技能会对所有项目全局生效。详见 `default_skills_dir`。
 pub(crate) fn skills_dir() -> PathBuf {
-    resolve_skills_dir(&load_ai_config().skills_dir)
+    skill_stores()
+        .into_iter()
+        .next()
+        .unwrap_or_else(default_skills_dir)
+}
+
+/// 库路径的比较键：展开 8.3 短名 + 统一分隔符与大小写。
+///
+/// Windows 上不归一就会出两类玄学问题：`ADMINI~1` 与 `Administrator` 认不出是同一个目录；
+/// `C:\x` 与 `c:/x` 也认不出。前者会让「已添加的库」变成两个，后者会让 junction 匹配失败。
+fn store_key(p: &Path) -> String {
+    let real = fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    real.to_string_lossy().replace('\\', "/").to_lowercase()
+}
+
+/// 全部技能库目录：**默认库 + 用户追加的库**。
+///
+/// 已解析成绝对路径（支持 `~` / `%VAR%`）、按 store_key 去重，默认库永远排第一。
+/// 界面上每个库是一个 tab；同名技能在不同库里各存一份（`.meta.json` 也在各库根下）。
+pub(crate) fn skill_stores() -> Vec<PathBuf> {
+    let cfg = load_ai_config();
+    let mut out: Vec<PathBuf> = Vec::new();
+    for raw in std::iter::once(&cfg.skills_dir).chain(cfg.extra_skills_dirs.iter()) {
+        let p = resolve_skills_dir(raw);
+        let key = store_key(&p);
+        if !out.iter().any(|x| store_key(x) == key) {
+            out.push(p);
+        }
+    }
+    if out.is_empty() {
+        out.push(default_skills_dir());
+    }
+    out
+}
+
+/// 命令的 `store` 参数解析：空 = 自动挑一个库。
+///
+/// 顺序是「显式指定 → 有该技能的库 → 默认库」。自动挑「有该技能的库」这条很关键：
+/// 同名技能可能同时存在于多个库里，命令只拿到 id 时必须挑对，否则会出现
+/// 「A 库的命令读到了 B 库同名技能」这种最难查的错位。
+fn resolve_store_arg(store: &str, skill_id: &str) -> PathBuf {
+    let stores = skill_stores();
+    let trimmed = store.trim();
+    if !trimmed.is_empty() {
+        let want = store_key(&resolve_skills_dir(trimmed));
+        if let Some(p) = stores.iter().find(|p| store_key(p) == want) {
+            return p.clone();
+        }
+    }
+    if !skill_id.is_empty() {
+        if let Some(p) = stores.iter().find(|p| p.join(skill_id).is_dir()) {
+            return p.clone();
+        }
+    }
+    stores.into_iter().next().unwrap_or_else(default_skills_dir)
+}
+
+/// 库里最后一个有内容的目录名，用作 tab 标题（`team-skills` → `team-skills`）。
+/// 取不到就用完整路径的末段兜底，再不行给个通用名。
+fn store_display_name(p: &Path) -> String {
+    p.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| p.to_string_lossy().to_string())
+}
+
+/// 技能库视图（前端一个 tab = 一条）
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillStoreView {
+    /// 绝对路径：前端把它当作库的稳定标识传回命令
+    pub path: String,
+    /// tab 标题（目录名）
+    pub name: String,
+    /// 第一个库：新增技能默认装进它
+    pub is_default: bool,
+    /// 目录是否已存在（配好了路径但还没建目录时为 false，界面要能如实显示）
+    pub exists: bool,
+    /// 目录下的技能数
+    pub skill_count: usize,
+}
+
+fn store_views() -> Vec<SkillStoreView> {
+    skill_stores()
+        .into_iter()
+        .enumerate()
+        .map(|(index, p)| {
+            let exists = p.is_dir();
+            let skill_count = if exists {
+                fs::read_dir(&p)
+                    .map(|entries| {
+                        entries
+                            .flatten()
+                            .filter(|e| {
+                                let name = e.file_name().to_string_lossy().to_string();
+                                !name.starts_with('.') && e.path().is_dir()
+                            })
+                            .count()
+                    })
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+            SkillStoreView {
+                path: p.to_string_lossy().to_string(),
+                name: store_display_name(&p),
+                is_default: index == 0,
+                exists,
+                skill_count,
+            }
+        })
+        .collect()
 }
 
 /// 当前生效的技能库目录（前端要如实显示「技能装到哪了」）。
 #[tauri::command]
 pub fn get_skills_dir() -> String {
     skills_dir().to_string_lossy().to_string()
+}
+
+/// 列出全部技能库（前端渲染成 tabs）
+#[tauri::command]
+pub fn list_skill_stores() -> Vec<SkillStoreView> {
+    store_views()
+}
+
+/// 追加一个技能库目录。**不搬动任何文件**，只是把路径记进配置。
+#[tauri::command]
+pub fn add_skill_store(path: String) -> Result<Vec<SkillStoreView>, String> {
+    let mut cfg = load_ai_config();
+    let resolved = resolve_skills_dir(&path);
+    let key = store_key(&resolved);
+    // 与已有库重复：直接当成功处理（幂等），否则用户会以为「加了两次」
+    if skill_stores().iter().any(|p| store_key(p) == key) {
+        return Ok(store_views());
+    }
+    // 禁止把某个库加进另一个库里：junction 的目标路径前缀匹配会变得含糊
+    // （`A/a-skill` 与 `A/B/a-skill` 谁才是「技能所在」），排查起来极其痛苦。
+    for existing in skill_stores() {
+        let ek = store_key(&existing);
+        if key.starts_with(&format!("{}/", ek.trim_end_matches('/'))) {
+            return Err(format!(
+                "「{}」在已添加的库「{}」里面，不能再作为独立的技能库",
+                resolved.display(),
+                existing.display()
+            ));
+        }
+    }
+    if !resolved.is_dir() {
+        // 路径不存在不拦着：用户可能打算先把技能拷进去。目录由装第一个技能时创建。
+        let _ = fs::create_dir_all(&resolved);
+    }
+    cfg.extra_skills_dirs.push(resolved.to_string_lossy().to_string());
+    super::config::save_ai_config_to_file(&cfg)?;
+    Ok(store_views())
+}
+
+/// 移除一个技能库（**只删配置记录，不删目录，也不动项目里的 junction**）。
+///
+/// 刻意不做「连带删除」：那等于替用户删数据。移除后该库里的技能不再出现在列表里，
+/// 已经装到项目里的 junction 会变成悬空链接 —— UI 会标成 broken 并给清理入口。
+#[tauri::command]
+pub fn remove_skill_store(path: String) -> Result<Vec<SkillStoreView>, String> {
+    let mut cfg = load_ai_config();
+    let key = store_key(&resolve_skills_dir(&path));
+    if cfg.extra_skills_dirs.is_empty() {
+        return Err("默认库不能在这里移除；改位置请用「修改默认库」".to_string());
+    }
+    let before = cfg.extra_skills_dirs.len();
+    cfg.extra_skills_dirs
+        .retain(|raw| store_key(&resolve_skills_dir(raw)) != key);
+    if cfg.extra_skills_dirs.len() == before {
+        return Err("这个库不在列表里".to_string());
+    }
+    super::config::save_ai_config_to_file(&cfg)?;
+    Ok(store_views())
 }
 
 /// 切换技能库位置的结果。
@@ -427,7 +597,7 @@ fn resolve_project_skills_dir_in(file: &Path, project_id: &str) -> Result<PathBu
 /// 用 `read_link` 解析真实目标，而不是「目录名在技能库里存在就算」——
 /// 后者会把用户自己建的同名链接、以及指错了位置的链接误判成已安装。
 /// 悬空 junction（目标已删）返回 None：它是链接，但不再指向任何现存技能。
-fn junction_target_skill(link: &Path, store: &Path) -> Option<String> {
+fn junction_target_skill(link: &Path, stores: &[PathBuf]) -> Option<(PathBuf, String)> {
     // symlink_metadata 而非 metadata：读链接自己而不是跟随后的目标（悬空时会失败）
     if !fs::symlink_metadata(link)
         .map(|m| m.file_type().is_symlink())
@@ -446,25 +616,42 @@ fn junction_target_skill(link: &Path, store: &Path) -> Option<String> {
     // 否则「技能库记的是长名、链接里存的是短名」就会匹配不上。
     // canonicalize 对悬空目标会失败，退回原路径即可（后续 is_dir() 会判为 broken）。
     let t = fs::canonicalize(&target).unwrap_or(target);
-    let s = fs::canonicalize(store).unwrap_or_else(|_| store.to_path_buf());
     // 自己归一分隔符：normalize_path 只统一大小写与**末尾**分隔符，中间的反斜杠不管，
     // 直接拿它做 prefix 匹配会永远失败。
-    let slashes = |p: &str| p.replace('\\', "/").to_lowercase();
-    let t = slashes(&t.to_string_lossy());
-    let s = slashes(&s.to_string_lossy());
-    let prefix = format!("{}/", s.trim_end_matches('/'));
-    let id = t.strip_prefix(&prefix)?.split('/').next()?.to_string();
-    if id.is_empty() {
-        None
-    } else {
-        Some(id)
+    let t = t.to_string_lossy().replace('\\', "/").to_lowercase();
+    // 按库路径长度倒序匹配：库之间理论上不会互相嵌套（add_skill_store 已禁止），
+    // 但用户可能手工摆成 `A` 与 `A/B`。先长后短能保证命中最具体的那个库。
+    let mut candidates: Vec<(PathBuf, String)> = stores
+        .iter()
+        .map(|s| {
+            let real = fs::canonicalize(s).unwrap_or_else(|_| s.to_path_buf());
+            (s.clone(), format!("{}/", store_key(&real)))
+        })
+        .collect();
+    candidates.sort_by_key(|(_, prefix)| std::cmp::Reverse(prefix.len()));
+    for (store, prefix) in candidates {
+        if let Some(rest) = t.strip_prefix(&prefix) {
+            let id = rest.split('/').next().unwrap_or("").to_string();
+            if !id.is_empty() {
+                return Some((store, id));
+            }
+        }
     }
+    None
 }
 
 /// 把技能装到项目。返回 junction 的实际路径。
+///
+/// `store` 为空时自动挑库（优先「有该技能」的库）。同名技能在多个库里都存在时，
+/// **后装的覆盖先装的**（与安装到技能库本身的语义一致）。
 #[tauri::command]
-pub fn install_skill_to_project(skill_id: String, project_id: String) -> Result<String, String> {
-    install_into(&skills_dir(), &projects_path(), &skill_id, &project_id)
+pub fn install_skill_to_project(
+    skill_id: String,
+    project_id: String,
+    store: Option<String>,
+) -> Result<String, String> {
+    let store = resolve_store_arg(store.as_deref().unwrap_or(""), &skill_id);
+    install_into(&store, &projects_path(), &skill_id, &project_id)
 }
 
 fn install_into(store: &Path, projects_file: &Path, skill_id: &str, project_id: &str) -> Result<String, String> {
@@ -486,7 +673,7 @@ fn install_into(store: &Path, projects_file: &Path, skill_id: &str, project_id: 
                 .map_err(|e| format!("无法替换已存在的目录 {}: {}", link.display(), e))?;
         } else {
             // 是链接：已正确指向本技能则幂等成功
-            if junction_target_skill(&link, store).as_deref() == Some(skill_id) {
+            if junction_target_skill(&link, &[store.to_path_buf()]).is_some_and(|(_, id)| id == skill_id) {
                 return Ok(link.to_string_lossy().to_string());
             }
             // 指向别处 / 悬空：交给 create_junction 删链接后重建
@@ -561,8 +748,9 @@ pub fn get_project_skill_md(project_id: String, skill_id: String) -> Result<Stri
 /// 与 `get_project_skill_md` 分开而不是合并成一个带可选参数的命令：两个入口的
 /// 失败语义不同（项目里可能是悬空链接，技能库里是真的没这个技能），分开报错更准。
 #[tauri::command]
-pub fn get_library_skill_md(skill_id: String) -> Result<String, String> {
-    let path = skills_dir().join(&skill_id).join("SKILL.md");
+pub fn get_library_skill_md(skill_id: String, store: Option<String>) -> Result<String, String> {
+    let dir = resolve_store_arg(store.as_deref().unwrap_or(""), &skill_id);
+    let path = dir.join(&skill_id).join("SKILL.md");
     fs::read_to_string(&path).map_err(|e| format!("{} 读取失败: {}", path.display(), e))
 }
 
@@ -572,10 +760,10 @@ pub fn get_library_skill_md(skill_id: String) -> Result<String, String> {
 /// 扫描推断则永远等于磁盘真实状态。
 #[tauri::command]
 pub fn list_project_skills(project_id: String) -> Result<Vec<ProjectSkillEntry>, String> {
-    list_installed(&skills_dir(), &projects_path(), &project_id)
+    list_installed(&skill_stores(), &projects_path(), &project_id)
 }
 
-fn list_installed(store: &Path, projects_file: &Path, project_id: &str) -> Result<Vec<ProjectSkillEntry>, String> {
+fn list_installed(stores: &[PathBuf], projects_file: &Path, project_id: &str) -> Result<Vec<ProjectSkillEntry>, String> {
     let dir = resolve_project_skills_dir_in(projects_file, project_id)?;
     let mut out: Vec<ProjectSkillEntry> = Vec::new();
     let entries = match fs::read_dir(&dir) {
@@ -583,8 +771,19 @@ fn list_installed(store: &Path, projects_file: &Path, project_id: &str) -> Resul
         // 项目还没装过任何技能（.agents/skills 不存在）：返回空而不是报错
         Err(_) => return Ok(out),
     };
-    // .meta.json 读一次就够，别在循环里反复读盘
-    let meta = load_skill_meta();
+    // 每个库的 .meta.json 各读一次（标签跟着库走：同名技能在不同库里可以有不同标签）；
+    // 每个库读一次就够，别在循环里反复读盘
+    let metas: Vec<(PathBuf, SkillMetaFile)> = stores
+        .iter()
+        .map(|s| (s.clone(), load_skill_meta_from(s)))
+        .collect();
+    let meta_of = |store: &Path| -> SkillMetaFile {
+        metas
+            .iter()
+            .find(|(p, _)| store_key(p) == store_key(store))
+            .map(|(_, m)| m.clone())
+            .unwrap_or_default()
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         let fallback_id = entry.file_name().to_string_lossy().to_string();
@@ -618,15 +817,20 @@ fn list_installed(store: &Path, projects_file: &Path, project_id: &str) -> Resul
             });
             continue;
         }
-        let target_id = junction_target_skill(&path, store);
-        let (skill_id, state) = match target_id {
-            Some(id) if store.join(&id).is_dir() => (id, "linked"),
-            // 是链接但目标已不在技能库 → 悬空，UI 要能标出来并给清理入口
-            _ => (fallback_id.clone(), "broken"),
+        // junction 归属哪个库由真实目标决定（多库时要认得出是哪一个）
+        let target = junction_target_skill(&path, stores);
+        let (hit_store, skill_id, state) = match target {
+            Some((store, id)) if store.join(&id).is_dir() => (Some(store), id, "linked"),
+            // 是链接但目标已不在任何技能库里 → 悬空，UI 要能标出来并给清理入口
+            _ => (None, fallback_id.clone(), "broken"),
         };
+        let meta = hit_store.as_ref().map(|s| meta_of(s)).unwrap_or_default();
         let (name, description, chars) = match state {
             "linked" => {
-                let md = store.join(&skill_id).join("SKILL.md");
+                let md = hit_store
+                    .as_ref()
+                    .map(|s| s.join(&skill_id).join("SKILL.md"))
+                    .unwrap_or_default();
                 if md.is_file() {
                     let c = fs::read_to_string(&md).unwrap_or_default();
                     let (n, d) = parse_skill_md(&c, &skill_id);
@@ -674,12 +878,15 @@ struct SkillMetaItem {
 }
 
 /// 元数据文件路径：`<技能库>/.meta.json`（点文件，扫描时跳过）
-fn skill_meta_path() -> PathBuf {
-    skills_dir().join(".meta.json")
+///
+/// **每个库各有一份** `.meta.json`：标签/分类跟着它所在的那个库走，
+/// 所以同名技能在两个库里可以被打上不同的分类与标签。
+fn skill_meta_path(store: &Path) -> PathBuf {
+    store.join(".meta.json")
 }
 
-fn load_skill_meta() -> SkillMetaFile {
-    let path = skill_meta_path();
+fn load_skill_meta_from(store: &Path) -> SkillMetaFile {
+    let path = skill_meta_path(store);
     if path.exists() {
         if let Ok(data) = fs::read_to_string(&path) {
             if let Ok(meta) = serde_json::from_str::<SkillMetaFile>(&data) {
@@ -690,9 +897,18 @@ fn load_skill_meta() -> SkillMetaFile {
     SkillMetaFile::default()
 }
 
-fn save_skill_meta(meta: &SkillMetaFile) -> Result<(), String> {
+fn save_skill_meta_to(store: &Path, meta: &SkillMetaFile) -> Result<(), String> {
     let data = serde_json::to_string_pretty(meta).map_err(|e| e.to_string())?;
-    crate::commands::config::atomic_write_file(&skill_meta_path(), data.as_bytes())
+    crate::commands::config::atomic_write_file(&skill_meta_path(store), data.as_bytes())
+}
+
+/// 默认库的元数据（AI 扫描等只需要主库的场景）
+fn load_skill_meta() -> SkillMetaFile {
+    load_skill_meta_from(&skills_dir())
+}
+
+fn save_skill_meta(meta: &SkillMetaFile) -> Result<(), String> {
+    save_skill_meta_to(&skills_dir(), meta)
 }
 
 // ─── SKILL.md 解析 ───
@@ -759,6 +975,10 @@ pub struct SkillEntry {
     /// SKILL.md 的字符数。UI 拿它一眼看出「这个技能有多重」——
     /// 描述在每次会话都常驻，而正文只在用到时读，字符数是这个技能的成本指标。
     pub skill_md_chars: usize,
+    /// 所属技能库的绝对路径（多库后前端据此分 tab、并把它作为命令的 store 参数传回）
+    pub store: String,
+    /// 所属库的显示名（目录名），冗余一份免得前端自己再切路径
+    pub store_name: String,
 }
 
 /// 安装进度事件
@@ -804,17 +1024,33 @@ fn is_junction(path: &PathBuf) -> bool {
 /// 手工拷进去的技能同样会被列出来——它和安装进来的技能没有区别对待。
 #[tauri::command]
 pub fn get_skill_overview() -> Result<Vec<SkillEntry>, String> {
-    let store = skills_dir();
-    // 全局 manifest / meta 按 id 关联（与具体仓库目录无关）
+    // 多库：逐个库扫描，每条记录带上它所属的库（前端据此分 tab，并把它作为 store 参数传回命令）
     let manifest = load_skills();
-    let meta = load_skill_meta();
     let mut entries: Vec<SkillEntry> = Vec::new();
+    for store in skill_stores() {
+        collect_store_entries(&store, &manifest, &mut entries)?;
+    }
+    entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(entries)
+}
 
+/// 扫一个技能库的目录，把技能条目追加进 `out`。
+///
+/// 拆出来是因为多库后这段逻辑要对每个库各跑一遍，而 `.meta.json` 必须**按库**读——
+/// 同名技能在两个库里可能有不同标签，用默认库那份会把其中一个的标签串到另一个上。
+fn collect_store_entries(
+    store: &Path,
+    manifest: &SkillsFile,
+    entries: &mut Vec<SkillEntry>,
+) -> Result<(), String> {
+    let meta = load_skill_meta_from(store);
+    let store_path = store.to_string_lossy().to_string();
+    let store_name = store_display_name(store);
     if !store.exists() {
-        return Ok(entries);
+        return Ok(());
     }
 
-    let dir_entries = fs::read_dir(&store).map_err(|e| e.to_string())?;
+    let dir_entries = fs::read_dir(store).map_err(|e| e.to_string())?;
     for entry in dir_entries.flatten() {
         let path = entry.path();
         if !path.is_dir() {
@@ -854,17 +1090,19 @@ pub fn get_skill_overview() -> Result<Vec<SkillEntry>, String> {
             category,
             tags,
             skill_md_chars,
+            store: store_path.clone(),
+            store_name: store_name.clone(),
         });
     }
-
-    entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-    Ok(entries)
+    Ok(())
 }
 
 /// 返回全部技能元数据（分类/标签），用于前端构建筛选选项
 #[tauri::command]
-pub fn get_skill_meta() -> Result<HashMap<String, SkillMetaItemDto>, String> {
-    let meta = load_skill_meta();
+pub fn get_skill_meta(store: Option<String>) -> Result<HashMap<String, SkillMetaItemDto>, String> {
+    // 每个库的分类/标签各自一份，筛选选项也要按当前 tab 的库来
+    let dir = resolve_store_arg(store.as_deref().unwrap_or(""), "");
+    let meta = load_skill_meta_from(&dir);
     let mut out: HashMap<String, SkillMetaItemDto> = HashMap::new();
     for (k, v) in meta.skills {
         out.insert(k, SkillMetaItemDto { category: v.category, tags: v.tags });
@@ -878,14 +1116,17 @@ pub fn update_skill_meta(
     skill_id: String,
     category: String,
     tags: Vec<String>,
+    store: Option<String>,
 ) -> Result<(), String> {
     if skill_id.is_empty() {
         return Err("技能 id 不能为空".to_string());
     }
-    let mut meta = load_skill_meta();
+    // 元数据写进**该技能所在那个库**：同名技能在两个库里各存一份标签，互不干扰
+    let dir = resolve_store_arg(store.as_deref().unwrap_or(""), &skill_id);
+    let mut meta = load_skill_meta_from(&dir);
     let tags: Vec<String> = tags.into_iter().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
     meta.skills.insert(skill_id.clone(), SkillMetaItem { category: category.trim().to_string(), tags });
-    save_skill_meta(&meta)
+    save_skill_meta_to(&dir, &meta)
 }
 
 /// 元数据项 DTO（前端筛选用）
@@ -998,8 +1239,8 @@ fn temp_clone_dir() -> PathBuf {
 // ─── 安装 / 卸载 ───
 
 #[tauri::command]
-pub fn install_skill(skill_dir: String) -> Result<(), String> {
-    install_skill_from_dir(&skill_dir, None).map(|_| ())
+pub fn install_skill(skill_dir: String, store: Option<String>) -> Result<(), String> {
+    install_skill_from_dir(&skill_dir, None, store.as_deref()).map(|_| ())
 }
 
 /// 安装技能到仓库，返回技能 id。
@@ -1009,6 +1250,7 @@ pub fn install_skill(skill_dir: String) -> Result<(), String> {
 pub(crate) fn install_skill_from_dir(
     skill_dir: &str,
     origin: Option<(&str, &str)>,
+    store: Option<&str>,
 ) -> Result<String, String> {
     let src = PathBuf::from(skill_dir);
     if !src.exists() || !src.is_dir() {
@@ -1025,7 +1267,8 @@ pub(crate) fn install_skill_from_dir(
     };
 
     let id = name.to_lowercase().replace(' ', "-");
-    let store = skills_dir();
+    // 装进用户当前选中的那个库（不传 = 默认库）
+    let store = resolve_store_arg(store.unwrap_or(""), "");
     let _ = fs::create_dir_all(&store);
     let dest_dir = store.join(&id);
 
@@ -1072,8 +1315,11 @@ pub(crate) fn install_skill_from_dir(
 }
 
 #[tauri::command]
-pub fn uninstall_skill(skill_id: String) -> Result<(), String> {
-    let store = skills_dir();
+pub fn uninstall_skill(skill_id: String, store: Option<String>) -> Result<(), String> {
+    // 删的是「用户当前所在那个库」里的技能：同名技能在多个库并存时，
+    // 删错库比不删更糟，所以不猜——前端一定把 store 传过来
+    let store_dir = resolve_store_arg(store.as_deref().unwrap_or(""), &skill_id);
+    let store = store_dir;
     let dir = store.join(&skill_id);
 
     if dir.exists() {
@@ -1086,9 +1332,9 @@ pub fn uninstall_skill(skill_id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn get_skill_files(skill_id: String) -> Result<(String, Vec<SkillFile>), String> {
-    let store = skills_dir();
-    let dir = store.join(&skill_id);
+pub fn get_skill_files(skill_id: String, store: Option<String>) -> Result<(String, Vec<SkillFile>), String> {
+    let store_dir = resolve_store_arg(store.as_deref().unwrap_or(""), &skill_id);
+    let dir = store_dir.join(&skill_id);
     if !dir.exists() {
         return Err("技能目录不存在".to_string());
     }
@@ -1122,7 +1368,7 @@ fn collect_skill_files(base: &PathBuf, current: &PathBuf, files: &mut Vec<SkillF
 // ─── 在线安装 ───
 
 #[tauri::command]
-pub async fn install_skill_from_source(source: String) -> Result<(), String> {
+pub async fn install_skill_from_source(source: String, store: Option<String>) -> Result<(), String> {
     let src_trimmed = source.trim();
     if src_trimmed.is_empty() {
         return Err("来源不能为空".to_string());
@@ -1135,7 +1381,7 @@ pub async fn install_skill_from_source(source: String) -> Result<(), String> {
     let local_path = PathBuf::from(&base);
     if local_path.exists() && local_path.is_dir() {
         let root = find_skill_root(&local_path, subdir.as_deref())?;
-        return install_skill(root.to_string_lossy().to_string());
+        return install_skill(root.to_string_lossy().to_string(), store);
     }
 
     // Git URL 或 owner/repo
@@ -1180,7 +1426,12 @@ pub async fn install_skill_from_source(source: String) -> Result<(), String> {
         }
     };
     let sha = rev_parse_head(&temp_dir).await.unwrap_or_default();
-    let result = install_skill_from_dir(&root.to_string_lossy(), Some((&base, &sha))).map(|_| ());
+    let result = install_skill_from_dir(
+        &root.to_string_lossy(),
+        Some((&base, &sha)),
+        store.as_deref(),
+    )
+    .map(|_| ());
     let _ = fs::remove_dir_all(&temp_dir);
     result
 }
@@ -1190,6 +1441,7 @@ pub async fn install_skill_from_source(source: String) -> Result<(), String> {
 pub async fn install_skill_from_online(
     app: tauri::AppHandle,
     source: String,
+    store: Option<String>,
 ) -> Result<(), String> {
     let src_trimmed = source.trim();
     if src_trimmed.is_empty() {
@@ -1205,7 +1457,7 @@ pub async fn install_skill_from_online(
     if local_path.exists() && local_path.is_dir() {
         emit_install_progress(&app, "安装", 1, 1, "", "正在安装到仓库...");
         let root = find_skill_root(&local_path, subdir.as_deref())?;
-        let result = install_skill(root.to_string_lossy().to_string());
+        let result = install_skill(root.to_string_lossy().to_string(), store);
         if result.is_ok() {
             emit_install_progress(&app, "完成", 1, 1, "", "安装完成！已管理工具自动获得新技能");
         }
@@ -1257,7 +1509,12 @@ pub async fn install_skill_from_online(
         }
     };
     let sha = rev_parse_head(&temp_dir).await.unwrap_or_default();
-    let result = install_skill_from_dir(&root.to_string_lossy(), Some((&base, &sha))).map(|_| ());
+    let result = install_skill_from_dir(
+        &root.to_string_lossy(),
+        Some((&base, &sha)),
+        store.as_deref(),
+    )
+    .map(|_| ());
     let _ = fs::remove_dir_all(&temp_dir);
 
     if result.is_ok() {
@@ -1447,9 +1704,9 @@ fn copy_dir_recursive(src: &PathBuf, dest: &PathBuf) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        add_project_at, default_skills_dir, find_skill_root, install_into, list_installed,
-        load_projects_from, remove_project_at, source_to_url, split_source_subdir, uninstall_from,
-        PRESET_SKILL_SOURCES,
+        add_project_at, default_skills_dir, find_skill_root, install_into, junction_target_skill,
+        list_installed, load_projects_from, remove_project_at, source_to_url, split_source_subdir,
+        store_key, uninstall_from, PRESET_SKILL_SOURCES,
     };
     use std::path::{Path, PathBuf};
 
@@ -1676,7 +1933,7 @@ mod tests {
         make_skill(&store, "demo");
 
         // 没装过时列表为空，且**不报错**（.agents/skills 还不存在）
-        assert!(list_installed(&store, &file, &pid).unwrap().is_empty());
+        assert!(list_installed(std::slice::from_ref(&store), &file, &pid).unwrap().is_empty());
 
         let link = install_into(&store, &file, "demo", &pid).expect("应安装成功");
         assert!(
@@ -1684,14 +1941,14 @@ mod tests {
             "junction 应能穿透读到 SKILL.md"
         );
 
-        let list = list_installed(&store, &file, &pid).unwrap();
+        let list = list_installed(std::slice::from_ref(&store), &file, &pid).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].state, "linked");
         assert_eq!(list[0].name, "demo", "名称应来自 SKILL.md 的 frontmatter");
 
         // 幂等：重复安装不报错、列表不重复
         install_into(&store, &file, "demo", &pid).expect("重复安装应幂等");
-        assert_eq!(list_installed(&store, &file, &pid).unwrap().len(), 1);
+        assert_eq!(list_installed(std::slice::from_ref(&store), &file, &pid).unwrap().len(), 1);
 
         // 卸载：链接消失，**技能库内容必须还在**
         uninstall_from(&file, "demo", &pid).unwrap();
@@ -1700,14 +1957,42 @@ mod tests {
             store.join("demo").join("SKILL.md").is_file(),
             "卸载绝不能删掉技能库里的实体内容"
         );
-        assert!(list_installed(&store, &file, &pid).unwrap().is_empty());
+        assert!(list_installed(std::slice::from_ref(&store), &file, &pid).unwrap().is_empty());
 
         // 悬空：装好后把技能库里的技能删掉，UI 必须能识别出来
         install_into(&store, &file, "demo", &pid).unwrap();
         std::fs::remove_dir_all(store.join("demo")).unwrap();
-        let list = list_installed(&store, &file, &pid).unwrap();
+        let list = list_installed(std::slice::from_ref(&store), &file, &pid).unwrap();
         assert_eq!(list.len(), 1, "悬空链接仍应被列出，否则用户看不到残留");
         assert_eq!(list[0].state, "broken");
+    }
+
+    /// 多库下必须认出 junction 指向**哪一个**库。认错库的后果很隐蔽：
+    /// 卸载会去删另一个库的同名技能，或把「已安装」误判成「悬空」。
+    #[cfg(windows)]
+    #[test]
+    fn junction_resolves_to_the_right_store_among_many() {
+        let (_base, store_a, file, pid) = setup_project_env("multi-store");
+        let store_b = store_a.parent().unwrap().join("store-b");
+        std::fs::create_dir_all(&store_b).unwrap();
+        make_skill(&store_a, "in-a");
+        make_skill(&store_b, "in-b");
+
+        let stores = vec![store_a.clone(), store_b.clone()];
+        // A 库的技能 → 归属 A；B 库的技能 → 归属 B
+        let link_a = install_into(&store_a, &file, "in-a", &pid).expect("A 库技能应安装成功");
+        let link_b = install_into(&store_b, &file, "in-b", &pid).expect("B 库技能应安装成功");
+        let got_a = junction_target_skill(Path::new(&link_a), &stores).expect("应认出 A 库的链接");
+        let got_b = junction_target_skill(Path::new(&link_b), &stores).expect("应认出 B 库的链接");
+        assert_eq!(store_key(&got_a.0), store_key(&store_a));
+        assert_eq!(got_a.1, "in-a");
+        assert_eq!(store_key(&got_b.0), store_key(&store_b));
+        assert_eq!(got_b.1, "in-b");
+
+        // 两个库同时列出时，各自的技能都要被认成 linked（不是 broken）
+        let list = list_installed(&stores, &file, &pid).unwrap();
+        assert_eq!(list.len(), 2);
+        assert!(list.iter().all(|e| e.state == "linked"), "两库都该是 linked");
     }
 
     /// 项目自带的真实目录也要被列出来（state=`local`），名字取自它自己的 SKILL.md。
@@ -1726,7 +2011,7 @@ mod tests {
         )
         .unwrap();
 
-        let list = list_installed(&store, &file, &pid).unwrap();
+        let list = list_installed(std::slice::from_ref(&store), &file, &pid).unwrap();
         assert_eq!(list.len(), 1, "项目自带技能应出现在列表里");
         assert_eq!(list[0].state, "local");
         assert_eq!(list[0].skill_id, "project-own");
@@ -1885,11 +2170,13 @@ pub fn list_builtin_skills() -> Vec<BuiltinSkillView> {
 /// 非破坏性：目标已存在且非空就直接报错，绝不覆盖用户自己的技能。
 /// 装完它只是技能库里的一个普通技能，仍需用户显式安装给某个项目才生效。
 #[tauri::command]
-pub fn install_builtin_skill(skill_id: String) -> Result<String, String> {
+pub fn install_builtin_skill(skill_id: String, store: Option<String>) -> Result<String, String> {
     // 装进技能库即可 —— 装完它就是一个普通技能，由用户显式安装给某个项目。
     // 早先这里要求用户先选一个目标目录（通常是 ~/.agents/skills，装完即全局生效），
     // 那正是上下文暴涨的来源，已随「项目」模型一起取消。
-    install_builtin_into(&skill_id, &skills_dir())
+    // 装进哪个库 = 当前 UI 上的那个 tab（前端传 store；不传则默认库）。
+    let target = resolve_store_arg(store.as_deref().unwrap_or(""), "");
+    install_builtin_into(&skill_id, &target)
 }
 
 /// 目标目录可注入的版本（单测必须能指向临时目录，否则会往真实技能库里写）。

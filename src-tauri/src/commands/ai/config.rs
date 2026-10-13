@@ -77,6 +77,7 @@ pub(crate) fn load_ai_config() -> AiConfig {
         proxy_port: 15721,
         default_project_path: String::new(),
         skills_dir: String::new(),
+        extra_skills_dirs: Vec::new(),
         rectifier: RectifierConfig::default(),
         headroom: HeadroomConfig::default(),
         optimizer: OptimizerConfig::default(),
@@ -495,6 +496,7 @@ mod tests {
             headroom: HeadroomConfig::default(),
             optimizer: OptimizerConfig::default(),
             skills_dir: String::new(),
+            extra_skills_dirs: Vec::new(),
             route_chain: Vec::new(),
             aggregate: AggregateConfig::default(),
         };
