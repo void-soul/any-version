@@ -446,6 +446,23 @@ async fn classify_inner(
 
         // 解析失败 → 直接返回错误：整批不落库，避免写进半截错误分类
         let groups = classify::parse_groups(&outcome.text, batch.len())?;
+        // 这一批的思考内容：归类是「按模型判断该进哪个分类」，判断依据全在思考里，
+        // 分类错了要能回头查它当时是怎么想的。以前完全没有上报，前端只知道进度。
+        if let Some(reasoning) = outcome.reasoning.as_deref().filter(|r| !r.trim().is_empty()) {
+            emit_progress(
+                &app,
+                &FavoritesProgress {
+                    stage: "reasoning",
+                    task: TASK_CLASSIFY.to_string(),
+                    message: Some(reasoning.trim().to_string()),
+                    classified: Some(result.classified),
+                    tags_written: Some(result.tags_written),
+                    remaining: Some(total_pending.saturating_sub(result.classified)),
+                    done: false,
+                    ..FavoritesProgress::default()
+                },
+            );
+        }
         let written = db::with_conn(|conn| db::apply_tags(conn, &batch, &groups, &model, reclassify))?;
         result.tags_written += written;
         result.classified += batch.len();

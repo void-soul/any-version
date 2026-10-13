@@ -70,7 +70,7 @@ fn install_agent_prompt() -> String {
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstallAgentStep {
-    /// "thinking" | "toolCall" | "toolResult" | "done" | "error"
+    /// "reasoning"（真实思考内容） | "toolCall" | "toolResult" | "done" | "error"
     pub step: String,
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -131,15 +131,6 @@ pub async fn install_agent_chat(
     let mut steps: Vec<InstallAgentStep> = Vec::new();
 
     for _round in 0..MAX_ROUNDS {
-        let step = InstallAgentStep {
-            step: "thinking".to_string(),
-            text: "思考中…".to_string(),
-            tool: None,
-            ok: None,
-        };
-        steps.push(step.clone());
-        emit(&app, &step);
-
         let outcome: CompleteOutcome = complete_chat_messages(
             &NoHooks,
             &provider,
@@ -150,6 +141,19 @@ pub async fn install_agent_chat(
             crate::commands::ai::usage::tool_ids::INSTALL_AGENT,
         )
         .await?;
+
+        // 这一轮的真实思考内容。以前发的是硬编码的「思考中…」——那既不透明也没有信息量，
+        // 用户看到的是我们自己编的一句话，而不是模型为什么决定调这个工具。
+        if let Some(reasoning) = outcome.reasoning.as_deref().filter(|r| !r.trim().is_empty()) {
+            let step = InstallAgentStep {
+                step: "reasoning".to_string(),
+                text: reasoning.trim().to_string(),
+                tool: None,
+                ok: None,
+            };
+            steps.push(step.clone());
+            emit(&app, &step);
+        }
 
         // 网关不支持 tools 或模型选择直接回答 → 输出即最终答复
         let tool_calls = outcome

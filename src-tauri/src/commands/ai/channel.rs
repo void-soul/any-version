@@ -301,15 +301,15 @@ fn process_sse_line(
 }
 
 /// 消费一次 SSE 流：逐块读取（带空闲超时，防止断流后永久挂起），跨包拼行、
-/// 累积 content；逐块检查取消（用户点「停止」后流式请求随即中断）。
-/// `model` 仅用于错误信息定位。返回 (完整文本, usage)，读流失败返回 Err。
+/// 累积 content 与 reasoning；逐块检查取消（用户点「停止」后流式请求随即中断）。
+/// `model` 仅用于错误信息定位。返回 (正文全文, 思考全文, usage)，读流失败返回 Err。
 async fn consume_sse(
     hooks: &dyn ChannelHooks,
     call_id: u64,
     model: &str,
     resp: reqwest::Response,
     on_stream_tick: &(dyn Fn(usize, &str) + Send + Sync),
-) -> Result<(String, Option<serde_json::Value>), String> {
+) -> Result<(String, String, Option<serde_json::Value>), String> {
     use futures_util::StreamExt;
     log_call(call_id, "开始读取 SSE 流…");
     let mut acc = String::new();
@@ -319,6 +319,7 @@ async fn consume_sse(
     let mut last_emit = std::time::Instant::now();
     let mut last_len = 0usize;
     let mut last_reason_len = 0usize;
+    let mut reason_emitted = false;
     let mut stream = resp.bytes_stream();
     loop {
         let chunk = match tokio::time::timeout(SSE_IDLE_TIMEOUT, stream.next()).await {
@@ -365,25 +366,22 @@ async fn consume_sse(
         }
         // 思考过程（reasoning_content）单独节流上报：推理型模型先想几十秒才动笔，
         // 这部分不报进度，前端就像卡死。阈值（200 字符/200ms）独立于 content，
-        // 保证「只思考不写字」时屏幕也在动。text 只给尾部 200 字符做预览，
-        // 完整思考文本对调用方没价值（模型输出的是正文，不是思考）。
+        // 保证「只思考不写字」时屏幕也在动。
+        //
+        // text 传**累积全文**而不是尾部 200 字符。早先只给尾片段是觉得「完整思考
+        // 文本对调用方没价值」，但那样前端永远只能看到最后 200 字——用户想排查
+        // 「AI 为什么给出这个结果」时，恰恰需要完整的推理链条。量级上推理文本通常
+        // 几千字，按 200 字符节流也就十几帧，远比丢信息划算。
         let r_cur = acc_reason.chars().count();
         if r_cur > last_reason_len
             && (r_cur - last_reason_len >= 200 || last_emit.elapsed().as_millis() >= 200)
         {
-            let tail: String = acc_reason
-                .chars()
-                .rev()
-                .take(200)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect();
             hooks.on_progress(
                 "reasoning",
-                serde_json::json!({ "length": r_cur, "text": tail }),
+                serde_json::json!({ "length": r_cur, "text": acc_reason.clone() }),
             );
             last_reason_len = r_cur;
+            reason_emitted = true;
             last_emit = std::time::Instant::now();
         }
     }
@@ -394,16 +392,20 @@ async fn consume_sse(
             e
         })?;
     }
-    // 思考过程收尾：有增量就标 done（前端据此把「思考中」定格为已完成的思考块）
+    // 思考过程收尾：有增量就标 done（前端据此把「思考中」定格为已完成的思考块）。
+    // 同样带上全文：某些供应商只在最后一帧给出思考，中途一帧都没发过。
+    //
+    // 触发条件不只是「比上次长」：若最后一段思考在上一帧已发完（长度没变化），
+    // 只判增量就永远不发 done，前端会一直停在「思考中…」。
     let r_final = acc_reason.chars().count();
-    if r_final > last_reason_len {
+    if r_final > 0 && (r_final > last_reason_len || reason_emitted) {
         hooks.on_progress(
             "reasoning",
-            serde_json::json!({ "length": r_final, "done": true }),
+            serde_json::json!({ "length": r_final, "text": acc_reason.clone(), "done": true }),
         );
     }
     log_call(call_id, &format!("SSE 流正常结束：累计 {} 字符，思考 {} 字符，usage={}", acc.chars().count(), acc_reason.chars().count(), usage.is_some()));
-    Ok((acc, usage))
+    Ok((acc, acc_reason, usage))
 }
 
 /// 流式输出「继续」prompt：AI 中途断流后，把已收到的部分发回去请求续写。
@@ -430,9 +432,14 @@ pub fn resume_prompt(system: &str, user: &str, partial: &str) -> (String, String
     (sys, usr)
 }
 
-/// 流式调用结果：完整拼接文本 + 末次 usage（流式末块，需 stream_options.include_usage）。
+/// 流式调用结果：完整拼接文本 + 思考全文 + 末次 usage（流式末块，需 stream_options.include_usage）。
+///
+/// `reasoning` 以前**没有这个字段**——思考文本在 `consume_sse` 返回处就被丢弃了，
+/// 于是「思考过程」在前端只能看到字数。现在与非流式的 `CompleteOutcome` 对齐：
+/// 两边都有完整的思考文本，前端不必区分走的是哪条路径。没有思考内容的模型为 None。
 pub struct StreamOutcome {
     pub text: String,
+    pub reasoning: Option<String>,
     pub usage: Option<serde_json::Value>,
 }
 
@@ -517,10 +524,12 @@ pub async fn stream_chat_with_resume(
             log_call(call_id, &format!("重试后仍非 2xx 响应体：{}", log_preview(&text2)));
             return Err(format!("AI错误 {}: {}", st2.as_u16(), msg2));
         }
-        let (text, usage) = consume_sse(hooks, call_id, model, resp2, &tick).await?;
-        return finish_stream_text(call_id, text, usage);
+        let (text, reasoning, usage) = consume_sse(hooks, call_id, model, resp2, &tick).await?;
+        return finish_stream_text(call_id, text, reasoning, usage);
     }
-    let (mut text, mut usage) = match consume_sse(hooks, call_id, model, resp, &tick).await {
+    // 思考文本与正文**分开累计**：续写只补正文，思考不能因为断流而重复一段
+    let mut reasoning = String::new();
+    let (mut text, first_reasoning, mut usage) = match consume_sse(hooks, call_id, model, resp, &tick).await {
         Ok(x) => x,
         Err(e) => {
             let err = format!("流式中断: {}", strip_prefix_of(&e, "流式中断: "));
@@ -528,14 +537,15 @@ pub async fn stream_chat_with_resume(
                 return Err(err);
             }
             log_call(call_id, &format!("流中断可恢复，准备断点续写：{}", err));
-            (String::new(), None)
+            (String::new(), String::new(), None)
         }
     };
+    reasoning.push_str(&first_reasoning);
     for attempt in 1..=STREAM_RESUME_MAX {
         // 已拿到完整内容则不再续写
         if !text.trim().is_empty() && extract_json(&text).is_some() {
             log_call(call_id, &format!("内容已成完整 JSON，提前返回（共 {} 字符，续写 {} 次）", text.chars().count(), attempt - 1));
-            return Ok(StreamOutcome { text, usage });
+            return finish_stream_text(call_id, text, reasoning, usage);
         }
         // 断流且内容为空：直接重发原请求（首次请求没收到任何有效内容）
         // 断流但已有部分内容：发「继续」请求，把已收到的片段回传给模型续写
@@ -586,7 +596,7 @@ pub async fn stream_chat_with_resume(
         }
         .await;
         match outcome {
-            Ok((part, u)) => {
+            Ok((part, part_reasoning, u)) => {
                 // 续写内容直接拼接（模型被要求从断点继续，不重复已有部分）。
                 if u.is_some() {
                     usage = u;
@@ -599,6 +609,7 @@ pub async fn stream_chat_with_resume(
                     log_preview(&part)
                 ));
                 text.push_str(&part);
+                reasoning.push_str(&part_reasoning);
                 // 若本次续写几乎无新增内容，说明模型在复读而非续写——判定失败。
                 if got < RESUME_MIN_PROGRESS_CHARS {
                     return Err(format!(
@@ -620,7 +631,7 @@ pub async fn stream_chat_with_resume(
     }
     // resume 次数用尽：把现有文本原样交回（调用方可用宽容解析，可能已经完整）
     log_call(call_id, &format!("续写次数用尽，将现有内容交回调用方宽容解析（共 {} 字符）", text.chars().count()));
-    finish_stream_text(call_id, text, usage)
+    finish_stream_text(call_id, text, reasoning, usage)
 }
 
 /// resume 次数用尽后的收尾：记录最终输出全量（截断预览），文本原样交回
@@ -629,15 +640,22 @@ pub async fn stream_chat_with_resume(
 fn finish_stream_text(
     call_id: u64,
     text: String,
+    reasoning: String,
     usage: Option<serde_json::Value>,
 ) -> Result<StreamOutcome, String> {
     log_call(call_id, &format!(
-        "═══ 流式最终返回（{} 字符，usage={}）═══\n{}",
+        "═══ 流式最终返回（{} 字符，思考 {} 字符，usage={}）═══\n{}",
         text.chars().count(),
+        reasoning.chars().count(),
         usage.is_some(),
         log_preview(&text)
     ));
-    Ok(StreamOutcome { text, usage })
+    Ok(StreamOutcome {
+        text,
+        // 空串统一成 None：调用方就不用同时判 null 和空串两种「没有思考」
+        reasoning: (!reasoning.trim().is_empty()).then_some(reasoning),
+        usage,
+    })
 }
 
 /// 提取首个平衡 JSON 对象（跳过前后缀文本 / Markdown 围栏 / 解释性文字）。

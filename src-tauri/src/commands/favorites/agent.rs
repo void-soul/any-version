@@ -51,7 +51,7 @@ struct FavAgentState {
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FavAgentStep {
-    /// "thinking" | "toolCall" | "toolResult" | "done"
+    /// "reasoning"（真实思考内容） | "toolCall" | "toolResult" | "done"
     pub step: String,
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -161,10 +161,6 @@ pub async fn fav_agent_search(
     let mut state = FavAgentState::default();
 
     for _round in 0..max_rounds {
-        let thinking = FavAgentStep { step: "thinking".to_string(), text: "检索中…".to_string(), tool: None };
-        steps.push(thinking.clone());
-        emit(&app, &thinking);
-
         let outcome: CompleteOutcome = complete_chat_messages(
             &NoHooks,
             &provider,
@@ -176,6 +172,19 @@ pub async fn fav_agent_search(
             crate::commands::ai::usage::tool_ids::FAVORITES,
         )
         .await?;
+
+        // 这一轮的真实思考内容。以前这里发的是硬编码的「检索中…」——
+        // 那既不透明也没有信息量，用户看到的是我们自己编的一句话，
+        // 而不是模型到底在想什么（`CompleteOutcome.reasoning` 一直有值，只是没往外发）。
+        if let Some(reasoning) = outcome.reasoning.as_deref().filter(|r| !r.trim().is_empty()) {
+            let thought = FavAgentStep {
+                step: "reasoning".to_string(),
+                text: reasoning.trim().to_string(),
+                tool: None,
+            };
+            steps.push(thought.clone());
+            emit(&app, &thought);
+        }
 
         let tool_calls = outcome
             .message

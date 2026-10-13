@@ -5586,5 +5586,10 @@
       "saved": "Path saved",
       "cleared": "Auto-detection restored"
     }
+  },
+  "thinking": {
+    "inProgress": "Thinking… {{count}} chars",
+    "done": "Thought for {{count}} chars",
+    "waiting": "(no reasoning yet)"
   }
 }

@@ -5514,5 +5514,10 @@
       "saved": "路径已保存",
       "cleared": "已恢复自动检测"
     }
+  },
+  "thinking": {
+    "inProgress": "思考中… {{count}} 字",
+    "done": "思考完成（{{count}} 字）",
+    "waiting": "（暂无思考内容）"
   }
 }
