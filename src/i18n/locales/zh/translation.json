@@ -549,7 +549,7 @@
   },
   "common": {
     "warning": "提示",
-    "error": "出错了",
+    "error": "失败",
     "info": "说明",
     "ok": "确定",
     "cancel": "取消",
@@ -568,7 +568,6 @@
     "enabled": "已启用",
     "disabled": "已禁用",
     "success": "成功",
-    "error": "失败",
     "copy": "复制",
     "copied": "已复制",
     "open": "打开",
@@ -2960,7 +2959,11 @@
     "projApplied": "已完成 {{add}} 次安装（技能 × 项目）",
     "projNoSkills": "技能库还是空的，先到「技能库」页添加技能。",
     "projBrokenHint": "这些技能已从技能库删除，但项目里的链接还留着：{{names}}",
-    "projBrokenClean": "清理失效链接"
+    "projBrokenClean": "清理失效链接",
+    "storeAdd": "添加技能库",
+    "storeRemove": "移除当前库",
+    "storeAddHint": "添加一个技能库根目录（只记配置，不搬文件）",
+    "storeRemoveHint": "只从列表移除这个库，不删除目录与已装技能的链接"
   },
   "toollaunch": {
     "officialOnly": "仅支持官方模型",
@@ -3137,8 +3140,8 @@
     "optimizerBadge": "优化器",
     "rectifierBadge": "整流器",
     "masqueradeLabel2": "伪装:",
-  "modelLabel": "模型:",
-  "masqueradeNone": "未设置",
+    "modelLabel": "模型:",
+    "masqueradeNone": "未设置",
     "starting": "启动中...",
     "restoreSession": "恢复会话",
     "launch": "启动 {{name}}",
