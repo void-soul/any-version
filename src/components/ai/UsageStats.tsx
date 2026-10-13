@@ -11,8 +11,6 @@ import {
   Boxes,
   Cpu,
   Server,
-  ChevronDown,
-  ChevronUp,
   Activity,
 } from "lucide-react";
 import { MODULE_MAP, moduleLabel } from "../../moduleRegistry";
@@ -48,7 +46,7 @@ interface UsageSummary {
   recent: { date: string; request_count: number; input_tokens: number; output_tokens: number; total_tokens: number }[];
 }
 
-type SortKey = "requests" | "input" | "output" | "total" | "success" | "cache";
+
 
 interface Row {
   key: string;
@@ -62,16 +60,12 @@ interface Row {
   total: number;
   /** 输出速度（tokens/s）：仅模型维度由后端聚合给出，其余维度无值不渲染 */
   tps?: number | null;
-  /** 成功率（0-1）：仅模型维度由后端聚合给出；null/undefined 表示无数据（渲染 —） */
+  /** 成功率（0-1）：仅模型维度由后端聚合给出；null/undefined 表示无数据 */
   successRate?: number | null;
-  /** 成功率排序值（无数据时 -1，保证排在最后） */
-  success?: number;
-  /** 失败请求数（有值时在成功率旁标出） */
+  /** 失败请求数（有值时在 tooltip 里标出） */
   failureCount?: number;
   /** 缓存命中率（0-1）：仅模型维度由后端聚合给出；未上报缓存的模型为 null */
   cacheHitRate?: number | null;
-  /** 缓存命中率排序值 */
-  cache?: number;
 }
 
 function formatTokens(n: number): string {
@@ -82,36 +76,6 @@ function formatTokens(n: number): string {
 
 function formatFull(n: number): string {
   return n.toLocaleString("en-US");
-}
-
-function SortHeader({
-  k,
-  children,
-  align,
-  sortKey,
-  asc,
-  onSort,
-}: {
-  k: SortKey;
-  children: React.ReactNode;
-  align?: string;
-  sortKey: SortKey;
-  asc: boolean;
-  onSort: (k: SortKey) => void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <th
-      onClick={() => onSort(k)}
-      className={`px-2 py-1.5 text-micro font-semibold text-slate-500 cursor-pointer select-none hover:text-slate-300 whitespace-nowrap ${align || "text-right"}`}
-      title={t("usagestats.clickSort")}
-    >
-      <span className="inline-flex items-center gap-0.5">
-        {children}
-        {sortKey === k && (asc ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />)}
-      </span>
-    </th>
-  );
 }
 
 // 自动刷新间隔（抄自 cc-switch 98ccde00）：0 表示关闭自动刷新
@@ -177,49 +141,46 @@ const SECTION_STYLES: Record<string, SectionStyle> = {
   provider: { iconClass: "text-emerald-400", softClass: "bg-emerald-500/10", barClass: "bg-emerald-500/60" },
 };
 
-function SortableTable({
+/**
+ * 一组统计的**柱状图**（原来是表格）。
+ *
+ * 为什么换：这四组要回答的是「谁花得多、什么时候花得多」——分布与量级对比，
+ * 柱状图一眼能看出峰值和占比，表格得逐个读数字再在脑子里排。
+ *
+ * 柱子刻意做成**输入/输出堆叠**：换成图之后最容易丢的就是这个拆分（哪个模型是
+ * 疯狂输入、哪个是疯狂输出，量级完全不同），堆叠能保住它，高度仍是总量。
+ * 请求数、成功率、缓存命中率这些放不进图的信息挂到 title tooltip 上。
+ */
+function UsageBarSection({
   title,
   icon,
   rows,
-  nameHeader,
   section,
-  maxRows,
+  chronological,
 }: {
   title: string;
   icon: React.ReactNode;
   rows: Row[];
-  nameHeader: string;
   section: keyof typeof SECTION_STYLES;
-  maxRows?: number;
+  /**
+   * 按**给定顺序**画（日期维度用）。
+   *
+   * 其余维度按总量降序排 —— 那是「谁花得多」的排名视图。
+   * 但日期必须按日期走：后端已经是 ORDER BY date ASC，前端 .slice(-14) 取最近 14 天，
+   * 结果本身有序；一旦也按总量排，柱子左右跳动，趋势线就没了。
+   */
+  chronological?: boolean;
 }) {
   const { t } = useTranslation();
-  const [sortKey, setSortKey] = useState<SortKey>("total");
-  const [asc, setAsc] = useState(false);
   const style = SECTION_STYLES[section];
 
-  const sorted = useMemo(() => {
-    const list = maxRows ? rows.slice(0, maxRows) : rows;
-    const copy = [...list];
-    copy.sort((a, b) => {
-      // 成功率 / 缓存命中率可能缺值（未上报的模型）→ 用 -1 兜底，让它排在最后
-      const diff = (a[sortKey] ?? -1) - (b[sortKey] ?? -1);
-      return asc ? diff : -diff;
-    });
-    return copy;
-  }, [rows, sortKey, asc, maxRows]);
+  const bars = useMemo(() => {
+    if (chronological) return rows;
+    return [...rows].sort((a, b) => b.total - a.total);
+  }, [rows, chronological]);
 
+  // 分母至少为 1：全是 0 时不能除零，且柱子高度算出来是 NaN 会让整排消失
   const maxTotal = useMemo(() => Math.max(...rows.map(r => r.total), 1), [rows]);
-
-  // 可靠性与缓存两列只在有数据的维度（目前是「按模型」）出现，其余维度不挤占宽度
-  const hasReliability = useMemo(
-    () => rows.some(r => r.successRate != null || r.cacheHitRate != null),
-    [rows],
-  );
-
-  const setSort = (k: SortKey) => {
-    if (sortKey === k) setAsc(!asc);
-    else { setSortKey(k); setAsc(false); }
-  };
 
   if (rows.length === 0) {
     return (
@@ -233,99 +194,71 @@ function SortableTable({
     );
   }
 
-  const rankBadge = (idx: number) => {
-    if (idx >= 3) return <span className="text-[8px] text-slate-600 tabular-nums w-4 text-right">{idx + 1}</span>;
-    const cls = idx === 0 ? "bg-amber-500/20 text-amber-300" : idx === 1 ? "bg-slate-400/20 text-slate-300" : "bg-orange-500/20 text-orange-300";
-    return <span className={`text-[8px] font-bold tabular-nums w-4 text-right ${cls}`}>{idx + 1}</span>;
-  };
-
   return (
     <div className="rounded-card bg-slate-900/30 border border-white/5 overflow-hidden">
       <div className="flex items-center gap-1.5 px-3 py-2 text-tiny font-bold text-slate-200 border-b border-white/[0.04] bg-white/[0.015]">
         <span className={`p-1 rounded-md ${style.softClass} ${style.iconClass}`}>{icon}</span>
         {title}
         <span className="text-micro font-normal text-slate-600 ml-1">{t("usagestats.rowsCount", { count: rows.length })}</span>
+        <div className="flex-1" />
+        {/* 图例：堆叠的两段分别是什么，不然两段同色系会被当成一根柱子 */}
+        <span className="flex items-center gap-2 text-[8px] font-normal text-slate-500">
+          <span className="flex items-center gap-1">
+            <span className={`w-1.5 h-1.5 rounded-sm ${style.barClass} opacity-50`} />
+            {t("usagestats.colInput")}
+          </span>
+          <span className="flex items-center gap-1">
+            <span className={`w-1.5 h-1.5 rounded-sm ${style.barClass}`} />
+            {t("usagestats.colOutput")}
+          </span>
+        </span>
       </div>
-      <table className="w-full border-collapse">
-        <thead>
-          <tr className="text-slate-500">
-            <th className="w-4" />
-            <th className="px-2 py-1 text-micro font-semibold text-left">{nameHeader}</th>
-            <SortHeader k="requests" sortKey={sortKey} asc={asc} onSort={setSort}>{t("usagestats.colRequests")}</SortHeader>
-            <SortHeader k="input" sortKey={sortKey} asc={asc} onSort={setSort}>{t("usagestats.colInput")}</SortHeader>
-            <SortHeader k="output" sortKey={sortKey} asc={asc} onSort={setSort}>{t("usagestats.colOutput")}</SortHeader>
-            <SortHeader k="total" sortKey={sortKey} asc={asc} onSort={setSort}>{t("usagestats.colTotal")}</SortHeader>
-            {hasReliability && (
-              <>
-                <SortHeader k="success" sortKey={sortKey} asc={asc} onSort={setSort}>{t("usagestats.colSuccess")}</SortHeader>
-                <SortHeader k="cache" sortKey={sortKey} asc={asc} onSort={setSort}>{t("usagestats.colCacheHit")}</SortHeader>
-              </>
-            )}
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.map((r, idx) => (
-            <tr key={r.key} className="border-t border-white/[0.03] hover:bg-white/[0.025] transition-colors">
-              <td className="pl-2 py-1.5">{rankBadge(idx)}</td>
-              <td className="px-2 py-1.5 max-w-[180px]">
-                <div className="flex items-center gap-1 min-w-0">
-                  {r.icon && <span className="flex-shrink-0 flex items-center justify-center w-3.5">{r.icon}</span>}
-                  <div className={`text-tiny truncate ${r.icon ? "text-slate-100" : "text-slate-200 font-mono"}`} title={r.label}>{r.label}</div>
-                </div>
-                {r.sub && <div className="text-[8px] text-slate-600 truncate">{r.sub}</div>}
-              </td>
-              <td className="px-2 py-1.5 text-tiny text-[var(--module-accent)] text-right font-semibold tabular-nums">{r.requests}</td>
-              <td className="px-2 py-1.5 text-tiny text-blue-300 text-right tabular-nums">{formatTokens(r.input)}</td>
-              <td className="px-2 py-1.5 text-tiny text-emerald-300 text-right tabular-nums">
-                {formatTokens(r.output)}
-                {typeof r.tps === "number" && (
-                  <span
-                    className="ml-1 text-[8px] text-emerald-500/80"
-                    title={t("usagestats.colOutputTpsHint")}
+
+      <div className="flex items-stretch gap-1 px-3 py-2 h-36">
+        {bars.map((r) => {
+          const pct = Math.min(100, (r.total / maxTotal) * 100);
+          // 零值也要留 2px 的底：完全没高度会让人以为这天没数据点、或柱子渲染失败了
+          const height = r.total > 0 ? Math.max(pct, 1.5) : 0;
+          const outShare = r.total > 0 ? (r.output / r.total) * 100 : 0;
+          const inShare = r.total > 0 ? (r.input / r.total) * 100 : 0;
+          const tip = [
+            r.label,
+            `${t("usagestats.colRequests")}: ${r.requests}`,
+            `${t("usagestats.colInput")}: ${formatTokens(r.input)}`,
+            `${t("usagestats.colOutput")}: ${formatTokens(r.output)}${typeof r.tps === "number" ? ` (${r.tps.toFixed(1)} t/s)` : ""}`,
+            `${t("usagestats.colTotal")}: ${formatTokens(r.total)}`,
+            r.successRate != null ? `${t("usagestats.colSuccess")}: ${(r.successRate * 100).toFixed(0)}%` : "",
+            r.cacheHitRate != null ? `${t("usagestats.colCacheHit")}: ${(r.cacheHitRate * 100).toFixed(0)}%` : "",
+          ].filter(Boolean).join("\n");
+          return (
+            <div key={r.key} className="flex-1 min-w-0 flex flex-col items-center gap-0.5 h-full" title={tip}>
+              <span className="text-[8px] tabular-nums text-slate-400 truncate w-full text-center">
+                {formatTokens(r.total)}
+              </span>
+              <div className="w-full flex-1 flex items-end">
+                {height > 0 ? (
+                  <div
+                    className="w-full flex flex-col justify-end rounded-t-sm overflow-hidden"
+                    style={{ height: `${height}%` }}
                   >
-                    {r.tps.toFixed(1)} t/s
-                  </span>
-                )}
-              </td>
-              <td className="px-2 py-1.5 text-right">
-                <div className="flex items-center justify-end gap-1.5">
-                  <div className="w-12 h-1.5 bg-white/5 rounded-full overflow-hidden hidden sm:block">
-                    <div className={`h-full ${style.barClass} rounded-full`} style={{ width: `${Math.min(100, (r.total / maxTotal) * 100)}%` }} />
+                    <div className={`w-full ${style.barClass}`} style={{ height: `${outShare}%` }} />
+                    <div className={`w-full ${style.barClass} opacity-50`} style={{ height: `${inShare}%` }} />
                   </div>
-                  <span className="text-tiny text-slate-400 tabular-nums w-10 text-right">{formatTokens(r.total)}</span>
-                </div>
-              </td>
-              {hasReliability && (
-                <>
-                  <td
-                    className={`px-2 py-1.5 text-tiny text-right tabular-nums whitespace-nowrap ${
-                      r.successRate == null
-                        ? "text-slate-600"
-                        : r.successRate >= 0.99
-                          ? "text-emerald-300"
-                          : r.successRate >= 0.9
-                            ? "text-amber-300"
-                            : "text-rose-300"
-                    }`}
-                    title={t("usagestats.colSuccessHint")}
-                  >
-                    {r.successRate == null ? "—" : `${(r.successRate * 100).toFixed(0)}%`}
-                    {typeof r.failureCount === "number" && r.failureCount > 0 && (
-                      <span className="ml-1 text-[8px] text-rose-400/70">×{r.failureCount}</span>
-                    )}
-                  </td>
-                  <td
-                    className={`px-2 py-1.5 text-tiny text-right tabular-nums whitespace-nowrap ${r.cacheHitRate == null ? "text-slate-600" : "text-sky-300"}`}
-                    title={t("usagestats.colCacheHitHint")}
-                  >
-                    {r.cacheHitRate == null ? "—" : `${(r.cacheHitRate * 100).toFixed(0)}%`}
-                  </td>
-                </>
-              )}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+                ) : (
+                  <div className="w-full h-[2px] bg-white/10 rounded-sm" />
+                )}
+              </div>
+              <span
+                className="text-[8px] text-slate-500 truncate w-full text-center"
+                title={r.label}
+              >
+                {/* 日期组只留 MM-DD：14 根柱子写全 2026-10-14 会挤成一团，年份月份重复 14 次也没信息量 */}
+                {chronological ? r.label.slice(5) : r.label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -410,10 +343,8 @@ export default function UsageStats() {
     total: m.total_tokens,
     tps: m.output_tps ?? null,
     successRate: m.success_rate ?? null,
-    success: m.success_rate ?? -1,
     failureCount: m.failure_count,
     cacheHitRate: m.cache_hit_rate ?? null,
-    cache: m.cache_hit_rate ?? -1,
   }));
   const providerRows: Row[] = (summary?.by_provider || []).map(p => ({
     key: p.provider || t("usagestats.unknown"),
@@ -546,10 +477,11 @@ export default function UsageStats() {
               </div>
             </div>
 
-            <SortableTable title={t("usagestats.recent14")} icon={<Clock className="w-3 h-3" />} section="recent" rows={recentRows} nameHeader={t("usagestats.dateHeader")} />
-            <SortableTable title={t("usagestats.tools")} icon={<Boxes className="w-3 h-3" />} section="tool" rows={toolRows} nameHeader={t("usagestats.toolHeader")} />
-            <SortableTable title={t("usagestats.models")} icon={<Cpu className="w-3 h-3" />} section="model" rows={modelRows} nameHeader={t("usagestats.modelHeader")} />
-            <SortableTable title={t("usagestats.providers")} icon={<Server className="w-3 h-3" />} section="provider" rows={providerRows} nameHeader={t("usagestats.providerHeader")} />
+            {/* 只有日期组按给定顺序画（后端已 ORDER BY date ASC，这里传 chronological 别再按量重排） */}
+                      <UsageBarSection title={t("usagestats.recent14")} icon={<Clock className="w-3 h-3" />} section="recent" rows={recentRows} chronological />
+                      <UsageBarSection title={t("usagestats.tools")} icon={<Boxes className="w-3 h-3" />} section="tool" rows={toolRows} />
+                      <UsageBarSection title={t("usagestats.models")} icon={<Cpu className="w-3 h-3" />} section="model" rows={modelRows} />
+                      <UsageBarSection title={t("usagestats.providers")} icon={<Server className="w-3 h-3" />} section="provider" rows={providerRows} />
           </>
         )}
       </div>
