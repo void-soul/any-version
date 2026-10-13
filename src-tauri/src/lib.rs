@@ -755,6 +755,7 @@ pub fn run() {
             commands::ai::skills::list_skill_stores,
             commands::ai::skills::add_skill_store,
             commands::ai::skills::remove_skill_store,
+            commands::ai::skills::list_project_skill_counts,
             commands::ai::skills::get_skill_meta,
             commands::ai::skills::update_skill_meta,
             commands::ai::skills::list_projects,

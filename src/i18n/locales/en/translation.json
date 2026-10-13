@@ -2957,7 +2957,10 @@
     "storeAdd": "Add library",
     "storeRemove": "Remove library",
     "storeAddHint": "Add a skill library root (config only, no files moved)",
-    "storeRemoveHint": "Remove this library from the list; the folder and installed links are kept"
+    "storeRemoveHint": "Remove this library from the list; the folder and installed links are kept",
+    "projCountHint": "{{linked}} from libraries · {{local}} project-own",
+    "projCountBrokenHint": "{{n}} broken link(s): the skill is gone from the library but the link is still in the project",
+    "projCountRefresh": "Recount skills per project"
   },
   "toollaunch": {
     "officialOnly": "Official models only",

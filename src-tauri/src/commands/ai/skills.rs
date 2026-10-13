@@ -860,6 +860,76 @@ fn list_installed(stores: &[PathBuf], projects_file: &Path, project_id: &str) ->
     Ok(out)
 }
 
+// ─── 项目技能计数（一次扫完所有项目） ───
+
+/// 单个项目的技能计数
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSkillCount {
+    pub project_id: String,
+    /// 有效技能总数（= linked + local，**不含** broken）
+    pub total: usize,
+    /// 来自技能库（junction 指到某个库里真实存在的技能）
+    pub linked: usize,
+    /// 项目自带的真实目录（用户手工维护、没进技能库）
+    pub local: usize,
+    /// 悬空链接：是指向技能库的链接，但目标已不在任何库里（最容易被漏掉的一类）
+    pub broken: usize,
+}
+
+/// 一次扫完所有项目的技能计数。
+///
+/// 与 `list_project_skills` 的区别是**只数、不读**：不碰 `SKILL.md`，不解析名称/描述/字符数。
+/// 项目列表里每行都要显示技能数，如果用完整清单就得为每个项目的每个技能读一次盘——
+/// 几十个项目就是上百次读盘，只为了拿一个数字。
+///
+/// 判定口径与 `list_installed` 严格一致（含「非点目录一律当项目自带」这条），
+/// 否则列表上显示的数字会和点进去看到的条目数对不上。
+#[tauri::command]
+pub fn list_project_skill_counts() -> Vec<ProjectSkillCount> {
+    count_project_skills(&projects_path(), &skill_stores())
+}
+
+/// 可注入的版本（单测必须能指向临时 projects 文件，否则会读用户真实清单）
+fn count_project_skills(projects_file: &Path, stores: &[PathBuf]) -> Vec<ProjectSkillCount> {
+    let mut out: Vec<ProjectSkillCount> = Vec::new();
+    for p in load_projects_from(projects_file).projects {
+        let dir = Path::new(&p.path).join(".agents").join("skills");
+        let (mut linked, mut local, mut broken) = (0usize, 0usize, 0usize);
+        if let Ok(entries) = fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with('.') {
+                    continue;
+                }
+                let path = entry.path();
+                let is_link = fs::symlink_metadata(&path)
+                    .map(|m| m.file_type().is_symlink())
+                    .unwrap_or(false);
+                if !is_link {
+                    // 真实目录 = 项目自带（与 list_installed 同口径：不额外要求 is_dir，
+                    // 否则这里数出来的会比点进去看到的条目数少）
+                    local += 1;
+                    continue;
+                }
+                // 是链接：真实目标还落在某个库里才算 linked，否则算悬空
+                match junction_target_skill(&path, &stores) {
+                    Some((store, id)) if store.join(&id).is_dir() => linked += 1,
+                    _ => broken += 1,
+                }
+            }
+        }
+        out.push(ProjectSkillCount {
+            project_id: p.id,
+            total: linked + local,
+            linked,
+            local,
+            broken,
+        });
+    }
+    out
+}
+
 // ─── 技能元数据（分类/标签）读写 ───
 // 与 skills.sh 规范解耦：不污染 SKILL.md，单独存于点文件 .meta.json。
 
@@ -1704,9 +1774,9 @@ fn copy_dir_recursive(src: &PathBuf, dest: &PathBuf) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        add_project_at, default_skills_dir, find_skill_root, install_into, junction_target_skill,
-        list_installed, load_projects_from, remove_project_at, source_to_url, split_source_subdir,
-        store_key, uninstall_from, PRESET_SKILL_SOURCES,
+        add_project_at, count_project_skills, default_skills_dir, find_skill_root, install_into,
+        junction_target_skill, list_installed, load_projects_from, remove_project_at,
+        source_to_url, split_source_subdir, store_key, uninstall_from, PRESET_SKILL_SOURCES,
     };
     use std::path::{Path, PathBuf};
 
@@ -1965,6 +2035,47 @@ mod tests {
         let list = list_installed(std::slice::from_ref(&store), &file, &pid).unwrap();
         assert_eq!(list.len(), 1, "悬空链接仍应被列出，否则用户看不到残留");
         assert_eq!(list[0].state, "broken");
+    }
+
+    /// 项目列表上显示的技能数必须和点进去看到的条目数**完全一致**。
+///
+/// 这是计数命令存在的全部理由，所以直接拿 `list_installed` 的结果做基准逐项比：
+    /// 一旦两边的判定口径分家（比如这里多要求了 is_dir），用户看到的数字就会对不上，
+    /// 而且这种错没有任何报错，只有「数字不对」。
+    #[cfg(windows)]
+    #[test]
+    fn project_skill_counts_match_the_installed_list() {
+        let (base, store, file, pid) = setup_project_env("counts");
+        make_skill(&store, "a");
+        make_skill(&store, "b");
+        install_into(&store, &file, "a", &pid).unwrap();
+        install_into(&store, &file, "b", &pid).unwrap();
+        // 再加一个项目自带（真实目录）与一个悬空链接
+        let skills_dir = base.join("proj").join(".agents").join("skills");
+        std::fs::create_dir_all(skills_dir.join("project-own")).unwrap();
+        std::fs::write(
+            skills_dir.join("project-own").join("SKILL.md"),
+            "---\nname: Project Own\ndescription: 手写的技能\n---\n",
+        )
+        .unwrap();
+        // 装好再把库里的实体删掉 → 项目里留下一个悬空链接
+        make_skill(&store, "gone");
+        install_into(&store, &file, "gone", &pid).expect("悬空用例的技能应装得上");
+        std::fs::remove_dir_all(store.join("gone")).unwrap();
+
+        let listed = list_installed(std::slice::from_ref(&store), &file, &pid).unwrap();
+        let counts = count_project_skills(&file, std::slice::from_ref(&store));
+        let c = counts
+            .iter()
+            .find(|c| c.project_id == pid)
+            .expect("项目应出现在计数里");
+
+        let alive = listed.iter().filter(|e| e.state != "broken").count();
+        let linked = listed.iter().filter(|e| e.state == "linked").count();
+        let local = listed.iter().filter(|e| e.state == "local").count();
+        let broken = listed.iter().filter(|e| e.state == "broken").count();
+        assert_eq!((c.total, c.linked, c.local, c.broken), (alive, linked, local, broken));
+        assert_eq!((c.total, c.linked, c.local, c.broken), (3, 2, 1, 1));
     }
 
     /// 多库下必须认出 junction 指向**哪一个**库。认错库的后果很隐蔽：

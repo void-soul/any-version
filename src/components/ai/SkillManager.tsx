@@ -8,7 +8,8 @@ import { Note, ResultNote } from '../shared/Note';
 import {
   Search, Tag, Store, Download, Trash2,
   CheckCircle, AlertTriangle, ExternalLink, X, Package, Loader2,
-  ChevronDown, Settings2, Filter, Unlink, Sparkles, FolderOpen, Plus, Link2, FileText
+  ChevronDown, Settings2, Filter, Unlink, Sparkles, FolderOpen, Plus, Link2, FileText,
+  RotateCw
 } from 'lucide-react';
 import { alertError } from "../shared/ThemedAlert";
 import { MarkdownRenderer } from "./MarkdownRenderer";
@@ -90,6 +91,25 @@ interface ProjectSkillEntry {
   category: string;
 }
 
+/**
+ * 单个项目的技能计数（后端 list_project_skill_counts）。
+ *
+ * 刻意与 ProjectSkillEntry 分开：那个是「点进项目才拉」的完整清单（要读 SKILL.md 拿名称/描述），
+ * 这个是「一次扫完所有项目」的数字（只数目录条目）。混在一起就等于为了一个数字把所有项目的
+ * SKILL.md 全读一遍。
+ */
+interface ProjectSkillCount {
+  projectId: string;
+  /** 有效技能总数（= linked + local，不含 broken） */
+  total: number;
+  /** 来自技能库 */
+  linked: number;
+  /** 项目自带的真实目录 */
+  local: number;
+  /** 悬空链接：指向技能库但目标已不在任何库里 */
+  broken: number;
+}
+
 type TabKey = 'skills' | 'projects';
 
 const MARKET_SOURCES = [
@@ -158,6 +178,8 @@ export default function SkillManager() {
   const [selProject, setSelProject] = useState<string | null>(null);
   /** projectId -> 该项目的技能清单（查看时才拉） */
   const [projSkills, setProjSkills] = useState<Record<string, ProjectSkillEntry[]>>({});
+  /** 每个项目的技能计数（一次扫完；见 ProjectSkillCount 的注释） */
+  const [projCounts, setProjCounts] = useState<Record<string, ProjectSkillCount>>({});
   /** 左侧勾选的项目 = 安装目标集合（可多选，配合右侧勾选的技能一次批量装） */
   const [pickedProjects, setPickedProjects] = useState<Set<string>>(new Set());
   /** 右侧勾选的「技能库技能」= 要安装的技能 */
@@ -244,8 +266,27 @@ export default function SkillManager() {
   const loadProjects = async () => {
     try {
       setProjects(await invoke<SkillProject[]>('list_projects'));
+      // 项目清单变了（初次进入 / 刚添加 / 刚移除），顺带把技能数一起刷掉
+      void loadProjCounts();
     } catch (e) {
       console.error("加载项目列表失败:", e);
+    }
+  };
+
+  /**
+   * 一次扫完所有项目的技能计数。
+   *
+   * 只在「项目列表变化」与「用户手动刷新」时调用，不跟着切 tab 跑 —— 计数是实时的，
+   * 但重新数一遍每个项目的磁盘不值得每次切页都做一次。
+   */
+  const loadProjCounts = async () => {
+    try {
+      const list = await invoke<ProjectSkillCount[]>('list_project_skill_counts');
+      const map: Record<string, ProjectSkillCount> = {};
+      for (const c of list) map[c.projectId] = c;
+      setProjCounts(map);
+    } catch (e) {
+      console.error("读取项目技能数失败:", e);
     }
   };
 
@@ -566,6 +607,8 @@ export default function SkillManager() {
     setProjBusy(null);
     // 只刷新右侧正在看的那个项目，不必全量重拉
     if (selProject) await loadProjectSkills(selProject);
+    // 左侧的技能数是实时的：装完就该变，否则用户会以为「装了没生效」
+    void loadProjCounts();
     setPickedLib(new Set());
     if (errors.length === 0) {
       setProjMsg({ id: '*', msg: t("skillmgr.projApplied", { add: n }), ok: true });
@@ -600,6 +643,7 @@ export default function SkillManager() {
     setProjBusy(null);
     setPickedInstalled(new Set());
     await loadProjectSkills(selProject);
+    void loadProjCounts();
     if (errors.length === 0) {
       setProjMsg({ id: selProject, msg: t("skillmgr.projBatchDeleted", { n: ids.length }), ok: true });
     } else {
@@ -650,6 +694,7 @@ export default function SkillManager() {
     }
     setProjBusy(null);
     await loadProjectSkills(pid);
+    void loadProjCounts();
   };
 
   return (
@@ -907,12 +952,22 @@ export default function SkillManager() {
               <div className="rounded-card bg-white/[0.02] border border-white/10 p-2 space-y-1.5">
                 <div className="flex items-center justify-between px-1">
                   <span className="text-body font-bold text-slate-300">{t("skillmgr.projTitle")}</span>
-                  <button
-                    onClick={() => void addProject()}
-                    className="flex items-center gap-1 px-2 py-1 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-tiny font-semibold text-white cursor-pointer"
-                  >
-                    <Plus className="w-3 h-3" /> {t("skillmgr.projAddShort")}
-                  </button>
+                  <div className="flex items-center gap-1">
+                    {/* 计数是实时扫盘的结果，装完/删完技能数字会过期，给一个手动刷新 */}
+                    <button
+                      onClick={() => void loadProjCounts()}
+                      className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-slate-200 cursor-pointer"
+                      title={t("skillmgr.projCountRefresh")}
+                    >
+                      <RotateCw className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={() => void addProject()}
+                      className="flex items-center gap-1 px-2 py-1 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-tiny font-semibold text-white cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" /> {t("skillmgr.projAddShort")}
+                    </button>
+                  </div>
                 </div>
 
                 {projects.length === 0 ? (
@@ -921,8 +976,8 @@ export default function SkillManager() {
                   projects.map((p) => {
                     const on = pickedProjects.has(p.id);
                     const viewing = selProject === p.id;
-                    const list = projSkills[p.id];
-                    const n = list ? list.filter((e) => e.state !== 'broken').length : null;
+                    // 数字来自「一次扫完所有项目」的计数，不再依赖「点过这个项目」
+                    const cnt = projCounts[p.id];
                     return (
                       <div
                         key={p.id}
@@ -941,8 +996,27 @@ export default function SkillManager() {
                           <div className="text-tiny font-semibold text-slate-200 truncate">{p.name || p.path}</div>
                           <div className="text-micro text-slate-500 font-mono truncate">{p.path}</div>
                         </button>
-                        {n !== null && (
-                          <span className="px-1.5 py-0.5 rounded text-micro font-semibold bg-emerald-500/15 text-emerald-400 flex-shrink-0">{n}</span>
+                        {/* 技能数常驻显示；悬停看拆分。悬空链接单独标出来——那是最容易漏掉的一类 */}
+                        {cnt && (
+                          <span className="flex items-center gap-1 flex-shrink-0">
+                            <span
+                              className="px-1.5 py-0.5 rounded text-micro font-semibold bg-emerald-500/15 text-emerald-400"
+                              title={t("skillmgr.projCountHint", {
+                                linked: cnt.linked,
+                                local: cnt.local,
+                              })}
+                            >
+                              {cnt.total}
+                            </span>
+                            {cnt.broken > 0 && (
+                              <span
+                                className="px-1 py-0.5 rounded text-micro font-semibold bg-amber-500/20 text-amber-400"
+                                title={t("skillmgr.projCountBrokenHint", { n: cnt.broken })}
+                              >
+                                ⚠{cnt.broken}
+                              </span>
+                            )}
+                          </span>
                         )}
                         <button
                           onClick={() => void removeProject(p)}
