@@ -60,6 +60,13 @@ interface SkillProject {
   addedAt: string;
 }
 
+/** 安装结果（后端 InstallOutcome）：逐目录成败，不是「一句装好了」 */
+interface InstallOutcome {
+  linked: string[];
+  failed: string[];
+  replaced: string[];
+}
+
 /** 项目里已安装的技能（后端 list_project_skills；camelCase） */
 interface ProjectSkillEntry {
   skillId: string;
@@ -74,6 +81,10 @@ interface ProjectSkillEntry {
   /** 技能库 .meta.json 里的标签/分类 —— 在项目列表里同样显示，免得两边信息各说各话 */
   tags: string[];
   category: string;
+  /** 装在哪些扫描目录（一个技能装 N 处也只有**一行**，dirs 说明装在哪） */
+  dirs?: string[];
+  /** 这些链接里有多少已失效（目标技能被从库里删了）；有一个还有效就仍算「已安装」 */
+  staleLinks?: number;
 }
 
 /**
@@ -149,6 +160,39 @@ export default function SkillManager() {
   const [libCollapsed, setLibCollapsed] = useState(false);
   /** 项目页技能库：只看尚未装到（勾选的）项目里的技能 */
   const [onlyMissing, setOnlyMissing] = useState(false);
+
+  /** 各AI 工具的项目级扫描目录（后端 SKILL_SCAN_DIRS，取自 CodeBuddy 服务端下发的 skillScanDirs）。
+   *  一个技能会在**每个勾选的目录**下各建一个 junction 指向库里同一份实体 ——
+   *  不复制内容，所以库一改所有目录同时生效。 */
+  const SCAN_DIRS = ['.agents', '.codebuddy', '.claude', '.workbuddy', '.openclaw'];
+  const [pickedDirs, setPickedDirs] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('kira.skill.scanDirs');
+      const parsed = saved ? (JSON.parse(saved) as string[]) : null;
+      // 只认仍在清单里的目录名：清单变了以后旧的 localStorage 不能把新目录全否掉
+      return parsed?.filter((d) => SCAN_DIRS.includes(d)) ?? [...SCAN_DIRS];
+    } catch {
+      return [...SCAN_DIRS];
+    }
+  });
+  /** 安装后自动把这些目录写进项目的 .gitignore（junction 会被 git 跟随进内容） */
+  const [autoGitignore, setAutoGitignore] = useState(
+    () => localStorage.getItem('kira.skill.autoGitignore') === '1',
+  );
+  useEffect(() => {
+    localStorage.setItem('kira.skill.scanDirs', JSON.stringify(pickedDirs));
+  }, [pickedDirs]);
+  useEffect(() => {
+    localStorage.setItem('kira.skill.autoGitignore', autoGitignore ? '1' : '0');
+  }, [autoGitignore]);
+
+  const toggleScanDir = (d: string) => {
+    setPickedDirs((prev) => {
+      const next = prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d];
+      // 至少留一个：全不勾等于「什么都不装」，那不如不给这个选项
+      return next.length ? next : prev;
+    });
+  };
   const [projMsg, setProjMsg] = useState<{ id: string; msg: string; ok: boolean } | null>(null);
   /** 右侧正在查看的项目（左侧点谁看谁） */
   const [selProject, setSelProject] = useState<string | null>(null);
@@ -514,8 +558,21 @@ export default function SkillManager() {
     for (const pid of targets) {
       for (const sid of wanted) {
         try {
-          await invoke('install_skill_to_project', { skillId: sid, projectId: pid });
+          const r = await invoke<InstallOutcome>('install_skill_to_project', {
+            skillId: sid,
+            projectId: pid,
+            dirs: pickedDirs,
+            gitignore: autoGitignore,
+          });
           n += 1;
+          // 逐目录结果必须如实上报：5 个目录里 1 个失败时报「装好了」是假的，
+          // 用户会在那个目录里找不到技能，又不知道发生了什么
+          for (const f of r.failed) {
+            errors.push(`${sid} → ${projects.find((p) => p.id === pid)?.name || pid}: ${f}`);
+          }
+          for (const rp of r.replaced) {
+            errors.push(`${sid} → ${rp}: ${t("skillmgr.replacedRealDir")}`);
+          }
         } catch (e: any) {
           errors.push(`${sid} → ${projects.find((p) => p.id === pid)?.name || pid}: ${String(e)}`);
         }
@@ -727,6 +784,48 @@ export default function SkillManager() {
                           <X className="w-3 h-3" /> {t("skillmgr.clearFilter")}
                         </button>
                       )}
+                    </div>
+
+                    {/* 装到哪些扫描目录：决定这个技能出现在哪些 AI 工具的视野里。
+                        每个勾选的目录下各建一个 junction 指向库里同一份实体，不复制内容。 */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-micro text-slate-500">{t("skillmgr.installToDirs")}</span>
+                      {SCAN_DIRS.map((d) => {
+                        const on = pickedDirs.includes(d);
+                        return (
+                          <button
+                            key={d}
+                            onClick={() => toggleScanDir(d)}
+                            title={t("skillmgr.scanDirHint", { dir: d })}
+                            className={`flex items-center gap-1 px-2 py-0.5 rounded text-micro font-mono cursor-pointer transition-colors border ${
+                              on
+                                ? "bg-[var(--module-accent-soft)] border-[var(--module-accent-ring)] text-slate-200"
+                                : "bg-white/5 border-white/10 text-slate-600 hover:text-slate-400"
+                            }`}
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full ${on ? "bg-emerald-400" : "bg-slate-600"}`} />
+                            {d}
+                          </button>
+                        );
+                      })}
+                      <button
+                        onClick={() => setPickedDirs([...SCAN_DIRS])}
+                        className="px-2 py-0.5 rounded text-micro bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer"
+                      >
+                        {t("skillmgr.scanDirAll")}
+                      </button>
+                      <label
+                        className="flex items-center gap-1 px-2 py-0.5 rounded text-micro bg-white/5 border border-white/10 text-slate-400 cursor-pointer"
+                        title={t("skillmgr.autoGitignoreHint")}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={autoGitignore}
+                          onChange={(e) => setAutoGitignore(e.target.checked)}
+                          className="w-2.5 h-2.5 accent-[var(--module-accent)]"
+                        />
+                        {t("skillmgr.autoGitignore")}
+                      </label>
                     </div>
 
                     {libFiltered.length === 0 ? (
@@ -953,6 +1052,24 @@ export default function SkillManager() {
                                   >
                                     {e.state === 'linked' ? t("skillmgr.projFromLibrary") : t("skillmgr.projFromProject")}
                                   </span>
+                                  {/* 装在哪些目录：一个技能装 N 处也只有一行，这里说明装在哪 */}
+                                  {e.dirs && e.dirs.length > 0 && (
+                                    <span
+                                      className="px-1.5 py-0.5 rounded text-micro bg-white/5 text-slate-400 flex-shrink-0 font-mono"
+                                      title={t("skillmgr.installedInDirs")}
+                                    >
+                                      {e.dirs.map((d) => d.replace('.', '')).join(' ')}
+                                    </span>
+                                  )}
+                                  {/* 有一个链接还有效就仍算已安装，但失效的那些要能被看见 */}
+                                  {(e.staleLinks ?? 0) > 0 && (
+                                    <span
+                                      className="px-1.5 py-0.5 rounded text-micro bg-amber-500/20 text-amber-400 flex-shrink-0"
+                                      title={t("skillmgr.staleLinksHint", { n: e.staleLinks ?? 0 })}
+                                    >
+                                      {t("skillmgr.staleLinks", { n: e.staleLinks ?? 0 })}
+                                    </span>
+                                  )}
                                   <span className="text-micro text-slate-500 font-mono flex-shrink-0">
                                     {t("skillmgr.skillChars", { n: e.skillMdChars })}
                                   </span>

@@ -2956,7 +2956,16 @@
     "projBrokenClean": "Clean up",
     "projCountHint": "{{linked}} from libraries · {{local}} project-own",
     "projCountBrokenHint": "{{n}} broken link(s): the skill is gone from the library but the link is still in the project",
-    "projCountRefresh": "Recount skills per project"
+    "projCountRefresh": "Recount skills per project",
+    "installToDirs": "Install into",
+    "scanDirAll": "select all",
+    "scanDirHint": "Installed into <project>/{{dir}}/skills/ as a junction pointing at the same file in the library (no copy). The list comes from each AI tool's native scan dir: {{dir}}",
+    "autoGitignore": "Auto-update .gitignore",
+    "autoGitignoreHint": "Git either records junctions as links or follows into them; without an ignore rule, installing to a project would pull the library's content into the repo. When ticked, install appends these dirs to the project's .gitignore (marked block, never duplicated).",
+    "installedInDirs": "Which scan dirs of the project this skill is installed into",
+    "staleLinks": "⚠{{n}} stale",
+    "staleLinksHint": "The links in these dirs no longer resolve (the skill was deleted from the library), but it still counts as installed because others are fine. Uninstalling cleans them up too.",
+    "replacedRealDir": "replaced the project's own directory of the same name"
   },
   "toollaunch": {
     "officialOnly": "Official models only",

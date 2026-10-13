@@ -2962,7 +2962,16 @@
     "projBrokenClean": "清理失效链接",
     "projCountHint": "技能 {{linked}} 个来自技能库 · {{local}} 个项目自带",
     "projCountBrokenHint": "{{n}} 个悬空链接（技能库里的技能已被删除，链接还留在项目里）",
-    "projCountRefresh": "重新统计各项目的技能数"
+    "projCountRefresh": "重新统计各项目的技能数",
+    "installToDirs": "装到",
+    "scanDirAll": "全选",
+    "scanDirHint": "装进 <项目>/{{dir}}/skills/（一个 junction 指向技能库里同一份实体，不复制内容）。清单取自各 AI 工具的原生扫描目录：{{dir}}",
+    "autoGitignore": "自动写 .gitignore",
+    "autoGitignoreHint": "junction 会被 git 当成链接或直接跟随进内容；不忽略的话，「装给项目」会把技能库的内容拖进仓库。勾上后安装时自动往项目的 .gitignore 追加这些目录（带标记块、不会重复添加）。",
+    "installedInDirs": "这个技能装在项目的哪些扫描目录下",
+    "staleLinks": "⚠{{n}} 处失效",
+    "staleLinksHint": "这些目录下的链接已失效（技能库里的技能被删了），但因为还有别处是好的，仍算已安装。卸载会一并清理。",
+    "replacedRealDir": "已覆盖该项目自带的同名目录"
   },
   "toollaunch": {
     "officialOnly": "仅支持官方模型",
