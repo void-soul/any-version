@@ -14,7 +14,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
-  AlertTriangle, CalendarDays, Check, ChevronLeft, ChevronRight, Clock, Inbox, Loader2, Plus, Trash2,
+  AlertTriangle, CalendarDays, Check, ChevronLeft, ChevronRight, Clock, Inbox, Loader2, Pencil, Plus, Trash2,
 } from "lucide-react";
 import { SharedButton, inputCls, labelCls } from "../shared/Button";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
@@ -341,6 +341,15 @@ function TaskEditorModal({
   const [detail, setDetail] = useState(task?.detail ?? "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  /**
+   * 打开**已有任务**先只读浏览，点「编辑」才进可编辑态；新建任务直接就是编辑态。
+   *
+   * 为什么：点开一个任务就想改内容，是最容易误改的路径（顺手把字删了、进度拖错了）。
+   * 默认浏览把「看」和「改」分开，改动变得有明确意图。
+   */
+  const [editing, setEditing] = useState(!task);
+  /** 只读浏览态 */
+  const ro = !!task && !editing;
 
   const late = !!task && isOverdue({ progress, scheduledDate: date || null }, today);
 
@@ -402,10 +411,11 @@ function TaskEditorModal({
       open
       onClose={onClose}
       width={520}
-      title={task ? t("taskPlan.editTask") : t("taskPlan.newTask")}
+      title={task ? (ro ? t("taskPlan.viewTask") : t("taskPlan.editTask")) : t("taskPlan.newTask")}
       footer={
         <>
-          {task && (
+          {/* 删除是破坏性动作，只在编辑态露出来：浏览态不该摆着一个红按钮 */}
+          {task && !ro && (
             <SharedButton variant="ghost" className="!text-rose-300 hover:!bg-rose-500/10" disabled={busy}
               onClick={() => onRequestDelete(task)}>
               <Trash2 className="h-3 w-3" />
@@ -413,8 +423,20 @@ function TaskEditorModal({
             </SharedButton>
           )}
           <div className="ml-auto flex items-center gap-2">
-            <SharedButton variant="secondary" onClick={onClose}>{t("taskPlan.cancel")}</SharedButton>
-            <SharedButton variant="primary" disabled={busy} onClick={() => void save()}>{t("taskPlan.save")}</SharedButton>
+            {ro ? (
+              <>
+                <SharedButton variant="secondary" onClick={onClose}>{t("taskPlan.close")}</SharedButton>
+                <SharedButton variant="primary" onClick={() => setEditing(true)}>
+                  <Pencil className="h-3 w-3" />
+                  {t("taskPlan.edit")}
+                </SharedButton>
+              </>
+            ) : (
+              <>
+                <SharedButton variant="secondary" onClick={onClose}>{t("taskPlan.cancel")}</SharedButton>
+                <SharedButton variant="primary" disabled={busy} onClick={() => void save()}>{t("taskPlan.save")}</SharedButton>
+              </>
+            )}
           </div>
         </>
       }
@@ -428,43 +450,59 @@ function TaskEditorModal({
 
       <div>
         <label className={labelCls}>{t("taskPlan.titleLabel")}</label>
-        <input className={inputCls} autoFocus value={title}
-          placeholder={t("taskPlan.titlePlaceholder")}
-          onChange={(e) => setTitle(e.target.value)} />
+        {ro ? (
+          <div className="text-body font-semibold text-slate-100 break-words">{title || "—"}</div>
+        ) : (
+          <input className={inputCls} autoFocus value={title}
+            placeholder={t("taskPlan.titlePlaceholder")}
+            onChange={(e) => setTitle(e.target.value)} />
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className={labelCls}>{t("taskPlan.dateLabel")}</label>
-          <input type="date" className={inputCls} value={date} onChange={(e) => setDate(e.target.value)} />
-          <div className="mt-1 flex items-center gap-1">
-            <button type="button" onClick={() => setDate(todayStr())}
-              className="rounded border border-white/10 px-1.5 py-0.5 text-tiny text-slate-400 hover:bg-white/10">
-              {t("taskPlan.setToday")}
-            </button>
-            <button type="button" onClick={() => setDate(new Date(Date.now() + DAY_MS).toISOString().slice(0, 10))}
-              className="rounded border border-white/10 px-1.5 py-0.5 text-tiny text-slate-400 hover:bg-white/10">
-              {t("taskPlan.setTomorrow")}
-            </button>
-            <button type="button" onClick={() => setDate("")}
-              className="rounded border border-white/10 px-1.5 py-0.5 text-tiny text-slate-400 hover:bg-white/10">
-              {t("taskPlan.unschedule")}
-            </button>
-          </div>
-          {!date && <div className="mt-1 text-tiny text-slate-500">{t("taskPlan.unscheduledHint")}</div>}
+          {ro ? (
+            <div className="text-caption text-slate-300">{date || t("taskPlan.unscheduled")}</div>
+          ) : (
+            <>
+              <input type="date" className={inputCls} value={date} onChange={(e) => setDate(e.target.value)} />
+              <div className="mt-1 flex items-center gap-1">
+                <button type="button" onClick={() => setDate(todayStr())}
+                  className="rounded border border-white/10 px-1.5 py-0.5 text-tiny text-slate-400 hover:bg-white/10">
+                  {t("taskPlan.setToday")}
+                </button>
+                <button type="button" onClick={() => setDate(new Date(Date.now() + DAY_MS).toISOString().slice(0, 10))}
+                  className="rounded border border-white/10 px-1.5 py-0.5 text-tiny text-slate-400 hover:bg-white/10">
+                  {t("taskPlan.setTomorrow")}
+                </button>
+                <button type="button" onClick={() => setDate("")}
+                  className="rounded border border-white/10 px-1.5 py-0.5 text-tiny text-slate-400 hover:bg-white/10">
+                  {t("taskPlan.unschedule")}
+                </button>
+              </div>
+              {!date && <div className="mt-1 text-tiny text-slate-500">{t("taskPlan.unscheduledHint")}</div>}
+            </>
+          )}
         </div>
         <div>
           <label className={labelCls}>{t("taskPlan.priorityLabel")}</label>
-          <div className="flex items-center gap-1">
-            {PRIORITY_ORDER.map((p) => (
-              <button key={p} type="button" onClick={() => setPriority(p)}
-                className={`flex-1 rounded-ctl border px-1.5 py-1 text-tiny transition ${
-                  priority === p ? `${PRIORITY_META[p].bg} ${PRIORITY_META[p].text} font-semibold` : "border-white/10 text-slate-400 hover:bg-white/5"
-                }`}>
-                {t(PRIORITY_LABEL[p])}
-              </button>
-            ))}
-          </div>
+          {ro ? (
+            <span className={`inline-flex items-center rounded-ctl border px-2 py-1 text-tiny font-semibold ${PRIORITY_META[priority].bg} ${PRIORITY_META[priority].text}`}>
+              {t(PRIORITY_LABEL[priority])}
+            </span>
+          ) : (
+            <div className="flex items-center gap-1">
+              {PRIORITY_ORDER.map((p) => (
+                <button key={p} type="button" onClick={() => setPriority(p)}
+                  className={`flex-1 rounded-ctl border px-1.5 py-1 text-tiny transition ${
+                    priority === p ? `${PRIORITY_META[p].bg} ${PRIORITY_META[p].text} font-semibold` : "border-white/10 text-slate-400 hover:bg-white/5"
+                  }`}>
+                  {t(PRIORITY_LABEL[p])}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -473,21 +511,23 @@ function TaskEditorModal({
           {t("taskPlan.progressLabel")} · {progress}%
           <span className="ml-2 font-normal text-slate-500">{t(`taskPlan.status${deriveStatus(progress) === "done" ? "Done" : deriveStatus(progress) === "inProgress" ? "InProgress" : "Todo"}`)}</span>
         </label>
-        <div className="flex items-center gap-2">
-          <input type="range" min={0} max={100} step={5} value={progress}
-            onChange={(e) => setProgress(Number(e.target.value))}
-            className="h-1.5 flex-1 cursor-pointer accent-[var(--module-accent)]" />
-          <div className="flex items-center gap-1">
-            {[0, 50, 100].map((p) => (
-              <button key={p} type="button" onClick={() => setProgress(p)}
-                className={`rounded border px-1.5 py-0.5 text-tiny transition ${
-                  progress === p ? "border-white/25 bg-white/10 text-white" : "border-white/10 text-slate-400 hover:bg-white/5"
-                }`}>
-                {p}%
-              </button>
-            ))}
+        {!ro && (
+          <div className="flex items-center gap-2">
+            <input type="range" min={0} max={100} step={5} value={progress}
+              onChange={(e) => setProgress(Number(e.target.value))}
+              className="h-1.5 flex-1 cursor-pointer accent-[var(--module-accent)]" />
+            <div className="flex items-center gap-1">
+              {[0, 50, 100].map((p) => (
+                <button key={p} type="button" onClick={() => setProgress(p)}
+                  className={`rounded border px-1.5 py-0.5 text-tiny transition ${
+                    progress === p ? "border-white/25 bg-white/10 text-white" : "border-white/10 text-slate-400 hover:bg-white/5"
+                  }`}>
+                  {p}%
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
         <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-white/10">
           <div className={`h-full ${progressColor(progress)}`} style={{ width: `${progress}%` }} />
         </div>
@@ -495,14 +535,24 @@ function TaskEditorModal({
 
       <div>
         <label className={labelCls}>{t("taskPlan.tagsLabel")}</label>
-        <input className={inputCls} value={tags} placeholder={t("taskPlan.tagsPlaceholder")}
-          onChange={(e) => setTags(e.target.value)} />
+        {ro ? (
+          <div className="text-caption text-slate-300 break-words">{tags || "—"}</div>
+        ) : (
+          <input className={inputCls} value={tags} placeholder={t("taskPlan.tagsPlaceholder")}
+            onChange={(e) => setTags(e.target.value)} />
+        )}
       </div>
 
       <div>
         <label className={labelCls}>{t("taskPlan.descriptionLabel")}</label>
-        <textarea className={`${inputCls} !h-16 resize-none py-1.5`} value={description}
-          onChange={(e) => setDescription(e.target.value)} />
+        {ro ? (
+          <div className="whitespace-pre-wrap break-words text-caption leading-relaxed text-slate-300">
+            {description || "—"}
+          </div>
+        ) : (
+          <textarea className={`${inputCls} !h-16 resize-none py-1.5`} value={description}
+            onChange={(e) => setDescription(e.target.value)} />
+        )}
       </div>
 
       {/* 详细说明：Markdown + 本地文件链接。链接点在预览里即可打开，
@@ -514,6 +564,7 @@ function TaskEditorModal({
           onChange={setDetail}
           minHeight="140px"
           pickFile={pickTaskFile}
+          readOnly={ro}
         />
       </div>
 
@@ -524,7 +575,7 @@ function TaskEditorModal({
             created: task.createdAt.slice(0, 10),
             updated: task.updatedAt.slice(0, 10),
           })}
-          {late && (
+          {!ro && late && (
             <button type="button" disabled={busy} onClick={() => void carryToToday()}
               className="ml-auto rounded-md border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-tiny text-amber-200 transition hover:bg-amber-400/20 disabled:opacity-50">
               {t("taskPlan.carryToToday")}

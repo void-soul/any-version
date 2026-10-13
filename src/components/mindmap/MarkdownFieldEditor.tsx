@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Bold, Italic, Strikethrough, Code, List, ListOrdered, ListChecks, Quote,
@@ -46,14 +46,26 @@ interface Props {
   /** 可选：选一个本地文件插入链接（返回要写入的路径；null = 用户取消）。
    *  不传则工具栏不出现该按钮 —— 需要「文件链接」的模块（如任务计划）自己给选择器。 */
   pickFile?: () => Promise<string | null>;
+  /**
+   * 只读：强制停在预览态，并隐藏整条格式工具栏（含切换按钮）。
+   *
+   * 为什么不给「受控 mode」而是只读开关：只读场景（打开已有条目先浏览）要的是
+   * 「纯浏览」——一排改格式的按钮摆在只读内容上方，既没用又误导；而在内部 toggle
+   * 来回切的场景（思维导图节点）保持原样即可，不需要父级介入。
+   */
+  readOnly?: boolean;
 }
 
 /** 可复用的 Markdown 编辑器：格式工具栏 + 编辑区 + 可选分栏实时预览。
  *  供思维导图节点详情编辑、悬浮窗节点表单等场景复用。 */
-export const MarkdownFieldEditor = memo(function MarkdownFieldEditor({ value, onChange, minHeight = "200px", defaultSplit = false, pickFile }: Props) {
+export const MarkdownFieldEditor = memo(function MarkdownFieldEditor({ value, onChange, minHeight = "200px", defaultSplit = false, pickFile, readOnly = false }: Props) {
   const { t } = useTranslation();
   const [split, setSplit] = useState(defaultSplit);
-  const [mode, setMode] = useState<"edit" | "view">("edit");
+  const [mode, setMode] = useState<"edit" | "view">(readOnly ? "view" : "edit");
+  // 父组件中途切到只读（例如从「编辑」点回「浏览」）时，内部状态要跟着回到预览态
+  useEffect(() => {
+    if (readOnly) setMode("view");
+  }, [readOnly]);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const undoStack = useRef<string[]>([]);
   const redoStack = useRef<string[]>([]);
@@ -136,7 +148,8 @@ export const MarkdownFieldEditor = memo(function MarkdownFieldEditor({ value, on
 
   return (
     <div className="flex flex-col min-h-0 flex-1 rounded-md border border-white/10 bg-slate-950/70">
-      {/* 格式工具栏 */}
+      {/* 格式工具栏（只读态整个隐藏：只读就是纯浏览，不该摆一排改格式的按钮） */}
+      {!readOnly && (
       <div className="flex-shrink-0 flex items-center gap-0.5 px-1.5 py-1 border-b border-white/5 overflow-x-auto">
         <button className={tbtn} title={t("mmd.undo")} onClick={undo}><Undo2 className="w-3 h-3" /></button>
         <button className={tbtn} title={t("mmd.redo")} onClick={redo}><Redo2 className="w-3 h-3" /></button>
@@ -184,6 +197,7 @@ export const MarkdownFieldEditor = memo(function MarkdownFieldEditor({ value, on
           </button>
         )}
       </div>
+      )}
 
       {/* 内容区 */}
       {mode === "view" ? (
