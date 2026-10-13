@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+﻿import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
 import {
@@ -13,6 +13,7 @@ import {
   X,
   Search,
   FolderOpen,
+  ChevronDown,
 } from "lucide-react";
 import { alertError, theamedAlert } from "../shared/ThemedAlert";
 
@@ -116,6 +117,10 @@ export default function McpManager() {
   const [selProject, setSelProject] = useState<string>("");
   const [projMcps, setProjMcps] = useState<ProjectMcp[]>([]);
   const [projBusy, setProjBusy] = useState<string>("");
+  /** 仓库区折叠（与技能安装页的「技能库」通栏一致） */
+  const [repoCollapsed, setRepoCollapsed] = useState(false);
+  /** 各项目已装数量（左侧列表上的数字；只拉当前项目的详情太慢，这里各存一份计数） */
+  const [projCounts, setProjCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -153,6 +158,18 @@ export default function McpManager() {
       setGlobalList(glob.filter((d) => !d.alreadyManaged));
       setProjects(projs);
       setSelProject((cur) => (cur && projs.some((p) => p.id === cur) ? cur : projs[0]?.id ?? ""));
+      // 左侧列表要显示每个项目的已装数量，所以**每个项目都读一次** `.mcp.json`。
+      // 成本极低（每人一个小 JSON），换来的是不用点进项目才知道装没装。
+      void Promise.all(
+        projs.map(async (p) => {
+          try {
+            const list = await invoke<ProjectMcp[]>("list_project_mcps", { projectId: p.id });
+            setProjCounts((m) => ({ ...m, [p.id]: list.length }));
+          } catch {
+            // 项目文件解析失败：数字留空即可，详情页会如实报错，不在这里打断整页
+          }
+        }),
+      );
     } catch (e) {
       console.error(e);
     } finally {
@@ -517,6 +534,28 @@ export default function McpManager() {
         </div>
       )}
 
+      {/* 顶部通栏：MCP 仓库（可折叠）。折叠后仍看得见条数、也照样点得了添加 */}
+      <div className="rounded-card bg-white/[0.02] border border-white/10 p-3 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <button
+            onClick={() => setRepoCollapsed((v) => !v)}
+            className="flex items-center gap-1.5 cursor-pointer min-w-0"
+            title={repoCollapsed ? t("mcp.repoExpand") : t("mcp.repoCollapse")}
+          >
+            <ChevronDown className={`w-3.5 h-3.5 text-slate-400 flex-shrink-0 transition-transform ${repoCollapsed ? "" : "rotate-180"}`} />
+            <span className="text-body font-bold text-slate-300">{t("mcp.repoTitle")}</span>
+            <span className="text-micro text-slate-500 truncate">{servers.length}</span>
+          </button>
+          <button
+            onClick={openAdd}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-tiny font-semibold cursor-pointer flex-shrink-0"
+          >
+            <Plus className="w-3 h-3" /> {t("mcp.addServer")}
+          </button>
+        </div>
+
+      {!repoCollapsed && (
+        <>
       {/* 已安装服务器列表 */}
       {servers.length === 0 ? (
         <div className="h-48 border border-dashed border-white/5 rounded-panel flex flex-col items-center justify-center text-slate-500">
@@ -592,67 +631,112 @@ export default function McpManager() {
           ))}
         </div>
       )}
+        </>
+      )}
+      </div>
 
-      {/* 项目维度：已装 / 可装。放在仓库列表之后，作为「装给谁」的那一栏 */}
-      <div className="p-3 rounded-card bg-white/[0.02] border border-white/10 space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-body font-bold text-slate-300 flex items-center gap-1.5">
-            <FolderOpen className="w-3.5 h-3.5" /> {t("mcp.projectScope")}
-          </span>
-          {projects.length > 0 && (
-            <select
-              value={selProject}
-              onChange={(e) => setSelProject(e.target.value)}
-              className="appearance-none px-2 py-1 rounded-ctl bg-slate-800 border border-white/10 text-tiny text-slate-200 focus:outline-none focus:border-[var(--module-accent-ring)] cursor-pointer max-w-[240px]"
+      {/* 下：左项目列表（勾选 = 安装目标）/ 右项目内已装 MCP。与技能安装页同构。 */}
+      <div className="grid grid-cols-1 lg:grid-cols-[264px_1fr] gap-3 items-start">
+        {/* 左：项目列表 */}
+        <div className="rounded-card bg-white/[0.02] border border-white/10 p-2 space-y-1.5">
+          <div className="flex items-center justify-between px-1">
+            <span className="text-body font-bold text-slate-300">{t("mcp.projectListTitle")}</span>
+            <button
+              onClick={() => void load()}
+              className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-slate-200 cursor-pointer"
+              title={t("mcp.refresh")}
             >
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>{p.name || p.path}</option>
-              ))}
-            </select>
+              <RefreshCw className="w-3 h-3" />
+            </button>
+          </div>
+
+          {projects.length === 0 ? (
+            <p className="text-tiny text-slate-500 px-1 py-2">{t("mcp.noProjects")}</p>
+          ) : (
+            projects.map((p) => {
+              const viewing = selProject === p.id;
+              const n = projCounts[p.id] ?? 0;
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => setSelProject(p.id)}
+                  className={`w-full text-left px-1.5 py-1.5 rounded-ctl border transition-colors cursor-pointer ${
+                    viewing
+                      ? "border-[var(--module-accent-ring)] bg-[var(--module-accent-soft)]"
+                      : "border-transparent hover:bg-white/5"
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <FolderOpen className="w-3 h-3 text-slate-500 flex-shrink-0" />
+                    <span className="text-tiny font-semibold text-slate-200 truncate flex-1">
+                      {p.name || p.path}
+                    </span>
+                    {n > 0 && (
+                      <span className="px-1.5 py-0.5 rounded text-micro font-semibold bg-emerald-500/15 text-emerald-400 flex-shrink-0">
+                        {n}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-micro text-slate-500 font-mono truncate mt-0.5 pl-4.5">{p.path}</div>
+                </button>
+              );
+            })
           )}
         </div>
 
-        {projects.length === 0 ? (
-          <p className="text-tiny text-slate-500">{t("mcp.noProjects")}</p>
-        ) : (
-          <>
-            {projMcps.length === 0 ? (
-              <p className="text-tiny text-slate-500">{t("mcp.projectNone")}</p>
-            ) : (
-              <div className="space-y-1">
-                {projMcps.map((m) => (
-                  <div key={m.name} className="flex items-center gap-2 rounded-ctl bg-slate-900/40 border border-white/5 px-2.5 py-1.5">
-                    <Plug className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
-                    <span className="text-tiny font-bold text-slate-200 font-mono truncate">{m.name}</span>
-                    <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400 flex-shrink-0">
-                      {t(`mcp.${TRANSPORT_KEY[m.transport] || m.transport}`) || m.transport}
-                    </span>
-                    {!m.managed && (
-                      <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-white/5 text-slate-400 flex-shrink-0"
-                        title={t("mcp.localHint")}>
-                        {t("mcp.fromProject")}
-                      </span>
-                    )}
-                    <span className="text-micro text-slate-500 truncate flex-1 font-mono">
-                      {m.url || `${m.command} ${m.args.join(" ")}`.trim()}
-                    </span>
-                    <button
-                      onClick={() => removeFromProject(m.name, m.managed)}
-                      disabled={projBusy === m.name}
-                      className="p-1 rounded text-slate-600 hover:text-red-400 hover:bg-red-500/10 cursor-pointer transition-all disabled:opacity-40 flex-shrink-0"
-                      title={t("mcp.removeFromProject")}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
+        {/* 右：当前项目内已装的 MCP */}
+        <div className="min-w-0 rounded-card bg-white/[0.02] border border-white/10 p-3 space-y-2">
+          {!selProject ? (
+            <p className="text-tiny text-slate-500 py-6 text-center">{t("mcp.pickProject")}</p>
+          ) : (
+            <>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-body font-bold text-slate-300 truncate">
+                  {t("mcp.projectInstalledTitle")}
+                  <span className="ml-1.5 text-micro text-slate-500 font-normal font-mono">
+                    {projects.find((p) => p.id === selProject)?.path}
+                  </span>
+                </span>
+                <span className="text-micro text-slate-500 flex-shrink-0">
+                  {t("mcp.projectFileHint", { name: ".mcp.json" })}
+                </span>
               </div>
-            )}
-            <p className="text-micro text-slate-500">
-              {t("mcp.projectFileHint", { name: ".mcp.json" })}
-            </p>
-          </>
-        )}
+
+              {projMcps.length === 0 ? (
+                <p className="text-tiny text-slate-500 py-4 text-center">{t("mcp.projectNone")}</p>
+              ) : (
+                <div className="space-y-1">
+                  {projMcps.map((m) => (
+                    <div key={m.name} className="flex items-center gap-2 rounded-ctl bg-slate-900/40 border border-white/5 px-2.5 py-1.5">
+                      <Plug className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                      <span className="text-tiny font-bold text-slate-200 font-mono truncate">{m.name}</span>
+                      <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400 flex-shrink-0">
+                        {t(`mcp.${TRANSPORT_KEY[m.transport] || m.transport}`) || m.transport}
+                      </span>
+                      {!m.managed && (
+                        <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-white/5 text-slate-400 flex-shrink-0"
+                          title={t("mcp.localHint")}>
+                          {t("mcp.fromProject")}
+                        </span>
+                      )}
+                      <span className="text-micro text-slate-500 truncate flex-1 font-mono">
+                        {m.url || `${m.command} ${m.args.join(" ")}`.trim()}
+                      </span>
+                      <button
+                        onClick={() => removeFromProject(m.name, m.managed)}
+                        disabled={projBusy === m.name}
+                        className="p-1 rounded text-slate-600 hover:text-red-400 hover:bg-red-500/10 cursor-pointer transition-all disabled:opacity-40 flex-shrink-0"
+                        title={t("mcp.removeFromProject")}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {/* 一次性清理：全局配置里的 MCP 对所有项目生效，是上下文被污染的根源 */}

@@ -4211,7 +4211,13 @@
     "migratePartial": "部分文件未能更新：{{failed}}。其余已迁移完成。",
     "aboutScope": "MCP 按项目安装，不再全局部署",
     "aboutScopeDesc": "MCP 写进项目的 .mcp.json：项目文件里没有 = agent 不会连接、不 spawn、工具 schema 不进上下文。所以每个项目只为自己需要的 MCP 付上下文成本。",
-    "aboutTrust": "注意：项目级 MCP 需要该文件夹被「信任」才会启动 —— 配置写对了但工作区没信任，等于没装。"
+    "aboutTrust": "注意：项目级 MCP 需要该文件夹被「信任」才会启动 —— 配置写对了但工作区没信任，等于没装。",
+    "repoTitle": "MCP 仓库",
+    "repoCollapse": "折叠仓库区",
+    "repoExpand": "展开仓库区",
+    "projectListTitle": "项目",
+    "projectInstalledTitle": "项目内已装",
+    "pickProject": "在左侧选择一个项目"
   },
   "tranpanel": {
     "title": "翻译",

@@ -4211,7 +4211,13 @@
     "migratePartial": "Some files could not be updated: {{failed}}. The rest were migrated.",
     "aboutScope": "MCP is installed per project, no longer deployed globally",
     "aboutScopeDesc": "MCP goes into the project's .mcp.json: absent = the agent won't connect, won't spawn it, and its tool schemas never enter the context. So each project only pays for the MCP it actually needs.",
-    "aboutTrust": "Note: project-level MCP only start once that folder is trusted — config written but workspace untrusted means not installed."
+    "aboutTrust": "Note: project-level MCP only start once that folder is trusted — config written but workspace untrusted means not installed.",
+    "repoTitle": "MCP registry",
+    "repoCollapse": "Collapse registry",
+    "repoExpand": "Expand registry",
+    "projectListTitle": "Projects",
+    "projectInstalledTitle": "Installed in project",
+    "pickProject": "Pick a project on the left"
   },
   "tranpanel": {
     "title": "Translate",
