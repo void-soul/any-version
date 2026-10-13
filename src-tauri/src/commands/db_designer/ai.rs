@@ -139,6 +139,12 @@ const FORMAT_SCHEMA: &str = r#"{
 "#;
 
 /// 完整最小示例：两张表 + 一条关联，把 schema 里「可选字段怎么落」演示出来。
+///
+/// **示例的主键刻意不用 `id`**，改用有业务含义的名字（`user_id` / `article_id`）。
+/// 用户明确要求过「主键禁止用 id」，而这条规则最初只存在于用户脑子里：提示词没写，
+/// 示例又两张表都用 `id` —— 模型最强的模仿对象就是示例，于是生成的所有表主键都是 id，
+/// 要求看起来像完全没生效。改示例比堆十条规则有效得多。
+/// 测试 `prompt_and_example_forbid_bare_id_as_primary_key` 钉住这条不变量。
 const FORMAT_EXAMPLE: &str = r#"{
   "name": "文章管理系统",
   "dialect": "mysql",
@@ -149,7 +155,7 @@ const FORMAT_EXAMPLE: &str = r#"{
       "comment": "用户：系统账号",
       "table": {
         "fields": [
-          { "name": "id", "type": { "base": "bigint" }, "pk": true, "autoIncrement": true, "comment": "主键" },
+          { "name": "user_id", "type": { "base": "bigint" }, "pk": true, "autoIncrement": true, "comment": "用户主键" },
           { "name": "username", "type": { "base": "varchar", "length": 64 }, "unique": true, "comment": "登录名" },
           { "name": "created_at", "type": { "base": "datetime" }, "nullable": false, "comment": "创建时间" }
         ]
@@ -161,8 +167,8 @@ const FORMAT_EXAMPLE: &str = r#"{
       "comment": "文章：用户发布的内容",
       "table": {
         "fields": [
-          { "name": "id", "type": { "base": "bigint" }, "pk": true, "autoIncrement": true, "comment": "主键" },
-          { "name": "user_id", "type": { "base": "bigint" }, "comment": "作者用户" },
+          { "name": "article_id", "type": { "base": "bigint" }, "pk": true, "autoIncrement": true, "comment": "文章主键" },
+          { "name": "user_id", "type": { "base": "bigint" }, "comment": "作者用户，引用 user.user_id" },
           { "name": "title", "type": { "base": "varchar", "length": 128 }, "nullable": false, "comment": "标题" },
           { "name": "content", "type": { "base": "text" }, "comment": "正文" },
           { "name": "status", "type": { "base": "enum", "values": ["draft", "published", "archived"] }, "nullable": false, "comment": "状态" }
@@ -174,7 +180,7 @@ const FORMAT_EXAMPLE: &str = r#"{
   "relations": [
     {
       "from": { "node": "article", "field": "user_id" },
-      "to": { "node": "user", "field": "id" },
+      "to": { "node": "user", "field": "user_id" },
       "kind": "1-n",
       "onDelete": "CASCADE"
     }
@@ -205,6 +211,8 @@ date time datetime timestamp boolean json uuid blob enum
 5. 约定：
    - 节点 id/x/y 可省略（我这边来补）；表名不允许重名
    - 每张表至少一个主键（字段 \"pk\":true）；\"autoIncrement\":true 必须是主键
+   - **主键名禁止用 \"id\"**：一律用有业务含义的名字（表 user 用 user_id、表 order_item 用 order_item_id），
+     外键则引用父表那个主键名。裸 id 会让联表 SQL 到处都是 user.id 这种分不清是谁的列
    - 主键只用字段 \"pk\":true 表达，不要再写 \"kind\":\"primary\" 的索引
    - indexes 只在需要查询加速或唯一约束时写
    - relations：from = 子表（外键所在端），to = 父表（被引用端）；不要写自关联；
@@ -763,5 +771,38 @@ mod tests {
         let cur = new_document("cur", "mysql");
         let p = build_user_prompt("N", "mysql", "需求甲", Some(&cur));
         assert!(!p.contains("当前设计"));
+    }
+
+    /// **示例与提示词里都不允许出现裸 `id` 作主键**。
+    ///
+    /// 踩过的坑：这条禁令原先只存在于用户脑子里，提示词里根本没写，而 `FORMAT_EXAMPLE`
+    /// 两张表的主键都叫 `id` —— 模型最强的模仿对象就是示例，于是生成的所有表主键都是 id，
+    /// 「禁止 id」的要求看起来像没生效。测试把这条不变量钉住，防止有人再把示例改回去。
+    #[test]
+    fn prompt_and_example_forbid_bare_id_as_primary_key() {
+        let p = system_prompt();
+        // 禁令要在提示词里，且说得具体（「不许用 id / user_id 这类通用名」）
+        assert!(
+            p.contains("主键名"),
+            "提示词必须写明主键命名的约束"
+        );
+        assert!(
+            p.contains("\"id\""),
+            "禁令要点名 id，只说「有含义的主键名」模型会忽略"
+        );
+        // 示例本身不能拿 id 当主键：示例比规则更有说服力
+        let bare_id_pk = format!(
+            r#"{{"name":"id","type":{{"base":"{}"}},"pk":true"#,
+            "bigint"
+        );
+        assert!(
+            !FORMAT_EXAMPLE.contains(&bare_id_pk),
+            "示例里不能再用 id 作主键——模型照抄的就是示例"
+        );
+        // 但 schema 里字段名示例仍是 id：那里演示的是「字段怎么命名」，不是主键命名
+        assert!(
+            FORMAT_SCHEMA.contains("\"name\""),
+            "schema 仍应演示字段结构"
+        );
     }
 }
