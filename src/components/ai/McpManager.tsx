@@ -384,12 +384,6 @@ export default function McpManager() {
           >
             <RefreshCw className="w-3 h-3" /> {t("mcp.refresh")}
           </button>
-          <button
-            onClick={openAdd}
-            className="px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-tiny font-semibold cursor-pointer transition-all flex items-center gap-1 shadow-lg shadow-[var(--module-accent-ring)]"
-          >
-            <Plus className="w-3 h-3" /> {t("mcp.addServer")}
-          </button>
         </div>
       </div>
 
@@ -562,6 +556,8 @@ export default function McpManager() {
             <span className="text-body font-bold text-slate-300">{t("mcp.repoTitle")}</span>
             <span className="text-micro text-slate-500 truncate">{servers.length}</span>
           </button>
+          {/* 全站只保留这一个「添加服务器」入口：仓库就是唯一入口，
+              再在页头放一个只会让人以为「添加」有区别（加到仓库 vs 加到全局） */}
           <button
             onClick={openAdd}
             className="flex items-center gap-1 px-2.5 py-1 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-tiny font-semibold cursor-pointer flex-shrink-0"
@@ -591,6 +587,16 @@ export default function McpManager() {
                 key={s.id}
                 className="flex items-center gap-1.5 px-1.5 py-1 rounded-ctl bg-white/[0.03] hover:bg-white/[0.06] transition-colors"
               >
+                <input
+                  type="checkbox"
+                  checked={!!installed}
+                  disabled={busy || (!selProject && pickedProjects.size === 0)}
+                  onChange={() => (installed ? removeFromProject(s.name, true) : installToProject(s.id))}
+                  title={installed
+                    ? t("mcp.installedIn", { name: projects.find((p) => p.id === selProject)?.name ?? "" })
+                    : t("mcp.installToProject")}
+                  className="w-3 h-3 accent-[var(--module-accent)] flex-shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                />
                 <Plug className="w-3 h-3 text-[var(--module-accent)] flex-shrink-0" />
                 <span className="text-tiny font-semibold text-slate-200 truncate flex-shrink-0 max-w-[38%]">
                   {s.name}
@@ -601,14 +607,6 @@ export default function McpManager() {
                 <span className="text-micro text-slate-500 truncate flex-1 font-mono" title={s.transport === "stdio" ? `${s.command} ${s.args.join(" ")}`.trim() : s.url}>
                   {s.transport === "stdio" ? `${s.command} ${s.args.join(" ")}`.trim() : s.url}
                 </span>
-                <button
-                  onClick={() => (installed ? removeFromProject(s.name, true) : installToProject(s.id))}
-                  disabled={!selProject && pickedProjects.size === 0 || busy}
-                  title={installed ? t("mcp.installedIn", { name: projects.find((p) => p.id === selProject)?.name ?? "" }) : t("mcp.installToProject")}
-                  className={`w-3 h-3 rounded-sm flex-shrink-0 border cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-                    installed ? "bg-emerald-400 border-emerald-300" : "border-white/20 hover:border-white/40"
-                  }`}
-                />
                 <button
                   onClick={() => openEdit(s)}
                   className="text-slate-600 hover:text-[var(--module-accent)] cursor-pointer flex-shrink-0"
