@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
+import { useProjects } from "./useProjects";
 import { useTranslation } from "react-i18next";
 import {
   Plug,
@@ -44,13 +45,6 @@ interface ProjectMcp {
   url: string;
   /** 仓库里有同名定义 = 受管；否则是用户手写的「项目自带」 */
   managed: boolean;
-}
-
-/** 项目（复用技能那边同一个 projects.json，后端 list_projects） */
-interface SkillProject {
-  id: string;
-  path: string;
-  name: string;
 }
 
 interface DiscoveredMcp {
@@ -116,13 +110,18 @@ export default function McpManager() {
   /** 勾选要收进仓库的全局条目 */
   const [pickedGlobal, setPickedGlobal] = useState<Set<string>>(new Set());
   const [migrating, setMigrating] = useState(false);
-  /** 项目维度：MCP 按项目安装，不再全局部署 */
-  const [projects, setProjects] = useState<SkillProject[]>([]);
-  const [selProject, setSelProject] = useState<string>("");
+  /** 项目维度：MCP 按项目安装，不再全局部署。
+   *  项目清单与技能页**共用同一个 hook**（./useProjects）—— 否则在技能页新加的项目
+   *  这里不会刷新，两边会各看到一份不同的项目列表。 */
+  const {
+    projects,
+    selProject,
+    setSelProject,
+    picked: pickedProjects,
+    setPicked: setPickedProjects,
+  } = useProjects();
   const [projMcps, setProjMcps] = useState<ProjectMcp[]>([]);
   const [projBusy, setProjBusy] = useState<string>("");
-  /** 勾选的项目 = 安装目标（批量往多个项目装同一个 MCP） */
-  const [pickedProjects, setPickedProjects] = useState<Set<string>>(new Set());
   /** 仓库区折叠（与技能安装页的「技能库」通栏一致） */
   const [repoCollapsed, setRepoCollapsed] = useState(false);
   /** 各项目已装数量（左侧列表上的数字；只拉当前项目的详情太慢，这里各存一份计数） */
@@ -154,20 +153,17 @@ export default function McpManager() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [srv, glob, projs] = await Promise.all([
+      const [srv, glob] = await Promise.all([
         invoke<McpServer[]>("get_mcp_servers"),
         invoke<DiscoveredMcp[]>("list_global_mcp").catch((e) => { setGlobalErr(String(e)); return [] as DiscoveredMcp[]; }),
-        invoke<SkillProject[]>("list_projects").catch(() => [] as SkillProject[]),
       ]);
       setServers(srv);
       // 已经收进仓库的条目不再重复提示迁移
       setGlobalList(glob.filter((d) => !d.alreadyManaged));
-      setProjects(projs);
-      setSelProject((cur) => (cur && projs.some((p) => p.id === cur) ? cur : projs[0]?.id ?? ""));
       // 左侧列表要显示每个项目的已装数量，所以**每个项目都读一次** `.mcp.json`。
       // 成本极低（每人一个小 JSON），换来的是不用点进项目才知道装没装。
       void Promise.all(
-        projs.map(async (p) => {
+        projects.map(async (p) => {
           try {
             const list = await invoke<ProjectMcp[]>("list_project_mcps", { projectId: p.id });
             setProjCounts((m) => ({ ...m, [p.id]: list.length }));

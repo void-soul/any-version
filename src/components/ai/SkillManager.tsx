@@ -1,4 +1,5 @@
 ﻿import { useState, useEffect, useMemo } from 'react';
+import { useProjects } from './useProjects';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { openPath, openUrl } from '@tauri-apps/plugin-opener';
@@ -87,25 +88,6 @@ interface ProjectSkillEntry {
   staleLinks?: number;
 }
 
-/**
- * 单个项目的技能计数（后端 list_project_skill_counts）。
- *
- * 刻意与 ProjectSkillEntry 分开：那个是「点进项目才拉」的完整清单（要读 SKILL.md 拿名称/描述），
- * 这个是「一次扫完所有项目」的数字（只数目录条目）。混在一起就等于为了一个数字把所有项目的
- * SKILL.md 全读一遍。
- */
-interface ProjectSkillCount {
-  projectId: string;
-  /** 有效技能总数（= linked + local，不含 broken） */
-  total: number;
-  /** 来自技能库 */
-  linked: number;
-  /** 项目自带的真实目录 */
-  local: number;
-  /** 悬空链接：指向技能库但目标已不在任何库里 */
-  broken: number;
-}
-
 type TabKey = 'skills' | 'projects';
 
 const MARKET_SOURCES = [
@@ -151,7 +133,24 @@ export default function SkillManager() {
   const [showBuiltin, setShowBuiltin] = useState(false);
 
   // ── 项目（技能的作用域） ──
-  const [projects, setProjects] = useState<SkillProject[]>([]);
+  /**
+   * 项目清单来自**共享 hook**（./useProjects）—— MCP 页用的是同一个。
+   * 之前两边各管各的：在技能页新加的项目，MCP 页要切页或手动刷新才看得见，
+   * 两边看到的也不是同一份东西。
+   */
+  const {
+    projects,
+    selProject: selProjectRaw,
+    setSelProject: setSelProjectRaw,
+    picked: pickedProjects,
+    setPicked: setPickedProjects,
+    counts: projCounts,
+    reloadCounts: loadProjCounts,
+    reload: reloadProjects,
+  } = useProjects({ withCounts: true });
+  /** 右侧正在查看的项目（左侧点谁看谁）。空串 = 还没选，界面给引导而不是空白 */
+  const selProject: string | null = selProjectRaw || null;
+  const setSelProject = (id: string | null) => setSelProjectRaw(id ?? '');
   /** 技能库实际路径（如实显示，别让用户猜装到哪了） */
   const [skillsDir, setSkillsDir] = useState('');
   /** 技能库位置设置弹窗 */
@@ -195,13 +194,8 @@ export default function SkillManager() {
   };
   const [projMsg, setProjMsg] = useState<{ id: string; msg: string; ok: boolean } | null>(null);
   /** 右侧正在查看的项目（左侧点谁看谁） */
-  const [selProject, setSelProject] = useState<string | null>(null);
   /** projectId -> 该项目的技能清单（查看时才拉） */
   const [projSkills, setProjSkills] = useState<Record<string, ProjectSkillEntry[]>>({});
-  /** 每个项目的技能计数（一次扫完；见 ProjectSkillCount 的注释） */
-  const [projCounts, setProjCounts] = useState<Record<string, ProjectSkillCount>>({});
-  /** 左侧勾选的项目 = 安装目标集合（可多选，配合右侧勾选的技能一次批量装） */
-  const [pickedProjects, setPickedProjects] = useState<Set<string>>(new Set());
   /** 右侧勾选的「技能库技能」= 要安装的技能 */
   const [pickedLib, setPickedLib] = useState<Set<string>>(new Set());
   /** 右侧勾选的「项目内已装技能」= 要删除的技能 */
@@ -228,32 +222,7 @@ export default function SkillManager() {
     setSkillLoading(false);
   };
 
-  const loadProjects = async () => {
-    try {
-      setProjects(await invoke<SkillProject[]>('list_projects'));
-      // 项目清单变了（初次进入 / 刚添加 / 刚移除），顺带把技能数一起刷掉
-      void loadProjCounts();
-    } catch (e) {
-      console.error("加载项目列表失败:", e);
-    }
-  };
-
-  /**
-   * 一次扫完所有项目的技能计数。
-   *
-   * 只在「项目列表变化」与「用户手动刷新」时调用，不跟着切 tab 跑 —— 计数是实时的，
-   * 但重新数一遍每个项目的磁盘不值得每次切页都做一次。
-   */
-  const loadProjCounts = async () => {
-    try {
-      const list = await invoke<ProjectSkillCount[]>('list_project_skill_counts');
-      const map: Record<string, ProjectSkillCount> = {};
-      for (const c of list) map[c.projectId] = c;
-      setProjCounts(map);
-    } catch (e) {
-      console.error("读取项目技能数失败:", e);
-    }
-  };
+  const loadProjects = reloadProjects;
 
   /** 查看项目时按需拉它的技能清单（不预先拉所有项目的，避免无用 IO） */
   const loadProjectSkills = async (pid: string) => {
@@ -488,13 +457,13 @@ export default function SkillManager() {
     try {
       await invoke('remove_project', { id: p.id });
       setProjMsg({ id: p.id, msg: t("skillmgr.projRemoved"), ok: true });
-      setSelProject((cur) => (cur === p.id ? null : cur));
+      setSelProjectRaw('');
       setPickedProjects((s) => {
         const n = new Set(s);
         n.delete(p.id);
         return n;
       });
-      await loadProjects();
+      await reloadProjects();
     } catch (e: any) {
       setProjMsg({ id: p.id, msg: String(e), ok: false });
     }
