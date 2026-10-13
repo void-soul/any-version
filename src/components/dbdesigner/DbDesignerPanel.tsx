@@ -887,7 +887,7 @@ export default function DbDesignerPanel() {
    * 一张被引用多少次就当作父节点；成环的表同样当根，不会死循环。
    */
   const tableTreeRows = useMemo(() => {
-    type Row = { id: string; name: string; color: string; depth: number; related: boolean; relCount: number };
+    type Row = { id: string; name: string; color: string; depth: number; related: boolean; relCount: number; comment: string };
     if (!doc) return [] as Row[];
     // 每张表被多少张表引用（from = 引用方）
     const refCount = new Map<string, number>();
@@ -915,6 +915,7 @@ export default function DbDesignerPanel() {
         depth,
         related: selectedId !== null && relatedIds.has(n.id),
         relCount: relCountOf(n.id),
+        comment: n.comment ?? "",
       });
       for (const r of doc.relations) {
         if (r.to.node !== id) continue;
@@ -932,6 +933,7 @@ export default function DbDesignerPanel() {
         id: n.id, name: n.name, color: n.color ?? "", depth: 0,
         related: selectedId !== null && relatedIds.has(n.id),
         relCount: relCountOf(n.id),
+        comment: n.comment ?? "",
       });
     }
     return rows;
@@ -1629,15 +1631,28 @@ export default function DbDesignerPanel() {
                           : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
                     }`}
                     style={{ paddingLeft: 6 + r.depth * 10 }}
-                    title={r.name}
+                    // 注释同时进 tooltip：列表里放不下（一行一个表是刻意的），
+                    // 但「这张表是干什么的」必须能看见 —— 注释是 AI 产出里最值钱的部分。
+                    title={r.comment ? `${r.name}\n${r.comment}` : r.name}
                   >
-                    {/* 与画布同源的配色，一眼分出系列 */}
-                    <span
-                      className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                      style={{ background: /^#[0-9a-f]{6}$/i.test(r.color ?? "") ? r.color : "var(--module-accent)" }}
-                    />
-                    <span className="truncate">{r.name}</span>
-                    {r.relCount > 0 ? <span className="ml-auto text-micro text-slate-600">{r.relCount}</span> : null}
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-1">
+                        {/* 与画布同源的配色，一眼分出系列 */}
+                        <span
+                          className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                          style={{ background: /^#[0-9a-f]{6}$/i.test(r.color ?? "") ? r.color : "var(--module-accent)" }}
+                        />
+                        <span className="truncate">{r.name}</span>
+                        {r.relCount > 0 ? <span className="ml-auto text-micro text-slate-600">{r.relCount}</span> : null}
+                      </span>
+                      {/* 表注释：AI 产出里最值钱的部分，光看表名猜不出它存什么。
+                          窄侧栏里必须 truncate —— 否则一行注释就能把整栏撑宽 */}
+                      {r.comment ? (
+                        <span className="block truncate text-[9px] leading-tight text-slate-600" title={r.comment}>
+                          {r.comment}
+                        </span>
+                      ) : null}
+                    </span>
                   </button>
                 ))}
               </div>
