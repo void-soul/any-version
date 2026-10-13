@@ -7,6 +7,7 @@
 // 屏蔽全局快捷键），并按 kind 给出对应图标与配色。
 //
 // 挂载方式与 Toast 一致：首次调用时惰性 createRoot，之后复用同一个根节点。
+import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, Info, XCircle } from "lucide-react";
@@ -124,6 +125,104 @@ function ConfirmView() {
       }
     >
       <div className="text-body text-slate-400 leading-relaxed">{message}</div>
+    </SharedModal>
+  );
+}
+
+/* ─── 命令式输入框：替代 window.prompt ─── */
+
+interface PromptState {
+  open: boolean;
+  message: string;
+  title: string;
+  placeholder: string;
+  initial: string;
+  confirmText: string;
+  resolve?: (value: string | null) => void;
+}
+
+let promptState: PromptState | null = null;
+let promptRender: (() => void) | undefined;
+let promptSeq = 0;
+
+/**
+ * 弹出主题风格输入框：`const name = await theamedPrompt(t("x.newCategoryPrompt"));`
+ * 取消时 resolve(null)，所以调用点只要判空即可，不必再问「用户是不是按了取消」。
+ *
+ * 为什么要有：`window.prompt` 是浏览器 chrome，不跟随主题、不能自定义样式，
+ * 而且它会**阻塞**事件循环——在它上面没法做「输入时实时校验重名」这类事。
+ */
+export function theamedPrompt(
+  message: string,
+  opts: { title?: string; placeholder?: string; initial?: string; confirmText?: string } = {},
+): Promise<string | null> {
+  return new Promise<string | null>((resolve) => {
+    promptSeq += 1;
+    promptState = {
+      open: true,
+      message,
+      title: opts.title ?? "",
+      placeholder: opts.placeholder ?? "",
+      initial: opts.initial ?? "",
+      confirmText: opts.confirmText ?? "",
+      resolve,
+    };
+    if (!promptRender) {
+      const host = document.createElement("div");
+      host.id = "global-theamed-prompt-root";
+      document.body.appendChild(host);
+      const root = createRoot(host);
+      promptRender = () => root.render(<PromptView key={promptSeq} />);
+    }
+    promptRender();
+  });
+}
+
+function PromptView() {
+  const { t } = useTranslation();
+  const [value, setValue] = useState(promptState?.initial ?? "");
+  const settle = (result: string | null) => {
+    const done = promptState?.resolve;
+    promptState = promptState ? { ...promptState, open: false, resolve: undefined } : null;
+    promptRender?.();
+    done?.(result);
+  };
+  // 空名按取消处理：调用点都是「名字拿来当标识」，空串会让后面出现无名分组
+  const submit = () => settle(value.trim() ? value.trim() : null);
+
+  if (!promptState) return null;
+  const { open, message, title, placeholder, confirmText } = promptState;
+  return (
+    <SharedModal
+      open={open}
+      onClose={() => settle(null)}
+      title={title || t("common.input")}
+      width={400}
+      footer={
+        <>
+          <SharedButton onClick={() => settle(null)} variant="secondary">
+            {t("common.cancel")}
+          </SharedButton>
+          <SharedButton onClick={submit} variant="primary" autoFocus>
+            {confirmText || t("common.confirm")}
+          </SharedButton>
+        </>
+      }
+    >
+      <div className="space-y-2">
+        {message && <p className="text-caption text-slate-400 leading-relaxed">{message}</p>}
+        <input
+          // autoFocus 只在首次挂载生效（key 递增保证每次调用都是新实例）
+          autoFocus
+          value={value}
+          placeholder={placeholder}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submit();
+          }}
+          className="w-full ui-input rounded-ctl px-3 py-2 text-body text-slate-200 placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent-ring)]"
+        />
+      </div>
     </SharedModal>
   );
 }

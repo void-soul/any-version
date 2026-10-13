@@ -501,8 +501,6 @@
     "starred": "Starred",
     "star": "Star (keep on top)",
     "unstar": "Remove star",
-    "newFollowGroup": "New follow group",
-    "followGroupHint": "Follow group: kept by hand, AI classification never touches it",
     "newCategoryPrompt": "New category name",
     "newSubCategory": "New subcategory",
     "newSubCategoryPrompt": "New subcategory name",
@@ -582,7 +580,9 @@
     "edgeStyle": "Line style",
     "edge_bezier": "Curved",
     "edge_smoothstep": "Orthogonal",
-    "edge_straight": "Straight"
+    "edge_straight": "Straight",
+    "create": "Create",
+    "input": "Input"
   },
   "palette": {
     "openTip": "Command palette",

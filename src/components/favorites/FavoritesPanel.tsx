@@ -43,7 +43,7 @@ import { Menu } from "../shared/Menu";
 import { useVirtualList } from "../shared/useVirtualList";
 import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
 import { toast } from "../shared/Toast";
-import { theamedConfirm } from "../shared/ThemedAlert";
+import { theamedConfirm, theamedPrompt } from "../shared/ThemedAlert";
 import VexEmptyState from "../VexEmptyState";
 import { GithubTokenDialog } from "../project/GithubTokenDialog";
 import { MarkdownRenderer } from "../ai/MarkdownRenderer";
@@ -344,11 +344,24 @@ export default function FavoritesPanel() {
     return walk(cats) || [];
   };
 
-  const createCat = async (parentId: number | null, kind: "topic" | "follow" = "topic") => {
-    const name = window.prompt(t(pickCatKey(parentId)));
+  /**
+   * 新建分类。
+   *
+   * 只保留「普通分类」一种。之前还有个 kind="follow" 的「关注分组」，已删除：
+   * 它建完之后**没有任何入口能把收藏项归进去**（唯一的归类入口是铅笔按钮，
+   * 而且默认 hover 才显形），于是用户建了一堆分组却发现「咋用啊」——
+   * 真正在用的其实一直是星标。留一个用不上的概念比不留更费解。
+   *
+   * 已存在的 follow 分组**不删数据**，按普通分类照样显示与筛选（不替用户删东西）。
+   */
+  const createCat = async (parentId: number | null) => {
+    const name = await theamedPrompt(t(pickCatKey(parentId)), {
+      title: parentId == null ? t("favorites.newCategory") : t("favorites.newSubCategory"),
+      confirmText: t("common.create"),
+    });
     if (!name?.trim()) return;
     try {
-      const id = await invoke<number>("fav_create_category", { name: name.trim(), parentId, kind });
+      const id = await invoke<number>("fav_create_category", { name: name.trim(), parentId, kind: "topic" });
       if (parentId != null) setExpandedCats((s) => new Set(s).add(parentId));
       setCategoryId(id);
       setCategoryName(name.trim());
@@ -363,7 +376,10 @@ export default function FavoritesPanel() {
 
   const renameCat = async (id: number) => {
     const cur = findCat(id);
-    const name = window.prompt(t("favorites.renameCategoryPrompt"), cur?.name || "");
+    const name = await theamedPrompt(t("favorites.renameCategoryPrompt"), {
+      title: t("favorites.renameCategory"),
+      initial: cur?.name || "",
+    });
     if (!name?.trim()) return;
     try {
       await invoke("fav_rename_category", { id, name: name.trim() });
@@ -1305,15 +1321,9 @@ export default function FavoritesPanel() {
             <Plus className="w-3 h-3 inline mr-1" />
             {t("favorites.newCategory")}
           </button>
-          {/* 关注分组：人工维护，AI 归类不会往里写 */}
-          <button
-            onClick={() => void createCat(null, "follow")}
-            className="w-full text-left px-2 py-1 rounded text-tiny text-slate-500 hover:text-amber-300 hover:bg-white/5 cursor-pointer"
-            title={t("favorites.newFollowGroup")}
-          >
-            <Star className="w-3 h-3 inline mr-1" />
-            {t("favorites.newFollowGroup")}
-          </button>
+          {/* 原先这里还有一个「+ 关注分组」（kind=follow）。已删除：它建完之后没有任何入口
+              能把收藏项归进去——真正在用的机制一直是星标（侧栏「星标」筛选 + 行内星标按钮）。
+              已存在的 follow 分组不删数据，按普通分类照样显示与筛选。 */}
 
           {cats.length === 0 && (
             <p className="text-tiny text-slate-500 px-2 py-1 leading-snug">
@@ -1864,7 +1874,6 @@ function CategoryTree({
   onSelect: (id: number, name: string) => void;
   onContextMenu: (id: number, name: string, x: number, y: number) => void;
 }) {
-  const { t } = useTranslation();
   return (
     <>
       {nodes.map((c) => {
@@ -1892,11 +1901,9 @@ function CategoryTree({
               >
                 {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
               </button>
-              <span
-                className={`truncate flex-1 py-1 ${c.kind === "follow" ? "text-amber-300/90" : ""}`}
-                title={c.kind === "follow" ? t("favorites.followGroupHint") : c.name}
-              >
-                {c.kind === "follow" && <Star className="w-2.5 h-2.5 inline mr-0.5 -mt-0.5" />}
+              {/* 分组一视同仁：kind="follow" 的区分样式已随「关注分组」功能一起删除，
+                历史遗留的 follow 分组也按普通分组显示（不替用户删数据）。 */}
+              <span className="truncate flex-1 py-1" title={c.name}>
                 {c.name}
               </span>
               <span className="pr-1 text-slate-500">{c.total}</span>

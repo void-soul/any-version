@@ -501,8 +501,6 @@
     "starred": "星标",
     "star": "加星标（特别关注）",
     "unstar": "取消星标",
-    "newFollowGroup": "新建关注分组",
-    "followGroupHint": "关注分组：人工维护，AI 归类不会改动它",
     "newCategoryPrompt": "新分类名",
     "newSubCategory": "新建子分类",
     "newSubCategoryPrompt": "新建子分类名",
@@ -582,7 +580,9 @@
     "edgeStyle": "连线样式",
     "edge_bezier": "曲线",
     "edge_smoothstep": "折线",
-    "edge_straight": "直线"
+    "edge_straight": "直线",
+    "create": "新建",
+    "input": "输入"
   },
   "palette": {
     "openTip": "全局命令面板",
