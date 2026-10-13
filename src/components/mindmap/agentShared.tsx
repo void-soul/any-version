@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import type { AiConfig } from "../ai/types";
 import { ModelSelector } from "../ai/ModelSelector";
+import { ThinkingBlock } from "../shared/ThinkingBlock";
 import type { AgentSessionRow, AiImportResult } from "./types";
 import { createEventBuffer, useEventBufferSnapshot, type EventBuffer } from "../../utils/eventBuffer";
 import { matchProjectFiles } from "./atFiles";
@@ -524,13 +525,13 @@ function ActivityLine({ e, projectRoot, t }: { e: AiProgressEntry; projectRoot?:
             ))}
           </div>
         )}
-        {/* 思考过程：模型调用工具前的想法 / 模型产出的推理文本 / 流式思考帧（长文可展开） */}
+        {/* 思考过程：模型调用工具前的想法 / 模型产出的推理文本 / 流式思考帧。
+            原来是这里自己写的一块定高 96px 的预览框，超长就看不全；
+            换成共享 ThinkingBlock（可折叠、全文可滚动、可复制）。 */}
         {(e.step === "agentThought" || e.step === "agentReasoning" || e.step === "reasoning") && !!e.text && (
-          <div className={`mt-0.5 max-h-24 overflow-y-auto whitespace-pre-wrap rounded border px-1.5 py-1 text-micro leading-4 ${
-            e.step === "agentThought"
-              ? "border-violet-400/20 bg-violet-400/[0.04] text-violet-200/80"
-              : "border-fuchsia-400/20 bg-fuchsia-400/[0.04] text-fuchsia-200/80"
-          }`} title={e.text}>{e.text}</div>
+          <div className="mt-0.5">
+            <ThinkingBlock text={e.text} pending={!e.done} />
+          </div>
         )}
         {/* 工具参数：折叠展示，避免长 JSON 把时间线撑爆 */}
         {e.step === "agentTool" && !!e.args && e.args !== "{}" && (
@@ -761,6 +762,15 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
     }
     return null;
   }, [entries]);
+  /** 思考全文（不因 done 而清空）：供 <ThinkingBlock> 展示。
+   *  后端从这一版起每帧都带累积全文，所以展开后是完整推理链条，不再是尾部 200 字。 */
+  const thinkingText = useMemo(() => {
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i];
+      if (e.step === "reasoning") return { text: e.text ?? "", done: !!e.done };
+    }
+    return null;
+  }, [entries]);
 
   // 时间线：折叠重复的 stream / reasoning 进行中帧（与旧 AiProgressLog 一致）
   const timeline = useMemo(() => {
@@ -929,16 +939,16 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
                 </div>
               </div>
             ) : lastReasoning ? (
-              // 推理模型「只思考不写字」阶段：展示思考尾部预览，屏幕一直在动
+              // 推理模型「只思考不写字」阶段：共享的思考块（可折叠、全文可复制）。
+              // 原来是这里自己写的一份预览框，只显示尾部 200 字。
               <div className="flex items-start gap-1.5">
                 <span className="mt-0.5 shrink-0"><Brain className="h-3 w-3 animate-pulse text-fuchsia-300" /></span>
                 <div className="min-w-0 flex-1">
-                  <div className="text-micro text-fuchsia-200/90">{t("mindmap.aiStepReasoning", { n: lastReasoning.length })}</div>
-                  <div className="mt-0.5 max-h-[72px] overflow-y-auto rounded border border-fuchsia-400/15 bg-fuchsia-400/[0.03] px-1.5 py-1 font-mono text-[8px] leading-3.5 whitespace-pre-wrap text-fuchsia-100/80">
-                    {lastReasoning.text || "…"}
-                    <span className="ml-0.5 inline-block h-2 w-1 animate-pulse bg-fuchsia-300 align-middle" />
-                  </div>
-                  <div className="mt-0.5 font-mono text-[7px] text-slate-500">{fmtNum(lastReasoning.length)} chars</div>
+                  <ThinkingBlock
+                    text={thinkingText?.text ?? ""}
+                    pending={!thinkingText?.done}
+                    tail={lastReasoning.text}
+                  />
                 </div>
               </div>
             ) : (

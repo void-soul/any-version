@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { Bot, Send, Sparkles, Wrench, CheckCircle, AlertTriangle } from "lucide-react";
 import type { AiConfig } from "./types";
 import { ModelSelector } from "./ModelSelector";
+import { ThinkingBlock } from "../shared/ThinkingBlock";
 
 /** 后端 install_agent::InstallAgentStep */
 interface AgentStep {
@@ -20,7 +21,7 @@ interface AgentReply {
 }
 
 interface ChatLine {
-  role: "user" | "agent" | "step";
+  role: "user" | "agent" | "step" | "reasoning";
   text: string;
   tool?: string;
   ok?: boolean;
@@ -64,7 +65,12 @@ export default function InstallAgentPanel({ seed }: { seed?: string } = {}) {
   useEffect(() => {
     const unlisten = listen<AgentStep>("install-agent-progress", (e) => {
       const s = e.payload;
-      if (s.step === "thinking") return;
+      // 以前这里把 step === "thinking" 整行丢掉，于是「思考」在助手里什么都不显示；
+      // 后端现在发的是 step === "reasoning"（模型这一轮的真实思考内容）。
+      if (s.step === "reasoning") {
+        setLines((prev) => [...prev, { role: "reasoning", text: s.text }]);
+        return;
+      }
       setLines((prev) => [...prev, { role: "step", text: s.text, tool: s.tool, ok: s.ok }]);
     });
     return () => { unlisten.then((fn) => fn()); };
@@ -149,6 +155,13 @@ export default function InstallAgentPanel({ seed }: { seed?: string } = {}) {
               <div key={i} className="flex gap-2">
                 <Bot className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-[var(--module-accent)]" />
                 <div className="text-caption text-slate-200 whitespace-pre-wrap break-all">{line.text}</div>
+              </div>
+            );
+          }
+          if (line.role === "reasoning") {
+            return (
+              <div key={i} className="pl-1">
+                <ThinkingBlock text={line.text} pending={busy} />
               </div>
             );
           }

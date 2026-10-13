@@ -114,7 +114,7 @@ export interface CheckResult {
 /** 后端实时进度事件（favorites-progress）：导入 / 归类 / 失效检测共用一个载荷。
  *  多个导入可以同时跑，所以带 task 用于分行展示，否则后一个会盖掉前一个。 */
 export interface FavoritesProgress {
-  stage: "import" | "classify" | "check";
+  stage: "import" | "classify" | "reasoning" | "check";
   /** github | bilibili | zhihu | classify | check */
   task?: string;
   source?: string | null;

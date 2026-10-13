@@ -42,6 +42,7 @@ import { SharedButton } from "../shared/Button";
 import { Menu } from "../shared/Menu";
 import { useVirtualList } from "../shared/useVirtualList";
 import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
+import { ThinkingBlock } from "../shared/ThinkingBlock";
 import { toast } from "../shared/Toast";
 import { theamedConfirm, theamedPrompt } from "../shared/ThemedAlert";
 import VexEmptyState from "../VexEmptyState";
@@ -170,7 +171,10 @@ export default function FavoritesPanel() {
       "favorites-agent-progress",
       (event) => {
         const s = event.payload;
-        if (s.step === "thinking" || s.step === "done") return;
+        // 以前这里连 step === "thinking" 一起过滤掉，于是「思考」在收藏检索里
+        // 什么都不显示；后端现在发的是 step === "reasoning"（模型的真实思考内容），
+        // 要收下来渲染成可展开的思考块。
+        if (s.step === "done") return;
         setAiSteps((prev) => [...prev, s]);
       },
     );
@@ -1218,6 +1222,14 @@ export default function FavoritesPanel() {
                   </>
                 )}
               </div>
+              {/* 归类过程中模型对这批的真实思考。原来完全没有上报，前端只看到进度数字；
+                  分类错了也无从查它当时是怎么判断的。
+                  注意它**不能另起一行**：progressKeyOf 用 task 作行键，reasoning 事件
+                  与归类事件同 key，另起一个 stage 会让两边互相覆盖。
+                  所以后端在 reasoning 帧里一并带上分类进度，这里渲染在同一行。 */}
+              {p.stage === "reasoning" && !!p.message && (
+                <ThinkingBlock text={p.message} pending />
+              )}
               <div className="h-1 rounded bg-white/5 overflow-hidden">
                 {p.stage === "check" && (p.checkTotal ?? 0) > 0 ? (
                   <div
@@ -1588,15 +1600,21 @@ export default function FavoritesPanel() {
                   </button>
                 </div>
 
-                {/* 检索过程：让用户看得见 agent 到底查了什么，而不是黑箱等结果 */}
+                {/* 检索过程：让用户看得见 agent 到底查了什么，而不是黑箱等结果。
+                    reasoning 步骤（模型的真实思考）走共享的 ThinkingBlock——
+                    以前它被上面的过滤器整个丢掉，前端只显示工具调用。 */}
                 {aiSteps.length > 0 && (
-                  <div ref={aiLogRef} className="max-h-24 shrink-0 overflow-y-auto rounded-ctl border border-white/5 bg-black/30 p-2 space-y-1">
-                    {aiSteps.map((s, i) => (
-                      <div key={i} className="text-micro text-slate-500 flex gap-1.5">
-                        <span className="flex-shrink-0 text-slate-600">{AI_TOOL_LABEL[s.tool ?? ""] ?? "过程"}</span>
-                        <span className="min-w-0 break-all">{s.text.slice(0, 160)}</span>
-                      </div>
-                    ))}
+                  <div ref={aiLogRef} className="max-h-40 shrink-0 overflow-y-auto rounded-ctl border border-white/5 bg-black/30 p-2 space-y-1">
+                    {aiSteps.map((s, i) =>
+                      s.step === "reasoning" ? (
+                        <ThinkingBlock key={i} text={s.text} pending={aiBusy && i === aiSteps.length - 1} />
+                      ) : (
+                        <div key={i} className="text-micro text-slate-500 flex gap-1.5">
+                          <span className="flex-shrink-0 text-slate-600">{AI_TOOL_LABEL[s.tool ?? ""] ?? "过程"}</span>
+                          <span className="min-w-0 break-all">{s.text.slice(0, 160)}</span>
+                        </div>
+                      ),
+                    )}
                   </div>
                 )}
 
