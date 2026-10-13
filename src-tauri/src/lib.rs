@@ -751,10 +751,6 @@ pub fn run() {
             commands::ai::skills::get_skill_overview,
             commands::ai::skills::get_skills_dir,
             commands::ai::skills::set_skills_dir,
-            // 多技能库：一个 tab = 一个根目录
-            commands::ai::skills::list_skill_stores,
-            commands::ai::skills::add_skill_store,
-            commands::ai::skills::remove_skill_store,
             commands::ai::skills::list_project_skill_counts,
             commands::ai::skills::get_skill_meta,
             commands::ai::skills::update_skill_meta,
