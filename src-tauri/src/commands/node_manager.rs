@@ -474,6 +474,11 @@ pub fn find_project(id: &str) -> Option<NodeProjectDef> {
 pub(crate) fn find_node_projects_dir() -> Option<PathBuf> {
     let mut search_dirs: Vec<PathBuf> = Vec::new();
 
+    // 开发构建：**仓库源目录排第一**（原因见 `utils::dev_repo_root`）
+    if let Some(repo) = crate::commands::utils::dev_repo_root() {
+        search_dirs.push(repo);
+    }
+
     // 优先在 Tauri 2 打包后的官方资源目录下查找
     if let Some(res_dir) = crate::commands::utils::get_resource_dir() {
         search_dirs.push(res_dir);
@@ -3472,6 +3477,67 @@ mod tests {
         assert!(!version_satisfies("20.0.0", ">20"));
         assert!(version_satisfies("18.0.0", "<=18"));
         assert!(version_satisfies("20.5.0", "20"));
+    }
+
+    /// 新加的定义文件必须在服务列表里看得到。
+    ///
+    /// 这守的是「新加的服务不出现」：资源目录（`target/debug/_up_`）里那份
+    /// `node-projects/*.json` 是**打包时**拷的副本，后来新增的 json 不会同步过去。
+    /// 而搜索顺序曾把资源目录排在第一位、命中即 return，于是仓库里的新定义永远读不到。
+    ///
+    /// 这里把资源目录设成 `target/debug`（与 `tauri dev` 运行时一致）来复现该场景。
+    #[test]
+    fn newly_added_definition_is_visible_in_dev() {
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        let dev_target = repo.join("src-tauri").join("target").join("debug");
+        crate::commands::utils::set_resource_dir(dev_target.clone());
+
+        let picked = find_node_projects_dir().expect("应能找到 node-projects 目录");
+        let picked = std::fs::canonicalize(&picked).unwrap();
+        // 开发构建必须用仓库源目录，而不是 target/debug/_up_ 里的打包副本
+        assert_eq!(
+            picked,
+            std::fs::canonicalize(repo.join("node-projects")).unwrap(),
+            "开发构建应优先命中仓库里的 node-projects"
+        );
+        assert!(
+            !picked.starts_with(&dev_target),
+            "开发构建不该用 target/debug 下的打包副本（它不会随新增定义更新）"
+        );
+        assert!(
+            NodeProjectRegistry::load().find("artex").is_some(),
+            "artex 应出现在服务注册表里"
+        );
+    }
+
+    /// 同一颗地雷也在另两个注册表上：`ai-tools` / `projects` 曾共用「资源目录优先」的
+    /// 搜索顺序，新增的 `ai-tools/*.json`、`projects/*/*.json` 同样读不到。
+    #[test]
+    fn dev_build_prefers_source_tree_for_all_definition_registries() {
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        crate::commands::utils::set_resource_dir(repo.join("src-tauri").join("target").join("debug"));
+        let under_target = |p: &std::path::Path| {
+            p.starts_with(repo.join("src-tauri").join("target"))
+        };
+
+        let ai_tools = crate::commands::ai_registry::AiToolRegistry::find_registry_dir();
+        assert_eq!(
+            std::fs::canonicalize(&ai_tools).unwrap(),
+            std::fs::canonicalize(repo.join("ai-tools")).unwrap(),
+            "ai-tools 注册表应命中仓库源目录"
+        );
+
+        let projects = crate::commands::project::registry::load_registry();
+        assert!(
+            !projects.is_empty(),
+            "projects 注册表应从仓库源目录读到定义"
+        );
     }
 
     /// ARTEX 的定义文件必须能被解析成完整的 docker 服务。

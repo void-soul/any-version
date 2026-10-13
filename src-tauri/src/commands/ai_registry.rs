@@ -603,10 +603,15 @@ impl AiToolRegistry {
     pub(crate) fn find_registry_dir() -> PathBuf {
         let mut search_dirs: Vec<PathBuf> = Vec::new();
 
-        // 优先在 Tauri 2 打包后的官方资源目录下查找
-        if let Some(res_dir) = crate::commands::utils::get_resource_dir() {
-            search_dirs.push(res_dir);
-        }
+            // 开发构建优先用仓库源目录（原因见 `utils::dev_repo_root`）
+            if let Some(repo) = crate::commands::utils::dev_repo_root() {
+                search_dirs.push(repo);
+            }
+
+            // 优先在 Tauri 2 打包后的官方资源目录下查找
+            if let Some(res_dir) = crate::commands::utils::get_resource_dir() {
+                search_dirs.push(res_dir);
+            }
 
         // exe 同目录及向上 5 层
         if let Ok(exe) = std::env::current_exe() {

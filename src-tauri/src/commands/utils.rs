@@ -480,6 +480,23 @@ pub fn get_resource_dir() -> Option<PathBuf> {
     RESOURCE_DIR.get().cloned()
 }
 
+/// 开发构建下的**仓库根目录**（`src-tauri` 的上一级）；生产构建恒为 `None`。
+///
+/// 三个定义注册表（`ai-tools` / `projects` / `node-projects`）都要用它把**仓库源目录**
+/// 排在搜索顺序第一位。原因：Tauri 只在**打包时**把定义文件拷进资源目录
+/// （`target/debug/_up_/…`），之后在仓库里新增的 json 不会同步到那份副本。若开发时优先搜
+/// 资源目录，新加的定义就读不到 —— 表现为「新加的服务 / 工具 / 项目不出现」，而且没有任何报错。
+///
+/// 生产构建没有仓库源目录，仍走资源目录。
+pub fn dev_repo_root() -> Option<PathBuf> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|p| p.to_path_buf())
+}
+
 /// 查找 bin/ 目录下的可执行文件或关联文件（如 ffmpeg.exe, mediamtx.exe, mediamtx.yml 等）
 /// 单一路径策略：只在 data_dir/bin 下查找，从程序根目录读取。
 pub fn find_bin_file(filename: &str) -> PathBuf {
