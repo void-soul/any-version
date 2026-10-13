@@ -134,6 +134,8 @@ interface DockerEnv {
 interface DockerServiceConfig {
   id: string;
   port: number;
+  /** 第二个对外端口；0 = 该服务只发布一个端口（此时弹窗不显示这个输入框） */
+  port2: number;
   pgPassword: string;
   dir: string;
   composePath: string;
@@ -842,12 +844,19 @@ function DockerConfigDialog({
   const [pg, setPg] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  /** 第二个对外端口（部分服务发布两个，如 ARTEX）；空串 = 不显示/不提交 */
+  const [port2, setPort2] = useState("");
+  const [hasPort2, setHasPort2] = useState(false);
 
   useEffect(() => {
     void invoke<DockerServiceConfig>("docker_service_config", { projectId: project.id })
       .then((c) => {
         setDir(c.dir);
         setPort(String(c.port));
+        // 服务不发布第二个端口时（c.port2 = 0）就别显示那个输入框，
+        // 否则会给用户一个改了却不起作用的字段
+        setHasPort2((c.port2 ?? 0) > 0);
+        setPort2(c.port2 > 0 ? String(c.port2) : "");
         setPg(c.pgPassword);
       })
       .catch((e) => setMsg({ ok: false, text: String(e) }));
@@ -859,15 +868,23 @@ function DockerConfigDialog({
       setMsg({ ok: false, text: t("nodeproj.configPortInvalid") });
       return;
     }
+    const p2 = Math.round(Number(port2 || 0));
+    if (port2.trim() && (!Number.isFinite(p2) || p2 <= 0)) {
+      setMsg({ ok: false, text: t("nodeproj.configPortInvalid") });
+      return;
+    }
     setBusy(true);
     setMsg(null);
     try {
       const c = await invoke<DockerServiceConfig>("docker_save_service_config", {
         projectId: project.id,
         port: p,
+        port2: p2 || null,
         pgPassword: pg,
       });
       setPort(String(c.port));
+      setHasPort2((c.port2 ?? 0) > 0);
+      setPort2(c.port2 > 0 ? String(c.port2) : "");
       setPg(c.pgPassword);
       setMsg({ ok: true, text: t("nodeproj.configSaved") });
       onSaved();
@@ -905,6 +922,17 @@ function DockerConfigDialog({
             className="w-full rounded-ctl bg-white/5 border border-white/10 px-2.5 py-1.5 text-slate-100 outline-none focus:border-[var(--module-accent-ring)]"
           />
         </label>
+        {hasPort2 && (
+          <label className="block space-y-1">
+            <span className="text-slate-400">{t("nodeproj.configPort2")}</span>
+            <input
+              value={port2}
+              onChange={(e) => setPort2(e.target.value)}
+              inputMode="numeric"
+              className="w-full rounded-ctl bg-white/5 border border-white/10 px-2.5 py-1.5 text-slate-100 outline-none focus:border-[var(--module-accent-ring)]"
+            />
+          </label>
+        )}
         <label className="block space-y-1">
           <span className="text-slate-400">{t("nodeproj.configPgPassword")}</span>
           <input

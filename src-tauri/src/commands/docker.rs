@@ -205,6 +205,10 @@ pub struct LocalConfig {
     /// 0 = 尚未设置，取定义里的 defaultPort
     #[serde(default)]
     pub port: u16,
+    /// 第二个对外端口（部分服务要发布两个，如 ARTEX 的界面 + API）。
+    /// 0 = 该服务不需要第二个端口
+    #[serde(default)]
+    pub port2: u16,
     #[serde(default)]
     pub pg_password: String,
 }
@@ -217,6 +221,8 @@ pub struct ServiceSpec<'a> {
     pub id: &'a str,
     /// 定义里的默认端口（`LocalConfig.port` 为 0 时用它）
     pub port: u16,
+    /// 第二个对外端口的默认值（`LocalConfig.port2` 为 0 时用它；0 = 不发布第二个端口）
+    pub port2: u16,
     /// compose 项目名（`-p`），与用户自己的 compose 项目隔离
     pub project: &'a str,
     /// 需要持久化的挂载目录名（相对服务目录），安装时创建
@@ -237,8 +243,13 @@ pub fn docker_dir(id: &str) -> PathBuf {
 ///
 /// `{{dir}}` 统一转成正斜杠：compose 在 Windows 上也认正斜杠，而反斜杠在 YAML 里
 /// 是转义符（`C:\Users` 会被解析器当成非法转义），直接写进去必然报错。
-pub fn render_template(tpl: &str, port: u16, pg_password: &str, dir: &str) -> String {
+///
+/// `{{port2}}` 是**可选的**第二个对外端口：模板里不写它就原样留着，不会被误替换。
+/// 存在的理由是端口会撞车 —— ARTEX 的第二个端口原本写死 8788，而 Kira 自带的 twoapi
+/// 代理默认就监听 8788，于是 `docker compose up` 必然失败在 "ports are not available"。
+pub fn render_template(tpl: &str, port: u16, port2: u16, pg_password: &str, dir: &str) -> String {
     tpl.replace("{{port}}", &port.to_string())
+        .replace("{{port2}}", &port2.to_string())
         .replace("{{pg_password}}", pg_password)
         .replace("{{dir}}", &dir.replace('\\', "/"))
 }
@@ -274,6 +285,8 @@ pub fn generate_password() -> String {
 pub struct DockerServiceConfig {
     pub id: String,
     pub port: u16,
+    /// 第二个对外端口；0 = 该服务只发布一个端口
+    pub port2: u16,
     pub pg_password: String,
     pub dir: String,
     pub compose_path: String,
@@ -286,6 +299,7 @@ fn to_view(spec: &ServiceSpec, dir: &Path, cfg: &LocalConfig) -> DockerServiceCo
     DockerServiceConfig {
         id: spec.id.to_string(),
         port: cfg.port,
+        port2: cfg.port2,
         pg_password: cfg.pg_password.clone(),
         dir: dir.to_string_lossy().to_string(),
         compose_path: dir.join("docker-compose.yml").to_string_lossy().to_string(),
@@ -308,6 +322,11 @@ pub fn load_config_in(dir: &Path, spec: &ServiceSpec) -> LocalConfig {
     if cfg.port == 0 {
         cfg.port = spec.port;
     }
+    // 第二个端口同理；但定义里没给（spec.port2 = 0）就保持 0，
+    // 别把「不需要第二个端口」的服务凭空塞一个端口进去
+    if cfg.port2 == 0 {
+        cfg.port2 = spec.port2;
+    }
     if cfg.pg_password.trim().is_empty() {
         cfg.pg_password = generate_password();
     }
@@ -318,8 +337,8 @@ pub fn load_config_in(dir: &Path, spec: &ServiceSpec) -> LocalConfig {
 /// 记录用户改动。**只有 kira.json 是权威**，其余两个都可由它重建。
 pub fn write_files_in(dir: &Path, spec: &ServiceSpec, cfg: &LocalConfig) -> Result<(), String> {
     let dir_str = dir.to_string_lossy().to_string();
-    let compose = render_template(spec.compose_tpl, cfg.port, &cfg.pg_password, &dir_str);
-    let env = render_template(spec.env_tpl, cfg.port, &cfg.pg_password, &dir_str);
+    let compose = render_template(spec.compose_tpl, cfg.port, cfg.port2, &cfg.pg_password, &dir_str);
+    let env = render_template(spec.env_tpl, cfg.port, cfg.port2, &cfg.pg_password, &dir_str);
     let compose_path = dir.join("docker-compose.yml");
     fs::write(&compose_path, compose)
         .map_err(|e| format!("写入 {} 失败: {}", compose_path.display(), e))?;
@@ -359,10 +378,18 @@ pub fn save_config_in(
     dir: &Path,
     spec: &ServiceSpec,
     port: u16,
+    port2: u16,
     pg_password: &str,
 ) -> Result<DockerServiceConfig, String> {
     if port < 1024 {
         return Err("端口需 ≥ 1024（低端口是系统保留区，且多半已被占用）".to_string());
+    }
+    // 第二个端口可选：不填（0）就沿用定义里的默认值；填了才校验
+    if port2 != 0 && port2 < 1024 {
+        return Err("第二个端口需 ≥ 1024（低端口是系统保留区，且多半已被占用）".to_string());
+    }
+    if port2 != 0 && port2 == port {
+        return Err("两个端口不能相同".to_string());
     }
     let pg = pg_password.trim();
     if pg.len() < 8 {
@@ -370,6 +397,8 @@ pub fn save_config_in(
     }
     let cfg = LocalConfig {
         port,
+        // 填 0 时回落定义默认值，别把 0 写进 kira.json —— 那会让 compose 绑到随机端口
+        port2: if port2 == 0 { spec.port2 } else { port2 },
         pg_password: pg.to_string(),
     };
     fs::create_dir_all(dir).map_err(|e| format!("创建 {} 失败: {}", dir.display(), e))?;
@@ -434,9 +463,13 @@ mod tests {
 
     #[test]
     fn render_replaces_all_placeholders_and_normalizes_slashes() {
-        let tpl = "ports:\n  - 127.0.0.1:{{port}}:8787\n  - {{dir}}/data:/data\nPG={{pg_password}}";
-        let got = render_template(tpl, 8787, "pw123456", r"C:\Users\me\AppData\docker\artex");
+        let tpl = "ports:\n  - 127.0.0.1:{{port}}:8787\n  - 127.0.0.1:{{port2}}:8788\n  - {{dir}}/data:/data\nPG={{pg_password}}";
+        let got = render_template(tpl, 8787, 8789, "pw123456", r"C:\Users\me\AppData\docker\artex");
         assert!(got.contains("127.0.0.1:8787:8787"));
+        assert!(
+            got.contains("127.0.0.1:8789:8788"),
+            "第二个对外端口也要能被替换，否则会绑到写死的端口上（实测撞了 Kira 的 8788）"
+        );
         assert!(got.contains("C:/Users/me/AppData/docker/artex/data:/data"));
         assert!(got.contains("PG=pw123456"));
         // 反斜杠必须一个不剩：YAML 里它是转义符，留着必然解析失败
@@ -506,6 +539,7 @@ mod tests {
         ServiceSpec {
             id: "demo",
             port: 8787,
+            port2: 8789,
             project: "kira-demo",
             volumes,
             compose_tpl: compose,
@@ -547,11 +581,19 @@ mod tests {
         let s = spec("port: {{port}}\nPG={{pg_password}}", "", &vols);
         prepare_in(&dir, &s).unwrap();
 
-        assert!(save_config_in(&dir, &s, 80, "longenough").is_err(), "低端口应拒绝");
-        assert!(save_config_in(&dir, &s, 8788, "short").is_err(), "密码过短应拒绝");
+        assert!(save_config_in(&dir, &s, 80, 0, "longenough").is_err(), "低端口应拒绝");
+        assert!(save_config_in(&dir, &s, 8788, 0, "short").is_err(), "密码过短应拒绝");
+        assert!(
+            save_config_in(&dir, &s, 9000, 9000, "longenough").is_err(),
+            "两个端口相同应被拒"
+        );
 
-        let cfg = save_config_in(&dir, &s, 9000, "newpassword").expect("合法值应成功");
+        let cfg = save_config_in(&dir, &s, 9000, 0, "newpassword").expect("合法值应成功");
         assert_eq!(cfg.port, 9000);
+        assert_eq!(
+            cfg.port2, 8789,
+            "port2 传 0 时应回落定义默认值，而不是把 0 写进配置让 compose 绑随机端口"
+        );
         let compose = fs::read_to_string(dir.join("docker-compose.yml")).unwrap();
         assert!(compose.contains("port: 9000"), "改端口后模板要重渲");
         assert!(compose.contains("newpassword"));

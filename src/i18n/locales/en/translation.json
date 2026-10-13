@@ -4143,7 +4143,8 @@
     "configSaved": "Saved — recreate the containers to apply",
     "init": "Initialize",
     "initTitle": "Download this service's runtime assets (runs once, see the log panel). Until it finishes the service may start but stay unusable",
-    "initBanner": "This service needs a one-time initialization: it downloads runtime assets (a few hundred MB up to 1.5 GB). Watch the log below."
+    "initBanner": "This service needs a one-time initialization: it downloads runtime assets (a few hundred MB up to 1.5 GB). Watch the log below.",
+    "configPort2": "Second port"
   },
   "mcp": {
     "fromPreset": "Add from preset:",

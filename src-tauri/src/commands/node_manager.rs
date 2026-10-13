@@ -39,6 +39,11 @@ pub struct NodeProjectDef {
     pub description: String,
     #[serde(default = "default_port")]
     pub default_port: u16,
+    /// 第二个对外端口的默认值（部分服务要发布两个，如 ARTEX 的界面 + API）。
+    /// 0 = 只发布第一个端口；**别再把第二个端口写死** —— 端口会撞车：
+    /// ARTEX 原本写死 8788，而 Kira 自带的 twoapi 代理默认就监听 8788。
+    #[serde(default)]
+    pub default_port2: u16,
     #[serde(default = "default_web_path")]
     pub web_path: String,
     /// node 版本 semver 约束，如 ">=20"；空串表示不约束。
@@ -196,8 +201,9 @@ impl NodeProjectDef {
     pub fn docker_spec(&self) -> Option<super::docker::ServiceSpec<'_>> {
         let d = self.docker.as_ref()?;
         Some(super::docker::ServiceSpec {
-            id: &self.id,
-            port: self.effective_port(),
+                id: &self.id,
+                port: self.effective_port(),
+                port2: self.default_port2,
             project: if d.project.trim().is_empty() {
                 self.id.as_str()
             } else {
@@ -2085,21 +2091,24 @@ pub fn docker_service_config(
 /// 所以前端必须提示「需要删掉数据卷重建」——这个后果不该由后端静默兜底。
 #[tauri::command]
 pub fn docker_save_service_config(
-    project_id: String,
-    port: u16,
-    pg_password: String,
-) -> Result<crate::commands::docker::DockerServiceConfig, String> {
-    let def = find_project(&project_id).ok_or_else(|| format!("未找到项目: {}", project_id))?;
-    let spec = def
-        .docker_spec()
-        .ok_or_else(|| format!("{} 不是 Docker 服务", def.display_name))?;
-    crate::commands::docker::save_config_in(
-        &crate::commands::docker::docker_dir(&def.id),
-        &spec,
-        port,
-        &pg_password,
-    )
-}
+        project_id: String,
+        port: u16,
+        // None / 0 = 沿用定义里的默认值（前端对「只发布一个端口」的服务不传这个）
+        port2: Option<u16>,
+        pg_password: String,
+    ) -> Result<crate::commands::docker::DockerServiceConfig, String> {
+        let def = find_project(&project_id).ok_or_else(|| format!("未找到项目: {}", project_id))?;
+        let spec = def
+            .docker_spec()
+            .ok_or_else(|| format!("{} 不是 Docker 服务", def.display_name))?;
+        crate::commands::docker::save_config_in(
+            &crate::commands::docker::docker_dir(&def.id),
+            &spec,
+            port,
+            port2.unwrap_or(0),
+            &pg_password,
+        )
+    }
 
 #[tauri::command]
 pub async fn npm_install(app: tauri::AppHandle, project_id: String) -> Result<(), String> {
@@ -3540,6 +3549,34 @@ mod tests {
         );
     }
 
+    /// ARTEX 的第二个对外端口**不许写死**。
+    ///
+    /// 写死过一次（`127.0.0.1:8788:8788`），而 Kira 自带的 twoapi 代理默认就监听 8788
+    /// （`buddy/twoapi::DEFAULT_PORT`），于是 `docker compose up` 必然失败在
+    /// `ports are not available`，而且错误信息完全指不到「是你自己的应用占了端口」。
+    #[test]
+    fn artex_second_port_is_configurable_and_does_not_collide() {
+        let raw = include_str!("../../../node-projects/artex.json");
+        let def: NodeProjectDef = serde_json::from_str(raw).expect("artex.json 应能解析");
+        assert_eq!(def.default_port2, 8789, "第二个端口要有自己的默认值");
+        assert_ne!(
+            def.default_port2, 8788,
+            "8788 是 Kira twoapi 代理的默认端口，当默认值必然撞车"
+        );
+        let d = def.docker.as_ref().expect("artex 是 docker 服务");
+        assert!(
+            d.compose.contains("ARTEX_PORT2"),
+            "第二个端口要走模板变量，不能写死"
+        );
+        assert!(
+            !d.compose.contains("127.0.0.1:8788:8788"),
+            "compose 里仍有写死的 8788"
+        );
+        assert!(d.env.contains("ARTEX_PORT2={{port2}}"), "env 要暴露该变量");
+        // 两个默认端口还不能相同（compose 会自己报错，但那时已经创建了卷）
+        assert_ne!(def.default_port, def.default_port2);
+    }
+
     /// ARTEX 的定义文件必须能被解析成完整的 docker 服务。
     ///
     /// 为什么需要这条：`serde` 默认**忽略未知字段**，所以模板里拼错一个字段名
@@ -3585,6 +3622,7 @@ mod tests {
             icon: String::new(),
             description: String::new(),
             default_port: 3080,
+            default_port2: 0,
             web_path: "http://127.0.0.1:{port}".into(),
             node_requirement: String::new(),
             runtime: String::new(),
@@ -3623,6 +3661,7 @@ mod tests {
             icon: String::new(),
             description: String::new(),
             default_port: 3080,
+            default_port2: 0,
             web_path: "http://127.0.0.1:{port}".into(),
             node_requirement: String::new(),
             runtime: String::new(),
@@ -4008,6 +4047,7 @@ mod tests {
             icon: String::new(),
             description: String::new(),
             default_port: 8788,
+            default_port2: 0,
             web_path: String::new(),
             node_requirement: String::new(),
             runtime: "python".into(),
