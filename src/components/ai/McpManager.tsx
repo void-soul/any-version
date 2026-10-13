@@ -794,7 +794,7 @@ export default function McpManager() {
               return (
                 <div
                   key={p.id}
-                  className={`flex items-start gap-1.5 px-1.5 py-1.5 rounded-ctl border transition-colors ${
+                  className={`flex items-center gap-1.5 px-1.5 py-1.5 rounded-ctl border transition-colors ${
                     viewing
                       ? "border-[var(--module-accent-ring)] bg-[var(--module-accent-soft)]"
                       : "border-transparent hover:bg-white/5"
@@ -809,40 +809,40 @@ export default function McpManager() {
                       return next;
                     })}
                     title={t("skillmgr.projPickAsTarget")}
-                    className="w-3 h-3 mt-0.5 accent-[var(--module-accent)] flex-shrink-0 cursor-pointer"
+                    className="w-3 h-3 accent-[var(--module-accent)] flex-shrink-0 cursor-pointer"
                   />
+                  {/*
+                    行的结构与技能页一致：勾选框 + 信息块（名称 / 路径）+ 右侧一排控件。
+                    **所有控件都必须是信息块的兄弟节点** —— 之前「打开目录」被放进了信息块
+                    内部的第二行，而删除按钮在块外第一行，两个图标于是落在不同高度、看着像错位。
+                  */}
                   <button onClick={() => setSelProject(p.id)} className="flex-1 min-w-0 text-left cursor-pointer">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-tiny font-semibold text-slate-200 truncate flex-1">
-                        {p.name || p.path}
-                      </span>
-                      {/* 数量 0 也显示：`没装过` 与 `还没算出来` 必须能一眼分开，
-                          藏起来就退化成「不知道有没有装」 */}
-                      <span
-                        className={`px-1.5 py-0.5 rounded text-micro font-semibold flex-shrink-0 ${
-                          n > 0 ? "bg-emerald-500/15 text-emerald-400" : "bg-white/5 text-slate-500"
-                        }`}
-                        title={t("mcp.projMcpCountHint", { n })}
-                      >
-                        {n}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <div className="text-micro text-slate-500 font-mono truncate flex-1">{p.path}</div>
-                      {/* 打开项目目录：装完想去项目里看一眼 .mcp.json 长什么样 */}
-                      <button
-                        onClick={() => void openPath(p.path).catch((e) => alertError(String(e)))}
-                        className="text-slate-600 hover:text-[var(--module-accent)] cursor-pointer flex-shrink-0"
-                        title={t("mcp.projectOpenDir")}
-                      >
-                        <FolderOpen className="w-3 h-3" />
-                      </button>
-                    </div>
+                    <div className="text-tiny font-semibold text-slate-200 truncate">{p.name || p.path}</div>
+                    <div className="text-micro text-slate-500 font-mono truncate">{p.path}</div>
+                  </button>
+                  {/* 数量 0 也显示：`没装过` 与 `还没算出来` 必须能一眼分开，
+                      藏起来就退化成「不知道有没有装」。做成可点：它本来就是「这个项目装了多少」的入口 */}
+                  <button
+                    onClick={() => setSelProject(p.id)}
+                    className={`px-1.5 py-0.5 rounded text-micro font-semibold flex-shrink-0 cursor-pointer ${
+                      n > 0 ? "bg-emerald-500/15 text-emerald-400" : "bg-white/5 text-slate-500"
+                    }`}
+                    title={t("mcp.projMcpCountHint", { n })}
+                  >
+                    {n}
+                  </button>
+                  {/* 打开项目目录：装完想去项目里看一眼 .mcp.json 长什么样 */}
+                  <button
+                    onClick={() => void openPath(p.path).catch((e) => alertError(String(e)))}
+                    className="text-slate-600 hover:text-[var(--module-accent)] cursor-pointer flex-shrink-0"
+                    title={t("mcp.projectOpenDir")}
+                  >
+                    <FolderOpen className="w-3 h-3" />
                   </button>
                   {/* 删除项目条目（只删清单记录，项目目录里的 .mcp.json 一概不动） */}
                   <button
                     onClick={() => askRemoveProject(p)}
-                    className="text-slate-600 hover:text-red-400 cursor-pointer flex-shrink-0 mt-0.5"
+                    className="text-slate-600 hover:text-red-400 cursor-pointer flex-shrink-0"
                     title={t("skillmgr.projRemove")}
                   >
                     <Trash2 className="w-3 h-3" />
