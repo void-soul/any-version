@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { useTranslation } from "react-i18next";
 import {
   Plug,
@@ -117,6 +118,8 @@ export default function McpManager() {
   const [selProject, setSelProject] = useState<string>("");
   const [projMcps, setProjMcps] = useState<ProjectMcp[]>([]);
   const [projBusy, setProjBusy] = useState<string>("");
+  /** 勾选的项目 = 安装目标（批量往多个项目装同一个 MCP） */
+  const [pickedProjects, setPickedProjects] = useState<Set<string>>(new Set());
   /** 仓库区折叠（与技能安装页的「技能库」通栏一致） */
   const [repoCollapsed, setRepoCollapsed] = useState(false);
   /** 各项目已装数量（左侧列表上的数字；只拉当前项目的详情太慢，这里各存一份计数） */
@@ -294,11 +297,21 @@ export default function McpManager() {
 
   /// 装给当前项目 / 从当前项目移除
   const installToProject = async (id: string) => {
-    if (!selProject) return;
+    // 没勾选项目时退回「当前正在看的那个」，免得按钮点了没反应
+    const targets = pickedProjects.size > 0 ? [...pickedProjects] : selProject ? [selProject] : [];
+    if (targets.length === 0) return;
+    const names = targets.map((pid) => projects.find((p) => p.id === pid)?.name || pid);
+    // 多个项目时把清单摆出来：装到哪几个是**会写项目文件**的操作，
+    // 装错项目不会有人报错，只会在那个项目里多出一个没人认领的 .mcp.json
+    if (targets.length > 1 && !confirm(t("mcp.installConfirmProjects", { list: names.join("、") }))) return;
     setProjBusy(id);
     try {
-      await invoke("install_mcp_to_project", { projectId: selProject, serverId: id });
+      for (const pid of targets) {
+        await invoke("install_mcp_to_project", { projectId: pid, serverId: id });
+      }
       await loadProjMcps(selProject);
+      
+      void load();
     } catch (e: any) {
       alertError(t("mcp.opFail", { err: String(e) }));
     } finally {
@@ -641,13 +654,27 @@ export default function McpManager() {
         <div className="rounded-card bg-white/[0.02] border border-white/10 p-2 space-y-1.5">
           <div className="flex items-center justify-between px-1">
             <span className="text-body font-bold text-slate-300">{t("mcp.projectListTitle")}</span>
-            <button
-              onClick={() => void load()}
-              className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-slate-200 cursor-pointer"
-              title={t("mcp.refresh")}
-            >
-              <RefreshCw className="w-3 h-3" />
-            </button>
+            <div className="flex items-center gap-1">
+              {/* 全选：往多个项目装同一批 MCP 时最烦的就是一个个点 */}
+              {projects.length > 1 && (
+                <button
+                  onClick={() => setPickedProjects((prev) =>
+                    prev.size === projects.length ? new Set() : new Set(projects.map((p) => p.id)),
+                  )}
+                  className="px-1.5 py-0.5 rounded text-micro bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer"
+                  title={t("mcp.projectSelectAll")}
+                >
+                  {pickedProjects.size === projects.length ? t("skillmgr.projUnselectAll") : t("skillmgr.projSelectAll")}
+                </button>
+              )}
+              <button
+                onClick={() => void load()}
+                className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-slate-200 cursor-pointer"
+                title={t("mcp.refresh")}
+              >
+                <RefreshCw className="w-3 h-3" />
+              </button>
+            </div>
           </div>
 
           {projects.length === 0 ? (
@@ -657,28 +684,49 @@ export default function McpManager() {
               const viewing = selProject === p.id;
               const n = projCounts[p.id] ?? 0;
               return (
-                <button
+                <div
                   key={p.id}
-                  onClick={() => setSelProject(p.id)}
-                  className={`w-full text-left px-1.5 py-1.5 rounded-ctl border transition-colors cursor-pointer ${
+                  className={`flex items-start gap-1.5 px-1.5 py-1.5 rounded-ctl border transition-colors ${
                     viewing
                       ? "border-[var(--module-accent-ring)] bg-[var(--module-accent-soft)]"
                       : "border-transparent hover:bg-white/5"
                   }`}
                 >
-                  <div className="flex items-center gap-1.5">
-                    <FolderOpen className="w-3 h-3 text-slate-500 flex-shrink-0" />
-                    <span className="text-tiny font-semibold text-slate-200 truncate flex-1">
-                      {p.name || p.path}
-                    </span>
-                    {n > 0 && (
-                      <span className="px-1.5 py-0.5 rounded text-micro font-semibold bg-emerald-500/15 text-emerald-400 flex-shrink-0">
-                        {n}
+                  <input
+                    type="checkbox"
+                    checked={pickedProjects.has(p.id)}
+                    onChange={() => setPickedProjects((prev) => {
+                      const next = new Set(prev);
+                      next.has(p.id) ? next.delete(p.id) : next.add(p.id);
+                      return next;
+                    })}
+                    title={t("skillmgr.projPickAsTarget")}
+                    className="w-3 h-3 mt-0.5 accent-[var(--module-accent)] flex-shrink-0 cursor-pointer"
+                  />
+                  <button onClick={() => setSelProject(p.id)} className="flex-1 min-w-0 text-left cursor-pointer">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-tiny font-semibold text-slate-200 truncate flex-1">
+                        {p.name || p.path}
                       </span>
-                    )}
-                  </div>
-                  <div className="text-micro text-slate-500 font-mono truncate mt-0.5 pl-4.5">{p.path}</div>
-                </button>
+                      {n > 0 && (
+                        <span className="px-1.5 py-0.5 rounded text-micro font-semibold bg-emerald-500/15 text-emerald-400 flex-shrink-0">
+                          {n}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <div className="text-micro text-slate-500 font-mono truncate flex-1">{p.path}</div>
+                      {/* 打开项目目录：装完想去项目里看一眼 .mcp.json 长什么样 */}
+                      <button
+                        onClick={() => void openPath(p.path).catch((e) => alertError(String(e)))}
+                        className="text-slate-600 hover:text-[var(--module-accent)] cursor-pointer flex-shrink-0"
+                        title={t("mcp.projectOpenDir")}
+                      >
+                        <FolderOpen className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </button>
+                </div>
               );
             })
           )}

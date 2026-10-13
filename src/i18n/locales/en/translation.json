@@ -2965,7 +2965,10 @@
     "installedInDirs": "Which scan dirs of the project this skill is installed into",
     "staleLinks": "⚠{{n}} stale",
     "staleLinksHint": "The links in these dirs no longer resolve (the skill was deleted from the library), but it still counts as installed because others are fine. Uninstalling cleans them up too.",
-    "replacedRealDir": "replaced the project's own directory of the same name"
+    "replacedRealDir": "replaced the project's own directory of the same name",
+    "projUnselectAll": "Clear all",
+    "projOpenDir": "Open project folder",
+    "projOpenFail": "Failed to open the project folder (it may have been moved or deleted)"
   },
   "toollaunch": {
     "officialOnly": "Official models only",
@@ -4217,7 +4220,12 @@
     "repoExpand": "Expand registry",
     "projectListTitle": "Projects",
     "projectInstalledTitle": "Installed in project",
-    "pickProject": "Pick a project on the left"
+    "pickProject": "Pick a project on the left",
+    "projectSelectAll": "Select all projects",
+    "projectOpenDir": "Open project folder",
+    "projectOpenFail": "Failed to open the project folder (it may have been moved or deleted)",
+    "installConfirmProjects": "Install this MCP into: {{list}}?",
+    "installedToProjects": "Installed into {{n}} project(s)"
   },
   "tranpanel": {
     "title": "Translate",

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { openPath, openUrl } from '@tauri-apps/plugin-opener';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen as listenEvent } from '@tauri-apps/api/event';
 import { Note, ResultNote } from '../shared/Note';
@@ -895,6 +895,19 @@ export default function SkillManager() {
                 <div className="flex items-center justify-between px-1">
                   <span className="text-body font-bold text-slate-300">{t("skillmgr.projTitle")}</span>
                   <div className="flex items-center gap-1">
+                    {/* 全选/全不选：装一批技能时最烦的就是一个个勾 */}
+                    <button
+                      onClick={() => {
+                        const all = pickedProjects.size === projects.length && projects.length > 0;
+                        setPickedProjects(all ? new Set() : new Set(projects.map((p) => p.id)));
+                      }}
+                      className="px-1.5 py-0.5 rounded text-micro bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer"
+                      title={t("skillmgr.projSelectAll")}
+                    >
+                      {pickedProjects.size === projects.length && projects.length > 0
+                        ? t("skillmgr.projUnselectAll")
+                        : t("skillmgr.projSelectAll")}
+                    </button>
                     {/* 计数是实时扫盘的结果，装完/删完技能数字会过期，给一个手动刷新 */}
                     <button
                       onClick={() => void loadProjCounts()}
@@ -937,6 +950,14 @@ export default function SkillManager() {
                         <button onClick={() => void selectProject(p.id)} className="flex-1 min-w-0 text-left cursor-pointer">
                           <div className="text-tiny font-semibold text-slate-200 truncate">{p.name || p.path}</div>
                           <div className="text-micro text-slate-500 font-mono truncate">{p.path}</div>
+                        </button>
+                        {/* 打开项目目录：装完技能想去项目里看一眼 junction 落在哪 */}
+                        <button
+                          onClick={() => void openPath(p.path).catch(() => setProjMsg({ id: p.id, msg: String(t("skillmgr.projOpenFail")), ok: false }))}
+                          className="text-slate-600 hover:text-[var(--module-accent)] cursor-pointer flex-shrink-0"
+                          title={t("skillmgr.projOpenDir")}
+                        >
+                          <FolderOpen className="w-3.5 h-3.5" />
                         </button>
                         {/* 技能数常驻显示；悬停看拆分。悬空链接单独标出来——那是最容易漏掉的一类 */}
                         {cnt && (

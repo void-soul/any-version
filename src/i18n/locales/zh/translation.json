@@ -2971,7 +2971,10 @@
     "installedInDirs": "这个技能装在项目的哪些扫描目录下",
     "staleLinks": "⚠{{n}} 处失效",
     "staleLinksHint": "这些目录下的链接已失效（技能库里的技能被删了），但因为还有别处是好的，仍算已安装。卸载会一并清理。",
-    "replacedRealDir": "已覆盖该项目自带的同名目录"
+    "replacedRealDir": "已覆盖该项目自带的同名目录",
+    "projUnselectAll": "全不选",
+    "projOpenDir": "打开项目目录",
+    "projOpenFail": "打开项目目录失败（项目可能已被移动或删除）"
   },
   "toollaunch": {
     "officialOnly": "仅支持官方模型",
@@ -4193,6 +4196,11 @@
     "disabled": "已停用",
     "edit": "编辑",
     "delete": "删除",
+    "projectSelectAll": "全选项目",
+    "projectOpenDir": "打开项目目录",
+    "projectOpenFail": "打开项目目录失败（项目可能已被移动或删除）",
+    "installConfirmProjects": "把该 MCP 装给这些项目：{{list}}？",
+    "installedToProjects": "已装给 {{n}} 个项目",
     "projectScope": "项目",
     "noProjects": "还没有任何项目。到「技能 - 项目」里添加项目后，才能按项目安装 MCP。",
     "projectNone": "该项目还没有安装任何 MCP。",
