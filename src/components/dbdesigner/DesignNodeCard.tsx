@@ -11,6 +11,13 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { Database, Eye, KeyRound } from "lucide-react";
 
 import { typeLabel, type DbDesignNode, type FieldRowMode } from "./types";
+import {
+  GRAPH_DIMMED_CLASS,
+  headerTint,
+  highlightColor,
+  neonRing,
+  neonTextGlow,
+} from "../../utils/graphHighlight";
 
 /** 注释列最多显示几个字符（超出的截断，完整内容在 title 里） */
 const COMMENT_MAX = 8;
@@ -60,41 +67,20 @@ function DesignNodeCardInner({ data }: NodeProps) {
   const rawColor = /^#[0-9a-f]{6}$/i.test(node.color ?? "") ? (node.color as string) : "";
   const tint = rawColor || "var(--module-accent)";
   /**
-   * 高亮色 = **这张表自己的颜色**（同系列自动配色或用户选的色）；没设色才回退
-   * （选中→主色，关联→青）。
+   * 高亮：**跟随这张表自己的颜色**（同系列自动配色或用户选的色），没设色才回退
+   * （选中→主色，关联→青）。档位用强度区分而非色相，理由与三个画布共用一套
+   * 语言的理由见 `utils/graphHighlight`。
    *
-   * 早先固定用主色/青，理由是「怕深色表被高亮后反而更暗」。但那会**色相打架**：
-   * 红的表被套一圈青霓虹，两个色相对着干，看着就是错的。改为跟随表色后，
-   * 高亮环与卡片、左侧色带、它的连线是同一个颜色 —— 一整套语言自洽。
-   *
-   * 档位因此改用**强度**区分（描边粗细 + 辉光层数 + 表头浓度），不再靠色相；
-   * 选中档再把表色往白里提 12%，暗色表也能看清环。
-   *
-   * 三档里的 `dimmed` 由面板侧算好后传进来，**不能在卡片里自己判断**：
+   * `dimmed` 由面板侧算好后传进来，**不能在卡片里自己判断**：
    * 「没选中任何表」也是一种正常状态，不该被当成「这张表跟谁都没关系」而整片压暗。
    */
-  const HL_FALLBACK_SELECT = "var(--module-accent, var(--vex-fallback-primary))";
-  const HL_FALLBACK_RELATED = "var(--cyan, var(--vex-cyan, var(--vex-fallback-cyan)))";
-  /** 本卡片当前的高亮色（未高亮时为空串） */
-  const hlColor = selected
-    ? rawColor
-      ? `color-mix(in srgb, ${rawColor} 88%, white 12%)`
-      : HL_FALLBACK_SELECT
-    : related
-      ? rawColor || HL_FALLBACK_RELATED
-      : "";
-  /** 霓虹环：贴边一层实描边 + 两三层渐远外辉光；选中更粗、辉光更多层 */
-  const ring = selected
-    ? `0 0 0 2px ${hlColor}, 0 0 6px color-mix(in srgb, ${hlColor} 60%, transparent), 0 0 18px color-mix(in srgb, ${hlColor} 42%, transparent), 0 0 40px color-mix(in srgb, ${hlColor} 22%, transparent)`
-    : related
-      ? `0 0 0 1px ${hlColor}, 0 0 8px color-mix(in srgb, ${hlColor} 48%, transparent), 0 0 26px color-mix(in srgb, ${hlColor} 26%, transparent)`
-      : "";
-  /** 文字霓虹辉光：高亮档才有，选中更亮 */
-  const textGlow = selected
-    ? `0 0 6px color-mix(in srgb, ${hlColor} 90%, transparent), 0 0 16px color-mix(in srgb, ${hlColor} 55%, transparent)`
-    : related
-      ? `0 0 8px color-mix(in srgb, ${hlColor} 60%, transparent)`
-      : "";
+  const hlLevel = selected ? "select" : related ? "related" : null;
+  const hlColor = hlLevel ? highlightColor(rawColor, hlLevel) : "";
+  /** 霓虹环（描边 + 渐远外辉光）；空串 = 当前不高亮 */
+  const ring = hlLevel ? neonRing(hlColor, hlLevel) : "";
+  const textGlow = hlLevel ? neonTextGlow(hlColor, hlLevel) : "";
+  /** 高亮时的表头底色（选中更浓） */
+  const hlHeader = hlLevel ? headerTint(hlColor, hlLevel) : "";
   /**
    * 显示哪些字段行：
    *   keys —— 只主键 + 外键 + 关联字段（「这张表靠什么关联」一眼看到，杂字段不占地方）
@@ -112,7 +98,7 @@ function DesignNodeCardInner({ data }: NodeProps) {
     <div
       className={`group relative w-[288px] overflow-hidden rounded-card border bg-surface-panel transition-all ${
         ring ? "" : "border-white/10 shadow-lg"
-      } ${dimmed ? "opacity-35" : "opacity-100"}`}
+      } ${dimmed ? GRAPH_DIMMED_CLASS : "opacity-100"}`}
       style={{
         // 选色后：整卡底色混入 6% 的表色，让颜色落在「卡身」上，而不只是左侧一条色带
         ...(rawColor ? { background: `color-mix(in srgb, ${rawColor} 6%, var(--color-surface-panel))` } : null),
@@ -138,16 +124,13 @@ function DesignNodeCardInner({ data }: NodeProps) {
 
       <div
         className="relative flex items-center gap-1.5 border-b border-white/10 px-2.5 py-1.5"
-        // 表头底：高亮时用同一个高亮色（选中最浓，是「点亮」最显眼的一块）；
+        // 表头底：高亮时用高亮色（选中最浓，是「点亮」最显眼的一块）；
         // 未高亮时混入 16% 表色（表的身份），没有表色就用极淡的白
         style={{
-          background: selected
-            ? `color-mix(in srgb, ${hlColor} 26%, transparent)`
-            : related
-              ? `color-mix(in srgb, ${hlColor} 14%, transparent)`
-              : rawColor
-                ? `color-mix(in srgb, ${rawColor} 16%, transparent)`
-                : "rgb(255 255 255 / 0.04)",
+          background: hlHeader
+            || (rawColor
+              ? `color-mix(in srgb, ${rawColor} 16%, transparent)`
+              : "rgb(255 255 255 / 0.04)"),
         }}
       >
         {isView ? (

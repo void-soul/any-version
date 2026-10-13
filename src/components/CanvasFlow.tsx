@@ -19,6 +19,10 @@ import {
 import "@xyflow/react/dist/style.css";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { EDGE_STYLES, edgePath, useEdgeStyle, type EdgeStyle } from "../utils/graphEdgeStyle";
+import {
+  EDGE_FLOW_CLASS, EDGE_GLOW_CLASS, GRAPH_DIMMED_CLASS,
+  highlightColor, neonRing, neonTextGlow,
+} from "../utils/graphHighlight";
 import EdgeStyleSelect from "./shared/EdgeStyleSelect";
 import type { JsonValue, SearchMatches } from "./SystemTools/JsonBrowser";
 
@@ -36,6 +40,10 @@ type JsonFlowNodeData = {
   selectedPath: string;
   searchMatches: SearchMatches;
   collapsed: Set<string>;
+  /** 与选中项直接相连（父 / 子）：点亮但比选中弱一档 */
+  related?: boolean;
+  /** 选中了别人而自己不在其关联范围：压暗 */
+  dimmed?: boolean;
   onSelect: (path: string) => void;
   onToggle: (path: string) => void;
   onCopy: (value: string) => void;
@@ -143,18 +151,30 @@ function copyJsonValue(value: JsonValue): string {
 
 const JsonFlowNode = memo(function JsonFlowNode({ data }: NodeProps<Node<JsonFlowNodeData>>) {
   const { t } = useTranslation();
-  const { item, selectedPath, searchMatches, collapsed, onSelect, onToggle, onCopy } = data;
+  const { item, selectedPath, searchMatches, collapsed, related, dimmed, onSelect, onToggle, onCopy } = data;
   const selected = item.path === selectedPath;
   const chain = searchMatches.paths.has(item.path);
   const directMatch = searchMatches.directPaths.has(item.path);
   const container = isJsonContainer(item.value);
   const color = hashColor(item.id, JSON_EDGE_COLORS);
+  /**
+   * 高亮：跟随节点自己的颜色（JSON 节点色由路径哈希得来，天然有色），
+   * 与 ER 设计、思维导图共用 graphHighlight —— 选中更亮、关联稍弱、其余压暗。
+   * 搜索命中的那条链（chain）优先级低于高亮：两者抢同一个「亮」通道时，
+   * 先看选中关系，否则用户选完节点就被搜索结果盖掉了。
+   */
+  const hlLevel = selected ? "select" : related ? "related" : null;
+  const hlColor = hlLevel ? highlightColor(color, hlLevel) : "";
+  const hlRing = hlLevel ? neonRing(hlColor, hlLevel) : "";
+  const hlGlow = hlLevel ? neonTextGlow(hlColor, hlLevel) : "";
   return (
-    <div className={`w-[250px] rounded-ctl border bg-surface-modal px-2.5 py-2 shadow-xl ${selected ? "border-cyan-300 shadow-cyan-500/30" : chain ? "border-cyan-700/80" : "border-white/10"}`} onClick={() => onSelect(item.path)}>
+    <div className={`w-[250px] rounded-ctl border bg-surface-modal px-2.5 py-2 shadow-xl ${dimmed ? GRAPH_DIMMED_CLASS : ""} ${hlLevel ? "" : chain ? "border-cyan-700/80" : "border-white/10"}`}
+      style={hlLevel ? { borderColor: hlColor, boxShadow: hlRing } : undefined}
+      onClick={() => onSelect(item.path)}>
       <Handle type="target" position={Position.Left} isConnectable={false} className="!h-2.5 !w-2.5 !border-2 !border-slate-950" style={{ background: color }} />
       <div className="flex items-center gap-1.5">
         {container && <button type="button" className="nodrag nopan inline-flex h-4 w-4 items-center justify-center text-slate-500 hover:text-white" onClick={(event) => { event.stopPropagation(); onToggle(item.path); }} title={collapsed.has(item.path) ? t("canvasflow.expand") : t("canvasflow.collapse")}>{collapsed.has(item.path) ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}</button>}
-        <span className={`min-w-0 flex-1 truncate font-mono text-caption ${directMatch ? "text-yellow-300" : "text-cyan-200"}`}>{item.name}</span>
+        <span className={`min-w-0 flex-1 truncate font-mono text-caption ${directMatch && !hlLevel ? "text-yellow-300" : "text-cyan-200"}`} style={{ textShadow: hlGlow || undefined }}>{item.name}</span>
         <button type="button" className="nodrag nopan text-slate-600 hover:text-white" onClick={(event) => { event.stopPropagation(); onCopy(copyJsonValue(item.value)); }} title={t("canvasflow.copyNode")}><span className="text-tiny">⧉</span></button>
       </div>
       <div className="mt-1 truncate font-mono text-tiny" style={{ color }}>{jsonSummary(item.value)}</div>
@@ -164,13 +184,16 @@ const JsonFlowNode = memo(function JsonFlowNode({ data }: NodeProps<Node<JsonFlo
   );
 });
 
-const ColorEdge = memo(function ColorEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, selected, data }: EdgeProps) {
+const ColorEdge = memo(function ColorEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps) {
   // 自定义 edge 拿不到组件 state，样式由每条边的 `data.style` 传进来（缺失 = 曲线）
   const style = (data?.style as EdgeStyle | undefined);
   const [path] = edgePath(style && EDGE_STYLES.includes(style) ? style : "bezier", { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
   const color = data?.color as string | undefined ?? "#22d3ee";
+  /** 关联边：加粗 + 同色辉光 + 流转动画；无关边：整条压暗（光晕一起淡，否则像有鬼影） */
+  const rel = !!(data?.rel as boolean | undefined);
+  const dim = !!(data?.dim as boolean | undefined);
   const gradientId = `flow-edge-${id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-  return <><defs><linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor={color} /><stop offset="100%" stopColor="#f8fafc" /></linearGradient></defs><path d={path} fill="none" stroke={color} strokeWidth={selected ? 5 : 3} opacity={selected ? 0.2 : 0.12} /><path d={path} fill="none" stroke={`url(#${gradientId})`} strokeWidth={selected ? 2.2 : 1.4} strokeLinecap="round" markerEnd={`url(#arrow-${gradientId})`} /><marker id={`arrow-${gradientId}`} markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#f8fafc" /></marker></>;
+  return <><defs><linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor={color} /><stop offset="100%" stopColor="#f8fafc" /></linearGradient></defs><path d={path} fill="none" stroke={color} strokeWidth={rel ? 5 : 3} opacity={dim ? 0.03 : rel ? 0.22 : 0.12} className={EDGE_GLOW_CLASS} /><path d={path} fill="none" stroke={`url(#${gradientId})`} strokeWidth={rel ? 2.2 : 1.4} strokeLinecap="round" markerEnd={`url(#arrow-${gradientId})`} opacity={dim ? 0.4 : 1} className={EDGE_FLOW_CLASS} /><marker id={`arrow-${gradientId}`} markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#f8fafc" /></marker></>;
 });
 
 function JsonFlowInner({ value, selectedPath, searchMatches, onSelectPath, onCopy, collapseAllToken }: { value: JsonValue; selectedPath: string; searchMatches: SearchMatches; onSelectPath: (path: string) => void; onCopy: (value: string) => void; collapseAllToken: number }) {
@@ -189,8 +212,28 @@ function JsonFlowInner({ value, selectedPath, searchMatches, onSelectPath, onCop
     previousCollapseToken.current = collapseAllToken;
   }, [allItems, collapseAllToken]);
   const visibleItems = useMemo(() => allItems.filter((item) => { let current = item.parentId; while (current) { if (collapsed.has(current)) return false; current = allItems.find((candidate) => candidate.id === current)?.parentId ?? null; } return true; }), [allItems, collapsed]);
-  const computedNodes = useMemo<Node<JsonFlowNodeData>[]>(() => visibleItems.map((item) => ({ id: item.id, type: "jsonNode", position: { x: item.depth * 260, y: item.depth === 0 ? 0 : visibleItems.filter((candidate) => candidate.depth === item.depth && candidate.id <= item.id).length * 92 }, data: { item, selectedPath, searchMatches, collapsed, onSelect: onSelectPath, onToggle: (path) => setCollapsed((current) => { const next = new Set(current); next.has(path) ? next.delete(path) : next.add(path); return next; }), onCopy }, sourcePosition: Position.Right, targetPosition: Position.Left })), [onCopy, onSelectPath, searchMatches, selectedPath, visibleItems, collapsed]);
-  const edges = useMemo<Edge[]>(() => visibleItems.flatMap((item) => !item.parentId || !visibleItems.some((candidate) => candidate.id === item.parentId) ? [] : [{ id: `json-edge-${item.id}`, source: item.parentId, target: item.id, type: "color", data: { color: hashColor(item.id, JSON_EDGE_COLORS), style: edgeStyle }, markerEnd: { type: MarkerType.ArrowClosed, color: "#f8fafc" } }]), [visibleItems, edgeStyle]);
+  /**
+   * 关联集合：选中项 + 它的直接父 + 直接子。JSON 画布是纯父子树（没有横向关系线），
+   * 所以关联范围就是这三者——与 ER 设计、思维导图同一套口径。
+   */
+  const relatedPaths = useMemo(() => {
+    const set = new Set<string>();
+    if (!selectedPath) return set;
+    set.add(selectedPath);
+    for (const item of allItems) {
+      if (item.parentId === selectedPath) set.add(item.id);
+      else if (item.id === selectedPath && item.parentId) set.add(item.parentId);
+    }
+    return set;
+  }, [allItems, selectedPath]);
+  const computedNodes = useMemo<Node<JsonFlowNodeData>[]>(() => visibleItems.map((item) => ({ id: item.id, type: "jsonNode", position: { x: item.depth * 260, y: item.depth === 0 ? 0 : visibleItems.filter((candidate) => candidate.depth === item.depth && candidate.id <= item.id).length * 92 }, data: { item, selectedPath, searchMatches, collapsed, related: relatedPaths.has(item.path), dimmed: !!selectedPath && !relatedPaths.has(item.path), onSelect: onSelectPath, onToggle: (path) => setCollapsed((current) => { const next = new Set(current); next.has(path) ? next.delete(path) : next.add(path); return next; }), onCopy }, sourcePosition: Position.Right, targetPosition: Position.Left })), [onCopy, onSelectPath, searchMatches, selectedPath, visibleItems, collapsed, relatedPaths]);
+  const edges = useMemo<Edge[]>(() => visibleItems.flatMap((item) => {
+    if (!item.parentId || !visibleItems.some((candidate) => candidate.id === item.parentId)) return [];
+    // 关联边（父↔选中）加粗 + 流转动画；选中某项后其余连线压暗，把注意力收到那一支
+    const rel = !!selectedPath && (item.parentId === selectedPath || item.id === selectedPath);
+    const dim = !!selectedPath && !rel;
+    return [{ id: `json-edge-${item.id}`, source: item.parentId, target: item.id, type: "color", animated: rel, zIndex: rel ? 10 : 0, data: { color: hashColor(item.id, JSON_EDGE_COLORS), style: edgeStyle, rel, dim }, markerEnd: { type: MarkerType.ArrowClosed, color: "#f8fafc" } }];
+  }), [visibleItems, edgeStyle, selectedPath]);
   // 保持拖放位置：computed nodes 更新时，已有位置的节点保持当前位置
   useEffect(() => {
     setNodes((current) => {

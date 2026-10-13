@@ -58,6 +58,7 @@ import DesignNodeCard, {
 } from "./DesignNodeCard";
 import FieldTable from "./FieldTable";
 import { NODE_COLORS, isPresetColor } from "./nodeColors";
+import { EDGE_FLOW_CLASS } from "../../utils/graphHighlight";
 import { ModelSelector } from "../ai/ModelSelector";
 import type { ProviderLike } from "../ai/ModelSelector";
 import { useAiPanelWidth } from "../ai/paneWidth";
@@ -1030,6 +1031,9 @@ export default function DbDesignerPanel() {
         // 多对多常驻流动；选中表的关联线也流动 —— 静态图里「哪几条线跟我有关」
         // 只能靠眼睛扫，流动一眼就分出来了
         animated: r.kind === "n-n" || related,
+        // 流动节奏统一走 graph-edge-flow：内置 `.animated` 是 dasharray:5 / 0.5s，
+        // 太快，看着像虚线在抖而不是「有东西在流动」
+        className: EDGE_FLOW_CLASS,
         // 不画连线文字：线的两端就落在具体字段上，谁引用谁一眼看得出来；
         // 挂一串「A.b → C.d」反而盖住线，密集时糊成一片。
         style: {
