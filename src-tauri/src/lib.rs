@@ -790,10 +790,13 @@ pub fn run() {
             commands::ai::mcp::get_mcp_presets,
             commands::ai::mcp::save_mcp_server,
             commands::ai::mcp::delete_mcp_server,
-            commands::ai::mcp::toggle_mcp_tool,
-            commands::ai::mcp::get_mcp_tools,
-            commands::ai::mcp::get_discovered_mcp,
-            commands::ai::mcp::adopt_mcp_server,
+            // 项目级安装：写<项目>/.mcp.json，不再全局部署
+            commands::ai::mcp::list_project_mcps,
+            commands::ai::mcp::install_mcp_to_project,
+            commands::ai::mcp::remove_mcp_from_project,
+            // 一次性迁移：把全局配置里的条目收进仓库并从全局文件删除
+            commands::ai::mcp::list_global_mcp,
+            commands::ai::mcp::migrate_global_mcp,
             commands::ai::provider::test_model_connection,
             commands::ai::launch::launch_ai_tool,
             commands::ai::tool_config_custom::resolve_claimed_model,

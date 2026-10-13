@@ -1,23 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use serde_json::{Map, Value};
 use crate::commands::ai_registry::registry;
 use crate::commands::config::get_data_dir;
 
 // ─── 数据模型 ───
-
-/// 可部署 MCP 的工具条目（id + 显示名）。
-///
-/// 原先借用技能模块的 `SkillToolInfo`，但技能模块已按「项目」重构、不再有工具维度，
-/// 这个两字段结构就与技能无关了，留在本模块更内聚。
-#[derive(Serialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct McpToolInfo {
-    pub id: String,
-    pub label: String,
-}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -160,6 +149,123 @@ pub fn get_mcp_presets() -> Vec<McpPreset> {
 #[cfg(test)]
 mod tests {
     use super::mcp_presets;
+    use super::{project_servers_of, translate, write_project_mcp, McpServer};
+    use serde_json::{json, Map, Value};
+    use std::collections::HashMap;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn tmp_dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("kira-mcp-{}-{}", tag, std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn server(name: &str) -> McpServer {
+        McpServer {
+            id: name.to_string(),
+            name: name.to_string(),
+            transport: "stdio".to_string(),
+            command: "npx".to_string(),
+            args: vec!["-y".to_string(), format!("{}@latest", name)],
+            env: HashMap::new(),
+            cwd: None,
+            url: String::new(),
+            headers: HashMap::new(),
+            enabled: true,
+            enabled_tools: Vec::new(),
+            description: None,
+            install_method: "manual".to_string(),
+        }
+    }
+
+    /// 装到项目 = 写 `<项目>/.mcp.json` 的 `mcpServers`，且**只动这一个键**。
+    ///
+    /// 整文件覆盖会把用户 `.mcp.json` 里的其它配置抹掉（inputs/outputs、各工具自己的
+    /// 扩展键），所以这条是硬要求。
+    #[test]
+    fn install_merges_and_preserves_other_keys() {
+        let dir = tmp_dir("install");
+        let path = dir.join(".mcp.json");
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(&json!({
+                "inputs": [{"id": "token"}],
+                "mcpServers": {"hand-written": {"url": "https://example.com/mcp"}}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let s = server("gitnexus");
+        let n = write_project_mcp(&path, &s.name, Some(translate(&s, "mcp"))).unwrap();
+        assert_eq!(n, 2, "装完应有2 个 server");
+
+        let val: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let servers = project_servers_of(&val);
+        assert!(servers.contains_key("gitnexus"), "应写入新 server");
+        assert!(
+            servers.contains_key("hand-written"),
+            "**不能动**用户原有的 server 条目"
+        );
+        assert_eq!(servers["gitnexus"]["command"], json!("npx"));
+        assert_eq!(
+            servers["gitnexus"]["args"],
+            json!(["-y", "gitnexus@latest"]),
+            "stdio 的 args 必须完整写进去，漏一个参数就启动不了"
+        );
+        assert_eq!(val["inputs"][0]["id"], json!("token"), "其它键必须原样保留");
+
+        // 移除只删自己那一条
+        write_project_mcp(&path, "gitnexus", None).unwrap();
+        let val: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let servers = project_servers_of(&val);
+        assert_eq!(servers.len(), 1);
+        assert!(servers.contains_key("hand-written"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 文件不存在时应当**新建**一个合法的空配置，而不是报错或跳过。
+    #[test]
+    fn install_creates_missing_file() {
+        let dir = tmp_dir("create");
+        let path = dir.join("nested").join(".mcp.json");
+        let s = server("a");
+        write_project_mcp(&path, &s.name, Some(translate(&s, "mcp"))).unwrap();
+        let val: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(project_servers_of(&val).len(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// `mcpServers` 不是对象时（用户写了数组、或文件被别的工具改成字符串）不能崩。
+    #[test]
+    fn malformed_mcp_servers_is_tolerated() {
+        let val = json!({ "mcpServers": ["not", "an", "object"] });
+        assert!(
+            project_servers_of(&val).is_empty(),
+            "非对象的 mcpServers 应被当成空，而不是 panic"
+        );
+        let empty = json!({});
+        assert!(project_servers_of(&empty).is_empty());
+        let good = json!({ "mcpServers": { "a": {} } });
+        assert_eq!(project_servers_of(&good).len(), 1);
+        let _ = Map::new();
+    }
+
+    /// http 类server：只有 url，没有 command/args。
+    #[test]
+    fn http_server_translation_carries_url() {
+        let mut s = server("cloudflare-docs");
+        s.transport = "http".to_string();
+        s.command = String::new();
+        s.args = Vec::new();
+        s.url = "https://docs.mcp.cloudflare.com/mcp".to_string();
+        let entry = translate(&s, "mcp");
+        assert_eq!(entry["url"], json!("https://docs.mcp.cloudflare.com/mcp"));
+        assert!(entry.get("command").is_none(), "http 不该带 command");
+    }
 
     #[test]
     fn test_presets_are_well_formed() {
@@ -253,109 +359,20 @@ pub fn save_mcp_server(server: McpServer) -> Result<(), String> {
         description: server.description.clone(),
         install_method: server.install_method.clone(),
     });
-    save_store(&store)?;
-    deploy_all()
+    save_store(&store)
 }
 
 #[tauri::command]
 pub fn delete_mcp_server(id: String) -> Result<(), String> {
     let mut store = load_store();
     store.servers.retain(|s| s.id != id);
-    save_store(&store)?;
-    deploy_all()
+    save_store(&store)
 }
 
-#[tauri::command]
-pub fn toggle_mcp_tool(id: String, tool_id: String, enabled: bool) -> Result<(), String> {
-    let mut store = load_store();
-    let Some(server) = store.servers.iter_mut().find(|s| s.id == id) else {
-        return Err("MCP 服务器不存在".to_string());
-    };
-    if enabled {
-        if !server.enabled_tools.contains(&tool_id) {
-            server.enabled_tools.push(tool_id);
-        }
-    } else {
-        server.enabled_tools.retain(|t| t != &tool_id);
-    }
-    save_store(&store)?;
-    deploy_all()
-}
-
-/// 从各工具中心配置中发现已配置、但 vex 尚未托管的 MCP 服务器。
-/// 类比技能管理的「问题检测 / 纳入管理」：先把散落在工具里的服务器找出来，再统一纳管。
-#[tauri::command]
-pub fn get_discovered_mcp() -> Result<Vec<DiscoveredMcp>, String> {
-    let store = load_store();
-    let reg = registry();
-    let mut out: Vec<DiscoveredMcp> = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
-    for tool_id in reg.mcp_tool_ids() {
-        let Some((path, _format, mcp_key)) = reg.get_tool_mcp_config(&tool_id) else { continue };
-        if !path.exists() { continue; }
-        let Ok(text) = fs::read_to_string(&path) else { continue };
-        let Ok(val) = serde_json::from_str::<Value>(&text) else { continue };
-        if !val.is_object() { continue; }
-        let Some(servers) = val.get(&mcp_key).and_then(|m| m.as_object()) else { continue };
-        for (name, entry) in servers {
-            if !entry.is_object() { continue; }
-            let raw = reverse_translate(name, entry);
-            let already = store.servers.iter().any(|s| s.name == *name);
-            let key = format!("{}:{}", tool_id, name);
-            if seen.contains(&key) { continue; }
-            seen.insert(key.clone());
-            out.push(DiscoveredMcp {
-                tool_id: tool_id.clone(),
-                name: raw.name,
-                transport: raw.transport,
-                command: raw.command,
-                args: raw.args,
-                env: raw.env,
-                cwd: raw.cwd,
-                url: raw.url,
-                headers: raw.headers,
-                already_managed: already,
-            });
-        }
-    }
-    Ok(out)
-}
-
-/// 将一个在工具配置中发现的服务器纳入 vex 托管：
-/// 写入托管仓库（默认启用、仅部署到发现它的工具），并触发重新部署。
-#[tauri::command]
-pub fn adopt_mcp_server(tool_id: String, name: String) -> Result<(), String> {
-    let reg = registry();
-    let (path, _format, mcp_key) = reg.get_tool_mcp_config(&tool_id).ok_or("找不到工具配置")?;
-    let text = fs::read_to_string(&path).map_err(|e| format!("读取工具配置失败: {}", e))?;
-    let val = serde_json::from_str::<Value>(&text).map_err(|e| format!("解析工具配置失败: {}", e))?;
-    let entry = val
-        .get(&mcp_key)
-        .and_then(|m| m.get(&name))
-        .cloned()
-        .ok_or("未在工具配置中找到该服务器")?;
-    let raw = reverse_translate(&name, &entry);
-    let id = normalize_id(&name);
-    let mut store = load_store();
-    store.servers.retain(|s| s.id != id);
-    store.servers.push(McpServer {
-        id: id.clone(),
-        name: name.clone(),
-        transport: raw.transport,
-        command: raw.command,
-        args: raw.args,
-        env: raw.env,
-        cwd: raw.cwd,
-        url: raw.url,
-        headers: raw.headers,
-        enabled: true,
-        enabled_tools: vec![tool_id.clone()],
-        description: None,
-        install_method: "adopted".to_string(),
-    });
-    save_store(&store)?;
-    deploy_all()
-}
+// 注：原先的 `adopt_mcp_server`（把发现的服务器纳入托管并立刻部署回全局）已删除——
+// 它和「全局部署」是一套的：纳入托管的目的就是写进各工具的全局配置。
+// 现在唯一会把全局条目收进仓库的入口是 `migrate_global_mcp`，而且它同时**删掉**
+// 全局文件里的那份（这才是「不污染全局」的落点）。
 
 /// 把各工具配置里的服务器片段反解析为规范化字段（覆盖 claude / opencode / gemini / qwen 等格式）
 fn reverse_translate(name: &str, entry: &Value) -> DiscoveredMcp {
@@ -420,70 +437,285 @@ fn reverse_translate(name: &str, entry: &Value) -> DiscoveredMcp {
     }
 }
 
-/// 可部署 MCP 的工具列表（由 mcp-config.json 驱动）
-#[tauri::command]
-pub fn get_mcp_tools() -> Result<Vec<McpToolInfo>, String> {
-    let reg = registry();
-    let mut tools: Vec<McpToolInfo> = Vec::new();
-    for id in reg.mcp_tool_ids() {
-        let label = reg.get_tool_config(&id)
-            .map(|c| c.display_name.clone())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| id.to_string());
-        tools.push(McpToolInfo { id: id.clone(), label });
-    }
-    tools.sort_by(|a, b| a.label.cmp(&b.label));
-    Ok(tools)
+// ─── 项目级安装（MCP 不再全局部署） ───
+//
+// 早先的模型是「托管一份清单 → deploy_all 写进各开发工具的全局配置」，后果是
+// **所有项目共享同一批 MCP**：为 gitnexus 付的 17 个工具的 schema，会出现在每一个项目的
+// 每一次请求里（哪怕那个项目跟代码图谱毫无关系），而全局清单里躺着没连过的条目也一样占位。
+//
+// 现在只写项目级`<项目>/.mcp.json` —— agent 在这个项目里只看得到这个文件，
+// 没写就是没连接、不spawn、不进上下文。Kira 不再往任何工具的全局配置写东西。
+
+/// 项目 `.mcp.json` 里的一个条目（= 项目「已装」的 MCP）
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectMcp {
+    /// 在项目文件里的键名
+    pub name: String,
+    /// stdio | http | sse
+    pub transport: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub url: String,
+    /// 仓库里有同名定义 = 受管（Kira 装的）；否则是用户手写的「项目自带」
+    pub managed: bool,
 }
 
-// ─── 部署 ───
+fn project_mcp_path(project_id: &str) -> Result<PathBuf, String> {
+    let dir = super::skills::project_dir_of(project_id)?;
+    Ok(Path::new(&dir).join(".mcp.json"))
+}
 
-/// 将托管服务器合并写入各工具的中心配置文件。
-/// 仅修改 mcpServers / mcp 键，保留文件其它内容；对未启用该服务器的工具移除托管条目。
-fn deploy_all() -> Result<(), String> {
+/// 读项目的 `.mcp.json`；不存在或不是合法对象时返回空对象。
+///
+/// **解析失败不静默当空**：直接返回错误。否则用户手写坏了一个逗号，UI 会显示
+/// 「这个项目没装任何 MCP」，而实际文件里有 6 个 —— 看起来像我们的功能坏了。
+fn read_project_mcp_file(path: &Path) -> Result<Value, String> {
+    if !path.is_file() {
+        return Ok(Value::Object(Map::new()));
+    }
+    let text = fs::read_to_string(path).map_err(|e| format!("读取 {} 失败: {}", path.display(), e))?;
+    if text.trim().is_empty() {
+        return Ok(Value::Object(Map::new()));
+    }
+    match serde_json::from_str::<Value>(&text) {
+        Ok(v) if v.is_object() => Ok(v),
+        Ok(_) => Err(format!("{} 不是合法的 JSON 对象", path.display())),
+        Err(e) => Err(format!("解析 {} 失败: {}", path.display(), e)),
+    }
+}
+
+fn project_servers_of(file_val: &Value) -> Map<String, Value> {
+    match file_val.get("mcpServers") {
+        Some(Value::Object(m)) => m.clone(),
+        _ => Map::new(),
+    }
+}
+
+/// 列出某个项目已装的 MCP
+#[tauri::command]
+pub fn list_project_mcps(project_id: String) -> Result<Vec<ProjectMcp>, String> {
+    let path = project_mcp_path(&project_id)?;
+    let file_val = read_project_mcp_file(&path)?;
+    let managed: Vec<String> = load_store().servers.iter().map(|s| s.name.clone()).collect();
+    let mut out: Vec<ProjectMcp> = Vec::new();
+    for (name, entry) in project_servers_of(&file_val) {
+        if !entry.is_object() {
+            continue;
+        }
+        let command = entry.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let url = entry.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let transport = if url.is_empty() { "stdio".to_string() } else { "http".to_string() };
+        out.push(ProjectMcp {
+            managed: managed.contains(&name),
+            name,
+            transport,
+            args: entry
+                .get("args")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_default(),
+            command,
+            url,
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+/// 写项目的 `.mcp.json`：合并写入 `mcpServers[name]`，**保留文件里其它键**。
+///
+/// 只动 `mcpServers` 这一个键是硬要求：用户的 `.mcp.json` 里可能还有别的配置
+/// （inputs、outputs、以及各工具自己的扩展键），整文件覆盖会把它们抹掉。
+fn write_project_mcp(path: &Path, name: &str, entry: Option<Value>) -> Result<usize, String> {
+    let mut file_val = read_project_mcp_file(path)?;
+    let mut servers = project_servers_of(&file_val);
+    match entry {
+        Some(v) => {
+            servers.insert(name.to_string(), v);
+        }
+        None => {
+            servers.remove(name);
+        }
+    }
+    let count = servers.len();
+    file_val
+        .as_object_mut()
+        .unwrap()
+        .insert("mcpServers".to_string(), Value::Object(servers));
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建 {} 失败: {}", parent.display(), e))?;
+    }
+    let data = serde_json::to_string_pretty(&file_val).map_err(|e| e.to_string())?;
+    crate::commands::config::atomic_write_file(path, data.as_bytes())
+        .map_err(|e| format!("写入 {} 失败: {}", path.display(), e))?;
+    Ok(count)
+}
+
+/// 把仓库里的 MCP 装给某个项目
+#[tauri::command]
+pub fn install_mcp_to_project(project_id: String, server_id: String) -> Result<usize, String> {
+    let store = load_store();
+    let server = store
+        .servers
+        .iter()
+        .find(|s| s.id == server_id)
+        .ok_or_else(|| format!("MCP 服务器不存在: {}", server_id))?;
+    let entry = translate(server, "mcp");
+    let path = project_mcp_path(&project_id)?;
+    write_project_mcp(&path, &server.name, Some(entry))
+}
+
+/// 从某个项目移除一个 MCP。
+///
+/// 项目自带（手写、非受管）的也能移除，但前端要先说清这是用户自己写的东西。
+#[tauri::command]
+pub fn remove_mcp_from_project(project_id: String, name: String) -> Result<usize, String> {
+    let path = project_mcp_path(&project_id)?;
+    write_project_mcp(&path, &name, None)
+}
+
+// ─── 一次性迁移：把全局配置里的 MCP 收进仓库 ───
+
+/// 列出各开发工具**全局**配置里现存的 MCP（只读，不改任何东西）。
+///
+/// 用途是一次性清理：这些条目对所有项目生效，是「上下文被污染」的根源。
+/// 迁移后它们从全局文件里消失，改由各项目按需引入。
+#[tauri::command]
+pub fn list_global_mcp() -> Result<Vec<DiscoveredMcp>, String> {
     let store = load_store();
     let reg = registry();
+    let mut out: Vec<DiscoveredMcp> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
     for tool_id in reg.mcp_tool_ids() {
-        let (path, format, mcp_key) = match reg.get_tool_mcp_config(&tool_id) {
-            Some(x) => x,
-            None => continue,
-        };
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
+        let Some((path, _format, mcp_key)) = reg.get_tool_mcp_config(&tool_id) else { continue };
+        if !path.exists() {
+            continue;
         }
-        let mut file_val: Value = if path.exists() {
-            fs::read_to_string(&path)
-                .ok()
-                .and_then(|s| serde_json::from_str(&s).ok())
-                .unwrap_or(Value::Object(Map::new()))
-        } else {
-            Value::Object(Map::new())
-        };
-        if !file_val.is_object() {
-            file_val = Value::Object(Map::new());
+        let Ok(text) = fs::read_to_string(&path) else { continue };
+        let Ok(val) = serde_json::from_str::<Value>(&text) else { continue };
+        if !val.is_object() {
+            continue;
         }
-        let mut servers_map: Map<String, Value> = match file_val.get(&mcp_key).cloned() {
-            Some(Value::Object(m)) => m,
-            _ => Map::new(),
-        };
-        for s in &store.servers {
-            if !s.enabled {
+        let Some(servers) = val.get(&mcp_key).and_then(|m| m.as_object()) else { continue };
+        for (name, entry) in servers {
+            if !entry.is_object() {
                 continue;
             }
-            if s.enabled_tools.contains(&tool_id) {
-                servers_map.insert(s.name.clone(), translate(s, &format));
-            } else {
-                servers_map.remove(&s.name);
+            let key = format!("{}:{}", tool_id, name);
+            if !seen.insert(key) {
+                continue;
             }
+            let mut d = reverse_translate(name, entry);
+            d.already_managed = store.servers.iter().any(|s| s.name == *name);
+            out.push(d);
         }
-        let count = servers_map.len();
-        file_val.as_object_mut().unwrap().insert(mcp_key.to_string(), Value::Object(servers_map));
-        let data = serde_json::to_string_pretty(&file_val).map_err(|e| e.to_string())?;
-        crate::commands::config::atomic_write_file(&path, data.as_bytes())
-            .map_err(|e| format!("写入 {} 失败: {}", path.display(), e))?;
-        eprintln!("[mcp] 已部署 {} 个服务器到 {} ({})", count, tool_id, format);
     }
-    Ok(())
+    Ok(out)
+}
+
+/// 一次性迁移：把选中的全局条目**收进仓库**，并从全局配置文件里删掉它们。
+///
+/// 只删用户勾选的；没勾的原地保留 —— 迁移不该替用户删东西。
+/// 逐个工具处理并**忽略单个失败**：某个工具的配置文件不可写时，其余仍要迁完。
+#[tauri::command]
+pub fn migrate_global_mcp(names: Vec<String>) -> Result<MigrateResult, String> {
+    let mut store = load_store();
+    let mut imported: Vec<String> = Vec::new();
+    for name in &names {
+        if store.servers.iter().any(|s| &s.name == name) {
+            continue;
+        }
+        // 定义从全局文件里现读，而不是让前端回传 —— 前端回传会漏字段，
+        // 而 server 定义少一个 command/args 就是启动不了
+        let Some(def) = read_definition_from_globals(name) else { continue };
+        store.servers.push(def);
+        imported.push(name.clone());
+    }
+    if !imported.is_empty() {
+        save_store(&store)?;
+    }
+    let mut removed = 0usize;
+    let mut failed: Vec<String> = Vec::new();
+    let reg = registry();
+    for tool_id in reg.mcp_tool_ids() {
+        let Some((path, _format, mcp_key)) = reg.get_tool_mcp_config(&tool_id) else { continue };
+        if !path.exists() {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(&path) else { continue };
+        let Ok(mut val) = serde_json::from_str::<Value>(&text) else { continue };
+        if !val.is_object() {
+            continue;
+        }
+        let Some(Value::Object(mut servers)) = val.get(&mcp_key).cloned() else { continue };
+        let before = servers.len();
+        for n in &imported {
+            servers.remove(n);
+        }
+        if servers.len() == before {
+            continue;
+        }
+        val.as_object_mut()
+            .unwrap()
+            .insert(mcp_key.to_string(), Value::Object(servers));
+        match serde_json::to_string_pretty(&val) {
+            Ok(data) => match crate::commands::config::atomic_write_file(&path, data.as_bytes()) {
+                Ok(()) => removed += 1,
+                Err(e) => failed.push(format!("{}: {}", tool_id, e)),
+            },
+            Err(e) => failed.push(format!("{}: {}", tool_id, e)),
+        }
+    }
+    Ok(MigrateResult {
+        imported,
+        files_updated: removed,
+        failed,
+    })
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct MigrateResult {
+    /// 已收进仓库的条目名
+    pub imported: Vec<String>,
+    /// 实际改动的全局配置文件数
+    pub files_updated: usize,
+    /// 单个文件失败时的原因（其余仍已迁完）
+    pub failed: Vec<String>,
+}
+
+/// 从各工具全局配置里读回某个 server 的完整定义（迁移时用，避免前端回传丢字段）
+fn read_definition_from_globals(name: &str) -> Option<McpServer> {
+    let reg = registry();
+    for tool_id in reg.mcp_tool_ids() {
+        let (path, _format, mcp_key) = reg.get_tool_mcp_config(&tool_id)?;
+        let text = fs::read_to_string(&path).ok()?;
+        let val: Value = serde_json::from_str(&text).ok()?;
+        let servers = val.get(&mcp_key)?.as_object()?;
+        let entry = servers.get(name)?;
+        let mut d = reverse_translate(name, entry);
+        d.tool_id = tool_id.clone();
+        d.already_managed = false;
+        let server = McpServer {
+            id: normalize_id(&d.name),
+            name: d.name.clone(),
+            transport: d.transport.clone(),
+            command: d.command.clone(),
+            args: d.args.clone(),
+            env: d.env.clone(),
+            cwd: d.cwd.clone(),
+            url: d.url.clone(),
+            headers: d.headers.clone(),
+            // 迁进仓库即视为可用：全局配置里存在的条目本来就是你打算用的
+            enabled: true,
+            enabled_tools: Vec::new(),
+            description: None,
+            install_method: "migrated".to_string(),
+        };
+        return Some(server);
+    }
+    None
 }
 
 /// 将规范的 McpServer 转换为各工具所需的配置片段
@@ -523,6 +755,16 @@ fn translate(server: &McpServer, format: &str) -> Value {
         "http" | "sse" => {
             let t = server.transport.clone();
             match format {
+                // 标准 `.mcp.json` 形态：**项目级文件用这一档**。
+                // 必须是 `url` 而不是 gemini/qwen 风格的 `httpUrl` —— CodeBuddy / Claude Code
+                // 读项目文件时只认 url，写成 httpUrl 等于配了一条永远连不上的 server。
+                "mcp" => {
+                    m.insert("type".into(), Value::String(t));
+                    m.insert("url".into(), Value::String(server.url.clone()));
+                    if !server.headers.is_empty() {
+                        m.insert("headers".into(), serde_json::to_value(&server.headers).unwrap_or(Value::Null));
+                    }
+                }
                 "opencode" => {
                     m.insert("type".into(), Value::String("remote".into()));
                     m.insert("url".into(), Value::String(server.url.clone()));

@@ -398,6 +398,19 @@ fn gen_project_id() -> String {
     format!("p{}_{}", std::process::id(), stamp)
 }
 
+/// 按 id 取项目目录。
+///
+/// 「项目」这个概念被技能与 MCP 共用（两者都是「装给某个项目」），所以解析放在这里，
+/// 免得 MCP 模块复制一份 projects.json 的读法——那种复制迟早会漂。
+pub(crate) fn project_dir_of(project_id: &str) -> Result<String, String> {
+    load_projects()
+        .projects
+        .into_iter()
+        .find(|p| p.id == project_id)
+        .map(|p| p.path)
+        .ok_or_else(|| format!("项目不存在: {}", project_id))
+}
+
 // ─── 安装到项目（junction） ───
 //
 // 安装 = 在 `<项目>/.agents/skills/<技能id>` 建一个指向技能库该技能的目录联接。
