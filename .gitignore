@@ -49,3 +49,7 @@ tmp_bins.txt
 /.commit_msg.txt
 /build-log.txt
 .freebuff
+# >>> kira skills >>>
+.agents/skills/
+.codebuddy/skills/
+# <<< kira skills <<<
