@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { NODE_COLORS } from "../nodeColors";
+import { NODE_COLORS, isPresetColor } from "../nodeColors";
 
 /**
  * 这份色板有两个消费方：选中表的颜色点选，以及**同系列自动配色**
@@ -24,5 +24,13 @@ describe("NODE_COLORS（表配色色板）", () => {
 
   it("色板足够区分常见规模的系列数", () => {
     expect(NODE_COLORS.length).toBeGreaterThanOrEqual(10);
+  });
+
+  it("isPresetColor 只认色板内的颜色（自定义色要另给清除入口）", () => {
+    expect(isPresetColor(NODE_COLORS[0])).toBe(true);
+    expect(isPresetColor("#123456")).toBe(false);
+    expect(isPresetColor("")).toBe(false);
+    expect(isPresetColor(undefined)).toBe(false);
+    expect(isPresetColor(null)).toBe(false);
   });
 });

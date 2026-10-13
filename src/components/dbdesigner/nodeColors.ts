@@ -26,3 +26,13 @@ export const NODE_COLORS = [
   "#6366f1", // 靛蓝
   "#8b5cf6", // 紫罗兰
 ];
+
+/**
+ * 该颜色是否来自预设色板。
+ *
+ * 用途：预设色的交互是「再点一次同一个圆点 = 取消」，而自定义色没有这个等价操作，
+ * 所以界面要靠它区分「当前是预设色还是自定义色」，后者才需要补一个清除按钮。
+ */
+export function isPresetColor(color?: string | null): boolean {
+  return !!color && NODE_COLORS.includes(color);
+}

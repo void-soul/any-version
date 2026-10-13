@@ -57,7 +57,7 @@ import DesignNodeCard, {
   type DesignNodeData,
 } from "./DesignNodeCard";
 import FieldTable from "./FieldTable";
-import { NODE_COLORS } from "./nodeColors";
+import { NODE_COLORS, isPresetColor } from "./nodeColors";
 import { ModelSelector } from "../ai/ModelSelector";
 import type { ProviderLike } from "../ai/ModelSelector";
 import { useAiPanelWidth } from "../ai/paneWidth";
@@ -771,6 +771,35 @@ export default function DbDesignerPanel() {
   const updateNodeMeta = (nodeId: string, patch: Partial<DbDesignNode>) => {
     if (!doc) return;
     patchDoc({ ...doc, nodes: doc.nodes.map((n) => (n.id === nodeId ? { ...n, ...patch } : n)) });
+  };
+
+  /** 最新文档的引用：给延迟提交用，避免闭包里那份过期（见 commitNodeColor） */
+  const docRef = useRef(doc);
+  docRef.current = doc;
+  const colorTimer = useRef<number | null>(null);
+  const pendingColor = useRef<string | null>(null);
+
+  /**
+   * 原生取色器提交颜色：合并 120ms 再落文档。
+   *
+   * 为什么必须合并：`input[type=color]` 在色盘上拖动时按**帧**触发 onChange，
+   * 一次拖动能打出几十次。每次都 patchDoc 都会把文档标记为已修改、并触发一次
+   * 后端校验（`useEffect([doc])`），手感会明显发涩。120ms 足够跟手。
+   *
+   * 读 `docRef` 而不是闭包里的 `doc`：定时器等待期间用户可能正在改表名，
+   * 拿旧文档回写会把那次输入覆盖掉。
+   */
+  const commitNodeColor = (nodeId: string, hex: string) => {
+    pendingColor.current = hex;
+    if (colorTimer.current !== null) window.clearTimeout(colorTimer.current);
+    colorTimer.current = window.setTimeout(() => {
+      colorTimer.current = null;
+      const next = pendingColor.current;
+      pendingColor.current = null;
+      const cur = docRef.current;
+      if (!next || !cur) return;
+      patchDoc({ ...cur, nodes: cur.nodes.map((n) => (n.id === nodeId ? { ...n, color: next } : n)) });
+    }, 120);
   };
 
   const toggleNodeTag = (nodeId: string, tag: string) => {
@@ -1757,6 +1786,27 @@ export default function DbDesignerPanel() {
                     style={{ background: c }}
                   />
                 ))}
+                {/* 原生取色器：预设之外还要对齐某个特定色（品牌色 / 与别处一致）时用。
+                    左边一道竖线是为了和上面 12 个预设点区分开 —— 它不是「又一个预设」。 */}
+                <span className="mx-0.5 h-3.5 w-px flex-shrink-0 bg-white/15" />
+                <input
+                  type="color"
+                  value={isPresetColor(selected.color) ? selected.color! : NODE_COLORS[0]}
+                  onChange={(e) => commitNodeColor(selected.id, e.target.value)}
+                  title={t("dbd.colorCustom")}
+                  className="h-3.5 w-5 flex-shrink-0 cursor-pointer rounded border border-white/20 bg-transparent p-0"
+                />
+                {/* 预设色靠「再点一次同一个圆点」取消，自定义色没有这个等价操作，
+                    所以给它补一个清除按钮（否则用户设了自定义色就回不去默认强调色） */}
+                {selected.color && !isPresetColor(selected.color) && (
+                  <button
+                    onClick={() => updateNodeMeta(selected.id, { color: "" })}
+                    title={t("dbd.colorClear")}
+                    className="flex h-3.5 w-3.5 flex-shrink-0 cursor-pointer items-center justify-center rounded-full border border-white/15 text-micro leading-none text-slate-400 transition hover:border-red-400/40 hover:text-red-300"
+                  >
+                    ×
+                  </button>
+                )}
               </div>
             ) : null}
             {selected && selected.kind === "view" ? (

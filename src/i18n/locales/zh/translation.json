@@ -110,6 +110,8 @@
     "tags": "标签",
     "tagAddPh": "新标签，回车",
     "color": "颜色",
+    "colorCustom": "自定义颜色…（系统取色器）",
+    "colorClear": "清除颜色，回到模块强调色",
     "tagFilter": "按标签筛选",
     "aiGenerate": "AI 生成",
     "aiTitle": "AI 助手",

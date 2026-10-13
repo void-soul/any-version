@@ -110,6 +110,8 @@
     "tags": "Tags",
     "tagAddPh": "New tag, Enter",
     "color": "Color",
+    "colorCustom": "Custom color… (system picker)",
+    "colorClear": "Clear the color and fall back to the module accent",
     "tagFilter": "Filter by tag",
     "aiGenerate": "AI",
     "aiTitle": "AI Assistant",
