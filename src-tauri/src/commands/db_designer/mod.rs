@@ -9,6 +9,7 @@ pub mod export;
 pub mod file;
 pub mod models;
 pub mod reverse;
+pub mod settings;
 pub mod store;
 pub mod sync;
 

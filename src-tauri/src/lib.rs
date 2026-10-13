@@ -1158,6 +1158,8 @@ pub fn run() {
                 commands::db_designer::commands::dbd_validate,
                 commands::db_designer::ai::dbd_ai_generate,
                 commands::db_designer::ai::dbd_ai_cancel,
+                commands::db_designer::settings::dbd_get_settings,
+                commands::db_designer::settings::dbd_save_settings,
                 commands::db_designer::commands::dbd_sync_relations,
                 commands::db_designer::commands::dbd_export_sql,
                 commands::db_designer::commands::dbd_export_sql_file,

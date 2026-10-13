@@ -64,6 +64,7 @@ import type { ProviderLike } from "../ai/ModelSelector";
 import { useAiPanelWidth } from "../ai/paneWidth";
 import { createEventBuffer, useEventBufferSnapshot } from "../../utils/eventBuffer";
 import { ResultNote } from "../shared/Note";
+import { ThinkingBlock } from "../shared/ThinkingBlock";
 import { theamedConfirm } from "../shared/ThemedAlert";
 import { toast } from "../shared/Toast";
 import {
@@ -246,13 +247,16 @@ export default function DbDesignerPanel() {
   /** 流式落图时已经排好位的节点（id → 坐标）：同一个节点不会被后来的批次挪动 */
   const aiPlacedRef = useRef<Record<string, { x: number; y: number }>>({});
   const aiProgress = useEventBufferSnapshot(dbdAiProgressBuffer);
-  /** 思考过程（DeepSeek-R1 / Qwen 思考模式等推理模型）：最新一帧思考。
-   *  思考块收尾（done）或正文已经开始输出（后面出现 stream 帧）后为 null。 */
-  const aiReasoning = useMemo(() => {
+  /** 思考的完整文本与是否还在想：供 <ThinkingBlock> 展示。
+   *  `text` 从这一版起是**累积全文**（后端以前只给尾部 200 字），展开能看到完整推理链条。
+   *  与下面 aiStatusText 用的 aiThinkFinal 的区别：它**不因 done 而变 null** ——
+   *  思考完成后那块还在，只是从「思考中」变成可展开的成品，随时能回头看。 */
+  const aiThinking = useMemo(() => {
     for (let i = aiProgress.length - 1; i >= 0; i--) {
       const e = aiProgress[i];
-      if (e.step === "reasoning") return e.data?.done ? null : { length: e.data?.length ?? 0, text: e.data?.text ?? "" };
-      if (e.step === "stream") return null;
+      if (e.step === "reasoning") {
+        return { text: e.data?.text ?? "", done: !!e.data?.done };
+      }
     }
     return null;
   }, [aiProgress]);
@@ -283,16 +287,29 @@ export default function DbDesignerPanel() {
 
   // 供应商 / 模型列表来自 AI 模块的现有配置（与思维导图、API 模块同一份）
   useEffect(() => {
+    // 记下「上次用的模型」，与设置读**并行**发起：串行会让空态闪一下
+    const remembered = invoke<{ lastProviderId?: string; lastModelId?: string }>(
+      "dbd_get_settings",
+    ).catch(() => null);
     invoke<any>("get_ai_config")
-      .then((cfg) => {
+      .then(async (cfg) => {
         const list: AiProviderLike[] = (cfg?.providers ?? []).filter(
           (p: AiProviderLike) => p.api_key && p.openai_url,
         );
         setAiProviders(list);
-        if (list.length > 0) {
-          setAiProviderId(list[0].id);
-          setAiModelId(list[0].active_model_id ?? list[0].models?.[0]?.id ?? "");
-        }
+        const saved = await remembered;
+        // 记住的模型要**先验证还存不存在**再沿用：供应商/模型被删掉后，
+        // 直接套用会得到一个空 id，后端只能回退默认，用户还以为自己选过
+        const prov =
+          (saved?.lastProviderId && list.find((p) => p.id === saved.lastProviderId)) ||
+          (list.length > 0 ? list[0] : undefined);
+        if (!prov) return;
+        const modelId =
+          (saved?.lastModelId && prov.models?.some((m: any) => m.id === saved.lastModelId))
+            ? saved.lastModelId
+            : prov.active_model_id ?? prov.models?.[0]?.id ?? "";
+        setAiProviderId(prov.id);
+        setAiModelId(modelId);
       })
       .catch(() => {});
   }, []);
@@ -2132,13 +2149,13 @@ export default function DbDesignerPanel() {
                     <Sparkles className="h-3 w-3 shrink-0 text-cyan-300" />
                     {t("dbd.aiStart")}
                   </div>
-                  {aiThinkFinal ? (
-                    <div className="flex items-center gap-1.5 text-micro text-fuchsia-200/90">
-                      <Brain className={`h-3 w-3 shrink-0 text-fuchsia-300 ${aiBusy && !aiThinkFinal.done ? "animate-pulse" : ""}`} />
-                      {aiThinkFinal.done
-                        ? t("dbd.aiThought", { count: aiThinkFinal.length })
-                        : t("dbd.aiThinkingChars", { count: aiThinkFinal.length })}
-                    </div>
+                  {/* 思考过程：原来这里只有一行「思考中 N 字」，看不到在想什么。
+                      换成共享的 ThinkingBlock（可折叠、全文可复制）。 */}
+                  {aiThinking && aiThinking.text ? (
+                    <ThinkingBlock
+                      text={aiThinking.text}
+                      pending={aiBusy && !aiThinking.done}
+                    />
                   ) : null}
                   {aiStream ? (
                     <div className="flex items-center gap-1.5 text-micro text-emerald-200/90">
@@ -2146,19 +2163,15 @@ export default function DbDesignerPanel() {
                       {t("dbd.aiWritingChars", { count: aiStream.length })}
                     </div>
                   ) : null}
-                  {aiBusy && (aiStream || aiReasoning) ? (
-                    <div
-                      className={`max-h-32 overflow-y-auto whitespace-pre-wrap rounded border px-1.5 py-1 font-mono text-[8px] leading-3.5 ${
-                        aiStream
-                          ? "border-emerald-400/15 bg-emerald-400/[0.03] text-emerald-100/80"
-                          : "border-fuchsia-400/15 bg-fuchsia-400/[0.03] text-fuchsia-100/80"
-                      }`}
-                    >
-                      {(aiStream ?? aiReasoning)!.text || "…"}
-                      <span className={`ml-0.5 inline-block h-2 w-1 animate-pulse align-middle ${aiStream ? "bg-emerald-300" : "bg-fuchsia-300"}`} />
+                  {/* 正文实时预览。思考的预览交给上面的 ThinkingBlock，
+                      不再在这里重复一份（以前同一个 text 在两处各渲染一次） */}
+                  {aiBusy && aiStream ? (
+                    <div className="max-h-32 overflow-y-auto whitespace-pre-wrap rounded border border-emerald-400/15 bg-emerald-400/[0.03] px-1.5 py-1 font-mono text-[8px] leading-3.5 text-emerald-100/80">
+                      {aiStream.text || "…"}
+                      <span className="ml-0.5 inline-block h-2 w-1 animate-pulse bg-emerald-300 align-middle" />
                     </div>
                   ) : null}
-                  {aiBusy && !aiReasoning && !aiStream ? (
+                  {aiBusy && !aiThinking && !aiStream ? (
                     <div className="flex items-center gap-1.5 pl-1">
                       <Loader2 className="h-3 w-3 animate-spin text-slate-400" />
                       <span className="text-micro text-slate-500">{t("dbd.aiThinking")}</span>
@@ -2197,6 +2210,11 @@ export default function DbDesignerPanel() {
                 onSelect={(pid, mid) => {
                   setAiProviderId(pid);
                   setAiModelId(mid);
+                  // 记住选择：主模块切换是 <Activity> keep-alive，切回时挂载 effect 会重跑，
+                  // 不持久化的话那次重跑会把这里选好的模型覆盖回默认
+                  void invoke("dbd_save_settings", {
+                    settings: { lastProviderId: pid, lastModelId: mid },
+                  }).catch(() => {});
                 }}
                 disabled={aiBusy}
                 compact
