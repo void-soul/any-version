@@ -1,7 +1,7 @@
 ﻿import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
-import { useProjects } from "./useProjects";
+import { useProjects, type SkillProject } from "./useProjects";
 import { useTranslation } from "react-i18next";
 import {
   Plug,
@@ -18,6 +18,7 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { alertError, theamedAlert } from "../shared/ThemedAlert";
+import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
 
 interface McpServer {
   id: string;
@@ -119,6 +120,7 @@ export default function McpManager() {
     setSelProject,
     picked: pickedProjects,
     setPicked: setPickedProjects,
+    removeProject: removeProjectShared,
   } = useProjects();
   const [projMcps, setProjMcps] = useState<ProjectMcp[]>([]);
   const [projBusy, setProjBusy] = useState<string>("");
@@ -126,6 +128,30 @@ export default function McpManager() {
   const [repoCollapsed, setRepoCollapsed] = useState(false);
   /** 各项目已装数量（左侧列表上的数字；只拉当前项目的详情太慢，这里各存一份计数） */
   const [projCounts, setProjCounts] = useState<Record<string, number>>({});
+  /** 危险操作二次确认（删项目等） */
+  const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
+
+  /**
+   * 删除项目条目：二次确认走共享弹框。
+   *
+   * 删的只是「清单里的一项」——项目目录里的 `.mcp.json`、已装技能一概不动。
+   * 走共享 store 的 removeProject，所以技能页那边也会立刻同步（两页读同一份快照）。
+   */
+  const askRemoveProject = (p: SkillProject) => {
+    setConfirmReq({
+      title: t("skillmgr.projRemove"),
+      desc: t("skillmgr.projRemoveConfirm", { name: p.name || p.path }),
+      confirmText: t("common.delete"),
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await removeProjectShared(p.id);
+        } catch (e) {
+          alertError(String(e));
+        }
+      },
+    });
+  };
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -160,18 +186,6 @@ export default function McpManager() {
       setServers(srv);
       // 已经收进仓库的条目不再重复提示迁移
       setGlobalList(glob.filter((d) => !d.alreadyManaged));
-      // 左侧列表要显示每个项目的已装数量，所以**每个项目都读一次** `.mcp.json`。
-      // 成本极低（每人一个小 JSON），换来的是不用点进项目才知道装没装。
-      void Promise.all(
-        projects.map(async (p) => {
-          try {
-            const list = await invoke<ProjectMcp[]>("list_project_mcps", { projectId: p.id });
-            setProjCounts((m) => ({ ...m, [p.id]: list.length }));
-          } catch {
-            // 项目文件解析失败：数字留空即可，详情页会如实报错，不在这里打断整页
-          }
-        }),
-      );
     } catch (e) {
       console.error(e);
     } finally {
@@ -180,6 +194,31 @@ export default function McpManager() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  /**
+   * 各项目的已装数量（左侧列表上的数字）。
+   *
+   * 刻意**不放在 `load` 里**：那个 useCallback 的依赖是 `[]`，闭包捕获的是首次渲染的
+   * `projects = []`，于是计数一次都没算出来过——徽章永远不显示，连刷新按钮都救不回来
+   * （刷新只重跑 `load`）。做成依赖共享 store 的 `projects` 的回调，才既正确、
+   * 又能跟着项目增删一起刷新（在技能页删项目，这里也会重算），刷新按钮也能复用。
+   *
+   * 成本：每个项目读一次 `.mcp.json`（每人一个小 JSON），并发发出。
+   */
+  const reloadProjCounts = useCallback(async () => {
+    await Promise.all(
+      projects.map(async (p) => {
+        try {
+          const list = await invoke<ProjectMcp[]>("list_project_mcps", { projectId: p.id });
+          setProjCounts((m) => ({ ...m, [p.id]: list.length }));
+        } catch {
+          // 项目文件解析失败：数字留空即可，详情页会如实报错，不在这里打断整页
+        }
+      }),
+    );
+  }, [projects]);
+
+  useEffect(() => { void reloadProjCounts(); }, [reloadProjCounts]);
 
   /// 读当前项目的 `.mcp.json`
   const loadProjMcps = useCallback(async (pid: string) => {
@@ -309,7 +348,8 @@ export default function McpManager() {
         await invoke("install_mcp_to_project", { projectId: pid, serverId: id });
       }
       await loadProjMcps(selProject);
-      
+      // 左侧徽章是**每个项目各一个数字**，而刚才装的可能不是当前项目，所以整批重算
+      void reloadProjCounts();
       void load();
     } catch (e: any) {
       alertError(t("mcp.opFail", { err: String(e) }));
@@ -326,6 +366,7 @@ export default function McpManager() {
     try {
       await invoke("remove_mcp_from_project", { projectId: selProject, name });
       await loadProjMcps(selProject);
+      void reloadProjCounts();
     } catch (e: any) {
       alertError(t("mcp.opFail", { err: String(e) }));
     } finally {
@@ -646,7 +687,7 @@ export default function McpManager() {
                 </button>
               )}
               <button
-                onClick={() => void load()}
+                onClick={() => { void load(); void reloadProjCounts(); }}
                 className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-slate-200 cursor-pointer"
                 title={t("mcp.refresh")}
               >
@@ -686,11 +727,16 @@ export default function McpManager() {
                       <span className="text-tiny font-semibold text-slate-200 truncate flex-1">
                         {p.name || p.path}
                       </span>
-                      {n > 0 && (
-                        <span className="px-1.5 py-0.5 rounded text-micro font-semibold bg-emerald-500/15 text-emerald-400 flex-shrink-0">
-                          {n}
-                        </span>
-                      )}
+                      {/* 数量 0 也显示：`没装过` 与 `还没算出来` 必须能一眼分开，
+                          藏起来就退化成「不知道有没有装」 */}
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-micro font-semibold flex-shrink-0 ${
+                          n > 0 ? "bg-emerald-500/15 text-emerald-400" : "bg-white/5 text-slate-500"
+                        }`}
+                        title={t("mcp.projMcpCountHint", { n })}
+                      >
+                        {n}
+                      </span>
                     </div>
                     <div className="flex items-center gap-1">
                       <div className="text-micro text-slate-500 font-mono truncate flex-1">{p.path}</div>
@@ -703,6 +749,14 @@ export default function McpManager() {
                         <FolderOpen className="w-3 h-3" />
                       </button>
                     </div>
+                  </button>
+                  {/* 删除项目条目（只删清单记录，项目目录里的 .mcp.json 一概不动） */}
+                  <button
+                    onClick={() => askRemoveProject(p)}
+                    className="text-slate-600 hover:text-red-400 cursor-pointer flex-shrink-0 mt-0.5"
+                    title={t("skillmgr.projRemove")}
+                  >
+                    <Trash2 className="w-3 h-3" />
                   </button>
                 </div>
               );
@@ -815,6 +869,8 @@ export default function McpManager() {
         </div>
       )}
 
+      {/* 危险操作二次确认（删项目等） */}
+      <ConfirmDialogHost request={confirmReq} onClose={() => setConfirmReq(null)} />
       </div>
   );
 }

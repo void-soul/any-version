@@ -4220,7 +4220,8 @@
     "projectOpenFail": "Failed to open the project folder (it may have been moved or deleted)",
     "installConfirmProjects": "Install this MCP into: {{list}}?",
     "installedToProjects": "Installed into {{n}} project(s)",
-    "globalReadFail": "Failed to read the global MCP configs: {{err}}"
+    "globalReadFail": "Failed to read the global MCP configs: {{err}}",
+    "projMcpCountHint": "{{n}} MCP server(s) installed in this project"
   },
   "tranpanel": {
     "title": "Translate",

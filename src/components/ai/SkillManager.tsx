@@ -13,6 +13,7 @@ import {
   RotateCw
 } from 'lucide-react';
 import { alertError } from "../shared/ThemedAlert";
+import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 
 // ─── 类型 ───
@@ -134,20 +135,21 @@ export default function SkillManager() {
 
   // ── 项目（技能的作用域） ──
   /**
-   * 项目清单来自**共享 hook**（./useProjects）—— MCP 页用的是同一个。
-   * 之前两边各管各的：在技能页新加的项目，MCP 页要切页或手动刷新才看得见，
-   * 两边看到的也不是同一份东西。
-   */
-  const {
-    projects,
-    selProject: selProjectRaw,
-    setSelProject: setSelProjectRaw,
-    picked: pickedProjects,
-    setPicked: setPickedProjects,
-    counts: projCounts,
-    reloadCounts: loadProjCounts,
-    reload: reloadProjects,
-  } = useProjects({ withCounts: true });
+    * 项目清单来自**共享 store**（./useProjects）—— MCP 页读的是同一份快照。
+    * 之前只是共用 hook 代码、各存一份 useState，加上两页 keep-alive 常驻，
+    * 于是「在技能页删掉的项目在 MCP 页还在」——后端早就改了，只有前端不同步。
+    */
+    const {
+      projects,
+      selProject: selProjectRaw,
+      setSelProject: setSelProjectRaw,
+      picked: pickedProjects,
+      setPicked: setPickedProjects,
+      counts: projCounts,
+      reloadCounts: loadProjCounts,
+      reload: reloadProjects,
+      removeProject: removeProjectShared,
+    } = useProjects();
   /** 右侧正在查看的项目（左侧点谁看谁）。空串 = 还没选，界面给引导而不是空白 */
   const selProject: string | null = selProjectRaw || null;
   const setSelProject = (id: string | null) => setSelProjectRaw(id ?? '');
@@ -193,6 +195,8 @@ export default function SkillManager() {
     });
   };
   const [projMsg, setProjMsg] = useState<{ id: string; msg: string; ok: boolean } | null>(null);
+  /** 危险操作二次确认（删项目等）—— 走共享弹框，而不是原生 confirm */
+  const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
   /** 右侧正在查看的项目（左侧点谁看谁） */
   /** projectId -> 该项目的技能清单（查看时才拉） */
   const [projSkills, setProjSkills] = useState<Record<string, ProjectSkillEntry[]>>({});
@@ -451,22 +455,28 @@ export default function SkillManager() {
     }
   };
 
-  /** 移除项目条目（只删记录，项目目录里的 .agents/skills 一概不动） */
-  const removeProject = async (p: SkillProject) => {
-    if (!confirm(t("skillmgr.projRemoveConfirm", { name: p.name || p.path }))) return;
-    try {
-      await invoke('remove_project', { id: p.id });
-      setProjMsg({ id: p.id, msg: t("skillmgr.projRemoved"), ok: true });
-      setSelProjectRaw('');
-      setPickedProjects((s) => {
-        const n = new Set(s);
-        n.delete(p.id);
-        return n;
-      });
-      await reloadProjects();
-    } catch (e: any) {
-      setProjMsg({ id: p.id, msg: String(e), ok: false });
-    }
+  /**
+  * 移除项目条目（只删记录，项目目录里的 .agents/skills 一概不动）。
+  *
+  * 二次确认走共享 ConfirmDialogHost：原生 `confirm` 的样式跟随系统、还阻塞事件循环，
+  * 而这里需要把「只删清单、不动项目里的文件」讲清楚。
+  */
+  const removeProject = (p: SkillProject) => {
+    setConfirmReq({
+      title: t("skillmgr.projRemove"),
+      desc: t("skillmgr.projRemoveConfirm", { name: p.name || p.path }),
+      confirmText: t("common.delete"),
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await removeProjectShared(p.id);
+          setProjMsg({ id: p.id, msg: t("skillmgr.projRemoved"), ok: true });
+          // 选中项交给 store 的 reload 兜底（它会落到第一个项目上）
+        } catch (e: any) {
+          setProjMsg({ id: p.id, msg: String(e), ok: false });
+        }
+      },
+    });
   };
 
   /** 切换右侧正在查看的项目，并按需拉它的技能清单 */
@@ -1529,6 +1539,9 @@ export default function SkillManager() {
           </div>
         </div>
       )}
+
+      {/* 危险操作二次确认（删项目等） */}
+      <ConfirmDialogHost request={confirmReq} onClose={() => setConfirmReq(null)} />
     </div>
   );
 }
