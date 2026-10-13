@@ -141,6 +141,10 @@ function normalizeInterval(value: number | null | undefined): number {
 /** 直连 AI 通道的调用方：tool_id 与模块 id 不一致时在此登记（→ 模块 id） */
 const TOOL_ID_ALIASES: Record<string, string> = {
   "api-import": "api", // API 智能导入 → api 模块
+  // workBuddy2API：它的 tool_id 是 buddy2api，但面板注册表里的模块 id 是 buddy。
+  // 不登记的话这一行只能回落成原始 id「buddy2api」——纯文本、无图标无颜色，
+  // 在一排都有模块图标的行里显得像没归类的脏数据。
+  "buddy2api": "buddy",
 };
 
 function toolDisplay(rawId: string, aiTools: DetectedAiTool[]): { label: string; icon?: React.ReactNode } {
