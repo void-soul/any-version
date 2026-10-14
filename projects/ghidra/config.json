@@ -3,7 +3,9 @@
   "display_name": "Ghidra",
   "category": "tool",
   "official_website": "https://ghidra-sre.org",
-  "bin_dirs": [],
+  "bin_dirs": [
+    "support"
+  ],
   "has_cache": false,
   "has_mirror": false,
   "mirror_options": null,
