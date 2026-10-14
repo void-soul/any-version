@@ -257,6 +257,19 @@ async fn call_ai_json_for_explorer(
     Ok(json)
 }
 
+/// 节点 `kind` 的唯一真相。
+///
+/// **刻意只有这一份**：同一枚举此前散在 `validate_ai_nodes_json` 与
+/// `normalize_imported_nodes` 两处局部常量里（连类型与顺序都不一致：
+/// `[&str; 12]` vs `&[&str]`），外加内置技能 `validate.py` 的 KINDS 与
+/// `SKILL.md` 的白名单散文 —— 一共四份。加一种 kind 只改其中一份时，
+/// 「严格校验」与「导入归一化」会对同一个值给出相反判断，且没有任何编译期或
+/// 测试期信号。`mindmap_node_kinds_match_the_builtin_skill` 守住另外三份。
+pub(crate) const NODE_KINDS: [&str; 12] = [
+    "root", "module", "component", "service", "route", "config", "file", "task", "requirement",
+    "constraint", "risk", "other",
+];
+
 /// 通用 JSON 对象请求（流式，文本协议）。
 
 fn json_to_mindmap_nodes(json: &serde_json::Value, document_id: &str, id_prefix: &str) -> Vec<MindmapNode> {
@@ -438,14 +451,12 @@ pub fn mm_import_nodes(input: MindmapImportInput) -> Result<MindmapImportResult,
 
 /// 导入节点的规范化：AI 内部路径容忍度高，外部文件要替用户兜住明显错误。
 fn normalize_imported_nodes(nodes: &mut Vec<MindmapNode>, warnings: &mut Vec<String>) {
-    const KINDS: [&str; 12] = ["root", "module", "component", "service", "route", "config",
-        "file", "task", "requirement", "constraint", "risk", "other"];
     for n in nodes {
         if n.name.trim().is_empty() {
             n.name = "未命名".to_string();
             warnings.push(format!("节点 {} 缺少 name，已填「未命名」", n.id));
         }
-        if !KINDS.contains(&n.kind.as_str()) {
+        if !NODE_KINDS.contains(&n.kind.as_str()) {
             warnings.push(format!("节点「{}」的 kind={} 不在允许列表，已改成 other", n.name, n.kind));
             n.kind = "other".to_string();
         }
@@ -647,14 +658,10 @@ fn node_keywords(name: &str, description: &str) -> Vec<String> {
 /// 借鉴 Archify 的「校验驱动」：结构/语义检查，为修复循环提供可反馈的诊断。
 /// project 非空时额外做证据校验：sources 必须真实存在于扫描结果中，
 /// 且文件内容/路径须与节点说明相关（防标注错误文件）。
-fn validate_ai_nodes_json(
+pub(crate) fn validate_ai_nodes_json(
     json: &serde_json::Value,
     project: Option<&super::scan::ProjectFiles>,
 ) -> Vec<String> {
-    const KINDS: &[&str] = &[
-        "root", "module", "requirement", "task", "constraint", "risk", "other",
-        "component", "service", "route", "config", "file",
-    ];
     let mut errs: Vec<String> = Vec::new();
     let Some(arr) = json.get("nodes").and_then(|v| v.as_array()) else {
         return vec!["缺少 nodes 数组".into()];
@@ -674,7 +681,7 @@ fn validate_ai_nodes_json(
             errs.push(format!("{}：name 为空", tag));
         }
         if let Some(k) = n.get("kind").and_then(|x| x.as_str()) {
-            if !KINDS.contains(&k) {
+            if !NODE_KINDS.contains(&k) {
                 errs.push(format!("{}：kind '{}' 不在允许列表", tag, k));
             }
         }

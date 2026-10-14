@@ -2420,6 +2420,122 @@ mod builtin_skill_tests {
         }
     }
 
+    /// 取出 SKILL.md 里第一个 ```json 代码块。
+    fn first_json_block(md: &str) -> Option<serde_json::Value> {
+        let start = md.find("```json")?;
+        let body = &md[start + 7..];
+        let end = body.find("```")?;
+        serde_json::from_str::<serde_json::Value>(body[..end].trim()).ok()
+    }
+
+    /// **内置 db-designer 技能的示例必须能通过应用自己的校验器。**
+    ///
+    /// 这条规则的来由：同一套命名规范散在**三份副本**里 —— AI 提示词、内置技能文档、
+    /// 校验器（Rust 与它的 Python 孪生）。改了两处忘了第三处，Agent 就会照着过期
+    /// 的示例产出违规设计，而用户在界面上看到的是「AI 生成的，一导入就报错」。
+    ///
+    /// 之前就踩过：示例里两张表主键都叫 `id`、`email` 是裸名、外键没建索引，
+    /// 而应用侧 `validate` 早就把这三类判成 error（会拦住保存与导出）。
+    /// 提示词那边已经加过同类测试，这里给技能文档补上，两处不再各漏一次。
+    #[test]
+    fn builtin_db_designer_skill_example_passes_the_app_validator() {
+        let example = first_json_block(DB_DESIGNER_SKILL_MD)
+            .expect("db-designer 的 SKILL.md 第一个 json 代码块应能解析");
+        // 示例里节点与关联都自带 id，直接反序列化即可（不需要走 ai::parse_document 补 id）
+        let doc: crate::commands::db_designer::models::DbDesignDocument =
+            serde_json::from_value(example).unwrap_or_else(|e| {
+                panic!("技能示例应能反序列化成设计文件：{}", e);
+            });
+        let report = crate::commands::db_designer::store::validate(&doc);
+        assert!(
+            report.errors.is_empty(),
+            "内置技能示例本身就违反应用规则，Agent 会照抄它：\n{}",
+            report.errors.join("\n")
+        );
+    }
+
+    /// 技能自带的 `validate.py` 必须真的实现那三类命名规则。
+    ///
+    /// 它的文件头写着「规则与应用的 store.rs::validate 对齐」—— 这句话曾经是假的：
+    /// 命名三类规则一条都没查，于是自检对一份导不出来的设计报「全部通过」。
+    /// 那比不检查更糟：Agent 会据此宣称交付，而用户一导入就撞上一屏报错。
+    #[test]
+    fn builtin_db_designer_validator_script_checks_naming_rules() {
+        for needle in [
+            "GENERIC_FIELD_NAMES",  // 通用裸名黑名单
+            "def singularize",      // 主键命名要用实体名
+            "主键应命名为",           // 主键命名规则
+            "通用裸名",              // 通用裸名规则
+            "没有索引",              // 外键索引覆盖规则
+        ] {
+            assert!(
+                DB_DESIGNER_VALIDATE_PY.contains(needle),
+                "validate.py 缺少「{}」规则，与它自称的「与应用对齐」不符",
+                needle
+            );
+        }
+    }
+
+    /// 内置 mindmap-import 技能的示例必须能通过应用自己的校验器。
+    ///
+    /// 与 db-designer 那条同构：示例是 Agent 最直接的抄写对象，示例违规就会被原样产出。
+    /// 这条技能当前**没有**违规（kind 白名单、示例结构都对得上），所以它是纯防漂移的闸门。
+    #[test]
+    fn builtin_mindmap_skill_example_passes_the_app_validator() {
+        let example = first_json_block(MINDMAP_IMPORT_SKILL_MD)
+            .expect("mindmap-import 的 SKILL.md 第一个 json 代码块应能解析");
+        let errs = crate::commands::mindmap::commands::validate_ai_nodes_json(&example, None);
+        assert!(
+            errs.is_empty(),
+            "内置思维导图技能示例违反应用规则，Agent 会照抄它：\n{}",
+            errs.join("\n")
+        );
+    }
+
+    /// **同一个 `kind` 枚举曾有五份副本**，这里守住其中三份外部的。
+    ///
+    /// Rust 侧已收敛为 `NODE_KINDS` 单一真相（原先 `validate_ai_nodes_json` 与
+    /// `normalize_imported_nodes` 各有一份局部常量，连类型与顺序都不同）。
+    /// 剩下三份在技能资产里，改 Rust 时不会牵动它们：
+    ///   1. `validate.py` 的 `KINDS` —— Agent 自检时读它
+    ///   2. `SKILL.md` 的白名单散文 —— Agent 生成时读它
+    ///   3. AI 提示词模板里的 kinds 占位（已随Rust 收敛，但它的取值来源即NODE_KINDS）
+    ///
+    /// 漂移后果是**静默且互相矛盾**的：同一个新 kind，严格校验放行、导入归一化
+    /// 改写成 `other`，或反过来 —— 而两边都不会报错，用户只看到节点类型莫名变了。
+    #[test]
+    fn mindmap_node_kinds_match_the_builtin_skill() {
+        use crate::commands::mindmap::commands::NODE_KINDS;
+
+        // 1) validate.py 的 KINDS 集合：取 `{...}` 内的引号 token
+        let py = MINDMAP_IMPORT_VALIDATE_PY;
+        let header = "KINDS = {";
+        let set_start = py.find(header).expect("validate.py 应有 KINDS 集合") + header.len();
+        let set_end = set_start
+            + py[set_start..].find('}').expect("KINDS 集合应有闭合大括号");
+        let py_kinds: std::collections::HashSet<&str> = py[set_start..set_end]
+            .split('"')
+            .filter(|s| !s.trim().is_empty() && !s.contains([' ', '\n', '\r', ',']))
+            .collect();
+        let rust_kinds: std::collections::HashSet<&str> = NODE_KINDS.iter().copied().collect();
+        assert_eq!(
+            py_kinds, rust_kinds,
+            "validate.py 的 KINDS 与 Rust 的 NODE_KINDS 不一致：\
+             少了 {:?}，多了 {:?}",
+            rust_kinds.difference(&py_kinds).collect::<Vec<_>>(),
+            py_kinds.difference(&rust_kinds).collect::<Vec<_>>(),
+        );
+
+        // 2) SKILL.md 的白名单散文：逐个反引号 kind 都要在集合里
+        for k in NODE_KINDS {
+            assert!(
+                MINDMAP_IMPORT_SKILL_MD.contains(&format!("`{}`", k)),
+                "SKILL.md 的 kind 白名单里没有 `{}` —— Agent 按文档生成时会用到它",
+                k
+            );
+        }
+    }
+
     #[test]
     fn install_writes_every_file_and_refuses_overwrite() {
         let dir = std::env::temp_dir().join(format!("kira-builtin-skill-{}", std::process::id()));

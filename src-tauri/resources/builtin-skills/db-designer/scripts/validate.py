@@ -24,6 +24,70 @@ INDEX_KINDS = {"primary", "unique", "index", "fulltext"}
 FK_ACTIONS = {"RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT", "NO ACTION"}
 DIALECTS = {"mysql", "postgres", "sqlite"}
 
+# ── 命名规范（与应用侧 store.rs::validate 的 validate_naming 逐条对齐）────────
+#
+# 这三条是 error 级：违反了应用会拦住保存与导出。缺了它们，这个自检脚本就会对
+# 一份导不出来的设计报「全部通过」—— 那比不检查更糟，因为 Agent 会据此交付。
+GENERIC_FIELD_NAMES = {
+    "id", "name", "title", "label", "desc", "description", "price", "amount",
+    "status", "type", "code", "value", "content", "text", "url", "uri",
+    "phone", "email", "address", "age", "sex", "gender", "count", "num",
+    "number", "total", "size", "weight", "height", "color", "comment",
+    "note", "remark", "date", "time", "year", "month", "day", "sort",
+    "order", "flag", "enabled",
+}
+
+
+def singularize(name):
+    """表名去复数 -> 实体名。与 store.rs::singularize 同规则。
+
+    刻意不处理不规则名词（users -> user 可以，people -> peopl 不会）：
+    Rust 那份也是这样，宁可让用户自己起对名字，不要猜错。
+    """
+    n = (name or "").strip().lower()
+    if n.endswith("ies") and len(n) > 3:
+        return n[:-3] + "y"
+    if n.endswith("ses") and len(n) > 3:
+        return n[:-2]
+    if n.endswith("s") and not n.endswith("ss"):
+        return n[:-1]
+    return n
+
+
+def check_naming(name, table, pk_cols, idx_field_sets):
+    """主键命名、通用裸名、外键索引覆盖。"""
+    entity = singularize(name)
+
+    # 1) 主键命名
+    if len(pk_cols) == 1:
+        expect = f"{entity}_id"
+        if pk_cols[0] != expect:
+            err(
+                f"表 {name}：主键应命名为 {expect}（当前是 {pk_cols[0]}）"
+                f"—— 裸 id 会让联表 SQL 分不清这一列属于谁"
+            )
+    elif len(pk_cols) > 1:
+        names = [c.lower() for c in pk_cols]
+        if "id" in names:
+            err(f"表 {name}：复合主键里不能有裸 id（{', '.join(pk_cols)}）")
+        elif not any("_" in c for c in names):
+            err(
+                f"表 {name}：复合主键（{', '.join(pk_cols)}）至少一个字段要带下划线，"
+                f"建议其中一个叫 {entity}_id"
+            )
+
+    # 2) 通用裸名（不含下划线的才查：带下划线视为已带表前缀）
+    for fname in [f.get("name") for f in table.get("fields") or []]:
+        if not fname:
+            continue
+        low = fname.lower()
+        if low in GENERIC_FIELD_NAMES and "_" not in fname:
+            err(
+                f"表 {name}：字段 {fname!r} 是通用裸名，跨表同名时无法分辨归属，"
+                f"应改为 {entity}_{low}"
+            )
+    return entity
+
 errors = []
 warnings = []
 
@@ -148,6 +212,19 @@ def check_table(node):
                 err(f"{where}：引用了不存在的字段 {c!r}")
         if kind == "unique" and cols and all(c in pk_cols for c in cols):
             warn(f"{where}：唯一索引的列全是主键，冗余")
+
+    # 命名规范：主键命名 + 通用裸名
+    check_naming(name, table, pk_cols, None)
+
+    # 外键索引覆盖：应用侧 store.rs::validate 会把「外键字段没索引」当 error，
+    # 这里同口径 —— 否则自检通过、导入后照样导不出 SQL。
+    idx_fields = {
+        c
+        for idx in indexes
+        if isinstance(idx, dict)
+        for c in (idx.get("fields") or [])
+        if isinstance(c, str)
+    }
     return seen
 
 
@@ -176,6 +253,8 @@ def check(doc):
     by_id = {}
     names = set()
     fields_of = {}
+    # 每张表被索引覆盖的列名：用于「外键字段必须有索引」那条 error
+    idx_fields_of = {}
     for i, n in enumerate(nodes):
         if not isinstance(n, dict):
             err(f"第 {i + 1} 个节点不是对象")
@@ -205,6 +284,14 @@ def check(doc):
             fields_of[nid] = set()
         else:
             fields_of[nid] = check_table(n)
+            tbl = n.get("table") or {}
+            idx_fields_of[nid] = {
+                c
+                for idx in (tbl.get("indexes") or [])
+                if isinstance(idx, dict)
+                for c in (idx.get("fields") or [])
+                if isinstance(c, str)
+            }
 
     rels = doc.get("relations") or []
     if not isinstance(rels, list):
@@ -244,6 +331,28 @@ def check(doc):
             v = r.get(act)
             if v and str(v).upper() not in FK_ACTIONS:
                 err(f"{where}：{act}={v!r} 越界（允许 {'/'.join(sorted(FK_ACTIONS))}）")
+
+        # 外键字段必须有索引（error 级，与应用侧 validate_naming 同口径）
+        # n-n 中间表例外：联合主键自带索引
+        kind = r.get("kind", "1-n")
+        if kind == "n-n":
+            continue
+        frm_node = by_id.get(frm)
+        if frm_node is None or frm_node.get("kind", "table") != "table":
+            continue
+        fk_field = (r.get("from") or {}).get("field")
+        tbl = frm_node.get("table") or {}
+        pk_names = {f.get("name") for f in (tbl.get("fields") or []) if isinstance(f, dict) and f.get("pk")}
+        if not fk_field or fk_field in pk_names:
+            continue  # 主键本身不需要额外索引
+        if fk_field in idx_fields_of.get(frm, set()):
+            continue
+        tname = frm_node.get("name") or frm
+        err(
+            f"表 {tname}：外键字段 {fk_field!r} 没有索引 —— "
+            f"关联查它时全表扫。补一条 "
+            f'{{"name": "idx_{tname}_{fk_field}", "kind": "index", "fields": ["{fk_field}"]}}'
+        )
 
 
 def main():

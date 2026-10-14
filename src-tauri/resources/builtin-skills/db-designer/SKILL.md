@@ -25,6 +25,9 @@ any-version 的数据库设计器是**纯文件**的：画的是「表 / 视图�
 
 ## 1. 文件长什么样（最小可用）
 
+> **示例本身是合规的**：`user_id` / `order_id` 作主键、`user_email` 带表前缀、
+> 外键 `user_id` 建了索引。示例违规的话 Agent 会照抄 —— 那比规则写漏了更常见。
+
 ```json
 {
   "id": "d1",
@@ -38,12 +41,12 @@ any-version 的数据库设计器是**纯文件**的：画的是「表 / 视图�
       "comment": "用户表",
       "table": {
         "fields": [
-          { "name": "id", "type": { "base": "bigint" }, "pk": true, "autoIncrement": true, "comment": "用户ID" },
-          { "name": "email", "type": { "base": "varchar", "length": 255 }, "unique": true, "comment": "邮箱" },
+          { "name": "user_id", "type": { "base": "bigint" }, "pk": true, "autoIncrement": true, "comment": "用户主键" },
+          { "name": "user_email", "type": { "base": "varchar", "length": 255 }, "unique": true, "comment": "邮箱" },
           { "name": "created_at", "type": { "base": "datetime" }, "default": "CURRENT_TIMESTAMP" }
         ],
         "indexes": [
-          { "name": "idx_users_email", "kind": "unique", "fields": ["email"] }
+          { "name": "idx_users_user_email", "kind": "unique", "fields": ["user_email"] }
         ]
       }
     },
@@ -51,12 +54,15 @@ any-version 的数据库设计器是**纯文件**的：画的是「表 / 视图�
       "id": "t_orders",
       "kind": "table",
       "name": "orders",
+      "comment": "订单表",
       "table": {
         "fields": [
-          { "name": "id", "type": { "base": "bigint" }, "pk": true, "autoIncrement": true },
-          { "name": "user_id", "type": { "base": "bigint" }, "comment": "下单人" }
+          { "name": "order_id", "type": { "base": "bigint" }, "pk": true, "autoIncrement": true, "comment": "订单主键" },
+          { "name": "user_id", "type": { "base": "bigint" }, "comment": "下单人，引用 users.user_id" }
         ],
-        "indexes": []
+        "indexes": [
+          { "name": "idx_orders_user_id", "kind": "index", "fields": ["user_id"] }
+        ]
       }
     }
   ],
@@ -64,7 +70,7 @@ any-version 的数据库设计器是**纯文件**的：画的是「表 / 视图�
     {
       "id": "r1",
       "from": { "node": "t_orders", "field": "user_id" },
-      "to": { "node": "t_users", "field": "id" },
+      "to": { "node": "t_users", "field": "user_id" },
       "kind": "1-n",
       "onDelete": "RESTRICT",
       "onUpdate": "RESTRICT"
@@ -77,6 +83,29 @@ any-version 的数据库设计器是**纯文件**的：画的是「表 / 视图�
 / `folderId` / `nodes` / `relations` / `updatedAt`。
 
 ## 2. 关键约定（最容易写错的地方）
+
+### 2.1 命名规范（**error 级，会拦住保存与导出**）
+
+这三条与应用侧 `store.rs::validate` 逐条对齐，违反就导不出 SQL：
+
+| 规则 | 对 / 错 |
+|---|---|
+| **主键禁止裸 `id`**，用 `<实体>_id` | `users` 表 → `user_id`；`orders` 表 → `order_id` |
+| **通用裸名必须带表名前缀** | `email` ✗ → `user_email`；`status` ✗ → `order_status` |
+| **每个外键字段都要有索引** | `orders.user_id` 是外键 → `indexes` 里必须有 `{"fields": ["user_id"]}` |
+
+「通用裸名」指这些词单独出现时无法分辨属于哪张表：
+`id` `name` `title` `label` `desc` `description` `price` `amount` `status` `type` `code`
+`value` `content` `text` `url` `uri` `phone` `email` `address` `age` `sex` `gender`
+`count` `num` `number` `total` `size` `weight` `height` `color` `comment` `note`
+`remark` `date` `time` `year` `month` `day` `sort` `order` `flag` `enabled`
+
+**已经带下划线的不用再加前缀** —— `created_at`、`user_id`、`order_status` 都合法。
+判定口径是「**不含下划线** 且命中上面的词」，所以 `username`（含下划线）不会被要求改成 `user_username`。
+
+> 复合主键（多个字段 `pk: true`）例外：不能出现裸 `id`，且至少一个字段带下划线。
+
+### 2.2 其他约定
 
 | 约定 | 说明 |
 |---|---|
@@ -102,7 +131,8 @@ any-version 的数据库设计器是**纯文件**的：画的是「表 / 视图�
 ### 3.1 一段需求 / 一段话
 
 1. 先数清**实体**（名词）与**关系**（动词）→ 每张表
-2. 标出**主键**（通常是 id，也可能是业务键如订单号）与**唯一键**（邮箱、手机号）
+2. 标出**主键**与**唯一键**。主键名用 `<实体>_id`（`users` 表用 `user_id`、`orders` 表用 `order_id`），
+   业务键做主键时用业务键本身（如 `order_no`）。**不要用裸 `id`** —— 见 §2.1
 3. 把需求里的限定词翻译成约束：「必须/不能为空」→ `nullable: false`；「默认…」→ `default`
 4. 一对一写成外键 + `kind: "1-1"`；多对多**加一张中间表**
 
