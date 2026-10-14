@@ -201,12 +201,35 @@ mod tests {
 
         let (name2, _, args2) = parse_runner_source("npx  some-pkg");
         assert_eq!(name2, "some-pkg");
-        assert_eq!(args2, vec!["some-pkg"]);
+        // 用户没写 -y 也要补：Kira 拉 MCP 是子进程，stdin 不是 TTY，
+        // npx 的「Ok to proceed? (y)」读不到 stdin 就挂住。
+        assert_eq!(args2, vec!["-y", "some-pkg"], "缺 -y 必须补上");
 
         // 只给了运行器名：名称退回运行器名（命令侧会另行报错「后面要跟包名」）
         let (name3, _, args3) = parse_runner_source("npx");
         assert_eq!(name3, "npx");
-        assert!(args3.is_empty());
+        assert!(args3.is_empty(), "没有包名时不补 -y");
+    }
+
+    /// `-y` 只在缺失时补一次，且不能动已有 flag 顺序。
+    #[test]
+    fn npx_yes_flag_is_added_once_and_only_when_needed() {
+        // 已经写了 -y → 不重复
+        let (_, _, a) = parse_runner_source("npx -y rea-agents@latest");
+        assert_eq!(a, vec!["-y", "rea-agents@latest"]);
+        // 写了 --yes → 不重复
+        let (_, _, a) = parse_runner_source("npx --yes some-pkg");
+        assert_eq!(a, vec!["--yes", "some-pkg"]);
+        // flag 在前（带别的 flag）→ 补在 flag 之后、第一个 flag 之前不合法的场景下不乱插
+        let (_, _, a) = parse_runner_source("npx some-pkg mcp");
+        assert_eq!(a, vec!["-y", "some-pkg", "mcp"], "子命令要原样保留在包名之后");
+        // pnpm dlx / uvx 同属包运行器
+        let (_, cmd, a) = parse_runner_source("pnpm dlx some-pkg");
+        assert_eq!(cmd, "pnpm");
+        assert_eq!(a, vec!["-y", "dlx", "some-pkg"]);
+        // 非包运行器不碰（node 直接跑脚本不需要 -y）
+        let (_, _, a) = parse_runner_source("node server.js");
+        assert_eq!(a, vec!["server.js"]);
     }
 
     #[test]
@@ -876,7 +899,7 @@ fn classify_source(source: &str) -> Option<&'static str> {
         return Some("http");
     }
     let first = s.split_whitespace().next().unwrap_or("");
-    if matches!(first, "npx" | "npm" | "pnpm" | "bunx" | "uvx") {
+    if is_package_runner(first) {
         return Some("npx");
     }
     if s.contains('\\') || s.contains(':') || s.starts_with('~') || s.starts_with("./") || s.starts_with("../") {
@@ -888,15 +911,26 @@ fn classify_source(source: &str) -> Option<&'static str> {
     None
 }
 
+/// 是否是「跑一个包」而非「跑一个程序」的包运行器。
+/// 与 [`classify_source`] 的第2 步共用同一份清单，避免两处漂移。
+fn is_package_runner(name: &str) -> bool {
+    matches!(name, "npx" | "npm" | "pnpm" | "bunx" | "uvx")
+}
+
 /// 把命令行形态拆成 `(建议名, 命令, 参数)`。**纯函数**。
 ///
 /// 名称取第一个非 flag 的 token，并剥掉作用域与版本修饰：`@scope/pkg@latest` → `pkg`。
 /// 剥作用域是因为 Kira 的条目名会拼进配置键（`mcpServers.<name>`），
 /// `@` 和 `/` 在里面都不是好字符。
+///
+/// **npx 形态必须补 `-y`**：Kira 拉起 MCP 是子进程，stdin 不是 TTY，
+/// npx 在需要装包时会问 `Ok to proceed? (y)` —— 读不到 stdin 就挂在那儿，
+/// 表现为「启动 MCP 后一直连不上、也没报错」。
+/// 用户已经写了 `-y`/`--yes` 的不重复加。
 fn parse_runner_source(src: &str) -> (String, String, Vec<String>) {
     let mut it = src.trim().split_whitespace();
     let command = it.next().unwrap_or("").to_string();
-    let args: Vec<String> = it.map(str::to_string).collect();
+    let mut args: Vec<String> = it.map(str::to_string).collect();
     let name = args
         .iter()
         .find(|a| !a.starts_with('-'))
@@ -911,6 +945,18 @@ fn parse_runner_source(src: &str) -> (String, String, Vec<String>) {
         })
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| command.clone());
+
+    // 包运行器（npx/pnpm dlx/uvx…）补 -y：只在「有包名且还没显式同意」时补
+    if is_package_runner(&command) && !name.is_empty() && !name.eq_ignore_ascii_case(&command) {
+        let already_yes = args
+            .iter()
+            .any(|a| a == "-y" || a == "--yes" || a == "--no-install" || a == "--prefer-offline");
+        // 第一个 token 就是包名（没有 flag 在前）时，-y 要插在它前面
+        let needs_insert = !args.first().map(|a| a.starts_with('-')).unwrap_or(false);
+        if !already_yes && needs_insert {
+            args.insert(0, "-y".to_string());
+        }
+    }
     (name, command, args)
 }
 
