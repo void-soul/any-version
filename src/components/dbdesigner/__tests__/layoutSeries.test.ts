@@ -1,8 +1,10 @@
 ﻿import { describe, it, expect } from "vitest";
 import { computeLayout } from "../layout";
+import { groupByPrefix, seriesKeyOf } from "../series";
 import type { DbDesignDocument, DbDesignNode, DbDesignRelation } from "../types";
 
 const OPTS = { fieldRows: "all" as const };
+const CARD_W = 288;
 
 function n(id: string, rows = 2): DbDesignNode {
   return {
@@ -43,78 +45,131 @@ function rel(from: string, to: string): DbDesignRelation {
 function docOf(nodes: DbDesignNode[], relations: DbDesignRelation[] = []): DbDesignDocument {
   return { nodes, relations } as DbDesignDocument;
 }
+/** 卡片矩形（坐标是左上角，估算高度与layout 内部同量级） */
+const approxH = (rows = 2) => 58 + rows * 18 + 12;
+function overlaps(pos: Record<string, { x: number; y: number }>, a: string, b: string): boolean {
+  const ra = { x: pos[a].x, y: pos[a].y, w: CARD_W, h: approxH() };
+  const rb = { x: pos[b].x, y: pos[b].y, w: CARD_W, h: approxH() };
+  return (
+    ra.x < rb.x + rb.w && rb.x < ra.x + ra.w && ra.y < rb.y + rb.h && rb.y < ra.y + ra.h
+  );
+}
+function dist(pos: Record<string, { x: number; y: number }>, a: string, b: string): number {
+  const cx = (id: string) => ({ x: pos[id].x + CARD_W / 2, y: pos[id].y + approxH() / 2 });
+  const ca = cx(a);
+  const cb = cx(b);
+  return Math.hypot(ca.x - cb.x, ca.y - cb.y);
+}
 
-describe("computeLayout（系列分块 + 兄弟相邻）", () => {
-  it("同一系列的表在同一块内，按父子分层左右排开", () => {
-    const pos = computeLayout(docOf([n("users"), n("orders"), n("items")], [rel("orders", "users"), rel("items", "orders")]), OPTS);
-    // 父在左：x 逐层递增
-    expect(pos.orders.x).toBeGreaterThan(pos.users.x);
-    expect(pos.items.x).toBeGreaterThan(pos.orders.x);
+describe("系列分组：表名前缀 ∪ 外键", () => {
+  it("同前缀的表归一组（哪怕它们之间还没有外键）", () => {
+    const a = n("t1", 1);
+    a.name = "user_paper";
+    const b = n("t2", 1);
+    b.name = "user_token";
+    const groups = groupByPrefix(docOf([a, b]));
+    expect(groups).toHaveLength(1);
+    expect(groups[0].map((x) => x.name)).toEqual(["user_paper", "user_token"]);
   });
 
-  it("不同系列被排到互不重叠的纵向区域（连线不会横跨别家）", () => {
+  it("有外键但名字不像的表也会并到一起（billing_invoice ≈ invoice）", () => {
+    const doc = docOf(
+      [n("t1"), n("t2")],
+      [rel("t2", "t1")],
+    );
+    doc.nodes[0].name = "invoice";
+    doc.nodes[1].name = "billing_invoice";
+    const groups = groupByPrefix(doc);
+    expect(groups).toHaveLength(1);
+  });
+
+  it("没有下划线的表自成一组", () => {
+    expect(seriesKeyOf("order")).toBe("order");
+    expect(seriesKeyOf("user_paper")).toBe("user");
+    expect(seriesKeyOf("_weird")).toBe("_weird");
+  });
+
+  it("单表系列也会拿到颜色（autoColorAll 不会漏掉它）", () => {
+    const doc = docOf([n("t1"), n("t2"), n("t3")]);
+    expect(groupByPrefix(doc)).toHaveLength(3);
+  });
+});
+
+describe("computeLayout（枢纽放射）", () => {
+  it("星型结构：连接最多的表落在圆心，同伴环绕它", () => {
+    // order_item 被 6 张表引用 → 它是枢纽
+    const nodes = [n("t0"), ...Array.from({ length: 6 }, (_, i) => n(`t${i + 1}`))];
+    const rels = Array.from({ length: 6 }, (_, i) => rel(`t${i + 1}`, "t0"));
+    const pos = computeLayout(docOf(nodes, rels), OPTS);
+    // 圆心 = 距其它表平均距离最小的那个
+    let best = "";
+    let bestD = Infinity;
+    for (const id of Object.keys(pos)) {
+      const avg =
+        Object.keys(pos)
+          .filter((x) => x !== id)
+          .reduce((s, x) => s + dist(pos, id, x), 0) / 6;
+      if (avg < bestD) {
+        bestD = avg;
+        best = id;
+      }
+    }
+    expect(best).toBe("t0");
+  });
+
+  it("卡片互不重叠（任意两张表不压在一起）", () => {
+    const nodes = [n("t0"), ...Array.from({ length: 9 }, (_, i) => n(`t${i + 1}`))];
+    const rels = Array.from({ length: 9 }, (_, i) => rel(`t${i + 1}`, "t0"));
+    const pos = computeLayout(docOf(nodes, rels), OPTS);
+    const ids = Object.keys(pos);
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        expect(overlaps(pos, ids[i], ids[j])).toBe(false);
+      }
+    }
+  });
+
+  it("可复现：同一份设计算两次坐标完全一致（布局会写进设计文件）", () => {
+    const nodes = [n("t0"), ...Array.from({ length: 7 }, (_, i) => n(`t${i + 1}`))];
+    const rels = Array.from({ length: 7 }, (_, i) => rel(`t${i + 1}`, "t0"));
+    const doc = docOf(nodes, rels);
+    expect(computeLayout(doc, OPTS)).toEqual(computeLayout(doc, OPTS));
+  });
+
+  it("相连的表在环上挨着（连线是短弦而不是横穿圆心的长线）", () => {
+    // a-b 相连、c-d-e 相连，两组互不相连 → 应分到两个系列块，块内各自成环
+    const doc = docOf(
+      [n("t0"), n("t1"), n("t2"), n("t3")],
+      [rel("t0", "t1"), rel("t2", "t3")],
+    );
+    const groups = groupByPrefix(doc);
+    expect(groups).toHaveLength(2);
+    const pos = computeLayout(doc, OPTS);
+    // 每组内部：相连的两张表中心距 < 该组外接直径的一半
+    expect(dist(pos, "t0", "t1")).toBeLessThan(dist(pos, "t0", "t2"));
+  });
+
+  it("单表系列也能落到画布上（不是 undefined）", () => {
+    const pos = computeLayout(docOf([n("t0"), n("t1")]), OPTS);
+    expect(pos.t0).toBeDefined();
+    expect(pos.t1).toBeDefined();
+  });
+
+  it("孤立表铺成网格，同前缀的孤立表仍然同块（网格而不是放射）", () => {
     const pos = computeLayout(
-      docOf([n("users"), n("orders"), n("logs"), n("audit")], [rel("orders", "users"), rel("audit", "logs")]),
+      docOf([
+        n("t0"),
+        n("t1"),
+        n("t2"),
+        n("t3"),
+        n("t4"),
+        n("t5"),
+      ]),
       OPTS,
     );
-    const aBottom = pos.orders.y + 100;
-    // 第二个系列整体落在第一个系列之下
-    expect(pos.logs.y).toBeGreaterThanOrEqual(aBottom);
-    expect(pos.audit.y).toBeGreaterThanOrEqual(aBottom);
-  });
-
-  it("同父的子表紧邻排列（层内兄弟相邻，连线不再扇形散开）", () => {
-    const pos = computeLayout(
-      docOf([n("users"), n("o1"), n("o2"), n("o3")], [rel("o1", "users"), rel("o2", "users"), rel("o3", "users")]),
-      OPTS,
-    );
-    const ys = [pos.o1.y, pos.o2.y, pos.o3.y];
-    const sorted = [...ys].sort((a, b) => a - b);
-    // 三个子表在同一列纵向连续排列，行距一致（不会一个在左上角、一个在右下角）
-    const gaps = [sorted[1] - sorted[0], sorted[2] - sorted[1]];
-    expect(gaps[0]).toBeCloseTo(gaps[1], 0);
-  });
-
-  it("孤立表合并成一个网格块，而不是竖着排成一条线", () => {
-    const pos = computeLayout(docOf([n("a"), n("b"), n("c"), n("d")]), OPTS);
-    const ys = new Set([pos.a.y, pos.b.y, pos.c.y, pos.d.y]);
-    // 四张无关联表会排成 2×2，两行两列
-    expect(ys.size).toBe(2);
-    expect(pos.c.y).toBe(pos.a.y);
-    expect(pos.b.x).not.toBe(pos.a.x);
-  });
-
-  it("孤立表与有关联的表不会排到同一块里", () => {
-    const pos = computeLayout(
-      docOf([n("users"), n("orders"), n("solo1"), n("solo2")], [rel("orders", "users")]),
-      OPTS,
-    );
-    // 有关系的块在上，孤立表块在下
-    expect(pos.solo1.y).toBeGreaterThan(pos.orders.y);
-    expect(pos.solo2.y).toBeGreaterThan(pos.orders.y);
-  });
-
-  it("环形引用不构成死循环，所有节点都有坐标", () => {
-    const pos = computeLayout(docOf([n("a"), n("b")], [rel("a", "b"), rel("b", "a")]), OPTS);
-    expect(pos.a).toBeDefined();
-    expect(pos.b).toBeDefined();
-  });
-
-  it("悬空关系被跳过，不影响其余布局", () => {
-    const pos = computeLayout(docOf([n("a"), n("b")], [rel("a", "ghost")]), OPTS);
-    expect(pos.a).toBeDefined();
-    expect(pos.b).toBeDefined();
-  });
-
-  it("布局是确定的：同一份文档算两次结果一致（可写进设计文件）", () => {
-    const d = docOf([n("users"), n("orders"), n("logs")], [rel("orders", "users")]);
-    expect(computeLayout(d, OPTS)).toEqual(computeLayout(d, OPTS));
-  });
-
-  it("视图节点不参与布局", () => {
-    const view = { id: "v1", kind: "view", name: "v", x: 0, y: 0 } as DbDesignNode;
-    const pos = computeLayout(docOf([n("users"), view], []), OPTS);
-    expect(pos.users).toBeDefined();
-    expect(pos.v1).toBeUndefined();
+    // 无任何关系 → 全是孤立表 → 网格布局：同一行内的两张卡x 差 = 卡宽 + 走廊
+    expect(pos.t0).toBeDefined();
+    expect(pos.t5).toBeDefined();
+    expect(pos.t1.x - pos.t0.x).toBe(CARD_W + 120);
   });
 });

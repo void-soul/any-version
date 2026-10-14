@@ -22,7 +22,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { CONNECTION_LINE_BY_STYLE, useEdgeStyle } from "../../utils/graphEdgeStyle";
 import { computeLayout } from "./layout";
-import { buildArrangeSubDoc, groupByForeignKey, relatedTableIds } from "./series";
+import { buildArrangeSubDoc, groupByPrefix, relatedTableIds } from "./series";
 import EdgeStyleSelect from "../shared/EdgeStyleSelect";
 import { Menu } from "../shared/Menu";
 import {
@@ -176,14 +176,16 @@ interface AiProviderLike {
 /**
  * 同系列自动配色：给每个节点挑一个颜色。
  *
- * 分组规则复用 series.ts 的 groupByForeignKey —— 与自动布局是同一份「系列」定义。
+ * 分组规则复用 series.ts 的 groupByPrefix（表名前缀 ∪ 外键）—— 与自动布局是同一份「系列」定义。
  * 两处若各写一套，就会出现「同色却离得很远」这种自相矛盾的画面。
  */
 function assignSeriesColors(doc: DbDesignDocument): Map<string, string> {
-  const groups = groupByForeignKey(doc);
+  // 与自动布局**同一份系列口径**（前缀 ∪ 外键）：口径分叉就会出现「颜色成对、位置分开」
+  const groups = groupByPrefix(doc);
   const byNode = new Map<string, string>();
   groups.forEach((group, i) => {
-    // 颜色按系列在文档中的出现顺序分配（不按 hash），同一份设计每次打开配色都一致
+    // 颜色按系列在文档中的出现顺序分配（不按 hash、不随机）：同一份设计每次打开配色都一致。
+    // 随机色会让「重新点一次自动配色，全场颜色全变」，用户会以为手滑了。
     const color = NODE_COLORS[i % NODE_COLORS.length];
     for (const n of group) byNode.set(n.id, color);
   });
@@ -1654,15 +1656,28 @@ export default function DbDesignerPanel() {
           items={[
             { key: "table", label: <><Database className="h-3.5 w-3.5" />{t("dbd.addTable")}</>, onSelect: () => addNode("table") },
             { key: "view", label: <><Eye className="h-3.5 w-3.5" />{t("dbd.addView")}</>, onSelect: () => addNode("view") },
-            { key: "sep1", type: "separator" as const },
-            {
-              key: "commonFields",
-              label: <><SlidersHorizontal className="h-3.5 w-3.5" />{t("dbd.commonFieldsMenu")}</>,
-              hint: doc?.commonFields?.length ? String(doc.commonFields.length) : undefined,
-              onSelect: () => setCommonFieldsOpen(true),
-            },
           ]}
         />
+        {/* 公共字段：与 AI 助手并列的独立入口（配置类动作，不塞进「添加」菜单）。
+            徽章直接显示已勾选几个 —— 那是「导出时会给每张表多出几列」的量化后果，
+            配完不必打开弹框就能确认配置生效了。 */}
+        <button
+          onClick={() => setCommonFieldsOpen(true)}
+          disabled={!doc}
+          className="ui-btn relative px-2 py-1 text-caption disabled:opacity-40"
+          title={
+            doc?.commonFields?.length
+              ? doc.commonFields.map((f) => f.name).join("、")
+              : t("dbd.commonFieldsNone")
+          }
+        >
+          <SlidersHorizontal className="h-3.5 w-3.5" /> {t("dbd.commonFieldsMenu")}
+          {doc?.commonFields?.length ? (
+            <span className="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--module-accent)] px-1 text-micro font-semibold text-white">
+              {doc.commonFields.length}
+            </span>
+          ) : null}
+        </button>
         <div className="mx-1 h-4 w-px bg-white/10" />
         {/* 逆向：最少用的一组，正好收进菜单 */}
         <Menu
