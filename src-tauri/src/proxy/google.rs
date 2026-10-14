@@ -751,21 +751,50 @@ pub struct GoogleStreamConverter {
     model: String,
     input_tokens: u64,
     output_tokens: u64,
+    /// 已发出终止标记；置位后不再产出任何事件
+    terminated: bool,
 }
 
 impl GoogleStreamConverter {
     pub fn new(source: &str, model: &str) -> Self {
-        Self { source: source.to_string(), model: model.to_string(), input_tokens: 0, output_tokens: 0 }
+        Self { source: source.to_string(), model: model.to_string(), input_tokens: 0, output_tokens: 0, terminated: false }
     }
 
     pub fn usage(&self) -> (u64, u64) {
         (self.input_tokens, self.output_tokens)
     }
 
+    /// 是否已发出终止事件
+    pub fn is_terminated(&self) -> bool {
+        self.terminated
+    }
+
+    /// 异常路径用：本转换器无 content block 概念，无内容可闭合
+    pub fn close_open_blocks(&mut self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// 收尾：Google SSE 的终止标记是 `[DONE]`。幂等。
+    pub fn finish(&mut self) -> Vec<String> {
+        if self.terminated {
+            return Vec::new();
+        }
+        self.terminated = true;
+        vec![format!("data: [DONE]\n\n")]
+    }
+
     /// 兼容统一管线：把上游（openai/anthropic）chunk 转换为 Google SSE 行向量。
     pub fn convert_chunk(&mut self, chunk: &Value) -> Vec<String> {
+        if self.terminated {
+            return Vec::new();
+        }
         match self.convert_source_chunk(chunk) {
-            Some(s) => vec![s],
+            Some(s) => {
+                if s.contains("[DONE]") {
+                    self.terminated = true;
+                }
+                vec![s]
+            }
             None => Vec::new(),
         }
     }
@@ -879,6 +908,8 @@ pub struct GoogleToAnthropicStreamConverter {
     model: String,
     message_id: String,
     started: bool,
+    /// 已发出 `message_stop`；置位后不再产出任何事件
+    terminated: bool,
     content_index: usize,
     tool_open: bool,
     text_open: bool,
@@ -893,6 +924,7 @@ impl GoogleToAnthropicStreamConverter {
             model: model.to_string(),
             message_id: format!("msg_google_{}", chrono::Utc::now().timestamp_millis()),
             started: false,
+            terminated: false,
             content_index: 0,
             tool_open: false,
             text_open: false,
@@ -906,9 +938,47 @@ impl GoogleToAnthropicStreamConverter {
         (self.input_tokens, self.output_tokens)
     }
 
+    /// 是否已发出终止事件
+    pub fn is_terminated(&self) -> bool {
+        self.terminated
+    }
+
+    /// 异常路径用：只闭合已打开的块，不发终止事件
+    pub fn close_open_blocks(&mut self) -> Vec<String> {
+        let mut events = Vec::new();
+        self.close_open_blocks_into(&mut events);
+        events
+    }
+
+    /// 收尾：闭合所有块 + `message_delta` + `message_stop`。幂等。
+    pub fn finish(&mut self) -> Vec<String> {
+        let mut events = Vec::new();
+        if self.terminated {
+            return events;
+        }
+        if !self.started {
+            self.terminated = true;
+            return events;
+        }
+        self.close_open_blocks_into(&mut events);
+        events.push(format!("event: message_delta\ndata: {}\n\n", json!({
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn", "stop_sequence": null},
+            "usage": {"output_tokens": self.output_tokens}
+        })));
+        events.push("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n".to_string());
+        self.terminated = true;
+        events
+    }
+
     /// 输入一个已解析的 Google chunk JSON，返回 0~N 个 Anthropic SSE 事件字符串。
     pub fn convert_chunk(&mut self, chunk: &Value) -> Vec<String> {
         let mut events = Vec::new();
+
+        // 流已终止：吞掉后续 chunk，绝不再产出事件
+        if self.terminated {
+            return events;
+        }
 
         // usageMetadata（出现在最后一个 chunk）
         if let Some(um) = chunk.get("usageMetadata") {
@@ -949,7 +1019,7 @@ impl GoogleToAnthropicStreamConverter {
                             if is_thought {
                                 // thinking delta
                                 if !self.thought_open {
-                                    self.close_open_blocks(&mut events);
+                                    self.close_open_blocks_into(&mut events);
                                     self.thought_open = true;
                                     events.push(format!("event: content_block_start\ndata: {}\n\n", json!({
                                         "type": "content_block_start", "index": self.content_index,
@@ -962,7 +1032,7 @@ impl GoogleToAnthropicStreamConverter {
                                 })));
                             } else {
                                 if !self.text_open {
-                                    self.close_open_blocks(&mut events);
+                                    self.close_open_blocks_into(&mut events);
                                     self.text_open = true;
                                     events.push(format!("event: content_block_start\ndata: {}\n\n", json!({
                                         "type": "content_block_start", "index": self.content_index,
@@ -978,7 +1048,7 @@ impl GoogleToAnthropicStreamConverter {
                             let fc = &p["functionCall"];
                             let name = fc.get("name").cloned().unwrap_or(json!(""));
                             let args = fc.get("args").cloned().unwrap_or(json!({}));
-                            self.close_open_blocks(&mut events);
+                            self.close_open_blocks_into(&mut events);
                             // 每个 functionCall 单独成块
                             events.push(format!("event: content_block_start\ndata: {}\n\n", json!({
                                 "type": "content_block_start", "index": self.content_index,
@@ -1000,7 +1070,7 @@ impl GoogleToAnthropicStreamConverter {
         }
 
         if let Some(fr) = finish {
-            self.close_open_blocks(&mut events);
+            self.close_open_blocks_into(&mut events);
             let stop_reason = match fr {
                 "STOP" => "end_turn",
                 "MAX_TOKENS" => "max_tokens",
@@ -1012,12 +1082,13 @@ impl GoogleToAnthropicStreamConverter {
                 "usage": {"output_tokens": self.output_tokens}
             })));
             events.push("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n".to_string());
+            self.terminated = true;
         }
 
         events
     }
 
-    fn close_open_blocks(&mut self, events: &mut Vec<String>) {
+    fn close_open_blocks_into(&mut self, events: &mut Vec<String>) {
         if self.text_open || self.thought_open || self.tool_open {
             events.push(format!("event: content_block_stop\ndata: {}\n\n", json!({
                 "type": "content_block_stop", "index": self.content_index
@@ -1041,6 +1112,8 @@ pub struct GoogleToOpenaiStreamConverter {
     tool_index: usize,
     input_tokens: u64,
     output_tokens: u64,
+    /// 已发出终止标记；置位后不再产出任何事件
+    terminated: bool,
 }
 
 impl GoogleToOpenaiStreamConverter {
@@ -1051,6 +1124,7 @@ impl GoogleToOpenaiStreamConverter {
             tool_index: 0,
             input_tokens: 0,
             output_tokens: 0,
+            terminated: false,
         }
     }
 
@@ -1058,7 +1132,29 @@ impl GoogleToOpenaiStreamConverter {
         (self.input_tokens, self.output_tokens)
     }
 
+    /// 是否已发出终止事件
+    pub fn is_terminated(&self) -> bool {
+        self.terminated
+    }
+
+    /// 异常路径用：OpenAI chunk 无 content block 概念，无内容可闭合
+    pub fn close_open_blocks(&mut self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// 收尾：OpenAI Chat Completions 的终止标记是 `data: [DONE]`。幂等。
+    pub fn finish(&mut self) -> Vec<String> {
+        if self.terminated {
+            return Vec::new();
+        }
+        self.terminated = true;
+        vec!["data: [DONE]\n\n".to_string()]
+    }
+
     pub fn convert_chunk(&mut self, chunk: &Value) -> Vec<String> {
+        if self.terminated {
+            return Vec::new();
+        }
         if let Some(um) = chunk.get("usageMetadata") {
             self.input_tokens = um.get("promptTokenCount").and_then(|v| v.as_u64()).unwrap_or(self.input_tokens);
             let cand = um.get("candidatesTokenCount").and_then(|v| v.as_u64()).unwrap_or(0);

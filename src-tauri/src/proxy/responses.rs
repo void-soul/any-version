@@ -848,6 +848,35 @@ impl ResponsesStreamConverter {
         )
     }
 
+    /// 标记本次响应失败并产出 `response.failed` + `[DONE]`。
+    /// 之后 `push_chunk` / `finish` 都不再产出任何事件（Codex 收不到「成功完成」的假象）。
+    ///
+    /// 两条调用路径：流内 `error` chunk（上游自己报错）、传输层断流（`body` 提前结束）。
+    /// 后者以前直接 `break` 导致 `failed` 仍为 false，`finish()` 补发
+    /// `response.completed` + `[DONE]` —— **上游断流被伪装成一次成功完成**，
+    /// Codex 会把残缺内容当作完整答案收下。
+    pub fn fail(&mut self, message: &str) -> Vec<String> {
+        if self.failed {
+            return Vec::new();
+        }
+        self.failed = true;
+        vec![
+            sse(
+                "response.failed",
+                json!({
+                    "type": "response.failed",
+                    "response": {
+                        "id": self.response_id,
+                        "object": "response",
+                        "status": "failed",
+                        "error": { "message": message, "type": "upstream_error" }
+                    }
+                }),
+            ),
+            "data: [DONE]\n\n".to_string(),
+        ]
+    }
+
     /// 处理一个 Chat SSE chunk（已解析的 JSON），返回要写回客户端的事件文本。
     pub fn push_chunk(&mut self, chunk: &Value) -> Vec<String> {
         if self.failed {
@@ -855,26 +884,12 @@ impl ResponsesStreamConverter {
         }
         // 流内错误：转成 response.failed 并停止后续事件
         if let Some(err) = chunk.get("error") {
-            self.failed = true;
             let message = err
                 .get("message")
                 .and_then(|v| v.as_str())
-                .unwrap_or("upstream stream error");
-            return vec![
-                sse(
-                    "response.failed",
-                    json!({
-                        "type": "response.failed",
-                        "response": {
-                            "id": self.response_id,
-                            "object": "response",
-                            "status": "failed",
-                            "error": { "message": message, "type": "upstream_error" }
-                        }
-                    }),
-                ),
-                "data: [DONE]\n\n".to_string(),
-            ];
+                .unwrap_or("upstream stream error")
+                .to_string();
+            return self.fail(&message);
         }
 
         let mut events = self.ensure_started(chunk);

@@ -863,7 +863,18 @@ fn wrap_chat_stream_as_responses(
             crate::proxy::responses::ResponsesStreamConverter::with_dialects(&model, &dialects);
         let mut buffer = String::new();
         while let Some(item) = stream.next().await {
-            let Ok(bytes) = item else { break };
+            let bytes = match item {
+                Ok(b) => b,
+                Err(e) => {
+                    // 传输层断流：必须标记失败，否则 finish() 会补发 response.completed，
+                    // 把残缺内容伪装成一次成功完成（Codex 会当作完整答案收下）
+                    log_proxy(&format!("  ✗ Responses 上游流中断: {}", e));
+                    for ev in conv.fail(&format!("upstream stream transport error: {e}")) {
+                        yield Ok::<_, std::convert::Infallible>(Bytes::from(ev));
+                    }
+                    return;
+                }
+            };
             buffer.push_str(&String::from_utf8_lossy(&bytes));
             // SSE 帧以空行分隔；一帧里可能有 `event:` 与 `data:` 多行
             while let Some(idx) = buffer.find("\n\n") {
@@ -1526,6 +1537,9 @@ async fn stream_response(
                 tokio::pin!(stream);
                 let mut acc_text = String::new();
                 let mut chunk_count: u64 = 0;
+                // 上游是否已发过 [DONE]：OpenAI/Google 出站下它就是完整终止标记，
+                // 补收尾会重复发一次；Anthropic 出站下它不算终止，仍需补 message_stop
+                let mut sent_done = false;
                 // 首个文本增量到达的时刻：t/s 统计要从生成窗口中扣掉首字等待
                 let mut first_token_ms: u64 = 0;
                 let stream_start = Instant::now();
@@ -1533,7 +1547,27 @@ async fn stream_response(
                     let chunk = match r {
                         Ok(c) => c,
                         Err(e) => {
-                            yield Ok::<_, Infallible>(Event::default().data(format!("{{\"error\":\"{}\"}}", e)));
+                            // 上游断流：先把已打开的 content block 闭合，**不要**发
+                            // message_stop（那等于声称正常结束），随后补一条 error 事件。
+                            // 若流已终止（终止事件已发出），只记日志不再写任何事件 ——
+                            // 否则会产出「message_stop 之后又来一个 error」的畸形流。
+                            for ev in conv.close_open_blocks() {
+                                let mut event = Event::default();
+                                for line in ev.lines() {
+                                    if let Some(rest) = line.strip_prefix("event:") {
+                                        event = event.event(rest.trim());
+                                    } else if let Some(rest) = line.strip_prefix("data:") {
+                                        event = event.data(rest.trim());
+                                    }
+                                }
+                                yield Ok::<_, Infallible>(event);
+                            }
+                            if conv.is_terminated() {
+                                log_proxy(&format!("  ✗ 上游在终止事件之后断流，丢弃错误事件: {}", e));
+                            } else {
+                                log_proxy(&format!("  ✗ 上游流中断: {}", e));
+                                yield Ok::<_, Infallible>(Event::default().data(format!("{{\"error\":\"{}\"}}", e)));
+                            }
                             break;
                         }
                     };
@@ -1545,7 +1579,23 @@ async fn stream_response(
                             None => continue,
                         };
                         if data_str == "[DONE]" {
+                            sent_done = true;
                             yield Ok::<_, Infallible>(Event::default().data("[DONE]"));
+                            // 部分上游只发 [DONE] 而不带 finish_reason：Anthropic 出站
+                            // 在这里补收尾，否则客户端永远等不到 message_stop（会挂住）
+                            if out_proto == "anthropic" {
+                                for ev in conv.finish() {
+                                    let mut event = Event::default();
+                                    for line in ev.lines() {
+                                        if let Some(rest) = line.strip_prefix("event:") {
+                                            event = event.event(rest.trim());
+                                        } else if let Some(rest) = line.strip_prefix("data:") {
+                                            event = event.data(rest.trim());
+                                        }
+                                    }
+                                    yield Ok::<_, Infallible>(event);
+                                }
+                            }
                             continue;
                         }
                         if let Ok(cj) = serde_json::from_str::<Value>(&data_str) {
@@ -1583,6 +1633,21 @@ async fn stream_response(
                                 yield Ok::<_, Infallible>(event);
                             }
                         }
+                    }
+                }
+                // 循环自然结束（上游没发 finish_reason 就断了）：补收尾，
+                // 否则客户端拿到的是未闭合的 content block（Anthropic 客户端会报错/挂住）
+                if !sent_done {
+                    for ev in conv.finish() {
+                        let mut event = Event::default();
+                        for line in ev.lines() {
+                            if let Some(rest) = line.strip_prefix("event:") {
+                                event = event.event(rest.trim());
+                            } else if let Some(rest) = line.strip_prefix("data:") {
+                                event = event.data(rest.trim());
+                            }
+                        }
+                        yield Ok::<_, Infallible>(event);
                     }
                 }
                 log_proxy(&format!("✓ 跨协议流式完成: {} chunks, {} chars text, {}ms",
