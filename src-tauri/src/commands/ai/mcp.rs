@@ -275,6 +275,73 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// **server.json 必须压过 package.json 的 bin** —— 否则探测到的是 CLI 而不是 MCP server。
+    ///
+    /// 真实反例：`morluto/rea`。它根目录没有 `mcp.json`，`package.json` 的 `bin` 指向
+    /// `rea`/`rea-agents`（那是命令行工具），真正的 MCP server 是 `npx rea-agents mcp`。
+    /// 只探 bin 的话会给出 `node <入口>` —— 看着能跑，实际起的是 CLI，用户完全看不出错在哪。
+    #[test]
+    fn registry_manifest_wins_over_package_bin() {
+        let dir = tmp_dir("registry");
+        let root = dir.join("repo");
+        fs::create_dir_all(&root).unwrap();
+
+        // bin 在位（会被误当成 MCP server 的那条老路）
+        fs::write(
+            root.join("package.json"),
+            r#"{"name":"rea","bin":{"rea":"./dist/cli.js"}}"#,
+        )
+        .unwrap();
+        // 只有 bin 时探到的是 node <入口>（这就是要避免的错误结果）
+        let (wrong_cmd, _) = detect_launch(&root).expect("bin 应能探测到");
+        assert_eq!(wrong_cmd, "node", "没有 server.json 时才会走 bin 兜底");
+
+        // 加上 MCP Registry 官方清单后必须改用它
+        fs::write(
+            root.join("server.json"),
+            r#"{
+                "name": "io.github.morluto/rea",
+                "version": "6.4.0",
+                "packages": [{
+                    "registryType": "npm",
+                    "identifier": "rea-agents",
+                    "version": "6.4.0",
+                    "runtimeHint": "npx",
+                    "transport": { "type": "stdio" },
+                    "packageArguments": [{ "type": "positional", "value": "mcp" }]
+                }]
+            }"#,
+        )
+        .unwrap();
+        let (cmd, args) = detect_launch(&root).expect("server.json 应能探测到");
+        assert_eq!(cmd, "npx");
+        assert_eq!(args, vec!["rea-agents".to_string(), "mcp".to_string()]);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 非 stdio 的 transport 装不了（Kira 是本地子进程模型），应跳过而不是给一个错的命令。
+    #[test]
+    fn registry_manifest_skips_non_stdio_transports() {
+        let doc: Value = serde_json::from_str(
+            r#"{"packages":[{"identifier":"svc","runtimeHint":"npx",
+                 "transport":{"type":"http"},"packageArguments":[{"value":"x"}]}]}"#,
+        )
+        .unwrap();
+        assert!(super::pick_registry_manifest(&doc).is_none(), "http transport 应跳过");
+
+        // 缺 packages / 不是数组 / 整包缺 transport（默认 stdio）
+        assert!(super::pick_registry_manifest(&json!({})).is_none());
+        assert!(super::pick_registry_manifest(&json!({"packages": "x"})).is_none());
+        let defaulted: Value = serde_json::from_str(
+            r#"{"packages":[{"identifier":"plain","packageArguments":[{"value":"run"}]}]}"#,
+        )
+        .unwrap();
+        let (cmd, args) = super::pick_registry_manifest(&defaulted).expect("缺 transport 时按 stdio 处理");
+        assert_eq!(cmd, "npx");
+        assert_eq!(args, vec!["plain".to_string(), "run".to_string()]);
+    }
+
     fn server(name: &str) -> McpServer {
         McpServer {
             id: name.to_string(),
@@ -884,7 +951,77 @@ fn pick_declared_server(doc: &Value) -> Option<(String, Vec<String>)> {
 ///
 /// 刻意**不猜**「`main` 字段」「README 里的 npx 命令」这类弱信号：猜出来的命令看着能跑，
 /// 实际会在用户保存后第一次用时才炸，而那时他已经不记得这行是 Kira 填的了。
+/// 从 MCP Registry 的官方清单 `server.json` 里解析启动命令。
+///
+/// **纯函数**，不碰磁盘。`server.json` 是 MCP 官方registry 定义的标准清单：
+/// ```json
+/// { "packages": [{ "identifier": "rea-agents",
+///    "runtimeHint": "npx",
+///    "packageArguments": [{ "type": "positional", "value": "mcp" }],
+///    "transport": { "type": "stdio" } }] }
+/// ```
+///
+/// **必须排在 `package.json` 的 `bin` 之前**，否则会探测到错的命令。实测反例：
+/// `morluto/rea` 根目录没有 `mcp.json`，但 `package.json` 有 `bin`（`rea`/`rea-agents`）
+/// —— 那是**命令行工具**，不是 MCP server（它的真身是 `npx rea-agents mcp`）。
+/// 探测到 `node <bin>` 看着能跑，实际起的是 CLI，用起来完全不对，而用户看不出错在哪。
+/// 而它的 `server.json` 把启动方式写得明明白白——那是作者对「怎么启动自己」的**正式声明**，
+/// 比从 `bin` 字段猜可靠得多。
+fn pick_registry_manifest(doc: &Value) -> Option<(String, Vec<String>)> {
+    let packages = doc.get("packages")?.as_array()?;
+    for pkg in packages {
+        // 只认 stdio：Kira 目前是本地子进程模型，走 http/sse 的 server 装不了
+        let transport = pkg
+            .get("transport")
+            .and_then(|t| t.get("type"))
+            .and_then(|t| t.as_str())
+            .unwrap_or("stdio");
+        if transport != "stdio" {
+            continue;
+        }
+        let identifier = pkg.get("identifier")?.as_str()?;
+        let mut args: Vec<String> = Vec::new();
+        if let Some(list) = pkg.get("packageArguments").and_then(|v| v.as_array()) {
+            for a in list {
+                if let Some(val) = a.get("value").and_then(|v| v.as_str()) {
+                    args.push(val.to_string());
+                }
+            }
+        }
+        // runtimeHint 缺省按 npm 处理（registry 清单里绝大多数是 npm 包），
+        // 但只认 npx 与 uvx/uv 这类「包运行器」—— 它们才是「跑一个包」而不是「跑一个程序」
+        let runner = pkg
+            .get("runtimeHint")
+            .and_then(|v| v.as_str())
+            .unwrap_or("npx");
+        return match runner {
+            "npx" => {
+                args.insert(0, identifier.to_string());
+                Some(("npx".to_string(), args))
+            }
+            // uvx/uv 走 python 生态，参数是包名 + 参数
+            "uvx" | "uv" => {
+                args.insert(0, identifier.to_string());
+                Some((runner.to_string(), args))
+            }
+            _ => None,
+        };
+    }
+    None
+}
+
 fn detect_launch(root: &Path) -> Option<(String, Vec<String>)> {
+    // 顺序即优先级，**不能调换**：
+    // 1) server.json（MCP Registry 官方清单）—— 作者对启动方式的正式声明
+    // 2) mcp.json / .mcp.json（通用约定）
+    // 3) package.json 的 bin（**兜底，且经常是错的**）
+    if let Ok(text) = fs::read_to_string(root.join("server.json")) {
+        if let Ok(doc) = serde_json::from_str::<Value>(&text) {
+            if let Some(hit) = pick_registry_manifest(&doc) {
+                return Some(hit);
+            }
+        }
+    }
     for name in ["mcp.json", ".mcp.json"] {
         if let Ok(text) = fs::read_to_string(root.join(name)) {
             if let Ok(doc) = serde_json::from_str::<Value>(&text) {
