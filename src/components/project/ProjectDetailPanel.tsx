@@ -45,17 +45,22 @@ const baseTabKeys: Record<string, string> = {
   config: "projdetail.tabConfig",
 };
 
-// 判断项目是否支持版本管理（下载多版本 / Git 仓库 / 版本前缀 URL 映射 / npm 包）。
+// 判断项目是否支持版本管理（下载多版本 / Git 仓库 / 远程版本清单 / GitHub assets / npm 包）。
 // mysql 等 SDK 使用 version_url_prefix_map + remote_versions_config 提供版本，
-// npm 包（npm_pkg_name 型）使用 npm install 安装，均须纳入判定，
-// 否则托管后会被误判为「简单托管」。
+// npm 包（npm_pkg_name 型）使用 npm install 安装，
+// Ghidra 用的是 remote_versions_config + github_asset —— 其 tag 是 `Ghidra_12.1.4_build`
+// 而资产叫 `ghidra_12.1.4_PUBLIC_20260921.zip`，中间那个构建日期既不在 tag 也不在
+// published_at 里，只有 github_asset 能表达（见 types.rs 的 github_asset 注释）。
+// 这三个字段任一存在都须纳入判定，否则托管后会被误判为「简单托管」而看不到下载入口。
 function hasVersionSupportOf(def: ProjectDef | null | undefined): boolean {
   if (!def) return false;
   return !!(
     def.download_url_template ||
     def.is_git_repo ||
     def.version_url_prefix_map ||
-    def.npm_pkg_name
+    def.npm_pkg_name ||
+    def.remote_versions_config ||
+    def.github_asset
   );
 }
 

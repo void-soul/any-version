@@ -214,6 +214,13 @@ export interface ProjectDef {
   service_start_mode?: "wait" | "detached" | string | null;
   service_allow_force_kill?: boolean;
   service_auto_create_dirs?: boolean;
+  /** 远程版本清单（配合 remote_versions_url）；存在即视为「支持版本管理」 */
+  remote_versions_config?: Record<string, unknown> | null;
+  /**
+   * 从 GitHub release 的 assets 里挑下载 URL（而非 URL 模板拼）。
+   * Ghidra 属这类：tag 是 `Ghidra_12.1.4_build`，资产名里多一个推不出来的构建日期。
+   */
+  github_asset?: Record<string, unknown> | null;
   conflict_managers?: ConflictManagerDef[];
   // npm 包类型：存在时该项目通过 `npm install --prefix` 安装（npm 发布的工具包）
   npm_pkg_name?: string;
