@@ -11,6 +11,7 @@
   "permissions": [
     "core:default",
     "opener:default",
+    "opener:allow-open-path",
     "dialog:default",
     "dialog:allow-ask",
     "dialog:allow-confirm",
