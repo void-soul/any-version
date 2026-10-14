@@ -1018,6 +1018,49 @@ mod tests {
         assert!(!p.contains("{common_note}"), "占位符没被替换: {}", p);
     }
 
+    /// 回归（用户实测）：**画布上还没有表、只配了公共字段**时发起的 AI 生成，
+    /// 提示词里也必须带那句声明。
+    ///
+    /// 起因：前端曾用「画布有表才把当前设计传给后端」当条件，公共字段配置跟着
+    /// `currentDoc` 一起被挡在门外 —— 于是最自然的路径（刚配好公共字段就点生成）
+    /// 恰恰拿不到声明，模型自己建了一遍 created_at，导出时又因重名被跳过。
+    /// 空文档（`nodes: []`）+ `commonFields` 非空就是这条路径的输入形态。
+    #[test]
+    fn prompt_declares_common_fields_for_empty_design() {
+        let json = serde_json::json!({
+            "text": "设计一个订单系统",
+            "dialect": "mysql",
+            "currentDoc": {
+                "name": "未命名设计",
+                "dialect": "mysql",
+                "nodes": [],
+                "commonFields": [
+                    { "name": "created_at", "type": { "base": "datetime" } },
+                    { "name": "remark", "type": { "base": "varchar", "length": 500 } }
+                ]
+            }
+        });
+        let input: AiDesignInput = serde_json::from_value(json).expect("输入必须能解析");
+        let common: &[DbField] = input
+            .current_doc
+            .as_ref()
+            .map(|d| d.common_fields.as_slice())
+            .unwrap_or(&[]);
+        assert_eq!(common.len(), 2, "空文档里的公共字段也必须送到后端");
+        let p = system_prompt(common);
+        assert!(p.contains("所有表在导出时都会自动追加"), "{}", p);
+        assert!(p.contains("created_at"), "{}", p);
+        assert!(p.contains("remark"), "{}", p);
+        // 同时确认：空文档仍不会被当成「修改场景」把基线塞进 user 消息
+        let user = build_user_prompt(
+            "未命名设计",
+            "mysql",
+            "设计一个订单系统",
+            input.current_doc.as_ref(),
+        );
+        assert!(!user.contains("当前设计"), "空文档不该带基线: {}", user);
+    }
+
     /// 没启用时这一节**整段不出现** —— 别给模型留「也许有公共字段」的想象空间，
     /// 否则它会自己加一堆 created_at，而那些列一个都不会进 SQL。
     #[test]

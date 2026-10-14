@@ -1402,7 +1402,9 @@ export default function DbDesignerPanel() {
         return { ...n, ...p };
       });
       if (!baseDoc) {
-        patchDoc({ ...partial, nodes: laid });
+        // commonFields 要原样带回：partial 是 AI 吐的新文档（只管表结构），
+        // 直接采纳会把用户配好的公共字段抹掉 —— 而这是新建场景（画布还没表）唯一的分支。
+        patchDoc({ ...partial, commonFields: doc.commonFields, nodes: laid });
         setPositions({});
         return;
       }
@@ -1446,8 +1448,15 @@ export default function DbDesignerPanel() {
           modelId: aiModelId || null,
           runId,
           // 画布有表就把当前设计带上：AI 基于它修改（输出完整更新后的设计）；
-          // 是「新建」还是「修改」由模型看需求判断（系统提示里写明了）
-          currentDoc: baseDoc ?? undefined,
+          // 是「新建」还是「修改」由模型看需求判断（系统提示里写明了）。
+          //
+          // **无条件传整个 doc**（不再按「有没有表」筛）：公共字段配置是**文档级设置**，
+          // 哪怕画布上一张表都没有，它也必须跟着走 —— 否则「刚配好公共字段就点 AI 生成」
+          // 这条最自然的路径，提示词里恰好没有那句声明，模型于是自己建一遍 created_at，
+          // 而导出时又因重名被跳过（表自己的赢），用户完全看不出问题出在哪。
+          // 「提示词要不要展示当前设计」由后端按「有没有表」判断
+          // （build_user_prompt 里过滤空节点文档），所以这里放开不会让空文档进提示词。
+          currentDoc: doc,
         },
       });
       const pos = computeLayout(generated, { fieldRows });
