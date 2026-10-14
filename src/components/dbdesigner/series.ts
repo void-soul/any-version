@@ -49,3 +49,50 @@ export function groupByForeignKey(
   }
   return [...byRoot.values()];
 }
+
+// ─── 「高亮 / 整理选中」的唯一口径 ───
+
+/**
+ * 选中表 + 与它直接有外键关系的表（**无向**，一跳）。
+ *
+ * 这就是界面上高亮的那批表，也就是「整理选中」要整理的那批表 —— 两者必须
+ * **同一个定义**：曾经高亮用一份内联写法、整理用 `groupByForeignKey` 的整个连通
+ * 分量，两边各写各的，于是一份「所有表外键连通」的业务设计里，
+ * 高亮看着 6 张、实际整理了 22 张，提示条如实报「已整理 22 张表」——
+ * 标签、提示与实现说的不是同一件事。
+ *
+ * 刻意**不是**连通分量：连通分量会把「同系列但你没选中的表」一起卷进来，
+ * 而用户要的是「忽略其他所有节点，只对齐选中的」。
+ */
+export function relatedTableIds(doc: DbDesignDocument, selectedId: string | null): Set<string> {
+  const set = new Set<string>();
+  if (!selectedId) return set;
+  set.add(selectedId);
+  for (const r of doc.relations) {
+    if (r.from.node === selectedId) set.add(r.to.node);
+    else if (r.to.node === selectedId) set.add(r.from.node);
+  }
+  return set;
+}
+
+/**
+ * 取整理用的**子文档**：只含 `ids` 里的表，以及两端都在集合内的关联。
+ *
+ * 关联必须双向过滤：指向集合外的关联会让分层算法把一个不存在的父节点算进
+ * 层号，结果是这批表被推到错误的列上。n-n 不参与分层（同 `layoutGroup` 的处理）。
+ *
+ * 父表不在集合内的节点会自然成为这个子布局的根 —— 这正是「忽略其它节点」的
+ * 预期结果，不是缺陷。
+ */
+export function buildArrangeSubDoc(
+  doc: DbDesignDocument,
+  ids: Set<string>,
+): DbDesignDocument {
+  return {
+    ...doc,
+    nodes: doc.nodes.filter((n) => n.kind === "table" && ids.has(n.id)),
+    relations: doc.relations.filter(
+      (r) => r.kind !== "n-n" && ids.has(r.from.node) && ids.has(r.to.node),
+    ),
+  };
+}

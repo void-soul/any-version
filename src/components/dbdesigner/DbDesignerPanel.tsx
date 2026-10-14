@@ -22,7 +22,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { CONNECTION_LINE_BY_STYLE, useEdgeStyle } from "../../utils/graphEdgeStyle";
 import { computeLayout } from "./layout";
-import { groupByForeignKey } from "./series";
+import { buildArrangeSubDoc, groupByForeignKey, relatedTableIds } from "./series";
 import EdgeStyleSelect from "../shared/EdgeStyleSelect";
 import {
   ArrowRight,
@@ -915,16 +915,10 @@ export default function DbDesignerPanel() {
    * 供节点卡片画高亮、供「只看关联」筛选用 —— 表一多时这是唯一能快速
    * 看清「这张表跟谁有关系」的办法。
    */
-  const relatedIds = useMemo(() => {
-    const set = new Set<string>();
-    if (!doc || !selectedId) return set;
-    set.add(selectedId);
-    for (const r of doc.relations) {
-      if (r.from.node === selectedId) set.add(r.to.node);
-      else if (r.to.node === selectedId) set.add(r.from.node);
-    }
-    return set;
-  }, [doc, selectedId]);
+  const relatedIds = useMemo(
+    () => (doc ? relatedTableIds(doc, selectedId) : new Set<string>()),
+    [doc, selectedId],
+  );
 
   /**
    * 表导航的行数据：按引用关系澄清父子并缩进，形成一棵树。
@@ -1435,31 +1429,20 @@ export default function DbDesignerPanel() {
   };
 
   /**
-   * 选中表所在的那个系列（按外键连通分量）。
+   * 整理**高亮中的那几张表**（= 选中表 + 与它直接有外键关系的表），其余表完全不动。
    *
-   * 与配色、整份自动布局共用同一个「系列」定义（`groupByForeignKey`）——
-   * 三处对「系列」的理解一旦分叉，就会出现「颜色成对、位置却分开」这种自相矛盾的画面。
-   */
-  const seriesOfSelected = useMemo(() => {
-    if (!doc || !selectedId) return null;
-    const tables = doc.nodes.filter((n) => n.kind === "table");
-    return groupByForeignKey(doc, tables).find((g) => g.some((n) => n.id === selectedId)) ?? null;
-  }, [doc, selectedId]);
-
-  /**
-   * 整理**选中表所在的那个系列**（按外键连通分量），其余系列原地不动。
+   * 这里曾经整理的是「选中表所在的整个外键连通分量」，而按钮文案写的是
+   * 「只把高亮中的表…其余不动」。多数业务设计里所有表外键连通，
+   * 于是「整理选中」实际等于「整理全部」—— 提示条如实报「已整理 22 张表」，
+   * 而位置因为早已按全量排过而看不出变化，看着像按钮坏了。
    *
-   * 为什么是「系列」而不是「高亮的那几张」：高亮（`relatedIds`）只含选中表的
-   * 直接父与直接子，通常就两三张 —— 把它们排齐了，同系列的孙表、兄弟表仍然散着，
-   * 整体依旧不整齐。而「系列」才是那个有完整父子层次的整体，
-   * 排出来才像思维导图的默认布局：根在左、子往右逐层展开、同父的挨着。
+   * 现在整理集合 = 高亮集合 = `relatedTableIds` 的返回值，**同一份定义**。
+   * 之前是三份各写各的（高亮一份、整理一份、标签一份），才会出现三者不一致。
    *
-   * 为什么不全排：整份「自动布局」会把所有系列都重排一遍，用户精心摆过的
-   * 其它系列也跟着动。只动这一个系列，其余坐标原样保留。
-   *
-   * 落点是**子文档**：把这个系列的表和它们之间的关联抽成一份小设计，交给同一个
-   * `computeLayout`（它 `x = PAD + 深度 * (卡宽 + 间距)`，天然就是父左子右）。
-   * 复用它而不是另写一套，是为了两份布局口径永不漂移。
+   * 落点是**子文档**：把这几张表与它们之间的关联抽成一份小设计，交给同一个
+   * `computeLayout`（`x = PAD + 深度 * (卡宽 + 间距)`，天然父左子右）。
+   * 复用它而不是另写一套，是为了两份布局口径永不漂移。父表不在集合内的节点
+   * 会成为这个子布局的根 —— 这正是「忽略其它节点」的预期。
    *
    * **不弹确认**：它只改坐标，不改任何数据（字段、关联、索引一概不动），
    * 且撤销 / 再点一次「自动布局」就能回来。为一个可逆的重排拦一道确认，
@@ -1467,20 +1450,13 @@ export default function DbDesignerPanel() {
    */
   const arrangeHighlighted = () => {
     if (!doc || !selectedId) return;
-    const series = seriesOfSelected;
-    if (!series || series.length < 2) {
+    const ids = relatedTableIds(doc, selectedId);
+    // 只有一张表时排了等于没排，直接说清楚而不是默默挪一下
+    if (ids.size < 2) {
       toast(t("dbd.arrangeNeedMore"), "err");
       return;
     }
-    const ids = new Set(series.map((n) => n.id));
-    const sub: DbDesignDocument = {
-      ...doc,
-      nodes: series,
-      // 只保留两端都在这个系列里的关联：指向外部表的关联会让分层多出不存在的一端
-      relations: doc.relations.filter(
-        (r) => r.kind !== "n-n" && ids.has(r.from.node) && ids.has(r.to.node),
-      ),
-    };
+    const sub = buildArrangeSubDoc(doc, ids);
     const pos = computeLayout(sub, { fieldRows });
     if (Object.keys(pos).length === 0) return;
     // 排完整体平移到原高亮区域的左上角：否则这批表会被搬到画布原点，
@@ -1564,7 +1540,7 @@ export default function DbDesignerPanel() {
         {/* 只整理选中表所在的那个系列：整份自动布局会连用户摆好的其它系列一起动 */}
         <button
           onClick={arrangeHighlighted}
-          disabled={!doc || !selectedId || !seriesOfSelected}
+          disabled={!doc || !selectedId || relatedIds.size < 2}
           className="ui-btn px-2 py-1 text-caption disabled:opacity-40"
           title={t("dbd.arrangeHint")}
         >
