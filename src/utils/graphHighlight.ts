@@ -5,6 +5,7 @@
  * 关联边流光），但实现散在三个组件里时，任何一次「调亮一点」都要改三处，
  * 而且很容易漏掉某一处 —— 高亮是纯观感，漏了不会报错、只会显得某处没跟上。
  */
+import { useCallback, useState } from "react";
 
 /** 高亮档位：`select` 选中本身，`related` 与它直接相连 */
 export type HighlightLevel = "select" | "related";
@@ -17,6 +18,119 @@ export const HL_FALLBACK_RELATED = "var(--cyan, var(--vex-cyan, var(--vex-fallba
 export const EDGE_DIM_STROKE = "rgba(148,163,184,0.18)";
 /** 无关节点的透明度（与三个画布的 className 对齐） */
 export const GRAPH_DIMMED_CLASS = "opacity-35";
+
+// ── 可调的两档强度（2026-10 起）────────────────────────────────────────
+//
+// 「高亮多强」「无关项淡到什么程度」以前是写死的常量，想调只能改代码。
+// 现在做成**持久化偏好**：设计器画布上有悬浮滑块，边拖边看效果，
+// 换台电脑也保留（localStorage，与边类型 `useEdgeStyle` 同一套做法）。
+//
+// **默认值刻意等于改动前的常量**（高亮 1 / 淡化 1），所以升级后
+// 任何人的画面都一模一样 —— 偏好只对「主动调过的人」生效。
+
+/** 高亮强度上限：150% —— 再高就成一片糊光，反而看不清结构 */
+export const HL_BOOST_MAX = 1.5;
+/**
+ * 淡化强度上限：**200%**，不是 100%。
+ *
+ * 为什么不是 100%：100% 对应的是「改动前的观感」（节点 0.35 不透明度），
+ * 而用户要的「再淡一点」是**调到看不见** —— 0.65 的不透明度只能降到 0.35 就到头了。
+ * 透明度 0 出现在 dim ≈ 154%，所以上限必须留出这段，否则滑块到顶了却还是能看见。
+ */
+export const DIM_MAX = 2;
+
+const HL_KEY = "kira.graph.dbd.highlight";
+const DIM_KEY = "kira.graph.dbd.dim";
+
+export interface GraphHighlightPrefs {
+  /** 高亮强度倍率：1 = 改动前的观感 */
+  highlight: number;
+  /** 淡化强度：1 = 改动前的观感，0 = 不淡化 */
+  dim: number;
+}
+
+export const DEFAULT_HL_PREFS: GraphHighlightPrefs = { highlight: 1, dim: 1 };
+
+/** 把任意输入夹到 0..max；非有限值（NaN / undefined）回落到默认 1。 */
+export function clampPref(v: number, max: number): number {
+  if (!Number.isFinite(v)) return 1;
+  return Math.min(max, Math.max(0, v));
+}
+
+/** 解析 localStorage 里的字符串；非法值回落默认（不报错，用户改坏了也不该白屏）。 */
+export function readPref(raw: string | null, max: number): number {
+  if (raw === null || raw.trim() === "") return 1;
+  return clampPref(Number(raw), max);
+}
+
+/**
+ * 无关节点的透明度：dim=1 → 0.35（与旧的 `opacity-35` 一致），dim=0 → 1（不淡化），
+ * dim ≳ 1.54 → 0（**完全看不见**，这是上限留到 200% 的原因）。
+ */
+export function dimmedOpacity(dim = 1): number {
+  const d = clampPref(dim, DIM_MAX);
+  return round2(Math.max(0, 1 - 0.65 * d));
+}
+
+/**
+ * 无关连线的颜色：**跟着节点的透明度一起淡**。
+ *
+ * 之前是另起一条公式（alpha = 0.15 + 0.25·dim），结果滑块往上推时连线反而更显眼 ——
+ * 而用户的直觉是「整块一起淡下去」。现在按 opacity 等比缩放：dim=1 → alpha 0.4（改动前），
+ * 淡到看不见时连线也归零。
+ */
+export function dimmedEdgeStroke(dim = 1): string {
+  const op = dimmedOpacity(dim);
+  // dim=1 时 opacity=0.35 → alpha 0.4；opacity=0 时 alpha 也必须是 0
+  const alpha = Math.min(1, 0.4 * (op / 0.35));
+  return `rgba(148,163,184,${round2(alpha)})`;
+}
+
+/**
+ * 无关连线的线宽：dim=1 → **1.3**（改动前的值，这条不变量不能破）。
+ *
+ * 分两段是有意的：dim ≤ 1 时在 0.9-1.3 之间插值（越不淡化越细，视觉上更「让路」）；
+ * dim > 1 时按透明度等比收细，收到 0.6 就停 —— 再细对一条已经看不见的线没有意义，
+ * 而且太细的线在高分屏上会断成虚点。
+ */
+export function dimmedEdgeWidth(dim = 1): number {
+  const d = clampPref(dim, DIM_MAX);
+  if (d <= 1) return round2(0.9 + 0.4 * d);
+  return round2(Math.max(0.6, 1.3 * (dimmedOpacity(d) / 0.35)));
+}
+
+/** 选中/关联连线的线宽：hl=1 → 2.6（改动前的值）。 */
+export function relatedEdgeWidth(highlight = 1): number {
+  return round2(1.4 + 1.2 * clampPref(highlight, HL_BOOST_MAX));
+}
+
+function round2(v: number): number {
+  return Math.round(v * 100) / 100;
+}
+
+/** 读偏好 + 改即持久化。与 `useEdgeStyle` 同一形态。 */
+export function useGraphHighlightPrefs() {
+  const [prefs, setPrefs] = useState<GraphHighlightPrefs>(() => ({
+    highlight: readPref(localStorage.getItem(HL_KEY), HL_BOOST_MAX),
+    dim: readPref(localStorage.getItem(DIM_KEY), DIM_MAX),
+  }));
+  const setHighlight = useCallback((v: number) => {
+    const next = clampPref(v, HL_BOOST_MAX);
+    setPrefs((p) => ({ ...p, highlight: next }));
+    localStorage.setItem(HL_KEY, String(next));
+  }, []);
+  const setDim = useCallback((v: number) => {
+    const next = clampPref(v, DIM_MAX);
+    setPrefs((p) => ({ ...p, dim: next }));
+    localStorage.setItem(DIM_KEY, String(next));
+  }, []);
+  const reset = useCallback(() => {
+    setPrefs(DEFAULT_HL_PREFS);
+    localStorage.setItem(HL_KEY, String(DEFAULT_HL_PREFS.highlight));
+    localStorage.setItem(DIM_KEY, String(DEFAULT_HL_PREFS.dim));
+  }, []);
+  return { prefs, setHighlight, setDim, reset };
+}
 
 /**
  * 高亮色：**优先用节点自己的颜色**，没有才回退到状态色。
@@ -35,37 +149,48 @@ export function highlightColor(ownColor: string | null | undefined, level: Highl
   return c || HL_FALLBACK_RELATED;
 }
 
+/** 把 0..max 的倍率夹好再算 alpha，避免 boost 调大后出现 `alpha > 100%` 这种废 CSS。 */
+function mixPct(pct: number, boost: number): number {
+  return round2(Math.min(100, pct * clampPref(boost, HL_BOOST_MAX)));
+}
+
 /**
  * 霓虹环（描边 + 外辉光）的 boxShadow。
  *
  * 档位靠**强度**区分（描边粗细 + 辉光层数 + 透明度），不靠色相 ——
  * 这样同一套代码在「节点有色」和「节点无色」两种情况下都成立。
+ *
+ * `boost` 是「高亮强度」偏好：描边宽度与各层辉光透明度都按它缩放，
+ * 1 = 改动前的样子。
  */
-export function neonRing(color: string, level: HighlightLevel): string {
+export function neonRing(color: string, level: HighlightLevel, boost = 1): string {
+  const b = clampPref(boost, HL_BOOST_MAX);
   if (level === "select") {
-    return `0 0 0 2px ${color}, 0 0 6px color-mix(in srgb, ${color} 60%, transparent), 0 0 18px color-mix(in srgb, ${color} 42%, transparent), 0 0 40px color-mix(in srgb, ${color} 22%, transparent)`;
+    return `0 0 0 ${round2(2 * b)}px ${color}, 0 0 6px color-mix(in srgb, ${color} ${mixPct(60, b)}%, transparent), 0 0 18px color-mix(in srgb, ${color} ${mixPct(42, b)}%, transparent), 0 0 40px color-mix(in srgb, ${color} ${mixPct(22, b)}%, transparent)`;
   }
-  return `0 0 0 1px ${color}, 0 0 8px color-mix(in srgb, ${color} 48%, transparent), 0 0 26px color-mix(in srgb, ${color} 26%, transparent)`;
+  return `0 0 0 ${round2(1 * b)}px ${color}, 0 0 8px color-mix(in srgb, ${color} ${mixPct(48, b)}%, transparent), 0 0 26px color-mix(in srgb, ${color} ${mixPct(26, b)}%, transparent)`;
 }
 
 /** 文字霓虹辉光（选中更亮：两段叠加） */
-export function neonTextGlow(color: string, level: HighlightLevel): string {
+export function neonTextGlow(color: string, level: HighlightLevel, boost = 1): string {
+  const b = clampPref(boost, HL_BOOST_MAX);
   if (level === "select") {
-    return `0 0 6px color-mix(in srgb, ${color} 90%, transparent), 0 0 16px color-mix(in srgb, ${color} 55%, transparent)`;
+    return `0 0 6px color-mix(in srgb, ${color} ${mixPct(90, b)}%, transparent), 0 0 16px color-mix(in srgb, ${color} ${mixPct(55, b)}%, transparent)`;
   }
-  return `0 0 8px color-mix(in srgb, ${color} 60%, transparent)`;
+  return `0 0 8px color-mix(in srgb, ${color} ${mixPct(60, b)}%, transparent)`;
 }
 
 /** 表头/卡片头部的底色浓度（选中更浓，是「点亮」最显眼的一块） */
-export function headerTint(color: string, level: HighlightLevel): string {
+export function headerTint(color: string, level: HighlightLevel, boost = 1): string {
   return level === "select"
-    ? `color-mix(in srgb, ${color} 26%, transparent)`
-    : `color-mix(in srgb, ${color} 14%, transparent)`;
+    ? `color-mix(in srgb, ${color} ${mixPct(26, boost)}%, transparent)`
+    : `color-mix(in srgb, ${color} ${mixPct(14, boost)}%, transparent)`;
 }
 
 /** 关联边的同色辉光（与节点环同色，一套语言） */
-export function edgeGlow(color: string): string {
-  return `drop-shadow(0 0 3px ${color})`;
+export function edgeGlow(color: string, boost = 1): string {
+  const b = clampPref(boost, HL_BOOST_MAX);
+  return `drop-shadow(0 0 ${round2(3 * b)}px ${color})`;
 }
 
 /** 自定义 edge 的内层实线用的 className（配合 App.css 的 graph-edge-flow 动画） */

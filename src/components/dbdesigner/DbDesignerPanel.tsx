@@ -24,6 +24,7 @@ import { CONNECTION_LINE_BY_STYLE, useEdgeStyle } from "../../utils/graphEdgeSty
 import { computeLayout } from "./layout";
 import { buildArrangeSubDoc, groupByForeignKey, relatedTableIds } from "./series";
 import EdgeStyleSelect from "../shared/EdgeStyleSelect";
+import { Menu } from "../shared/Menu";
 import {
   ArrowRight,
   Ban,
@@ -38,28 +39,32 @@ import {
   FileDown,
   FilePlus2,
   FolderOpen,
-  LayoutGrid,
-  Rows3,
-  Palette,
   Plus,
   ListTree,
   Save,
   Sparkles,
+  SlidersHorizontal,
   Terminal,
   Trash2,
 } from "lucide-react";
 
-import DesignNodeCard, {
-  HANDLE_TABLE,
-  HANDLE_TABLE_IN,
-  handleAllPk,
-  handleField,
-  handleFieldIn,
-  type DesignNodeData,
-} from "./DesignNodeCard";
+import DesignNodeCard, { type DesignNodeData } from "./DesignNodeCard";
 import FieldTable from "./FieldTable";
+import GraphLookPanel from "./GraphLookPanel";
+import CommonFieldsDialog from "./CommonFieldsDialog";
+import ExportDialog from "./ExportDialog";
+import { predictSqlPath, type ExportChoice } from "./exportOptions";
 import { NODE_COLORS, isPresetColor } from "./nodeColors";
-import { EDGE_FLOW_CLASS } from "../../utils/graphHighlight";
+import { EDGE_FLOW_CLASS, edgeGlow } from "../../utils/graphHighlight";
+import {
+  DIM_MAX,
+  HL_BOOST_MAX,
+  dimmedEdgeStroke,
+  dimmedEdgeWidth,
+  dimmedOpacity,
+  relatedEdgeWidth,
+  useGraphHighlightPrefs,
+} from "../../utils/graphHighlight";
 import { ModelSelector } from "../ai/ModelSelector";
 import type { ProviderLike } from "../ai/ModelSelector";
 import { useAiPanelWidth } from "../ai/paneWidth";
@@ -72,7 +77,11 @@ import { toast } from "../shared/Toast";
 import {
   DIALECTS,
   FIELD_ROW_MODES,
+  HANDLE_TABLE,
+  HANDLE_TABLE_IN,
+  edgeAnchors,
   fkFieldsOf,
+  handleAllPk,
   relationFieldsOf,
   typeLabel,
   type FieldRowMode,
@@ -262,10 +271,24 @@ export default function DbDesignerPanel() {
   const [tableNavOpen, setTableNavOpen] = useState(false);
   /** 连线样式（曲线 / 直角折线 / 直线）：与思维导图、JSON 图共用一份偏好 */
   const [edgeStyle, setEdgeStyle] = useEdgeStyle();
+  /**
+   * 高亮强度 / 淡化强度：持久化偏好（localStorage），默认值 = 改动前的观感。
+   * 画布右下角的悬浮面板直接改它，rfNodes / rfEdges 的 useMemo 都依赖它 → 实时重画。
+   */
+  const {
+    prefs: lookPrefs,
+    setHighlight: setHighlightStrength,
+    setDim: setDimStrength,
+    reset: resetLookPrefs,
+  } = useGraphHighlightPrefs();
   const [report, setReport] = useState<ValidationReport | null>(null);
   /** 校验结果条是否展开：默认展开（有问题就该看得见），收起只留一行摘要把画布还回去 */
   const [reportOpen, setReportOpen] = useState(true);
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  /** 导出弹框：只在打开时挂载（这样每次打开都是默认选项，不记忆上次选择） */
+  const [exportOpen, setExportOpen] = useState(false);
+  const [commonFieldsOpen, setCommonFieldsOpen] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
   /** 底部 dock：页签（字段 / 索引 / 关联）+ 折叠。属性编辑全在这里，画布只负责摆表。 */
   const [dockTab, setDockTab] = useState<"fields" | "indexes" | "relations">("fields");
   /** 关联页签筛选：全部 / 我是主表 / 我是子表 */
@@ -441,6 +464,29 @@ export default function DbDesignerPanel() {
     setDirty(true);
   }, []);
 
+  /** 保存 / 导出前的校验闸门：返回 false 表示「有阻断级问题，别往下走」。
+   *
+   *  为什么要有这道闸门：后端 `dbd_export_sql` / `dbd_save_file` 校验不过时会把
+   *  **整份错误清单**（`设计文档校验未通过：\n- …\n- …`，几十行）当作错误字符串抛回来。
+   *  早先直接 `setResult({ ok: false, msg })` 塞进顶部的 ResultNote —— 那是个无上限的
+   *  内联块，几十行一换行就把画布整个顶没了（用户看到的是「整个界面被错误盖住」，
+   *  而且不能滚动）。而面板里本来就有一条**限高可滚动、可折叠**的校验条，
+   *  错误清单天生该进那里。
+   *
+   *  所以这里先自己问一次后端 `dbd_validate`（单一真源，不在前端复制校验规则），
+   *  把结果塞进那条校验条并展开它，只用 toast 报一句「有几项未通过」，
+   *  错误详情去校验条里看 —— 画布始终拿得回来。
+   */
+  const ensureValid = async (): Promise<boolean> => {
+    if (!doc) return false;
+    const r = await invoke<ValidationReport>("dbd_validate", { doc });
+    setReport(r);
+    if (r.errors.length === 0) return true;
+    setReportOpen(true);
+    toast(t("dbd.blockedByValidation", { count: r.errors.length }), "err");
+    return false;
+  };
+
   // 同系列自动配色：只在**节点集合或关系端点**变化时重算，拖动节点/切页签不会触发，
   // 否则每次微动都可能去改文档，把文档标记成「已修改」。
   const autoColorSigRef = useRef("");
@@ -505,6 +551,7 @@ export default function DbDesignerPanel() {
 
   const saveFile = async (as: boolean) => {
     if (!doc) return;
+    if (!(await ensureValid())) return;
     let target = path;
     if (!target || as) {
       const picked = await saveDialog({
@@ -525,25 +572,51 @@ export default function DbDesignerPanel() {
     }
   };
 
-  const exportSql = async () => {
+  const exportSql = async (choice: ExportChoice) => {
     if (!doc) return;
-    if (!path) {
-      // 没落盘过：直接导出文本，让用户自己另存
-      try {
-        const sql = await invoke<string>("dbd_export_sql", { doc });
+    setExportBusy(true);
+    try {
+      // options 的键名必须是 camelCase（后端 ExportOptions 是 rename_all=camelCase）：
+      // 写成 foreign_keys 会被 serde 静默忽略 → 开关看着没生效却仍导出带外键的 SQL。
+      const options = { foreignKeys: choice.foreignKeys };
+      if (choice.target === "clipboard") {
+        const sql = await invoke<string>("dbd_export_sql", { doc, options });
         await navigator.clipboard.writeText(sql);
         toast(t("dbd.sqlCopied"), "ok");
-      } catch (e) {
-        setResult({ ok: false, msg: String(e) });
+        setExportOpen(false);
+        return;
       }
-      return;
-    }
-    try {
-      const out = await invoke<string>("dbd_export_sql_file", { path });
+      if (choice.target === "saveAs") {
+        const picked = await saveDialog({
+          title: t("dbd.exportSaveAsTitle"),
+          defaultPath: predictSqlPath(path) || `${doc.name}.sql`,
+          filters: [{ name: "sql", extensions: ["sql"] }],
+        });
+        if (typeof picked !== "string") return;
+        const out = await invoke<string>("dbd_export_sql_to", { doc, target: picked, options });
+        setResult({ ok: true, msg: t("dbd.sqlExported", { path: out }) });
+        setExportOpen(false);
+        return;
+      }
+      if (!path) {
+        toast(t("dbd.exportNeedSaveFirst"), "err");
+        return;
+      }
+      const out = await invoke<string>("dbd_export_sql_file", { doc, path, options });
       setResult({ ok: true, msg: t("dbd.sqlExported", { path: out }) });
+      setExportOpen(false);
     } catch (e) {
       setResult({ ok: false, msg: String(e) });
+    } finally {
+      setExportBusy(false);
     }
+  };
+
+  /** 打开导出弹框前先过校验闸门：不让后端那份几十行的错误清单落进内联块 */
+  const openExportDialog = async () => {
+    if (!doc) return;
+    if (!(await ensureValid())) return;
+    setExportOpen(true);
   };
 
   const exportOutline = async () => {
@@ -996,6 +1069,8 @@ export default function DbDesignerPanel() {
     if (!doc) return [];
     const cache = nodeObjCache.current;
     const out: Node[] = [];
+    /** 无关节点淡化到多少：inline opacity（Tailwind 动态类名拼不出来） */
+    const dimOpacity = dimmedOpacity(lookPrefs.dim);
     for (const n of visibleNodes) {
       const p = positions[n.id] ?? { x: n.x ?? 0, y: n.y ?? 0 };
       const selected = selectedId === n.id;
@@ -1027,7 +1102,9 @@ export default function DbDesignerPanel() {
         prevData?.selected === selected &&
         prevData?.related === related &&
         prevData?.dimmed === dimmed &&
-        prevData?.expanded === expanded
+        prevData?.expanded === expanded &&
+        prevData?.hlBoost === lookPrefs.highlight &&
+        prevData?.dimOpacity === dimOpacity
       ) {
         out.push(prev.obj);
         continue;
@@ -1040,7 +1117,9 @@ export default function DbDesignerPanel() {
         (prevData.related !== related) ||
         (prevData.dimmed !== dimmed) ||
         (prevData.expanded !== expanded) ||
-        (prevData.fieldRows !== fieldRows);
+        (prevData.fieldRows !== fieldRows) ||
+        (prevData.hlBoost !== lookPrefs.highlight) ||
+        (prevData.dimOpacity !== dimOpacity);
       const data = (dataChanged
         ? {
             node: n,
@@ -1052,6 +1131,8 @@ export default function DbDesignerPanel() {
             related,
             dimmed,
             fieldRows,
+            hlBoost: lookPrefs.highlight,
+            dimOpacity,
           }
         : prevData) as unknown as Record<string, unknown>;
       const obj: Node = prevObj
@@ -1061,7 +1142,8 @@ export default function DbDesignerPanel() {
       out.push(obj);
     }
     return out;
-  }, [doc, positions, selectedId, relatedIds, measuredMap, fieldRows, visibleNodes]);
+  // lookPrefs 在依赖里：滑块一动就得重算节点（否则卡片保持旧样式）
+}, [doc, positions, selectedId, relatedIds, measuredMap, fieldRows, visibleNodes, lookPrefs]);
 
   const rfEdges: Edge[] = useMemo(() => {
     if (!doc) return [];
@@ -1086,20 +1168,27 @@ export default function DbDesignerPanel() {
       const related = selectedId !== null && (r.from.node === selectedId || r.to.node === selectedId);
       const dimmed = selectedId !== null && !related;
       const own = ownColorOf(r.from.node);
+      // 弱化档（选中了别的表）：**要退后，但不能退到看不见**。
+      // 早先这里是 rgba(148,163,184,0.18) + 1px，在深色画布上等于隐形 ——
+      // 而相邻两张卡常常只隔几十像素（用户截图：product_category 与 product 之间
+      // 一条线都看不见，误以为关联丢了）。现在默认 0.4 / 1.3px，由「淡化强度」滑块调节；
+      // 拉到 0 则完全不弱化（用节点自己的颜色画，与未选中时同等待遇）。
+      const dimOff = lookPrefs.dim <= 0.001;
       const stroke = related
         ? own || HL_RELATED_FALLBACK
-        : dimmed
-          ? "rgba(148,163,184,0.18)"
+        : dimmed && !dimOff
+          ? dimmedEdgeStroke(lookPrefs.dim)
           : colorOf(r.from.node);
+      const { sourceHandle, targetHandle } = edgeAnchors(doc, r);
       return {
         id: r.id,
         // 画成「父 → 子」：箭头指向多端（外键所在表），与 PowerDesigner 的观感一致
         source: r.to.node,
         target: r.from.node,
-        sourceHandle: handleField(r.to.field),
-        // 落在子表**对应的外键字段**上（左侧「被引用」锚点），不是整张表的表头入口 ——
-        // 复合主键时 A 的 3 个主键各有各的线，各自指向 B 里自己那一列。
-        targetHandle: handleFieldIn(r.from.field),
+        // 落在两端**对应的字段**上（复合主键时 A 的 3 个主键各有各的线，各自指向 B 里
+        // 自己那一列）；字段找不到时回退表级锚点，保证线还在（见 edgeAnchors 注释）
+        sourceHandle,
+        targetHandle,
         type: edgeStyle,
         // 多对多常驻流动；选中表的关联线也流动 —— 静态图里「哪几条线跟我有关」
         // 只能靠眼睛扫，流动一眼就分出来了
@@ -1112,15 +1201,20 @@ export default function DbDesignerPanel() {
         style: {
           stroke,
           // 关联线更粗 + 泛一层同色辉光（辉光色 = 线色 = 该表自己的颜色），
-          // 节点环、表头、连线是同一套语言
-          strokeWidth: related ? 2.6 : dimmed ? 1 : 1.5,
-          ...(related ? { filter: `drop-shadow(0 0 3px ${stroke})` } : null),
+          // 节点环、表头、连线是同一套语言。粗细/辉光随「高亮强度」缩放。
+          strokeWidth: related
+            ? relatedEdgeWidth(lookPrefs.highlight)
+            : dimmed && !dimOff
+              ? dimmedEdgeWidth(lookPrefs.dim)
+              : 1.5,
+          ...(related ? { filter: edgeGlow(stroke, lookPrefs.highlight) } : null),
         },
         zIndex: related ? 10 : 0,
         markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
       };
     });
-  }, [doc, edgeStyle, visibleNodes, selectedId]);
+  // lookPrefs 也要在依赖里：滑块一动，连线的粗细/颜色/辉光要立刻跟着变
+}, [doc, edgeStyle, visibleNodes, selectedId, lookPrefs]);
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     // 位置：一次性写本地覆盖（思维导图同款，避免每帧重建文档）
@@ -1359,6 +1453,10 @@ export default function DbDesignerPanel() {
       const pos = computeLayout(generated, { fieldRows });
       const placed: DbDesignDocument = {
         ...generated,
+        // **公共字段配置必须从原文档带过来**：AI 返回的是一份全新文档（它只管表结构），
+        // 直接采纳的话，用户配好的公共字段会被一次生成抹掉 —— 而这配置只存在于设计文件里，
+        // 抹掉就等于白配（还得重新勾一遍）。
+        commonFields: doc.commonFields,
         nodes: generated.nodes.map((n) => {
           // 现有表（按 id、再按名字匹配）保持手动摆过的位置，新表才用自动布局
           const old =
@@ -1505,61 +1603,67 @@ export default function DbDesignerPanel() {
       className="relative flex h-full min-h-0 flex-col text-slate-200"
     >
       {/* 工具栏。relative：AI 面板是挂在工具栏上的浮层，
-          少了它浮层会以整个模块为基准（top-full = 模块底部）→ 渲染在可视区外，看着像"没反应"。 */}
+          少了它浮层会以整个模块为基准（top-full = 模块底部）→ 渲染在可视区外，看着像"没反应"。
+
+          **为什么大半按钮收进了下拉**：平铺 14 个按钮会占满两行、把画布挤到只剩一条，
+          而且每加一个动作就再挤一格。收成「同一条主线上的动作进一个菜单」后，
+          顶栏固定 8 个入口（收藏模块早就用`shared/Menu` 解决了同一个问题）。
+          留在外面的是高频 / 有状态的三个：打开、保存、AI 生成。*/}
       <div className="relative flex flex-wrap items-center gap-1.5 border-b border-white/5 bg-white/[0.02] px-3 py-2">
-        <button onClick={() => void newDoc()} className="ui-btn px-2 py-1 text-caption" title={t("dbd.new")}>
-          <FilePlus2 className="h-3.5 w-3.5" /> {t("dbd.new")}
-        </button>
         <button onClick={() => void openFile()} className="ui-btn px-2 py-1 text-caption" title={t("dbd.open")}>
           <FolderOpen className="h-3.5 w-3.5" /> {t("dbd.open")}
         </button>
         <button onClick={() => void saveFile(false)} disabled={!doc} className="ui-btn px-2 py-1 text-caption disabled:opacity-40" title={t("dbd.save")}>
           <Save className="h-3.5 w-3.5" /> {t("dbd.save")}
         </button>
-        <button onClick={() => void saveFile(true)} disabled={!doc} className="ui-btn px-2 py-1 text-caption disabled:opacity-40">
-          {t("dbd.saveAs")}
-        </button>
+        {/* 文件类：新建 / 另存为（打开与保存直连 —— 它们最高频） */}
+        <Menu
+          label={t("dbd.menuFile")}
+          className="ui-btn px-2 py-1 text-caption"
+          items={[
+            { key: "new", label: t("dbd.new"), onSelect: () => void newDoc() },
+            { key: "saveAs", label: t("dbd.saveAs"), disabled: !doc, onSelect: () => void saveFile(true) },
+          ]}
+        />
         <div className="mx-1 h-4 w-px bg-white/10" />
-        <button onClick={() => void exportSql()} disabled={!doc} className="ui-btn px-2 py-1 text-caption disabled:opacity-40" title={t("dbd.exportSql")}>
-          <FileDown className="h-3.5 w-3.5" /> {t("dbd.exportSql")}
-        </button>
-        <button onClick={() => void exportOutline()} disabled={!doc} className="ui-btn px-2 py-1 text-caption disabled:opacity-40">
-          <Sparkles className="h-3.5 w-3.5" /> {t("dbd.exportOutline")}
-        </button>
-        <div className="mx-1 h-4 w-px bg-white/10" />
-        <button onClick={() => addNode("table")} disabled={!doc} className="ui-btn px-2 py-1 text-caption disabled:opacity-40">
-          <Database className="h-3.5 w-3.5" /> {t("dbd.addTable")}
-        </button>
-        <button onClick={() => addNode("view")} disabled={!doc} className="ui-btn px-2 py-1 text-caption disabled:opacity-40">
-          <Eye className="h-3.5 w-3.5" /> {t("dbd.addView")}
-        </button>
-        <div className="mx-1 h-4 w-px bg-white/10" />
-        <button onClick={() => void autoLayout()} disabled={!doc} className="ui-btn px-2 py-1 text-caption disabled:opacity-40" title={t("dbd.autoLayout")}>
-          <LayoutGrid className="h-3.5 w-3.5" /> {t("dbd.autoLayout")}
-        </button>
-        {/* 只整理选中表所在的那个系列：整份自动布局会连用户摆好的其它系列一起动 */}
-        <button
-          onClick={arrangeHighlighted}
-          disabled={!doc || !selectedId || relatedIds.size < 2}
-          className="ui-btn px-2 py-1 text-caption disabled:opacity-40"
-          title={t("dbd.arrangeHint")}
-        >
-          <Rows3 className="h-3.5 w-3.5" /> {t("dbd.arrange")}
-        </button>
-        <button
-          onClick={autoColorAll}
+        {/* 导出：SQL（带选项弹框）/ 结构说明 */}
+        <Menu
+          label={t("dbd.menuExport")}
+          className="ui-btn px-2 py-1 text-caption"
           disabled={!doc}
-          className="ui-btn px-2 py-1 text-caption disabled:opacity-40"
-          title={t("dbd.autoColorHint")}
-        >
-          <Palette className="h-3.5 w-3.5" /> {t("dbd.autoColor")}
-        </button>
-        <button onClick={() => void reverseSqlite()} className="ui-btn px-2 py-1 text-caption" title={t("dbd.reverseSqlite")}>
-          <Database className="h-3.5 w-3.5" /> {t("dbd.reverseSqlite")}
-        </button>
-        <button onClick={() => void reverseDdl()} className="ui-btn px-2 py-1 text-caption" title={t("dbd.reverseDdl")}>
-          <FileCode className="h-3.5 w-3.5" /> {t("dbd.reverseDdl")}
-        </button>
+          items={[
+            { key: "sql", label: <><FileDown className="h-3.5 w-3.5" />{t("dbd.exportSql")}</>, onSelect: () => void openExportDialog() },
+            { key: "outline", label: <><Sparkles className="h-3.5 w-3.5" />{t("dbd.exportOutline")}</>, onSelect: () => void exportOutline() },
+          ]}
+        />
+        <div className="mx-1 h-4 w-px bg-white/10" />
+        {/* 添加：表 / 视图 */}
+        <Menu
+          label={t("dbd.menuAdd")}
+          className="ui-btn px-2 py-1 text-caption"
+          disabled={!doc}
+          items={[
+            { key: "table", label: <><Database className="h-3.5 w-3.5" />{t("dbd.addTable")}</>, onSelect: () => addNode("table") },
+            { key: "view", label: <><Eye className="h-3.5 w-3.5" />{t("dbd.addView")}</>, onSelect: () => addNode("view") },
+            { key: "sep1", type: "separator" as const },
+            {
+              key: "commonFields",
+              label: <><SlidersHorizontal className="h-3.5 w-3.5" />{t("dbd.commonFieldsMenu")}</>,
+              hint: doc?.commonFields?.length ? String(doc.commonFields.length) : undefined,
+              onSelect: () => setCommonFieldsOpen(true),
+            },
+          ]}
+        />
+        <div className="mx-1 h-4 w-px bg-white/10" />
+        {/* 逆向：最少用的一组，正好收进菜单 */}
+        <Menu
+          label={t("dbd.menuReverse")}
+          className="ui-btn px-2 py-1 text-caption"
+          items={[
+            { key: "sqlite", label: <><Database className="h-3.5 w-3.5" />{t("dbd.reverseSqlite")}</>, onSelect: () => void reverseSqlite() },
+            { key: "ddl", label: <><FileCode className="h-3.5 w-3.5" />{t("dbd.reverseDdl")}</>, onSelect: () => void reverseDdl() },
+          ]}
+        />
 
         {/* AI 助手：给一段需求 → 生成一份设计文档。**只载入画布，不落盘**（用户再自己保存），
             避免 AI 直接覆盖正在画的设计。生成结果没有坐标，载入后立刻跑一次自动布局。
@@ -1684,8 +1788,12 @@ export default function DbDesignerPanel() {
         </div>
       ) : null}
 
+      {/* 操作结果条：**必须限高滚动**。这里是顶部的常规流容器，不是浮层 ——
+          一条不限高的长文案（后端把校验清单整段抛回来就是这种）会把下面的画布
+          整个顶出视野，看起来像「界面被盖住」而且无处滚动。校验类的长清单另有去处：
+          上面的可折叠校验条（见 ensureValid）。 */}
       {result ? (
-        <div className="px-3 pt-2">
+        <div className="max-h-24 shrink-0 overflow-y-auto px-3 pt-2">
           <ResultNote ok={result.ok} message={result.msg} />
         </div>
       ) : null}
@@ -1832,6 +1940,24 @@ export default function DbDesignerPanel() {
                 <FitOnSignal signal={fitSignal} />
                 <CenterOnSignal signal={centerSignal} nodeId={centerTargetId} />
               </ReactFlow>
+              {/* 外观调面板（高亮 / 淡化强度）：浮在画布右下角，避开左侧表导航、
+                  右下 AI 侧栏与工具栏。默认折叠成一个图标钮 —— 调它是低频操作，
+                  但展开后要一直能看见效果，所以不能塞进菜单里「打开→拖→关→看」。 */}
+              <div className="pointer-events-auto absolute bottom-3 right-3 z-20">
+                <GraphLookPanel
+                  highlight={lookPrefs.highlight}
+                  dim={lookPrefs.dim}
+                  maxHighlight={HL_BOOST_MAX}
+                  maxDim={DIM_MAX}
+                  onHighlight={setHighlightStrength}
+                  onDim={setDimStrength}
+                  onReset={resetLookPrefs}
+                  onAutoLayout={() => void autoLayout()}
+                  onArrange={arrangeHighlighted}
+                  onAutoColor={autoColorAll}
+                  arrangeDisabled={!selectedId || relatedIds.size < 2}
+                />
+              </div>
             </ReactFlowProvider>
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-2 text-slate-500">
@@ -2422,6 +2548,24 @@ export default function DbDesignerPanel() {
       {/* 表列表的悬浮字段预览（fixed 定位，随鼠标） */}
       {hp.preview && <HoverPreview preview={hp.preview} width={320} maxHeight={340} hoverGuard={hp.hoverGuard} />}
       </div>
+      {/* 导出弹框：只在打开时挂载 —— 每次打开都用默认选项（不记忆上次选择） */}
+      {commonFieldsOpen && doc ? (
+        <CommonFieldsDialog
+          open
+          value={doc.commonFields}
+          onClose={() => setCommonFieldsOpen(false)}
+          onSave={(commonFields) => patchDoc({ ...doc, commonFields })}
+        />
+      ) : null}
+      {exportOpen ? (
+        <ExportDialog
+          open
+          designPath={path}
+          busy={exportBusy}
+          onClose={() => setExportOpen(false)}
+          onExport={(choice) => void exportSql(choice)}
+        />
+      ) : null}
     </div>
   );
 }

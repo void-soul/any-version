@@ -88,6 +88,14 @@ export interface DbDesignDocument {
   name: string;
   description?: string;
   dialect: Dialect;
+  /**
+   * 公共字段：导出时自动附加到每张表末尾；表里已有同名字段时以表自己的为准
+   * （比对时忽略大小写与下划线 —— MySQL 列名不区分大小写，两个都写会建表失败）。
+   *
+   * 存的是**完整定义**（自包含：任何工具都能读懂这份设计往每张表加了什么）。
+   * 缺省 / 空数组 = 不附加，旧文件与不配的设计完全不受影响。
+   */
+  commonFields?: DbField[];
   nodes: DbDesignNode[];
   relations: DbDesignRelation[];
   updatedAt?: string;
@@ -135,4 +143,58 @@ export function fkFieldsOf(doc: DbDesignDocument, nodeId: string): string[] {
     if (r.from.node === nodeId && !out.includes(r.from.field)) out.push(r.from.field);
   }
   return out;
+}
+
+// ── 连线锚点（PowerDesigner 式）──
+//
+// 放在这里而不是组件文件里：锚点 id 的规则是**纯逻辑**（要能测），
+// 而 DesignNodeCard 只是照着这些 id 渲染 <Handle>。
+
+/** 右侧（引用别人）字段锚点 */
+export const handleField = (field: string) => `f:${field}`;
+/**
+ * 左侧（被引用侧）字段锚点。
+ *
+ * 为什么要和右侧分开命名：为了让**同一个锚点既能接、也能拖**（用户要求左右双向等价），
+ * React Flow 需要 `connectionMode="loose"`；而 loose 模式下锚点不再按声明类型区分，
+ * id 必须左右各一个，否则同名字段两个锚点会被当成同一个。
+ * 面板里靠这个前缀判断「拖线是从哪一侧开始的」，见 DbDesignerPanel.onConnect。
+ */
+export const handleFieldIn = (field: string) => `b:${field}`;
+/** 表级锚点：连到「表」而不是具体某列 */
+export const HANDLE_TABLE = "table";
+export const HANDLE_TABLE_IN = "table-in";
+/** 拖出它 = 复制本表全部主键并建关联（复合主键用这个） */
+export const handleAllPk = "pk-all";
+
+export interface EdgeAnchors {
+  sourceHandle: string;
+  targetHandle: string;
+  /** 字段锚点不存在、已回退到表级锚点 —— 关联指向的字段在这张表里没有 */
+  degraded: boolean;
+}
+
+/**
+ * 一条关联在画布上两端的锚点。
+ *
+ * **为什么要回退**：React Flow 找不到 `sourceHandle` / `targetHandle` 对应的锚点时
+ * 会**静默不画这条边**（只在 devtools 里 warn 一句）。用户看到的是「关联明明存在、
+ * 表也明明高亮着，那条线就是不见了」，而且完全无法定位 —— 实际原因是关联指向的
+ * 字段名在这张表里找不到（手改过字段、或手写的设计文件对不上）。
+ *
+ * 所以这里显式判定：字段在表里就用字段锚点（复合主键时各连各的列），
+ * 不在就退回表级锚点 —— **宁可连到表头，也不要整条线凭空消失**。
+ * 字段真的丢了由 `validate` 报错（那是 error 级，会阻断导出），画布这边只负责「看得见」。
+ */
+export function edgeAnchors(doc: DbDesignDocument, rel: DbDesignRelation): EdgeAnchors {
+  const hasField = (nodeId: string, field: string): boolean =>
+    (doc.nodes.find((n) => n.id === nodeId)?.table?.fields ?? []).some((f) => f.name === field);
+  // 方向约定：source = 被引用端（父，to），target = 外键所在端（子，from）
+  const parentOk = hasField(rel.to.node, rel.to.field);
+  const childOk = hasField(rel.from.node, rel.from.field);
+  return {
+    sourceHandle: parentOk ? handleField(rel.to.field) : HANDLE_TABLE,
+    targetHandle: childOk ? handleFieldIn(rel.from.field) : HANDLE_TABLE_IN,
+    degraded: !parentOk || !childOk,
+  };
 }

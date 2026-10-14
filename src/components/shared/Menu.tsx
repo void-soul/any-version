@@ -133,7 +133,13 @@ export function Menu({
                 } ${item.active ? "text-[var(--module-accent)]" : ""}`}
               >
                 <span className="w-2 shrink-0">{item.active ? "•" : ""}</span>
-                <span className="flex-1 min-w-0 truncate">{item.label}</span>
+                {/* label 必须自己是 flex 行：**Tailwind preflight 把 svg 设成
+                      display:block**，图标 + 文字若直接塞进这个 span，图标会独占一行、
+                      文字掉到下面（菜单里出现「图标在上、文字在下」的怪样子）。
+                      标签只是一段文字时 flex 行与原来无差别。*/}
+                  <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate">
+                    {item.label}
+                  </span>
                 {item.hint && <span className="shrink-0 text-micro text-slate-500">{item.hint}</span>}
               </button>
             );

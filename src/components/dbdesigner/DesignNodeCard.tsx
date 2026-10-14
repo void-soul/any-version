@@ -11,8 +11,8 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { Database, Eye, KeyRound } from "lucide-react";
 
 import { typeLabel, type DbDesignNode, type FieldRowMode } from "./types";
+import { HANDLE_TABLE_IN, handleAllPk, handleField, handleFieldIn } from "./types";
 import {
-  GRAPH_DIMMED_CLASS,
   headerTint,
   highlightColor,
   neonRing,
@@ -40,25 +40,23 @@ export interface DesignNodeData extends Record<string, unknown> {
    * 「哪几张跟我有关」只能靠眼睛一根根线扫。
    */
   related: boolean;
+  /**
+   * 高亮强度倍率（持久化偏好，1 = 默认观感）：缩放霓虹环 / 文字辉光 / 表头底色浓度。
+   * 由面板侧滑块实时传入 —— 必须进 rfNodes 的缓存失效判定，否则拖滑块时
+   * 卡片会卡在旧样式（节点对象被复用、data 不重建）。
+   */
+  hlBoost: number;
+  /** 无关节点淡化到多少透明度（1 = 默认观感；1 = 不淡化 → 用 inline opacity，Tailwind 不支持动态类名） */
+  dimOpacity: number;
 }
 
-export const HANDLE_TABLE = "table";
-export const handleField = (field: string) => `f:${field}`;
-/**
- * 左侧（被引用侧）字段锚点的 id。
- *
- * 为什么要和右侧分开命名：为了让**同一个锚点既能接、也能拖**（用户要求左右双向等价），
- * React Flow 需要 `connectionMode="loose"`；而 loose 模式下锚点不再按声明类型区分，
- * id 必须左右各一个，否则同名字段两个锚点会被当成同一个。
- * 面板里靠这个前缀判断「拖线是从哪一侧开始的」，见 DbDesignerPanel.onConnect。
- */
-export const handleFieldIn = (field: string) => `b:${field}`;
-export const HANDLE_TABLE_IN = "table-in";
-export const handleAllPk = "pk-all";
+// 锚点 id 的规则是纯逻辑，放在 types.ts（可测）；这里只照着 id 渲染 <Handle>。
+// 左右锚点为什么分成两套 id，见 types.ts 里 handleFieldIn 的注释。
+export { HANDLE_TABLE, HANDLE_TABLE_IN, handleAllPk, handleField, handleFieldIn } from "./types";
 
 function DesignNodeCardInner({ data }: NodeProps) {
   const d = data as unknown as DesignNodeData;
-  const { node, relationFields, expanded, selected, fieldRows, fkFields, related, dimmed } = d;
+  const { node, relationFields, expanded, selected, fieldRows, fkFields, related, dimmed, hlBoost, dimOpacity } = d;
   const isView = node.kind === "view";
   const fields = node.table?.fields ?? [];
   /** 表配色：图标 / 表名 / 表头底 / 整卡底 / 左侧色条都用它；没设置就回退模块强调色。
@@ -76,11 +74,11 @@ function DesignNodeCardInner({ data }: NodeProps) {
    */
   const hlLevel = selected ? "select" : related ? "related" : null;
   const hlColor = hlLevel ? highlightColor(rawColor, hlLevel) : "";
-  /** 霓虹环（描边 + 渐远外辉光）；空串 = 当前不高亮 */
-  const ring = hlLevel ? neonRing(hlColor, hlLevel) : "";
-  const textGlow = hlLevel ? neonTextGlow(hlColor, hlLevel) : "";
+  /** 霓虹环（描边 + 渐远外辉光）；空串 = 当前不高亮。hlBoost = 面板侧的高亮强度滑块 */
+  const ring = hlLevel ? neonRing(hlColor, hlLevel, hlBoost) : "";
+  const textGlow = hlLevel ? neonTextGlow(hlColor, hlLevel, hlBoost) : "";
   /** 高亮时的表头底色（选中更浓） */
-  const hlHeader = hlLevel ? headerTint(hlColor, hlLevel) : "";
+  const hlHeader = hlLevel ? headerTint(hlColor, hlLevel, hlBoost) : "";
   /**
    * 显示哪些字段行：
    *   keys —— 只主键 + 外键 + 关联字段（「这张表靠什么关联」一眼看到，杂字段不占地方）
@@ -98,8 +96,11 @@ function DesignNodeCardInner({ data }: NodeProps) {
     <div
       className={`group relative w-[288px] overflow-hidden rounded-card border bg-surface-panel transition-all ${
         ring ? "" : "border-white/10 shadow-lg"
-      } ${dimmed ? GRAPH_DIMMED_CLASS : "opacity-100"}`}
+      }`}
       style={{
+        // 淡化走 inline opacity：数值来自「淡化强度」滑块，Tailwind 的 opacity-35
+        // 之类是编译期类名，拼不出动态值（思维导图 / JSON 图仍用 GRAPH_DIMMED_CLASS）
+        opacity: dimmed ? dimOpacity : 1,
         // 选色后：整卡底色混入 6% 的表色，让颜色落在「卡身」上，而不只是左侧一条色带
         ...(rawColor ? { background: `color-mix(in srgb, ${rawColor} 6%, var(--color-surface-panel))` } : null),
         // 高亮：描边 + 霓虹环（内联写，压过原本的 shadow-lg）；颜色跟随表色（见 hlColor 注释）
