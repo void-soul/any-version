@@ -92,9 +92,6 @@ interface ProjectSkillEntry {
 
 type TabKey = 'skills' | 'projects';
 
-/** 「当前项目未勾选任何技能」时的空集。模块级单例，避免每次渲染新建 Set。 */
-const EMPTY_SET: ReadonlySet<string> = new Set<string>();
-
 const MARKET_SOURCES = [
   { name: 'skills.sh 官网', desc: 'Agent Skills 官方生态与规范', url: 'https://skills.sh' },
   { name: 'Anthropic 官方 Skills', desc: 'anthropics/skills 仓库示例技能', url: 'https://github.com/anthropics/skills' },
@@ -208,9 +205,6 @@ export default function SkillManager() {
   /** 右侧勾选的「技能库技能」= 要安装的技能 */
   const [pickedLib, setPickedLib] = useState<Set<string>>(new Set());
   /** 右侧勾选的「项目内已装技能」= 要删除的技能 */
-  // 按项目分组：{ [projectId]: Set<skillId> }。分组是跨项目批量卸载的前提——
-// 单个 Set 只能表达「某一个项目里勾了哪些」，切项目就没法保留别的项目的勾选了。
-  const [pickedInstalled, setPickedInstalled] = useState<Record<string, Set<string>>>({});
   /** SKILL.md 预览弹窗 */
   const [preview, setPreview] = useState<{ name: string; md: string } | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
@@ -512,9 +506,6 @@ export default function SkillManager() {
   /** 切换右侧正在查看的项目，并按需拉它的技能清单 */
   const selectProject = async (id: string) => {
     setSelProject(id);
-    // **不再清空 pickedInstalled**：它是按项目分组的（见 toggleInstalledPick），
-    // 切项目不该把用户在别的项目里的勾选清掉 —— 批量卸载要跨项目，
-    // 清空就等于永远只能删当前这一个项目。
     if (!projSkills[id]) await loadProjectSkills(id);
   };
 
@@ -536,23 +527,52 @@ export default function SkillManager() {
     });
   };
 
-  /** 勾选/取消某个项目里的某个技能。**按项目分组**，因此可跨项目累积。 */
-  const toggleInstalledPick = (projectId: string, skillId: string) => {
-    setPickedInstalled((s) => {
-      const n = { ...s };
-      const cur = new Set(n[projectId] ?? []);
-      if (cur.has(skillId)) cur.delete(skillId);
-      else cur.add(skillId);
-      if (cur.size === 0) delete n[projectId];
-      else n[projectId] = cur;
-      return n;
+  /**
+   * 从**某一个目录**卸载技能，并按需清理空掉的壳目录。
+   *
+   * 交互是「在技能这一行里点掉 .codebuddy 或 .agents 其中一个」：一个技能常同时
+   * 装在几个目录，用户要能逐个去掉，而不是只有「全卸」和「都不卸」两个极端。
+   * 全部目录都卸掉后这一行自然从列表消失 —— 列表是扫出来的，不是存出来的。
+   *
+   * `state === 'local'`（项目自带的真实目录）会**整个目录删除**，不可逆，
+   * 所以那种情况要先确认；链接只删链接本身，技能库里那份不受影响。
+   */
+  const removeSkillFromDir = (entry: ProjectSkillEntry, dirName: string) => {
+    if (!selProject) return;
+    const isRealDir = entry.state === "local";
+    const run = async () => {
+   setProjBusy(selProject);
+   try {
+     await invoke("remove_skill_from_project", {
+       skillId: entry.skillId,
+       projectId: selProject,
+       dirName,
+     });
+     await loadProjectSkills(selProject);
+     void loadProjCounts();
+     setProjMsg({ id: selProject, msg: t("skillmgr.projRemovedFromDir", { name: entry.name || entry.skillId, dir: dirName }), ok: true });
+   } catch (e: any) {
+     setProjMsg({ id: selProject, msg: String(e), ok: false });
+   }
+   setProjBusy(null);
+    };
+    if (!isRealDir) {
+   void run();
+   return;
+    }
+    setConfirmReq({
+   title: t("skillmgr.projRemoveDirTitle"),
+   danger: true,
+   confirmText: t("common.delete"),
+   desc: (
+     <div className="space-y-1.5">
+       <p>{t("skillmgr.projRemoveDirConfirm", { name: entry.name || entry.skillId, dir: dirName })}</p>
+       <p className="text-micro text-slate-500">{t("skillmgr.projPruneEmptyDirsHint")}</p>
+     </div>
+   ),
+   onConfirm: run,
     });
   };
-
-  /** 当前查看的项目里已勾选的技能（渲染勾选框用） */
-  const pickedInSelProject = pickedInstalled[selProject ?? ""] ?? EMPTY_SET;
-  /** 跨项目勾选总数（按钮上的计数） */
-  const pickedInstalledTotal = Object.values(pickedInstalled).reduce((a, s) => a + s.size, 0);
 
   /** 批量勾选/取消技能库里的全部技能（筛选后一键全选很常用） */
   const toggleAllLib = (list: SkillEntry[]) => {
@@ -609,86 +629,6 @@ export default function SkillManager() {
     } else {
       setProjMsg({ id: '*', msg: errors.join('；'), ok: false });
     }
-  };
-
-  /**
-   * 批量删除**跨项目**勾选的「项目内技能」：链接只删链接，真实目录整个删，
-   * 顺带清掉因此空掉的 `skills/` 与 `.agents` / `.codebuddy` 等壳目录。
-   *
-   * 两个刻意的设计：
-   * 1) **确认框按项目分组列出**。跨项目之后「会删掉什么」不再是单一列表能说清的，
-   *    必须让用户看见「哪个项目的哪些技能」，尤其是会被整个删掉的真实目录。
-   * 2) **空目录清理的说明写进确认文案**。用户可能不知道装过技能才会多出
-   *    `.codebuddy/agents` 这类目录，不说清楚会以为应用乱删东西。
-   */
-  const removePickedInstalled = () => {
-    // 收集所有勾选：{ projectId: Set<skillId> }
-    const targets = Object.entries(pickedInstalled).filter(([, s]) => s.size > 0);
-    if (targets.length === 0) return;
-    const totalIds = targets.reduce((a, [, s]) => a + s.size, 0);
-    // 逐项目算出「哪些是真实目录（会被整个删）」，确认框里要列出来
-    const perProject = targets.map(([pid, sids]) => {
-      const entries = projSkills[pid] || [];
-      const dirs = entries.filter((e) => sids.has(e.skillId) && e.state === 'local');
-      return {
-        pid,
-        name: projects.find((p) => p.id === pid)?.name || pid,
-        total: sids.size,
-        dirs,
-        links: sids.size - dirs.length,
-      };
-    });
-    const totalLinks = perProject.reduce((a, p) => a + p.links, 0);
-    setConfirmReq({
-      title: t("skillmgr.projBatchDeleteTitle"),
-      danger: true,
-      width: 460,
-      confirmText: t("common.delete"),
-      desc: (
-        <div className="space-y-2">
-          <p>{t("skillmgr.projBatchDeleteConfirmMulti", { projects: perProject.length, n: totalIds, links: totalLinks })}</p>
-          <div className="rounded-ctl border border-white/10 bg-black/20 p-2 space-y-1 max-h-[200px] overflow-y-auto">
-            {perProject.map((p) => (
-              <div key={p.pid} className="space-y-0.5">
-                <p className="text-micro font-semibold text-slate-300 truncate">{p.name} · {t("skillmgr.projBatchDeleteCount", { n: p.total })}</p>
-                {p.dirs.length > 0 && (
-                  <ul className="text-micro text-rose-200/80 space-y-0.5 list-disc pl-4">
-                    {p.dirs.map((d) => (
-                      <li key={d.skillId} className="truncate">{d.name || d.skillId}</li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            ))}
-          </div>
-          <p className="text-micro text-slate-500">
-            {t("skillmgr.projPruneEmptyDirsHint")}
-          </p>
-        </div>
-      ),
-      onConfirm: async () => {
-        const errors: string[] = [];
-        let n = 0;
-        for (const [pid, sids] of targets) {
-          setProjBusy(pid);
-          for (const sid of sids) {
-            try {
-              await invoke('remove_skill_from_project', { skillId: sid, projectId: pid });
-              n += 1;
-            } catch (e: any) { errors.push(`${sid}: ${String(e)}`); }
-          }
-          await loadProjectSkills(pid);
-        }
-        setProjBusy(null);
-        setPickedInstalled({});
-        void loadProjCounts();
-        if (errors.length === 0) {
-          setProjMsg({ id: selProject ?? '*', msg: t("skillmgr.projBatchDeletedMulti", { projects: targets.length, n }), ok: true });
-        } else {
-          setProjMsg({ id: selProject ?? '*', msg: errors.join('；'), ok: false });
-        }
-      },
-    });
   };
 
   /** 打开 SKILL.md 预览（按需取全文，避免列表被撑大） */
@@ -1012,9 +952,13 @@ export default function SkillManager() {
                           <div className="text-tiny font-semibold text-slate-200 truncate">{p.name || p.path}</div>
                           <div className="text-micro text-slate-500 font-mono truncate">{p.path}</div>
                         </button>
-                        {/* 打开项目目录：装完技能想去项目里看一眼 junction 落在哪 */}
+                        {/* 打开项目目录：装完技能想去项目里看一眼 junction 落在哪。
+                            失败时**透出原始错误**，不要换成「项目可能已被移动或删除」那种
+                            猜测 —— 实测路径全部存在时，那句提示会把排查方向带偏
+                            （真实原因可能是权限、路径在非挂载盘、或 shell 调用失败）。
+                            与 McpManager 的同名按钮保持一致的做法。 */}
                         <button
-                          onClick={() => void openPath(p.path).catch(() => setProjMsg({ id: p.id, msg: String(t("skillmgr.projOpenFail")), ok: false }))}
+                          onClick={() => void openPath(p.path).catch((e) => setProjMsg({ id: p.id, msg: String(e), ok: false }))}
                           className="text-slate-600 hover:text-[var(--module-accent)] cursor-pointer flex-shrink-0"
                           title={t("skillmgr.projOpenDir")}
                         >
@@ -1074,16 +1018,11 @@ export default function SkillManager() {
                             {t("skillmgr.projInstalledTitle")}
                             <span className="ml-1.5 text-micro text-slate-500 font-normal">{viewing?.path}</span>
                           </span>
-                          <button
-                            onClick={() => removePickedInstalled()}
-                            disabled={pickedInstalledTotal === 0 || projBusy === selProject}
-                            title={t("skillmgr.projBatchDeleteHint")}
-                            className="flex items-center gap-1 px-2 py-1 rounded-ctl bg-red-500/15 hover:bg-red-500/25 disabled:opacity-40 text-red-300 text-tiny font-semibold cursor-pointer flex-shrink-0"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                            {t("skillmgr.projBatchDelete")}
-                            {pickedInstalledTotal > 0 ? ` (${pickedInstalledTotal})` : ''}
-                          </button>
+                          {/* 原先这里有「批量删除 (N)」按钮 + 每行一个勾选框。
+                              已按用户要求删除：改成每一行直接列出装了哪些目录、
+                              点目录标签上的 × 逐个去掉。理由是「全卸」与「都不卸」
+                              两个极端之间没有中间态，而一个技能同时装在
+                              .agents 与 .codebuddy 是常态。 */}
                         </div>
 
                         {broken.length > 0 && (
@@ -1106,19 +1045,11 @@ export default function SkillManager() {
                         ) : (
                           <div className="space-y-1">
                             {alive.map((e) => {
-                              const on = pickedInSelProject.has(e.skillId);
                               return (
                                 <div
                                   key={e.skillId}
-                                  className={`flex items-center gap-2 px-2 py-1.5 rounded-ctl ${on ? 'bg-red-500/10' : 'bg-white/[0.03]'}`}
+                                  className="flex items-center gap-2 px-2 py-1.5 rounded-ctl bg-white/[0.03]"
                                 >
-                                  <input
-                                    type="checkbox"
-                                    checked={on}
-                                    onChange={() => selProject && toggleInstalledPick(selProject, e.skillId)}
-                                    title={t("skillmgr.projPickToDelete")}
-                                    className="w-3 h-3 accent-red-400 flex-shrink-0 cursor-pointer"
-                                  />
                                   <button
                                     onClick={() => void openPreview(e)}
                                     className="text-tiny font-semibold text-slate-200 hover:text-[var(--module-accent)] underline decoration-dotted underline-offset-2 truncate cursor-pointer"
@@ -1135,13 +1066,31 @@ export default function SkillManager() {
                                   >
                                     {e.state === 'linked' ? t("skillmgr.projFromLibrary") : t("skillmgr.projFromProject")}
                                   </span>
-                                  {/* 装在哪些目录：一个技能装 N 处也只有一行，这里说明装在哪 */}
+                                  {/* 装在哪些目录：**逐个可删**。
+                                      一个技能同时装在 .agents 与 .codebuddy 是常态，
+                                      而「全卸」与「都不卸」之间没有中间态 —— 所以每个
+                                      目录做成一个带 × 的标签，点哪个就去哪个。
+                                      删掉最后一个目录，这一行自然消失（列表是扫出来的）。 */}
                                   {e.dirs && e.dirs.length > 0 && (
-                                    <span
-                                      className="px-1.5 py-0.5 rounded text-micro bg-white/5 text-slate-400 flex-shrink-0 font-mono"
-                                      title={t("skillmgr.installedInDirs")}
-                                    >
-                                      {e.dirs.map((d) => d.replace('.', '')).join(' ')}
+                                    <span className="flex items-center gap-1 flex-shrink-0">
+                                      {e.dirs.map((d) => (
+                                        <span
+                                          key={d}
+                                          className="inline-flex items-center gap-0.5 rounded text-micro bg-white/5 text-slate-400 font-mono pl-1 pr-0.5 py-0.5"
+                                          title={t("skillmgr.installedInDirs")}
+                                        >
+                                          {d}
+                                          <button
+                                            type="button"
+                                            onClick={() => removeSkillFromDir(e, d)}
+                                            disabled={projBusy === selProject}
+                                            title={t("skillmgr.projRemoveDirHint", { dir: d })}
+                                            className="nodrag shrink-0 rounded px-0.5 text-slate-500 hover:bg-red-500/25 hover:text-red-300 disabled:opacity-40 cursor-pointer"
+                                          >
+                                            <X className="w-2.5 h-2.5" />
+                                          </button>
+                                        </span>
+                                      ))}
                                     </span>
                                   )}
                                   {/* 有一个链接还有效就仍算已安装，但失效的那些要能被看见 */}

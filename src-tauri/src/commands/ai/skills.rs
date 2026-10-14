@@ -660,9 +660,22 @@ const KIRA_GITIGNORE_END: &str = "# <<< kira skills <<<";
 ///   若用会跟随删除的操作，删掉的会是**技能库里的实体技能内容**。这里刻意不用 remove_dir_all。
 /// - **真实目录**（项目自带的技能）：按用户要求与链接同等对待，整个删除。
 ///   不可逆，UI 必须先把「会被删除的真实目录」列出来让用户确认。
+/// 卸载技能。`dir_name` 给定时**只从这一个扫描目录**卸载，给 `None` 时从全部目录卸载。
+///
+/// 单目录卸载是主流程：一个技能常同时装在 `.agents` 与 `.codebuddy`，用户要能逐个
+/// 去掉，而不是只有「全卸」和「都不卸」两个极端。全部目录卸载保留给脚本化调用。
 #[tauri::command]
-pub fn remove_skill_from_project(skill_id: String, project_id: String) -> Result<Vec<String>, String> {
-    uninstall_from(&projects_path(), &skill_id, &project_id)
+pub fn remove_skill_from_project(
+    skill_id: String,
+    project_id: String,
+    dir_name: Option<String>,
+) -> Result<Vec<String>, String> {
+    uninstall_from(
+        &projects_path(),
+        &skill_id,
+        &project_id,
+        dir_name.as_deref(),
+    )
 }
 
 /// 目录是否**真的空**（没有任何条目）。
@@ -696,13 +709,33 @@ fn prune_empty_skill_dirs(project_root: &Path, scan_dir_name: &str) {
     }
 }
 
-fn uninstall_from(projects_file: &Path, skill_id: &str, project_id: &str) -> Result<Vec<String>, String> {
+fn uninstall_from(
+    projects_file: &Path,
+    skill_id: &str,
+    project_id: &str,
+    only_dir: Option<&str>,
+) -> Result<Vec<String>, String> {
+    // 先校验目录名合法：传进来一个任意字符串就让它拼进路径，等于开了条删任意目录的路
+    if let Some(d) = only_dir {
+        if !SKILL_SCAN_DIRS.contains(&d) {
+            return Err(format!(
+                "{} 不是技能扫描目录（允许 {}）",
+                d,
+                SKILL_SCAN_DIRS.join(" / ")
+            ));
+        }
+    }
     let mut removed: Vec<String> = Vec::new();
     let project_root = resolve_project_root_in(projects_file, project_id)?;
     for (dir_name, dir) in SKILL_SCAN_DIRS
         .iter()
         .zip(project_skill_dirs_in(projects_file, project_id)?)
     {
+        if let Some(only) = only_dir {
+            if *dir_name != only {
+                continue;
+            }
+        }
         let link = dir.join(skill_id);
         let Ok(md) = fs::symlink_metadata(&link) else { continue };
         if md.file_type().is_symlink() {
@@ -718,7 +751,10 @@ fn uninstall_from(projects_file: &Path, skill_id: &str, project_id: &str) -> Res
         prune_empty_skill_dirs(&project_root, dir_name);
     }
     if removed.is_empty() {
-        return Err(format!("该项目未安装技能「{}」", skill_id));
+        return Err(match only_dir {
+            Some(d) => format!("项目的 {} 目录下未安装技能「{}」", d, skill_id),
+            None => format!("该项目未安装技能「{}」", skill_id),
+        });
     }
     Ok(removed)
 }
@@ -2075,12 +2111,85 @@ mod tests {
         assert_eq!((c.total, c.linked), (1, 1), "计数必须去重");
 
         // 卸载：所有目录里的链接都清掉
-        let removed = uninstall_from(&file, "demo", &pid).unwrap();
+        let removed = uninstall_from(&file, "demo", &pid, None).unwrap();
         assert_eq!(removed.len(), 3);
         for d in &picked {
             assert!(!root.join(d).join("skills").join("demo").exists(), "{} 下的链接应被清掉", d);
         }
         assert!(store.join("demo").join("SKILL.md").is_file(), "绝不能删掉技能库里的实体");
+    }
+
+    /// 逐目录卸载：只去掉指定的那一个，其余目录里的链接**必须留着**。
+    ///
+    /// 用户的交互是「在技能这一行里点掉 .codebuddy 或 .agents 其中一个」，
+    /// 所以「只影响指定目录」是这个交互成立的前提 —— 误伤另外两个目录等于
+    /// 把用户的安装状态改坏了，而它不报错、只是安静地少装了两个。
+    ///
+    /// 顺带守住「删完最后一个目录，技能就从这个项目里消失」：列表是扫出来的，
+    /// 目录空了自然不再有这一行。
+    #[cfg(windows)]
+    #[test]
+    fn uninstall_from_one_dir_leaves_the_others_installed() {
+        let (_base, store, file, pid) = setup_project_env("onedir");
+        make_skill(&store, "demo");
+        let picked = vec![".agents".to_string(), ".codebuddy".to_string()];
+        install_into(&store, &file, "demo", &pid, Some(&picked)).expect("应安装成功");
+        let root = project_root(&file, &pid);
+
+        // 只卸 .codebuddy
+        let removed = uninstall_from(&file, "demo", &pid, Some(".codebuddy")).unwrap();
+        assert_eq!(removed, vec![".codebuddy".to_string()], "只应报告动过 .codebuddy");
+        assert!(
+            !root.join(".codebuddy").join("skills").join("demo").exists(),
+            ".codebuddy 下的链接应被删掉"
+        );
+        assert!(
+            root.join(".agents").join("skills").join("demo").is_dir(),
+            ".agents 下的链接必须原样保留 —— 误伤它等于悄悄改坏用户的安装状态"
+        );
+
+        // 列表仍然有这一行（还剩 .agents），且 dirs 只剩一个
+        let list = list_installed(&store, &file, &pid).unwrap();
+        assert_eq!(list.len(), 1, "还剩一个目录有链接，技能就该仍在列表里");
+        assert_eq!(list[0].dirs, vec![".agents".to_string()]);
+
+        // 技能库实体不受影响
+        assert!(store.join("demo").join("SKILL.md").is_file());
+
+        // 再卸 .agents：这一次技能就该从项目里彻底消失
+        let removed = uninstall_from(&file, "demo", &pid, Some(".agents")).unwrap();
+        assert_eq!(removed, vec![".agents".to_string()]);
+        assert!(
+            list_installed(&store, &file, &pid).unwrap().is_empty(),
+            "全部目录都卸完后不该再有这一行"
+        );
+
+        // 两个壳目录都空了 -> 逐级删掉
+        assert!(!root.join(".agents").exists(), "空的 .agents 应被清掉");
+        assert!(!root.join(".codebuddy").exists(), "空的 .codebuddy 应被清掉");
+
+        let _ = std::fs::remove_dir_all(&_base);
+    }
+
+    /// 目录名必须是扫描目录之一：否则等于让调用方拼任意路径去删东西。
+    #[cfg(windows)]
+    #[test]
+    fn uninstall_rejects_a_dir_that_is_not_a_scan_dir() {
+        let (_base, store, file, pid) = setup_project_env("baddir");
+        make_skill(&store, "demo");
+        let one = vec![".agents".to_string()];
+        install_into(&store, &file, "demo", &pid, Some(&one)).unwrap();
+        let root = project_root(&file, &pid);
+        // 项目里放一个不该被碰的东西
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src").join("main.rs"), "fn main() {}").unwrap();
+
+        let err = uninstall_from(&file, "demo", &pid, Some("src")).unwrap_err();
+        assert!(err.contains("不是技能扫描目录"), "got: {}", err);
+        assert!(root.join("src").join("main.rs").exists(), "非扫描目录必须原样不动");
+        assert!(root.join(".agents").join("skills").join("demo").is_dir());
+
+        let _ = std::fs::remove_dir_all(&_base);
     }
 
     /// 5 个链接里坏 1 个：仍算「已安装」，但要记下失效数。
@@ -2148,7 +2257,7 @@ mod tests {
         assert_eq!(list_installed(&store, &file, &pid).unwrap().len(), 1);
 
         // 卸载：链接消失，**技能库内容必须还在**
-        uninstall_from(&file, "demo", &pid).unwrap();
+        uninstall_from(&file, "demo", &pid, None).unwrap();
         assert!(!Path::new(&link).exists(), "链接应被删除");
         assert!(
             store.join("demo").join("SKILL.md").is_file(),
@@ -2263,7 +2372,7 @@ mod tests {
         std::fs::create_dir_all(skills_dir.join("demo")).unwrap();
         std::fs::write(skills_dir.join("demo").join("MY_FILE.txt"), "bye").unwrap();
 
-        uninstall_from(&file, "demo", &pid).expect("真实目录应被删除");
+        uninstall_from(&file, "demo", &pid, None).expect("真实目录应被删除");
         assert!(!skills_dir.join("demo").exists(), "目录应整个删掉");
         // 关键：技能库本体不能被牵连（只有链接才该这样，真实目录不会碰到技能库）
         assert!(store.join("demo").join("SKILL.md").is_file(), "技能库本体不受影响");
