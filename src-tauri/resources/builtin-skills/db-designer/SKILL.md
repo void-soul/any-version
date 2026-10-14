@@ -80,7 +80,10 @@ any-version 的数据库设计器是**纯文件**的：画的是「表 / 视图�
 ```
 
 顶层可带：`id` / `name` / `description` / `dialect`（`mysql` 默认、`postgres`、`sqlite`）
-/ `folderId` / `nodes` / `relations` / `updatedAt`。
+/ `folderId` / **`commonFields`（公共字段，见 references/schema.md §8.2）** / `nodes` / `relations` / `updatedAt`。
+
+> 若目标设计文件启用了 `commonFields`：**不要手动创建那些字段**（如 `created_at`），
+> 导出时会自动附加；你手动写的会因重名被跳过（表自己的定义优先）。
 
 ## 2. 关键约定（最容易写错的地方）
 
@@ -93,6 +96,8 @@ any-version 的数据库设计器是**纯文件**的：画的是「表 / 视图�
 | **主键禁止裸 `id`**，用 `<实体>_id` | `users` 表 → `user_id`；`orders` 表 → `order_id` |
 | **通用裸名必须带表名前缀** | `email` ✗ → `user_email`；`status` ✗ → `order_status` |
 | **每个外键字段都要有索引** | `orders.user_id` 是外键 → `indexes` 里必须有 `{"fields": ["user_id"]}` |
+| **一张表只能有一个自增列** | 两个字段都写 `autoIncrement: true` → MySQL 建表直接失败（1067） |
+| **索引名全文档唯一** | 两张表都用 `idx_user` → PostgreSQL / SQLite 建表失败（索引名要求全库唯一），一律带表名前缀 |
 
 「通用裸名」指这些词单独出现时无法分辨属于哪张表：
 `id` `name` `title` `label` `desc` `description` `price` `amount` `status` `type` `code`
@@ -120,9 +125,26 @@ any-version 的数据库设计器是**纯文件**的：画的是「表 / 视图�
 `int` `bigint` `smallint` `tinyint` `decimal` `float` `double` `char` `varchar`
 `text` `date` `time` `datetime` `timestamp` `boolean` `json` `uuid` `blob` `enum`
 
-字段其余属性：`nullable`（**默认 false**，写 `true` 才允许 NULL）、`default`（**SQL 字面量**，字符串自己加引号）、
+字段其余属性：`nullable`（**默认 false**，写 `true` 才允许 NULL）、`default`（**SQL 字面量，一律写成字符串**）、
 `comment`、`pk`、`autoIncrement`、`unique`。
 索引：`{ name, kind, fields }`，`kind` ∈ `index` `unique` `fulltext`（`primary` 别用）。
+
+### 2.3 `default` 怎么写（最容易踩）
+
+1. **一律写成字符串**：`"default": "0"`、`"default": "CURRENT_TIMESTAMP"`。
+   写裸值 `"default": false` / `0` 是模型最自然的写法，也是最常见的坑 ——
+   应用侧现在能容错，但旧版本应用与严格 JSON 的工具会直接拒。
+2. **字符串值应当自带 SQL 引号**：`"default": "'enabled'"`。设计文件里存的是
+   **SQL 字面量**，引号是值的一部分。漏引号时应用导出会自动补（并在校验条警告），
+   但别指望它 —— 自己写对，产物才和你想的一样。
+3. **`boolean` 列按方言写**：`boolean` 只是设计器内部的抽象 —— MySQL 没有 BOOLEAN
+   （导成 `TINYINT(1)`）、SQLite 导成 `INTEGER`，两边都是数值存储，写 `"0"` / `"1"`；
+   只有 `dialect: "postgres"` 才写 `"false"` / `"true"`（PG 上 `BOOLEAN DEFAULT 0` 直接报错）。
+4. **MySQL 的 TEXT / BLOB / JSON 列不要给默认值**（报 1101，导出时会被跳过）。
+
+**导出选项不在设计文件里**：「这份 SQL 要不要带外键约束」是导出时的选择
+（应用导出弹框 / `kira-dbd export-sql --no-foreign-keys`），**不要**为了导出一份
+不带外键的 SQL 去改设计文件。
 
 完整字段表见 `references/schema.md`。
 
@@ -173,6 +195,7 @@ python <技能安装目录>/db-designer/scripts/validate.py <file.dbdesign.json>
 ```bash
 kira-dbd validate <file.dbdesign.json>     # 与应用内校验同一套规则
 kira-dbd export-sql <file.dbdesign.json>   # 直接出建表 SQL
+kira-dbd export-sql <file.dbdesign.json> --no-foreign-keys   # 不带外键约束（与应用导出弹框同一个开关）
 ```
 
 ## 5. 交付
@@ -193,3 +216,7 @@ kira-dbd export-sql <file.dbdesign.json>   # 直接出建表 SQL
 6. **关系引用了视图** → 视图没有字段概念，不能作为外键的一端
 7. **给 JSON 套 Markdown 代码围栏** —— 导入端能剥，但**不要依赖它**，直接输出纯 JSON
 8. **多对多不建中间表** → 导出时应用会自己生成一张 `a_b` 中间表；但如果中间表需要额外字段（数量、备注），就要显式建出来
+9. **`default` 写成裸值**（`false` / `0`）→ 旧版本应用直接拒收；字符串忘加引号（`"enabled"` 而不是 `"'enabled'"`）→ 导出虽会自动补，但产物与设计文件不一致。见 §2.3
+10. **两张表用同一个索引名** → PostgreSQL / SQLite 建表失败（索引名要求全库唯一）。索引名一律带表名前缀
+11. **一张表写多个自增列** → MySQL 建表直接失败（1067）
+12. **为了导出一份不带外键的 SQL 去改设计文件** → 导出选项不属于设计文件，用导出弹框的「包含外键约束」开关（CLI：`--no-foreign-keys`）

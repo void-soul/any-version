@@ -100,6 +100,19 @@ def warn(msg):
     warnings.append(msg)
 
 
+def _bool_default_literal(value, dialect):
+    """boolean 列的默认值该写成什么。
+
+    `boolean` 只是设计器内部的跨方言抽象：MySQL 根本没有 BOOLEAN（导出成 TINYINT(1)），
+    SQLite 只有存储类 INTEGER（也导出成 INTEGER），两边都是数值存储 → 写 "0" / "1"；
+    只有 PostgreSQL 是原生 BOOLEAN → 才写 "false" / "true"。
+    """
+    truthy = value is True or (isinstance(value, str) and value.strip().lower() in ("true", "t", "1", "yes"))
+    if dialect == "postgres":
+        return "true" if truthy else "false"
+    return "1" if truthy else "0"
+
+
 def check_type(t, where):
     if not isinstance(t, dict):
         err(f"{where}：type 必须是对象（如 {{\"base\": \"varchar\", \"length\": 32}}）")
@@ -120,7 +133,7 @@ def check_type(t, where):
             warn(f"{where}：decimal 没写 scale，导出时按 2 处理")
 
 
-def check_table(node):
+def check_table(node, dialect="mysql"):
     name = node.get("name", "?")
     table = node.get("table")
     if table is None:
@@ -162,7 +175,18 @@ def check_table(node):
         if f.get("autoIncrement"):
             auto_cols.append(fname)
         d = f.get("default")
-        if isinstance(d, str) and d.strip():
+        base = (f.get("type") or {}).get("base") if isinstance(f.get("type"), dict) else None
+        if d is not None and not isinstance(d, str):
+            # 裸 boolean / 数字：模型最自然的写法，也是最容易踩的坑。应用侧现在能容错，
+            # 但约定上 default 一律是字符串（旧版本应用、以及把它当严格 JSON 读的其它
+            # 工具会直接拒），所以这里按「写法不合规」提示，并给出该方言该怎么写。
+            want = _bool_default_literal(d, dialect) if base == "boolean" else None
+            tail = f"，{base} 列在 {dialect} 上建议写 {want!r}" if want else ""
+            warn(
+                f"表 {name} 字段 {fname}：default={d!r} 是裸值，"
+                f"必须写成字符串（如 \"0\" / \"CURRENT_TIMESTAMP\"）{tail}"
+            )
+        elif isinstance(d, str) and d.strip():
             # 字符串字面量忘了加引号是高频错误
             v = d.strip()
             looks_literal = (
@@ -172,9 +196,21 @@ def check_table(node):
             )
             if not looks_literal:
                 warn(f"表 {name} 字段 {fname}：default={v!r} 看起来不像 SQL 字面量（字符串要自己加引号）")
+            if base == "boolean" and v.lower() in ("true", "false"):
+                want = _bool_default_literal(v, dialect)
+                warn(
+                    f"表 {name} 字段 {fname}：boolean 列在 {dialect} 上实际是数值存储，"
+                    f"默认值建议写 {want!r}（写成 {v!r} 也能导，但列类型与字面量对不上）"
+                )
 
     if len(pk_cols) > 1 and auto_cols:
         err(f"表 {name}：复合主键里不能有自增列（{', '.join(pk_cols)}），导出的 SQL 跑不起来")
+    if len(auto_cols) > 1:
+        # MySQL 报1067（there can be only one auto column）；PG/SQLite 建得出来但没人用第二个
+        err(
+            f"表 {name}：有 {len(auto_cols)} 个自增列（{', '.join(auto_cols)}）"
+            f"—— 一张表只能有一个自增列，MySQL 建表会直接失败"
+        )
     for c in auto_cols:
         if c not in pk_cols:
             err(f"表 {name}：自增列 {c} 不是主键（MySQL/PG 不允许），要么加 pk:true 要么去掉自增")
@@ -212,9 +248,39 @@ def check_table(node):
                 err(f"{where}：引用了不存在的字段 {c!r}")
         if kind == "unique" and cols and all(c in pk_cols for c in cols):
             warn(f"{where}：唯一索引的列全是主键，冗余")
+        if kind == "fulltext" and dialect != "mysql":
+            warn(
+                f"{where}：{dialect} 没有全文索引语法（SQLite 要 FTS5 虚拟表），"
+                f"导出时会降级成普通索引"
+            )
+        if dialect == "mysql" and kind != "fulltext":
+            # MySQL 报 1170：BLOB/TEXT column used in key specification without a key length
+            for c in cols:
+                fld = next((f for f in fields if isinstance(f, dict) and f.get("name") == c), None)
+                ftype = fld.get("type") if isinstance(fld, dict) else None
+                fbase = ftype.get("base") if isinstance(ftype, dict) else None
+                if fbase in ("text", "blob"):
+                    warn(
+                        f"{where}：建在 {c}（{fbase}）列上 —— MySQL 不允许 TEXT/BLOB 进普通或唯一索引"
+                        f"（需要指定前缀长度，如 ({c}(191))），导出会跳过它"
+                    )
 
     # 命名规范：主键命名 + 通用裸名
     check_naming(name, table, pk_cols, None)
+
+    # MySQL 不允许 TEXT/BLOB/JSON 列带默认值（报 1101），导出时会跳过
+    if dialect == "mysql":
+        for f in fields:
+            if not isinstance(f, dict):
+                continue
+            ftype = f.get("type") if isinstance(f.get("type"), dict) else None
+            fbase = ftype.get("base") if isinstance(ftype, dict) else None
+            dv = f.get("default")
+            if fbase in ("text", "blob", "json") and isinstance(dv, str) and dv.strip():
+                warn(
+                    f"表 {name} 字段 {f.get('name')}（{fbase}）：默认值 {dv!r} 不会导出 —— "
+                    f"MySQL 不允许 TEXT/BLOB/JSON 列带默认值（报 1101）"
+                )
 
     # 外键索引覆盖：应用侧 store.rs::validate 会把「外键字段没索引」当 error，
     # 这里同口径 —— 否则自检通过、导入后照样导不出 SQL。
@@ -255,6 +321,8 @@ def check(doc):
     fields_of = {}
     # 每张表被索引覆盖的列名：用于「外键字段必须有索引」那条 error
     idx_fields_of = {}
+    # 索引名（小写）→ 首次出现的表名：用于「索引名跨表唯一」那条 error
+    idx_name_owner = {}
     for i, n in enumerate(nodes):
         if not isinstance(n, dict):
             err(f"第 {i + 1} 个节点不是对象")
@@ -283,7 +351,7 @@ def check(doc):
                 err(f"视图 {name}：缺少 view.sql")
             fields_of[nid] = set()
         else:
-            fields_of[nid] = check_table(n)
+            fields_of[nid] = check_table(n, dialect)
             tbl = n.get("table") or {}
             idx_fields_of[nid] = {
                 c
@@ -292,6 +360,22 @@ def check(doc):
                 for c in (idx.get("fields") or [])
                 if isinstance(c, str)
             }
+            # 索引名跨表唯一：MySQL 是表内唯一，PG / SQLite 是**全库**唯一 ——
+            # 后者索引建在表外，重名直接 relation already exists 建表失败。按最严口径判重。
+            for idx in (tbl.get("indexes") or []):
+                if not isinstance(idx, dict):
+                    continue
+                iname = idx.get("name")
+                if not iname:
+                    continue
+                owner = idx_name_owner.get(iname.lower())
+                if owner is None:
+                    idx_name_owner[iname.lower()] = name or nid
+                else:
+                    err(
+                        f"索引名 {iname!r} 被表 {owner} 和表 {name or nid} 共用 —— "
+                        f"PostgreSQL / SQLite 要求索引名全库唯一，重名会建表失败，请加表名前缀"
+                    )
 
     rels = doc.get("relations") or []
     if not isinstance(rels, list):
