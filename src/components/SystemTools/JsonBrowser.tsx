@@ -4,6 +4,7 @@ import { JsonFlowCanvas } from "../CanvasFlow";
 import MonacoEditor from "../shared/MonacoEditor";
 import { theamedConfirm } from "../shared/ThemedAlert";
 import { invoke } from "@tauri-apps/api/core";
+import { isEditorAlive } from "../../utils/editorAlive";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
   Braces,
@@ -660,20 +661,30 @@ export default function JsonBrowser() {
   };
 
   const expandAll = () => setCollapsed(new Set());
-  const revealPathInEditor = useCallback((path: string) => {
-    setSelectedPath(path);
-    const target = sourceEditorRef.current;
-    if (!target || !active) return;
-    const segments = path.split(".").slice(1);
-    const needle = segments.length ? `"${segments[segments.length - 1]}"` : "{";
-    const lines = active.text.split(/\r?\n/);
-    const lineIndex = lines.findIndex((line) => line.includes(needle));
-    if (lineIndex >= 0) {
-      target.revealLineInCenter(lineIndex + 1);
-      target.setPosition({ lineNumber: lineIndex + 1, column: Math.max(1, lines[lineIndex].indexOf(needle) + 1) });
-      target.focus();
-    }
-  }, [active]);
+  const revealPathInEditor = useCallback(
+    (path: string) => {
+      // 空 path = 「取消选中」（点画布空白处）；此时不该去编辑器里找任何东西
+      setSelectedPath(path);
+      if (!path) return;
+      const target = sourceEditorRef.current;
+      if (!target || !active) return;
+      // 活性判断：编辑器可能已被卸载并 dispose（例如收起了左栏），
+      // 而 ref 仍指向那个死对象 —— 对它调方法会抛
+      // 「InstantiationService has been disposed」。清空 ref 是另一道防线，
+      // 但两者都需要：卸载回调挡不住所有时序（如 React 批量更新中间的调用）。
+      if (!isEditorAlive(target)) return;
+      const segments = path.split(".").slice(1);
+      const needle = segments.length ? `"${segments[segments.length - 1]}"` : "{";
+      const lines = active.text.split(/\r?\n/);
+      const lineIndex = lines.findIndex((line) => line.includes(needle));
+      if (lineIndex >= 0) {
+        target.revealLineInCenter(lineIndex + 1);
+        target.setPosition({ lineNumber: lineIndex + 1, column: Math.max(1, lines[lineIndex].indexOf(needle) + 1) });
+        target.focus();
+      }
+    },
+    [active],
+  );
 
   const collapseAll = () => {
     if (largeDocument) {
@@ -757,6 +768,12 @@ export default function JsonBrowser() {
                       scrollEditors("left", { scrollTop: event.scrollTop, scrollLeft: event.scrollLeft });
                     }
                   });
+                }}
+                // 收起左栏 / 切走模块时编辑器会被 dispose，而 ref 不会自动失效。
+                // 不清空的话，之后点右侧画布的节点会去调一个已销毁的 editor，
+                // 抛「InstantiationService has been disposed」（打包版常见，刷新才好）。
+                onUnmount={() => {
+                  sourceEditorRef.current = null;
                 }}
                 options={{ minimap: { enabled: false }, fontSize: 12, lineNumbers: "on", wordWrap: "on", automaticLayout: true, tabSize: 2, padding: { top: 8, bottom: 8 } }}
               />

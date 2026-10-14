@@ -9,7 +9,13 @@
 //   2. import("@monaco-editor/react") 拿到真正 Editor；
 //   3. 渲染真 Editor，透传所有 props。
 // 之后 monaco 模块已缓存，其它编辑实例复用同一份（loader 是模块级单例）。
-import React, { useEffect, useState } from "react";
+//
+// **调用方如果把 editor 存进 ref，必须配 `onUnmount` 清空它**，并在调用前用
+// `utils/editorAlive` 的 `isEditorAlive()` 判定活性。否则编辑器卸载后会抛
+// `InstantiationService has been disposed`（详见那个 helper 的注释）。
+// 只在 editor 挂载时注册全局语言/补全、不持有 editor 的调用方（如
+// mihomo 订阅/覆写、项目配置编辑）不需要这两步。
+import React, { useEffect, useRef, useState } from "react";
 
 type MonacoEditorProps = {
   height?: string | number;
@@ -24,6 +30,16 @@ type MonacoEditorProps = {
   saveViewState?: boolean;
   onChange?: (value: string | undefined, event: unknown) => void;
   onMount?: (editor: any, monaco: any) => void;
+  /**
+   * 真 Editor 卸载（被 dispose）时回调。**调用方必须用它把自己持有的 editor 引用清空**。
+   *
+   * 为什么必须有：调用方常把 editor 存进 ref（比如「点 JSON 节点跳到编辑器对应行」
+   * 要调 `revealLineInCenter`）。编辑器卸载后 monaco 会 dispose 掉它内部的
+   * InstantiationService，但 ref 不会自动失效 —— 之后再拿它调方法就会抛
+   * `InstantiationService has been disposed`，而 monaco 核心模块是单例、不受影响，
+   * 于是表现为「偶发、刷新才好」。
+   */
+  onUnmount?: () => void;
   onValidate?: (markers: unknown[]) => void;
   options?: Record<string, unknown>;
   className?: string;
@@ -60,5 +76,19 @@ export default function MonacoEditor(props: MonacoEditorProps) {
   if (!ready) return <>{props.loading ?? <div className="h-full w-full rounded-ctl bg-slate-950/60" />}</>;
   if (fallback) return <>{fallback}</>;
   if (!Comp) return null;
-  return <Comp {...props} />;
+  // 包一层只是为了拿「真 Editor 卸载」这个时机：@monaco-editor/react 没有 onUnmount，
+  // 而调用方需要它来清空自己持有的 editor 引用。
+  return <EditorHost Comp={Comp} {...props} />;
+}
+
+function EditorHost({ Comp, onUnmount, ...rest }: MonacoEditorProps & { Comp: React.ComponentType<any> }) {
+  const unmountRef = useRef(onUnmount);
+  unmountRef.current = onUnmount;
+  useEffect(
+    () => () => {
+      unmountRef.current?.();
+    },
+    [],
+  );
+  return <Comp {...rest} />;
 }
