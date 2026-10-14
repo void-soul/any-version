@@ -465,6 +465,18 @@ pub struct ProjectDef {
     #[serde(default)]
     pub remote_versions_config: Option<serde_json::Value>,
 
+    /// 从 GitHub release 的 **assets** 里挑下载 URL，而不是用 URL 模板拼。
+    ///
+    /// 存在的理由：`download_url_template` 表达不了「文件名里带一个推不出来的值」。
+    /// Ghidra 就是这种——tag 是 `Ghidra_12.1.4_build`，而资产叫
+    /// `ghidra_12.1.4_PUBLIC_20260921.zip`，中间那个 `20260921`（构建日期）
+    /// 既不在 tag 里也不在 `published_at` 里（实测 12.1.3 的文件名日期 20260817
+    /// 与发布时间 2026-08-18 差一天）。模板只能拼出错的 URL。
+    ///
+    /// 配了就走 assets 解析，没配就走原来的模板逻辑（27 个存量托管物零影响）。
+    #[serde(default)]
+    pub github_asset: Option<serde_json::Value>,
+
     /// 安装方式：
     /// - `"archive"`（默认）：下载归档 → 解压到 versions_dir → junction 切换（支持多版本）
     /// - `"msix"`：下载 MSIX/AppX 包 → `Add-AppxPackage` **覆盖安装**（系统级只存在一份，

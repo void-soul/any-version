@@ -454,6 +454,136 @@ mod tests {
         collect_msix_files(std::path::Path::new("C:/definitely/not/here"), &mut found);
         assert!(found.is_empty());
     }
+
+    /// 从 release 的 assets 里挑出唯一匹配的那一个（真实数据取自 Ghidra 12.1.4）。
+    #[test]
+    fn pick_asset_finds_the_one_zip_among_other_platform_archives() {
+        let assets = vec![
+            serde_json::json!({ "name": "ghidra_12.1.4_PUBLIC_20260921.zip",
+                "browser_download_url": "https://example.com/ghidra_12.1.4_PUBLIC_20260921.zip" }),
+            serde_json::json!({ "name": "ghidra_12.1.4_PUBLIC_20260921.tar.gz",
+                "browser_download_url": "https://example.com/x.tar.gz" }),
+            serde_json::json!({ "name": "ghidra_12.1.4_PUBLIC_20260921.7z",
+                "browser_download_url": "https://example.com/x.7z" }),
+        ];
+        let (name, url) = super::pick_asset(&assets, "ghidra_12.1.4_PUBLIC_", ".zip")
+            .expect("应能挑出唯一的 zip");
+        assert_eq!(name, "ghidra_12.1.4_PUBLIC_20260921.zip");
+        assert!(url.ends_with("ghidra_12.1.4_PUBLIC_20260921.zip"));
+    }
+
+    /// **挑不出来必须报错，不能默默取第一个** —— 猜错比留空更糟：
+    /// 用户会下载到一个不对的东西，且完全看不出哪里错了。
+    #[test]
+    fn pick_asset_errors_when_nothing_matches() {
+        let assets = vec![serde_json::json!({ "name": "ghidra_12.1.4_PUBLIC_20260921.tar.gz" })];
+        let err = super::pick_asset(&assets, "ghidra_12.1.4_PUBLIC_", ".zip")
+            .expect_err("没有 zip 应报错");
+        assert!(err.contains("没有匹配"), "实际: {}", err);
+    }
+
+    /// 多个匹配说明筛选条件不够窄，应把候选列出来而不是随便挑一个。
+    #[test]
+    fn pick_asset_errors_and_lists_candidates_when_ambiguous() {
+        let assets = vec![
+            serde_json::json!({ "name": "ghidra_12.1.4_PUBLIC_20260921.zip",
+                "browser_download_url": "https://example.com/a.zip" }),
+            serde_json::json!({ "name": "ghidra_12.1.4_PUBLIC_20260922.zip",
+                "browser_download_url": "https://example.com/b.zip" }),
+        ];
+        let err = super::pick_asset(&assets, "ghidra_12.1.4_PUBLIC_", ".zip")
+            .expect_err("两个 zip 应报错");
+        assert!(err.contains("20260921.zip") && err.contains("20260922.zip"),
+            "应列出全部候选，实际: {}", err);
+    }
+
+    /// tag 与资产名的清洗规则（Ghidra 专用形态）。
+    #[test]
+    fn ghidra_tag_and_asset_prefix_are_derived_from_the_bare_version() {
+        let v = "12.1.4";
+        // 版本列表侧：tag_name `Ghidra_12.1.4_build` -> `12.1.4`
+        let shown = super::apply_transform("Ghidra_12.1.4_build", "trim_prefix:Ghidra_;trim_suffix:_build");
+        assert_eq!(shown, v);
+        // asset 侧：tag 与资产名前缀都由同一个清洗后的版本号拼出
+        assert_eq!(format!("Ghidra_{}_build", v), "Ghidra_12.1.4_build");
+        assert_eq!(format!("ghidra_{}_PUBLIC_", v), "ghidra_12.1.4_PUBLIC_");
+    }
+}
+
+/// 带 Token 与重试的 GitHub JSON 请求，返回解析后的 JSON。
+///
+/// **刻意抽出来共用**：拉版本列表（`fetch_json_api`）与解析 release 里的具体 asset
+/// （`resolve_github_asset`）是两种取数，但「带 Token + 3 次退避 + GitHub 专属状态码提示」
+/// 这段完全一样。复制第二份的话，限流提示的措辞就会在两处漂移。
+///
+/// Token 来源：SDK 模块设置优先，其次 `GITHUB_TOKEN` / `GH_TOKEN`。
+/// 未认证的 GitHub API 只有 60 次/小时，多工具一起刷新很容易撞 403。
+async fn get_github_json(
+    client: &reqwest::Client,
+    url: &str,
+) -> Result<serde_json::Value, String> {
+    let gh_token = if url.contains("api.github.com") || url.contains("github.com") {
+        crate::commands::utils::github_api_token()
+    } else {
+        None
+    };
+    let mut last_error = String::new();
+    // 重试最多 3 次，指数退避 1s / 2s / 4s
+    for attempt in 0..3 {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(1 << (attempt - 1))).await;
+        }
+        let send_fut = {
+            let mut req = client.get(url);
+            if let Some(token) = gh_token.as_deref() {
+                req = req.bearer_auth(token);
+            }
+            req
+        };
+        let resp = match send_fut.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                last_error = format!("网络请求失败: {}", e);
+                continue;
+            }
+        };
+        let status = resp.status();
+        if !status.is_success() {
+            let code = status.as_u16();
+            last_error = if gh_token.is_some() || url.contains("github.com") {
+                // GitHub 专属的可操作提示（401 令牌失效 / 403·429 限流 / 404 仓库不存在）
+                format!(
+                    "HTTP {} ({}{})",
+                    code,
+                    status.canonical_reason().unwrap_or("未知"),
+                    crate::commands::utils::github_status_hint(code)
+                )
+            } else {
+                format!(
+                    "HTTP {} ({}), 可能是 API 限流或网络问题",
+                    code,
+                    status.canonical_reason().unwrap_or("未知")
+                )
+            };
+            continue;
+        }
+        let resp_text = match resp.text().await {
+            Ok(t) => t,
+            Err(e) => {
+                last_error = format!("读取响应体失败: {}", e);
+                continue;
+            }
+        };
+        return match serde_json::from_str::<serde_json::Value>(&resp_text) {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                // 截取前 200 字符帮助诊断
+                let preview: String = resp_text.chars().take(200).collect();
+                Err(format!("JSON 解析失败: {}，响应预览: {}", e, preview))
+            }
+        };
+    }
+    Err(last_error)
 }
 
 async fn fetch_json_api(client: &reqwest::Client, config: &serde_json::Value, url_override: Option<&str>) -> Result<Vec<String>, String> {
@@ -474,96 +604,32 @@ async fn fetch_json_api(client: &reqwest::Client, config: &serde_json::Value, ur
     let reverse = config.get("reverse").and_then(|v| v.as_bool()).unwrap_or(false);
     let extra_field = config.get("extra_field").and_then(|v| v.as_str());
 
-    // GitHub API 未认证请求每小时只有 60 次，多工具一起刷新很容易撞上限流（403）：
-    // 对 github 域名的请求自动附带 Token（SDK 模块设置优先，其次环境变量），
-    // 配额可提到 5000 次/小时。
-    let is_github = url.contains("api.github.com") || url.contains("github.com");
-    let gh_token = if is_github {
-        crate::commands::utils::github_api_token()
-    } else {
-        None
+    let body = get_github_json(client, url).await?;
+
+    let items: Vec<serde_json::Value> = match response_type {
+        "array" => body.as_array().cloned().unwrap_or_default(),
+        "object_with_array" => {
+            let arr_field = config.get("array_field").and_then(|v| v.as_str()).unwrap_or("versions");
+            body.get(arr_field).and_then(|v| v.as_array()).cloned().unwrap_or_default()
+        }
+        "object_with_nested_array" => {
+            let arr_field = config.get("array_field").and_then(|v| v.as_str()).unwrap_or("releases");
+            body.get(arr_field).and_then(|v| v.as_array()).cloned().unwrap_or_default()
+        }
+        // npm registry 等：versions 是 { "1.0.0": {...}, ... } 这样的字典，取键作版本列表
+        "object_keys" => {
+            let keys_field = config.get("array_field").and_then(|v| v.as_str()).unwrap_or("versions");
+            body.get(keys_field)
+                .and_then(|v| v.as_object())
+                .map(|o| o.keys().map(|k| serde_json::Value::String(k.clone())).collect())
+                .unwrap_or_default()
+        }
+        _ => {
+            return Err(format!("不支持的 response_type: {}", response_type));
+        }
     };
 
-    // 带重试的请求（最多 3 次，指数退避：1s, 2s, 4s）
-    let mut last_error = String::new();
-    for attempt in 0..3 {
-        if attempt > 0 {
-            tokio::time::sleep(std::time::Duration::from_secs(1 << (attempt - 1))).await;
-        }
-        let send_fut = {
-            let mut req = client.get(url);
-            if let Some(token) = gh_token.as_deref() {
-                req = req.bearer_auth(token);
-            }
-            req
-        };
-        let resp = match send_fut.send().await {
-            Ok(r) => r,
-            Err(e) => {
-                last_error = format!("网络请求失败: {}", e);
-                continue;
-            }
-        };
-        // 检查 HTTP 状态码
-        let status = resp.status();
-        if !status.is_success() {
-            let code = status.as_u16();
-            last_error = if is_github {
-                // GitHub 专属的可操作提示（401 令牌失效 / 403·429 限流 / 404 仓库不存在）
-                format!(
-                    "HTTP {} ({}{})",
-                    code,
-                    status.canonical_reason().unwrap_or("未知"),
-                    crate::commands::utils::github_status_hint(code)
-                )
-            } else {
-                format!("HTTP {} ({}), 可能是 API 限流或网络问题", code, status.canonical_reason().unwrap_or("未知"))
-            };
-            continue;
-        }
-        // 读取响应文本，便于在解析失败时输出诊断信息
-        let resp_text = match resp.text().await {
-            Ok(t) => t,
-            Err(e) => {
-                last_error = format!("读取响应体失败: {}", e);
-                continue;
-            }
-        };
-        let body: serde_json::Value = match serde_json::from_str(&resp_text) {
-            Ok(v) => v,
-            Err(e) => {
-                // 截取前 200 字符帮助诊断
-                let preview: String = resp_text.chars().take(200).collect();
-                last_error = format!("JSON 解析失败: {}，响应预览: {}", e, preview);
-                continue;
-            }
-        };
-
-        let items: Vec<serde_json::Value> = match response_type {
-            "array" => body.as_array().cloned().unwrap_or_default(),
-            "object_with_array" => {
-                let arr_field = config.get("array_field").and_then(|v| v.as_str()).unwrap_or("versions");
-                body.get(arr_field).and_then(|v| v.as_array()).cloned().unwrap_or_default()
-            }
-            "object_with_nested_array" => {
-                let arr_field = config.get("array_field").and_then(|v| v.as_str()).unwrap_or("releases");
-                body.get(arr_field).and_then(|v| v.as_array()).cloned().unwrap_or_default()
-            }
-            // npm registry 等：versions 是 { "1.0.0": {...}, ... } 这样的字典，取键作版本列表
-            "object_keys" => {
-                let keys_field = config.get("array_field").and_then(|v| v.as_str()).unwrap_or("versions");
-                body.get(keys_field)
-                    .and_then(|v| v.as_object())
-                    .map(|o| o.keys().map(|k| serde_json::Value::String(k.clone())).collect())
-                    .unwrap_or_default()
-            }
-            _ => {
-                last_error = format!("不支持的 response_type: {}", response_type);
-                continue;
-            }
-        };
-
-        let mut versions: Vec<String> = Vec::new();
+    let mut versions: Vec<String> = Vec::new();
         for item in &items {
             if let Some(ff) = filter_field {
                 if let Some(fv) = filter_value {
@@ -633,10 +699,7 @@ async fn fetch_json_api(client: &reqwest::Client, config: &serde_json::Value, ur
         }
 
         if reverse { versions.reverse(); }
-        return Ok(versions);
-    }
-
-    Err(last_error)
+    Ok(versions)
 }
 
 async fn fetch_multi_source(client: &reqwest::Client, config: &serde_json::Value) -> Result<Vec<String>, String> {
@@ -766,7 +829,12 @@ pub async fn project_install_version(app: AppHandle, id: String, version: String
     if !delegation.version_control {
         return Err("项目尚未开启“版本控制与下载”功能，无法下载/安装版本".to_string());
     }
-    let dl_info = get_download_url(&id, &version)?;
+    // 配了 github_asset 的托管物走 assets 解析（资产名里有推不出来的值，例如 Ghidra 的构建日期）；
+    // 其余走 URL 模板。两条路径互斥，未配置时行为与从前完全一致。
+    let dl_info = match async_resolve_github_asset(&id, &version).await? {
+        Some(info) => info,
+        None => get_download_url(&id, &version)?,
+    };
 
     let id_task = id.clone();
     let version_task = version.clone();
@@ -1700,6 +1768,135 @@ struct DownloadInfo {
     url: String,
     file_ext: String,
     extract_subdir: Option<String>,
+}
+
+/// 从 `assets` 数组里挑出唯一匹配的那一个。**纯函数**，不联网。
+///
+/// 挑不出来就报错，**绝不随便挑一个**：猜错的后果是下载到一个同名但不对的东西
+/// （或者 404），而用户完全看不出哪里错了 —— 这正是本模块 URL 模板那条老路的教训。
+fn pick_asset<'a>(
+    assets: &'a [serde_json::Value],
+    prefix: &str,
+    suffix: &str,
+) -> Result<(&'a str, &'a str), String> {
+    let matched: Vec<&serde_json::Value> = assets
+        .iter()
+        .filter(|a| {
+            a.get("name")
+                .and_then(|n| n.as_str())
+                .map(|n| n.starts_with(prefix) && n.ends_with(suffix))
+                .unwrap_or(false)
+        })
+        .collect();
+    match matched.len() {
+        0 => Err(format!(
+            "该 release 里没有匹配「{}*{}」的资产（现有 {} 个）。\
+             资产名里的构建日期之类的东西推不出来，只能逐个列出来核对",
+            prefix,
+            suffix,
+            assets.len()
+        )),
+        1 => {
+            let name = matched[0]
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or_default();
+            let url = matched[0]
+                .get("browser_download_url")
+                .and_then(|n| n.as_str())
+                .ok_or_else(|| format!("资产 {} 缺少 browser_download_url", name))?;
+            Ok((name, url))
+        }
+        n => {
+            // 多个匹配说明筛选条件不够窄。把候选列出来，比默默取第一个有用得多。
+            let names: Vec<&str> = matched
+                .iter()
+                .filter_map(|a| a.get("name").and_then(|x| x.as_str()))
+                .collect();
+            Err(format!(
+                "有 {} 个资产同时匹配「{}*{}」，无法判断该下哪个：{}",
+                n,
+                prefix,
+                suffix,
+                names.join("、")
+            ))
+        }
+    }
+}
+
+/// 配了 `github_asset` 的托管物：打 release 的 assets 拿真实下载 URL。
+///
+/// 返回 `Ok(None)` 表示这个托管物没配 `github_asset`，调用方应走 URL 模板那条老路。
+async fn async_resolve_github_asset(
+    project_id: &str,
+    version: &str,
+) -> Result<Option<DownloadInfo>, String> {
+    let Some(def) = super::registry::find_by_id(project_id) else {
+        return Ok(None);
+    };
+    let Some(cfg) = def.github_asset.as_ref() else {
+        return Ok(None);
+    };
+    let repo = cfg
+        .get("repo")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "github_asset 缺少 repo".to_string())?;
+    let tag_template = cfg
+        .get("tag_template")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "github_asset 缺少 tag_template".to_string())?;
+    let prefix_tpl = cfg
+        .get("asset_name_prefix")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let suffix = cfg.get("asset_name_suffix").and_then(|v| v.as_str()).unwrap_or("");
+
+    // 与 get_download_url 的版本清洗保持一致：去 v 前缀、去 -LTS
+    let version_clean = version
+        .trim_start_matches('v')
+        .trim_end_matches("-LTS")
+        .split(' ')
+        .next()
+        .unwrap_or(version);
+    let tag = tag_template.replace("{version}", version_clean);
+    let prefix = prefix_tpl.replace("{version}", version_clean);
+
+    let url = format!(
+        "https://api.github.com/repos/{}/releases/tags/{}",
+        repo,
+        tag
+    );
+    let client = reqwest::Client::builder()
+        .user_agent("kira-sdk-manager")
+        .build()
+        .map_err(|e| format!("HTTP 客户端初始化失败: {}", e))?;
+    let body = get_github_json(&client, &url).await?;
+    let assets = body
+        .get("assets")
+        .and_then(|a| a.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let (name, download_url) = pick_asset(&assets, &prefix, suffix)?;
+
+    // 资产后缀即真实扩展名（如 .zip / .tar.gz）：比配置里写死的 download_file_ext 可靠
+    let file_ext = cfg
+        .get("file_ext")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .unwrap_or_else(|| {
+            name.rsplit_once('.')
+                .map(|(_, e)| e.to_string())
+                .unwrap_or_else(|| "zip".to_string())
+        });
+    let extract_subdir = def
+        .extract_subdir
+        .as_ref()
+        .map(|s| s.replace("{version}", version_clean));
+    Ok(Some(DownloadInfo {
+        url: download_url.to_string(),
+        file_ext,
+        extract_subdir,
+    }))
 }
 
 fn get_download_url(project_id: &str, version: &str) -> Result<DownloadInfo, String> {
