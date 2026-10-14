@@ -8,8 +8,10 @@
 //   · **流式构图**：流式过程中每写完一张表就推一份部分文档（`dbd-ai-partial`），
 //     前端边收边画，与思维导图观感一致。
 //   · 不强依赖 tool-call：只有部分网关支持，通道内部会在不支持时降级为纯文本协议。
-//   · 产出后**不做**校验修补：校验规则只有一份（`store::validate`），
-//     错误交给应用展示给用户在画布上改，比我们在后端瞎猜怎么修更可靠。
+//   · 产出后**过一遍规范化**（`store::normalize_naming`）：命名改合规 + 外键补索引。
+//     这两类都是 error 级（阻断保存 / 导出），而提示词只是概率性约束 —— 只靠提示词，
+//     用户会拿到「满屏报错且导不出来」的设计。规范化与 `store::validate` 共用同一套规则，
+//     不会两套口径漂移；它只改明显的规范问题，业务语义仍由 AI 决定。
 
 use super::file::new_document;
 use super::models::{DbDesignDocument, DbDesignNode, DbDesignRelation};
@@ -140,11 +142,11 @@ const FORMAT_SCHEMA: &str = r#"{
 
 /// 完整最小示例：两张表 + 一条关联，把 schema 里「可选字段怎么落」演示出来。
 ///
-/// **示例的主键刻意不用 `id`**，改用有业务含义的名字（`user_id` / `article_id`）。
-/// 用户明确要求过「主键禁止用 id」，而这条规则最初只存在于用户脑子里：提示词没写，
-/// 示例又两张表都用 `id` —— 模型最强的模仿对象就是示例，于是生成的所有表主键都是 id，
-/// 要求看起来像完全没生效。改示例比堆十条规则有效得多。
-/// 测试 `prompt_and_example_forbid_bare_id_as_primary_key` 钉住这条不变量。
+/// **示例必须自身通过 `store::validate`**，否则模型会忠实照抄违规写法。
+/// 这是踩过两次的坑：第一次示例用 `id` 作主键、第二次用 `title`/`content`/`status`
+/// 这类通用裸名 —— 两次用户看到的都是「AI 照着示例写出来的违规字段」。
+/// 测试 `example_document_passes_our_own_validator` 会把示例过一遍真实校验器，
+/// 以后新增任何规则都会自动被这条测试覆盖。
 const FORMAT_EXAMPLE: &str = r#"{
   "name": "文章管理系统",
   "dialect": "mysql",
@@ -156,7 +158,7 @@ const FORMAT_EXAMPLE: &str = r#"{
       "table": {
         "fields": [
           { "name": "user_id", "type": { "base": "bigint" }, "pk": true, "autoIncrement": true, "comment": "用户主键" },
-          { "name": "username", "type": { "base": "varchar", "length": 64 }, "unique": true, "comment": "登录名" },
+          { "name": "user_name", "type": { "base": "varchar", "length": 64 }, "unique": true, "comment": "登录名" },
           { "name": "created_at", "type": { "base": "datetime" }, "nullable": false, "comment": "创建时间" }
         ]
       }
@@ -169,9 +171,9 @@ const FORMAT_EXAMPLE: &str = r#"{
         "fields": [
           { "name": "article_id", "type": { "base": "bigint" }, "pk": true, "autoIncrement": true, "comment": "文章主键" },
           { "name": "user_id", "type": { "base": "bigint" }, "comment": "作者用户，引用 user.user_id" },
-          { "name": "title", "type": { "base": "varchar", "length": 128 }, "nullable": false, "comment": "标题" },
-          { "name": "content", "type": { "base": "text" }, "comment": "正文" },
-          { "name": "status", "type": { "base": "enum", "values": ["draft", "published", "archived"] }, "nullable": false, "comment": "状态" }
+          { "name": "article_title", "type": { "base": "varchar", "length": 128 }, "nullable": false, "comment": "标题" },
+          { "name": "article_content", "type": { "base": "text" }, "comment": "正文" },
+          { "name": "article_status", "type": { "base": "enum", "values": ["draft", "published", "archived"] }, "nullable": false, "comment": "状态" }
         ],
         "indexes": [ { "name": "idx_article_user", "kind": "index", "fields": ["user_id"] } ]
       }
@@ -213,13 +215,27 @@ date time datetime timestamp boolean json uuid blob enum
    - 每张表至少一个主键（字段 \"pk\":true）；\"autoIncrement\":true 必须是主键
    - **主键名禁止用 \"id\"**：一律用有业务含义的名字（表 user 用 user_id、表 order_item 用 order_item_id），
      外键则引用父表那个主键名。裸 id 会让联表 SQL 到处都是 user.id 这种分不清是谁的列
+   - **通用裸名必须带表名前缀**：name/title/label/desc/description/price/amount/status/type/code/
+     value/content/text/url/phone/email/address/count/total/size/color/comment/note/remark 这类词
+     单独出现时无法分辨属于哪张表，要写成 article_title、article_status、user_name；
+     **已经带下划线的（created_at、user_id、article_title）不用再加前缀**
+   - **每个外键字段都要有索引**：relations 里的 from.field（非 n-n）必须在本表 indexes 里有一条
+     kind 为 index 且包含该字段的记录，如 {{\"name\":\"idx_article_user\",\"kind\":\"index\",\"fields\":[\"user_id\"]}}
    - 主键只用字段 \"pk\":true 表达，不要再写 \"kind\":\"primary\" 的索引
    - indexes 只在需要查询加速或唯一约束时写
    - relations：from = 子表（外键所在端），to = 父表（被引用端）；不要写自关联；
      外键字段类型必须与父表被引用字段一致
    - 每张表、每个字段的 comment 用中文写清业务含义，这是产出里最值钱的部分
    - 表按真实实体来，不要为了显得完整而编造；字段类型拿不准时给保守类型
-   - 修改场景：未涉及改动的表/关联**原样保留**，输出完整更新后的设计，不要 diff，不要省略",
+   - 修改场景：未涉及改动的表/关联**原样保留**，输出完整更新后的设计，不要 diff，不要省略
+
+6. 上面第 5 条里的命名与索引规则是**硬性的**：产出后我会跑一遍自动修正（主键改名、
+   通用裸名加表前缀、外键补索引），所以下面两点请务必做对：
+   - **别依赖我兜底，请一次写对**。自动修正**只在目标名没被占用时才生效**：同一张表里
+     若已经有 article_title，再写一个 title 就会撞名、修正被跳过，错误会原样留在你的产出里。
+     所以不要同时出现 article_title 和 title 这种冲突命名。
+   - **关联两端必须写**当前真实存在的字段名。自动修正会把改名**级联**到 relations 与 indexes，
+     但它**不会凭空创建**字段 —— 指向一个不存在的字段名，我这边改不了。",
         schema = FORMAT_SCHEMA,
         example = FORMAT_EXAMPLE,
     )
@@ -313,7 +329,31 @@ pub async fn dbd_ai_generate(
     let json = ai::channel::parse_json(&text)
         .map_err(|e| format!("AI 返回的内容不是合法 JSON：{}", e))?;
 
-    parse_document(json)
+    let mut doc = parse_document(json)?;
+
+    // 落地前过一遍规范化：命名改合规 + 外键补索引。
+    //
+    // 为什么必须在这里做：命名规范是 error 级（阻断保存 / 导出），而提示词只是**概率性**
+    // 约束 —— 改过示例与禁令之后模型仍会写出 type_id / title / status 这类裸名，
+    // 用户拿到的就是「满屏报错且导不出来」的死锁。规范化是确定性的，且与校验共用同一套
+    // 规则（singularize + GENERIC_FIELD_NAMES），不会出现两套口径漂移。
+    //
+    // 顺带把外键索引也补上（同一函数内）：外键字段没索引同样是 error，手写/AI 路径
+    // 原先都不会补，只有反推路径补过。
+    let normalized = super::store::normalize_naming(&mut doc);
+    let touched = normalized.renamed_pk.len()
+        + normalized.renamed_field.len()
+        + normalized.added_index.len();
+    if touched > 0 || !normalized.skipped.is_empty() {
+        tracing::info!(
+            "[dbd] AI 产出已规范化：主键改名 {}、字段改名 {}、补索引 {}、跳过 {}",
+            normalized.renamed_pk.len(),
+            normalized.renamed_field.len(),
+            normalized.added_index.len(),
+            normalized.skipped.len()
+        );
+    }
+    Ok(doc)
 }
 
 /// 组装 user 消息。`current` 非空（有表）时为「修改」场景：带上当前设计作基线，
@@ -803,6 +843,171 @@ mod tests {
         assert!(
             FORMAT_SCHEMA.contains("\"name\""),
             "schema 仍应演示字段结构"
+        );
+    }
+
+    /// 提示词必须把**校验器管的每一类命名/索引规则**都写出来。
+    ///
+    /// 之前只写了主键那一条，于是模型压根不知道有「通用裸名」和「外键索引」两条规则 ——
+    /// 它不是不听话，是没人告诉过它。规则与校验器脱节 = 稳定产出违规。
+    #[test]
+    fn prompt_states_every_naming_rule_the_validator_enforces() {
+        let p = system_prompt();
+        for (needle, why) in [
+            ("主键名禁止用", "主键不能叫 id"),
+            ("通用裸名必须带表名前缀", "name/title/status 这类要加表前缀"),
+            ("已经带下划线的", "要说清 created_at 这类不必再加前缀，否则模型会过度加前缀"),
+            ("每个外键字段都要有索引", "外键字段缺索引是 error 级，会阻断导出"),
+        ] {
+            assert!(p.contains(needle), "提示词缺少规则「{}」（{}）", needle, why);
+        }
+    }
+
+    /// 提示词必须说明「产出后会自动修正」，并说清它的**失效条件**。
+    ///
+    /// 只说「会自动修」是有害的：模型会以为命名可以偷懒，而自动修正只在目标名没被占用时
+    /// 才生效 —— 撞名就跳过，错误原样留下。关联两端同理：修正会级联改名，但不会凭空创建字段。
+    #[test]
+    fn prompt_explains_autofix_and_its_limits() {
+        let p = system_prompt();
+        assert!(
+            p.contains("自动修正"),
+            "要告诉模型产出后会自动规范化，否则它会以为命名可以偷懒"
+        );
+        assert!(
+            p.contains("撞名") || p.contains("没被占用"),
+            "必须说清自动修正的失效条件：目标名被占用时会跳过，错误会原样留下"
+        );
+        assert!(
+            p.contains("不会凭空创建"),
+            "必须说清关联指向不存在的字段时自动修正救不了"
+        );
+    }
+
+    /// **示例本身必须通过我们自己的校验器。**
+    ///
+    /// 这是踩过两次的坑才补上的测试：第一次示例用 `id` 作主键，第二次用
+    /// `title`/`content`/`status` 这类通用裸名 —— 两次用户看到的都是「AI 照着示例
+    /// 写出来的违规字段」，而提示词里已经把规则写得很清楚了。模型最强的模仿对象是
+    /// 示例，示例违规就会**稳定地**产出违规。
+    ///
+    /// 走完整链路（`parse_document` 补 id、按表名回认关联端点 → `validate`），
+    /// 与 AI 产出走的是同一条路。以后**新增任何校验规则，这条测试自动覆盖**，
+    /// 不会再出现「规则加了但示例忘了改」。
+    #[test]
+    fn example_document_passes_our_own_validator() {
+        let json: serde_json::Value =
+            serde_json::from_str(FORMAT_EXAMPLE).expect("示例必须是合法 JSON");
+        let doc = super::parse_document(json).expect("示例必须能被解析成设计文件");
+        let report = super::super::store::validate(&doc);
+        assert!(
+            report.errors.is_empty(),
+            "示例自己就违反了我们自己的规则，模型会照抄它：\n{}",
+            report.errors.join("\n")
+        );
+    }
+
+    /// AI 产出走完规范化后**必须能过校验** —— 这才是「命名约束生效」的可测定义。
+    ///
+    /// 光改提示词不够：模型仍会写出 type_id 这种主键、title/status 这种通用裸名，
+    /// 而这两类都是 error 级，会阻断保存和导出。规范化是确定性的那一道。
+    #[test]
+    fn ai_output_passes_validation_after_normalizing() {
+        // 故意构造一份「模型不听话」的产出：主键裸名 + 通用裸名字段 + 外键无索引
+        let mut doc = new_document("文章库", "mysql");
+        let mut parent = DbDesignNode {
+            id: "t1".into(),
+            name: "article_type".into(),
+            kind: "table".into(),
+            ..Default::default()
+        };
+        parent.table = Some(super::super::models::DbTableBody {
+            fields: vec![
+                serde_json::from_value(serde_json::json!({
+                    "name": "type_id", "type": { "base": "bigint" }, "pk": true, "autoIncrement": true
+                }))
+                .unwrap(),
+                serde_json::from_value(serde_json::json!({
+                    "name": "name", "type": { "base": "varchar", "length": 32 }
+                }))
+                .unwrap(),
+            ],
+            indexes: vec![],
+        });
+        let mut child = DbDesignNode {
+            id: "t2".into(),
+            name: "article".into(),
+            kind: "table".into(),
+            ..Default::default()
+        };
+        child.table = Some(super::super::models::DbTableBody {
+            fields: vec![
+                serde_json::from_value(serde_json::json!({
+                    "name": "article_id", "type": { "base": "bigint" }, "pk": true, "autoIncrement": true
+                }))
+                .unwrap(),
+                serde_json::from_value(serde_json::json!({
+                    "name": "article_title", "type": { "base": "varchar", "length": 128 }
+                }))
+                .unwrap(),
+                serde_json::from_value(serde_json::json!({
+                    "name": "type_id", "type": { "base": "bigint" }
+                }))
+                .unwrap(),
+            ],
+            indexes: vec![],
+        });
+        doc.nodes.push(parent);
+        doc.nodes.push(child);
+        doc.relations.push(DbDesignRelation {
+            id: String::new(),
+            name: String::new(),
+            from: super::super::models::DbRelationEnd { node: doc.nodes[1].id.clone(), field: "type_id".into() },
+            to: super::super::models::DbRelationEnd { node: doc.nodes[0].id.clone(), field: "type_id".into() },
+            kind: "1-n".into(),
+            on_delete: String::new(),
+            on_update: String::new(),
+            mirror: false,
+        });
+
+        // 规范化前：应当报出命名与索引两类错误（证明这份产出确实不合规）
+        let before = super::super::store::validate(&doc);
+        assert!(
+            before.errors.iter().any(|e| e.contains("主键应命名为")),
+            "裸名主键应被校验拦下：{:?}",
+            before.errors
+        );
+
+        let report = super::super::store::normalize_naming(&mut doc);
+        assert!(
+            !report.renamed_pk.is_empty(),
+            "主键应被改名：{:?}",
+            report.renamed_pk
+        );
+        assert!(
+            !report.renamed_field.is_empty(),
+            "通用裸名字段应被改名：{:?}",
+            report.renamed_field
+        );
+        assert!(
+            !report.added_index.is_empty(),
+            "外键字段应自动补索引：{:?}",
+            report.added_index
+        );
+        // 改名必须级联到关联端点，否则关系会指向一个已经不存在的字段
+        assert_eq!(
+            doc.relations[0].to.field, "article_type_id",
+            "父表主键改名后，关系指向父表的那一端必须同步"
+        );
+        // 子表外键 type_id 带下划线，通用裸名规则不碰它（外键名不必与父表主键同名），
+        // 它仍指向父表改名后的 article_type_id —— 关系本身依然成立
+        assert_eq!(doc.relations[0].from.field, "type_id");
+
+        let after = super::super::store::validate(&doc);
+        assert!(
+            after.errors.is_empty(),
+            "规范化后不应再有阻断级错误：{:?}",
+            after.errors
         );
     }
 }
