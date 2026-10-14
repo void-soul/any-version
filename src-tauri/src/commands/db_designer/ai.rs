@@ -14,7 +14,7 @@
 //     不会两套口径漂移；它只改明显的规范问题，业务语义仍由 AI 决定。
 
 use super::file::new_document;
-use super::models::{DbDesignDocument, DbDesignNode, DbDesignRelation};
+use super::models::{DbDesignDocument, DbDesignNode, DbDesignRelation, DbField};
 use crate::commands::ai;
 
 /// 前端传进来的生成请求
@@ -190,7 +190,10 @@ const FORMAT_EXAMPLE: &str = r#"{
 }
 "#;
 
-fn system_prompt() -> String {
+/// `common`：文档里启用的公共字段。**非空时**要在提示词里声明「这些字段导出时会自动附加，
+/// 不要手动创建」—— 否则模型会自己在每张表里加一遍 created_at，
+/// 而导出时又因为重名被跳过（表自己的赢），等于白写一遍，还让用户以为配置没生效。
+fn system_prompt(common: &[DbField]) -> String {
     format!(
         "你是数据库设计助手。根据用户的需求，产出 any-version 数据库设计器的设计文件（JSON）。
 若请求附带「当前设计」，还要能基于它修改。
@@ -209,6 +212,8 @@ fn system_prompt() -> String {
 date time datetime timestamp boolean json uuid blob enum
    - decimal 必须给 precision/scale（如 {{\"base\":\"decimal\",\"precision\":10,\"scale\":2}}）
    - enum 必须给 values（取值数组）
+   - **default 一律写成字符串**（\"0\" / \"CURRENT_TIMESTAMP\" / \"false\"）：即使字段是boolean 或 int，
+     也不要写 \"default\":false、\"default\":0 这种裸值（我这边按字符串拼进 SQL，裸值会让整份产出作废）
    - 不要写 \"VARCHAR(32)\" 这种整串，永远用上面的 type 对象
 5. 约定：
    - 节点 id/x/y 可省略（我这边来补）；表名不允许重名
@@ -235,125 +240,54 @@ date time datetime timestamp boolean json uuid blob enum
      若已经有 article_title，再写一个 title 就会撞名、修正被跳过，错误会原样留在你的产出里。
      所以不要同时出现 article_title 和 title 这种冲突命名。
    - **关联两端必须写**当前真实存在的字段名。自动修正会把改名**级联**到 relations 与 indexes，
-     但它**不会凭空创建**字段 —— 指向一个不存在的字段名，我这边改不了。",
+     但它**不会凭空创建**字段 —— 指向一个不存在的字段名，我这边改不了。
+{common_note}",
         schema = FORMAT_SCHEMA,
         example = FORMAT_EXAMPLE,
+        common_note = common_note(common),
     )
 }
 
-/// 生成设计文档。**同步返回完整文档**（当前是短请求，不必做流式进度）。
-#[tauri::command]
-pub async fn dbd_ai_generate(
-    app: tauri::AppHandle,
-    input: AiDesignInput,
-) -> Result<DbDesignDocument, String> {
-    let run_id = input.run_id.clone().unwrap_or_default();
-    let text = input.text.trim();
-    if text.is_empty() {
-        return Err("请先描述要设计什么（例如：一个订单系统，含用户、商品、订单、订单项）".to_string());
+/// 「公共字段已启用」的声明段。
+///
+/// **为什么必须有**：模型看到需求里说「记录创建时间」就会自己给每张表加 `created_at`，
+/// 而导出时公共字段会因重名被跳过（表自己的定义优先）—— 模型写的那一份根本没进SQL，
+/// 用户却会以为「配置了公共字段，怎么导出还是我自己写的那个」。一句话说清「这些字段我替你加」
+/// 就能省掉这一整轮返工。
+///
+/// 没启用时返回空串，提示词里就不出现这一节（不要给模型留「也许有公共字段」的想象空间）。
+fn common_note(common: &[DbField]) -> String {
+    let names: Vec<String> = common
+        .iter()
+        .map(|f| f.name.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .collect();
+    if names.is_empty() {
+        return String::new();
     }
-    let (provider, model) = resolve_provider_model(&input.provider_id, &input.model_id)?;
+    // 逐行拼而不是用 `\` 续行：续行会保留下一行的缩进，提示词里就多出一堆空格
+    let lines = [
+        "7. **所有表在导出时都会自动追加下面这些字段，你不要创建它们**：".to_string(),
+        format!("   - {}", names.join("\u{3001}")),
+        "   它们来自设计文件顶层的公共字段配置，由导出环节统一追加到每张表末尾。".to_string(),
+        "   如果你也在表里写上同名字段，导出时会因重名被跳过（以表自己的定义为准），等于白写一遍，".to_string(),
+        "   还会让用户误以为配置没生效 —— 而被跳过的那个字段名可能与你写的并不一样，排查起来更费劲。".to_string(),
+    ];
+    format!("\n{}\n", lines.join("\n"))
+}
 
-    let dialect = input
-        .dialect
-        .clone()
-        .unwrap_or_else(|| "mysql".to_string());
-    let name_hint = input
-        .name
-        .clone()
-        .unwrap_or_else(|| "未命名设计".to_string());
-
-    // 画布有表时把当前设计带进提示词：AI 基于它修改（或判断出是全新设计则忽略）
-    let user = build_user_prompt(&name_hint, &dialect, text, input.current_doc.as_ref());
-
-    emit_progress(&Some(app.clone()), "start", serde_json::json!({}));
-    let hooks = DbdHooks {
-        app: Some(app.clone()),
-        run_id: run_id.clone(),
-    };
-    // 走**流式**通道：AI 每写完一张表就往前端推一份部分文档（`dbd-ai-partial`），
-    // 画布边收边画，不用等整篇到齐（100 张表要等几十秒，全程空白很难受）。
-    // 通道要求 `Fn`（不可变捕获），「已推过多少个」只能用原子量记录
-    let seen_nodes = std::sync::atomic::AtomicUsize::new(0);
-    let seen_relations = std::sync::atomic::AtomicUsize::new(0);
-    let app_opt = Some(app.clone());
-    let outcome = ai::channel::stream_chat_with_resume(
-        &hooks,
-        &provider,
-        &model,
-        &system_prompt(),
-        &user,
-        0.3,
-        |len, acc| {
-            // 附带末尾 200 字符做预览：前端控制台实时显示「正在写什么」（与思维导图同款）
-            let tail: String = acc.chars().rev().take(200).collect::<Vec<_>>().into_iter().rev().collect();
-            emit_progress(&app_opt, "stream", serde_json::json!({ "length": len, "text": tail }));
-            // 只有「又多出一个完整节点/关系」才推一次 —— 天然节流，
-            // 不会每来 400 字符就刷一遍画布。
-            let partial = extract_partial(acc);
-            let grew = partial.nodes.len() > seen_nodes.load(std::sync::atomic::Ordering::Relaxed)
-                || partial.relations.len() > seen_relations.load(std::sync::atomic::Ordering::Relaxed);
-            if grew {
-                seen_nodes.store(partial.nodes.len(), std::sync::atomic::Ordering::Relaxed);
-                seen_relations.store(partial.relations.len(), std::sync::atomic::Ordering::Relaxed);
-                emit_partial(&app_opt, &run_id, &partial);
-            }
-        },
-    )
-    .await
-    .map_err(|e| format!("AI 生成失败：{}", e))?;
-
-    // 兜底：个别网关不认 stream:true（直接回一个普通 JSON），SSE 消费会拿到空文本。
-    // 这时退回非流式再取一次，不要让用户看到「AI返回空」。
-    let text = if outcome.text.trim().is_empty() {
-        ai::channel::complete_chat(
-            &hooks,
-            &provider,
-            &model,
-            &system_prompt(),
-            &user,
-            0.3,
-            None,
-            ai::usage::tool_ids::DB_DESIGNER,
-        )
-        .await
-        .map_err(|e| format!("AI 生成失败：{}", e))?
-        .text
-    } else {
-        outcome.text
-    };
-    if text.trim().is_empty() {
-        return Err("AI返回空".into());
+/// boolean 列的默认值该怎么写 —— **取决于目标方言**，所以这句不能进系统提示（那里不知道方言）。
+///
+/// `boolean` 只是设计器内部的跨方言抽象，落地时各家不同：MySQL 根本没有 BOOLEAN（导出成
+/// `TINYINT(1)`）、SQLite 只有 INTEGER 存储类（也导出成 INTEGER），这两种默认值必须是 `0` / `1`；
+/// 只有 PG 真有 BOOLEAN 类型，`false` / `true` 才对。写反了不会立刻报错
+/// （PG 上 `DEFAULT 0` 才会直接报错），但导出的 DDL 语义会和列类型对不上。
+fn bool_default_hint(dialect: &str) -> &'static str {
+    match dialect {
+        "postgres" => "boolean 列的默认值写 \"false\" / \"true\"（PG 有原生 BOOLEAN 类型）",
+        "sqlite" => "boolean 列的默认值写 \"0\" / \"1\"（SQLite 会导出成 INTEGER，没有布尔类型）",
+        _ => "boolean 列的默认值写 \"0\" / \"1\"（MySQL 没有 boolean 类型，会导出成 TINYINT(1)）",
     }
-    // 收尾解析用通道的宽容解析（容忍 markdown 围栏、前后缀、非法转义）
-    let json = ai::channel::parse_json(&text)
-        .map_err(|e| format!("AI 返回的内容不是合法 JSON：{}", e))?;
-
-    let mut doc = parse_document(json)?;
-
-    // 落地前过一遍规范化：命名改合规 + 外键补索引。
-    //
-    // 为什么必须在这里做：命名规范是 error 级（阻断保存 / 导出），而提示词只是**概率性**
-    // 约束 —— 改过示例与禁令之后模型仍会写出 type_id / title / status 这类裸名，
-    // 用户拿到的就是「满屏报错且导不出来」的死锁。规范化是确定性的，且与校验共用同一套
-    // 规则（singularize + GENERIC_FIELD_NAMES），不会出现两套口径漂移。
-    //
-    // 顺带把外键索引也补上（同一函数内）：外键字段没索引同样是 error，手写/AI 路径
-    // 原先都不会补，只有反推路径补过。
-    let normalized = super::store::normalize_naming(&mut doc);
-    let touched = normalized.renamed_pk.len()
-        + normalized.renamed_field.len()
-        + normalized.added_index.len();
-    if touched > 0 || !normalized.skipped.is_empty() {
-        tracing::info!(
-            "[dbd] AI 产出已规范化：主键改名 {}、字段改名 {}、补索引 {}、跳过 {}",
-            normalized.renamed_pk.len(),
-            normalized.renamed_field.len(),
-            normalized.added_index.len(),
-            normalized.skipped.len()
-        );
-    }
-    Ok(doc)
 }
 
 /// 组装 user 消息。`current` 非空（有表）时为「修改」场景：带上当前设计作基线，
@@ -364,10 +298,11 @@ fn build_user_prompt(
     text: &str,
     current: Option<&DbDesignDocument>,
 ) -> String {
+    let bool_hint = bool_default_hint(dialect);
     match current.filter(|d| !d.nodes.is_empty()) {
         None => format!(
             "设计名：{name_hint}\n目标方言：{dialect}\n\n需求：\n{text}\n\n\
-             请按系统提示的标准格式输出 JSON。字段命名用小写蛇形。"
+             请按系统提示的标准格式输出 JSON。字段命名用小写蛇形。\n{bool_hint}。"
         ),
         Some(doc) => format!(
             "设计名：{name_hint}\n目标方言：{dialect}\n\n\
@@ -376,7 +311,7 @@ fn build_user_prompt(
              判断：若需求是对当前设计的修改/扩展，则基于当前设计施加改动并输出完整更新后的设计 JSON\
              （未涉及改动的表/关联必须原样保留，不要省略）；\
              若需求是与当前设计无关的全新设计，则忽略当前设计、产出新设计。\
-             按系统提示的标准格式输出完整 JSON。",
+             按系统提示的标准格式输出完整 JSON。\n{bool_hint}。",
             doc_to_prompt_json(doc)
         ),
     }
@@ -471,6 +406,127 @@ fn parse_document(json: serde_json::Value) -> Result<DbDesignDocument, String> {
                 end.node = real.clone();
             }
         }
+    }
+    Ok(doc)
+}
+
+/// 生成设计文档。**同步返回完整文档**（当前是短请求，不必做流式进度）。
+#[tauri::command]
+pub async fn dbd_ai_generate(
+    app: tauri::AppHandle,
+    input: AiDesignInput,
+) -> Result<DbDesignDocument, String> {
+    let run_id = input.run_id.clone().unwrap_or_default();
+    let text = input.text.trim();
+    if text.is_empty() {
+        return Err("请先描述要设计什么（例如：一个订单系统，含用户、商品、订单、订单项）".to_string());
+    }
+    let (provider, model) = resolve_provider_model(&input.provider_id, &input.model_id)?;
+
+    let dialect = input
+        .dialect
+        .clone()
+        .unwrap_or_else(|| "mysql".to_string());
+    let name_hint = input
+        .name
+        .clone()
+        .unwrap_or_else(|| "未命名设计".to_string());
+
+    // 画布有表时把当前设计带进提示词：AI 基于它修改（或判断出是全新设计则忽略）
+    let user = build_user_prompt(&name_hint, &dialect, text, input.current_doc.as_ref());
+    // 公共字段配置跟着「当前设计」走：新建设计没有配置，修改场景才需要声明
+    let common: &[DbField] = input
+        .current_doc
+        .as_ref()
+        .map(|d| d.common_fields.as_slice())
+        .unwrap_or(&[]);
+
+    emit_progress(&Some(app.clone()), "start", serde_json::json!({}));
+    let hooks = DbdHooks {
+        app: Some(app.clone()),
+        run_id: run_id.clone(),
+    };
+    // 走**流式**通道：AI 每写完一张表就往前端推一份部分文档（`dbd-ai-partial`），
+    // 画布边收边画，不用等整篇到齐（100 张表要等几十秒，全程空白很难受）。
+    // 通道要求 `Fn`（不可变捕获），「已推过多少个」只能用原子量记录
+    let seen_nodes = std::sync::atomic::AtomicUsize::new(0);
+    let seen_relations = std::sync::atomic::AtomicUsize::new(0);
+    let app_opt = Some(app.clone());
+    let outcome = ai::channel::stream_chat_with_resume(
+        &hooks,
+        &provider,
+        &model,
+        &system_prompt(common),
+        &user,
+        0.3,
+        |len, acc| {
+            // 附带末尾 200 字符做预览：前端控制台实时显示「正在写什么」（与思维导图同款）
+            let tail: String = acc.chars().rev().take(200).collect::<Vec<_>>().into_iter().rev().collect();
+            emit_progress(&app_opt, "stream", serde_json::json!({ "length": len, "text": tail }));
+            // 只有「又多出一个完整节点/关系」才推一次 —— 天然节流，
+            // 不会每来 400 字符就刷一遍画布。
+            let partial = extract_partial(acc);
+            let grew = partial.nodes.len() > seen_nodes.load(std::sync::atomic::Ordering::Relaxed)
+                || partial.relations.len() > seen_relations.load(std::sync::atomic::Ordering::Relaxed);
+            if grew {
+                seen_nodes.store(partial.nodes.len(), std::sync::atomic::Ordering::Relaxed);
+                seen_relations.store(partial.relations.len(), std::sync::atomic::Ordering::Relaxed);
+                emit_partial(&app_opt, &run_id, &partial);
+            }
+        },
+    )
+    .await
+    .map_err(|e| format!("AI 生成失败：{}", e))?;
+
+    // 兜底：个别网关不认 stream:true（直接回一个普通 JSON），SSE 消费会拿到空文本。
+    // 这时退回非流式再取一次，不要让用户看到「AI返回空」。
+    let text = if outcome.text.trim().is_empty() {
+        ai::channel::complete_chat(
+            &hooks,
+            &provider,
+            &model,
+            &system_prompt(common),
+            &user,
+            0.3,
+            None,
+            ai::usage::tool_ids::DB_DESIGNER,
+        )
+        .await
+        .map_err(|e| format!("AI 生成失败：{}", e))?
+        .text
+    } else {
+        outcome.text
+    };
+    if text.trim().is_empty() {
+        return Err("AI返回空".into());
+    }
+    // 收尾解析用通道的宽容解析（容忍 markdown 围栏、前后缀、非法转义）
+    let json = ai::channel::parse_json(&text)
+        .map_err(|e| format!("AI 返回的内容不是合法 JSON：{}", e))?;
+
+    let mut doc = parse_document(json)?;
+
+    // 落地前过一遍规范化：命名改合规 + 外键补索引。
+    //
+    // 为什么必须在这里做：命名规范是 error 级（阻断保存 / 导出），而提示词只是**概率性**
+    // 约束 —— 改过示例与禁令之后模型仍会写出 type_id / title / status 这类裸名，
+    // 用户拿到的就是「满屏报错且导不出来」的死锁。规范化是确定性的，且与校验共用同一套
+    // 规则（singularize + GENERIC_FIELD_NAMES），不会出现两套口径漂移。
+    //
+    // 顺带把外键索引也补上（同一函数内）：外键字段没索引同样是 error，手写/AI 路径
+    // 原先都不会补，只有反推路径补过。
+    let normalized = super::store::normalize_naming(&mut doc);
+    let touched = normalized.renamed_pk.len()
+        + normalized.renamed_field.len()
+        + normalized.added_index.len();
+    if touched > 0 || !normalized.skipped.is_empty() {
+        tracing::info!(
+            "[dbd] AI 产出已规范化：主键改名 {}、字段改名 {}、补索引 {}、跳过 {}",
+            normalized.renamed_pk.len(),
+            normalized.renamed_field.len(),
+            normalized.added_index.len(),
+            normalized.skipped.len()
+        );
     }
     Ok(doc)
 }
@@ -820,7 +876,7 @@ mod tests {
     /// 「禁止 id」的要求看起来像没生效。测试把这条不变量钉住，防止有人再把示例改回去。
     #[test]
     fn prompt_and_example_forbid_bare_id_as_primary_key() {
-        let p = system_prompt();
+        let p = system_prompt(&[]);
         // 禁令要在提示词里，且说得具体（「不许用 id / user_id 这类通用名」）
         assert!(
             p.contains("主键名"),
@@ -852,7 +908,7 @@ mod tests {
     /// 它不是不听话，是没人告诉过它。规则与校验器脱节 = 稳定产出违规。
     #[test]
     fn prompt_states_every_naming_rule_the_validator_enforces() {
-        let p = system_prompt();
+        let p = system_prompt(&[]);
         for (needle, why) in [
             ("主键名禁止用", "主键不能叫 id"),
             ("通用裸名必须带表名前缀", "name/title/status 这类要加表前缀"),
@@ -869,7 +925,7 @@ mod tests {
     /// 才生效 —— 撞名就跳过，错误原样留下。关联两端同理：修正会级联改名，但不会凭空创建字段。
     #[test]
     fn prompt_explains_autofix_and_its_limits() {
-        let p = system_prompt();
+        let p = system_prompt(&[]);
         assert!(
             p.contains("自动修正"),
             "要告诉模型产出后会自动规范化，否则它会以为命名可以偷懒"
@@ -882,6 +938,96 @@ mod tests {
             p.contains("不会凭空创建"),
             "必须说清关联指向不存在的字段时自动修正救不了"
         );
+    }
+
+    /// 回归（滑雪助手那份产出）：boolean 字段写 `"default": false` 曾让整份设计
+    /// 报「invalid type: boolean `false`, expected a string」作废。宽容反序列化在
+    /// `models::DbField::default` 上，这里钉住的是**整条解析链路**（含补 id / 端点回认）。
+    #[test]
+    fn parse_document_accepts_non_string_default() {
+        let json = serde_json::json!({
+            "name": "滑雪助手", "dialect": "mysql",
+            "nodes": [{
+                "name": "posture",
+                "table": { "fields": [
+                    { "name": "posture_id", "type": { "base": "bigint" }, "pk": true, "autoIncrement": true },
+                    { "name": "need_dynamic_capture", "type": { "base": "boolean" }, "nullable": false, "default": false },
+                    { "name": "posture_score", "type": { "base": "decimal", "precision": 5, "scale": 2 }, "default": 0 }
+                ] }
+            }]
+        });
+        let doc = parse_document(json).expect("非字符串默认值不该让整份产出作废");
+        let fields = &doc.nodes[0].table.as_ref().unwrap().fields;
+        assert_eq!(fields[1].default.as_deref(), Some("false"));
+        assert_eq!(fields[2].default.as_deref(), Some("0"));
+    }
+
+    /// 提示词必须点名「default 写字符串」——产出里最常见的作废原因就是这个，
+    /// 光靠schema 里那句「（可选，字符串）」模型会当成可以省略，不是「必须字符串」。
+    #[test]
+    fn prompt_requires_string_default() {
+        let p = system_prompt(&[]);
+        assert!(
+            p.contains("default 一律写成字符串"),
+            "提示词必须明确 default 的类型，否则模型会写裸 false / 裸 0"
+        );
+    }
+
+    /// **boolean 默认值的写法必须按方言给**：MySQL / SQLite 的列其实是数值型，
+    /// 让模型统一写 "false" 会导出成 `TINYINT(1) DEFAULT false`；反过来若对 PG 说 0/1，
+    /// 导出的 `BOOLEAN DEFAULT 0` 在 PG 上是直接报错的。这句只能进 user 消息（那里才知道方言）。
+    #[test]
+    fn bool_default_hint_follows_dialect() {
+        let mysql = build_user_prompt("N", "mysql", "需求甲", None);
+        assert!(mysql.contains("TINYINT(1)"), "MySQL 要说明没有 boolean 类型: {}", mysql);
+        assert!(mysql.contains("\"0\" / \"1\""), "{}", mysql);
+        assert!(!mysql.contains("\"false\" / \"true\""), "{}", mysql);
+
+        let pg = build_user_prompt("N", "postgres", "需求甲", None);
+        assert!(pg.contains("\"false\" / \"true\""), "PG 有原生 BOOLEAN: {}", pg);
+
+        let sqlite = build_user_prompt("N", "sqlite", "需求甲", None);
+        assert!(sqlite.contains("INTEGER"), "{}", sqlite);
+
+        // 修改场景同样要带上
+        let mut cur = new_document("cur", "mysql");
+        cur.nodes.push(DbDesignNode {
+            name: "orders".into(),
+            ..Default::default()
+        });
+        assert!(build_user_prompt("N", "mysql", "改字段", Some(&cur)).contains("TINYINT(1)"));
+    }
+
+    /// 启用公共字段后，**提示词里必须出现「所有表导出时会自动追加、不要你创建」这段声明**。
+    ///
+    /// 不写的后果（模型看到「记录创建时间」就会自己加）���模型写的那份因重名被跳过、
+    /// 根本没进 SQL，而用户会以为「配置了公共字段，导出怎么还是我自己写的那个」。
+    #[test]
+    fn prompt_declares_common_fields_when_enabled() {
+        let cf = vec![
+            DbField { name: "created_at".into(), ..Default::default() },
+            DbField { name: "is_deleted".into(), ..Default::default() },
+        ];
+        let p = system_prompt(&cf);
+        assert!(p.contains("所有表在导出时都会自动追加"), "{}", p);
+        assert!(p.contains("不要创建它们"), "{}", p);
+        // 字段名要列出来（模型得知道是哪些）
+        assert!(p.contains("created_at"), "{}", p);
+        assert!(p.contains("is_deleted"), "{}", p);
+        // 不能留下未替换的占位符
+        assert!(!p.contains("{common_note}"), "占位符没被替换: {}", p);
+    }
+
+    /// 没启用时这一节**整段不出现** —— 别给模型留「也许有公共字段」的想象空间，
+    /// 否则它会自己加一堆 created_at，而那些列一个都不会进 SQL。
+    #[test]
+    fn prompt_has_no_common_note_when_not_enabled() {
+        let p = system_prompt(&[]);
+        assert!(!p.contains("公共字段"), "未启用时不该提公共字段:\n{}", p);
+        assert!(!p.contains("{common_note}"), "{}", p);
+        // 只配了空名字的项视同没配
+        let blank = vec![DbField { name: "   ".into(), ..Default::default() }];
+        assert!(!system_prompt(&blank).contains("公共字段"));
     }
 
     /// **示例本身必须通过我们自己的校验器。**

@@ -3,9 +3,10 @@
 // 形态：**纯文件 + 无状态**。文档不进应用数据库，前端持有当前文档对象，
 // 后端负责「读文件 / 写文件 / 生成产物 / 校验 / 结构维护」这几件确定性工作。
 // 新增命令必须同步注册到 `lib.rs` 的 invoke_handler（漏注册 = 前端运行时报错）。
-use super::export::{export_outline, export_sql};
+use super::export::{export_outline, export_sql_with, ExportOptions};
 use super::file::{
-    export_outline_file, export_sql_file, load_file, new_document, save_file, write_json,
+    export_outline_file, export_sql_file, export_sql_to, load_file, new_document, save_file,
+    write_json,
 };
 use super::models::DbDesignDocument;
 use super::store::{rename_field, validate, ValidationReport};
@@ -51,16 +52,37 @@ pub fn dbd_sync_relations(doc: DbDesignDocument) -> DbDesignDocument {
     next
 }
 
-/// 生成建表语句文本（前端负责另存为）
+/// 生成建表语句文本（前端复制到剪贴板用）
+///
+/// `options` 可选且**缺省 = 带外键**：老调用方（不传 options）行为不变。
 #[tauri::command]
-pub fn dbd_export_sql(doc: DbDesignDocument) -> Result<String, String> {
-    export_sql(&doc)
+pub fn dbd_export_sql(
+    doc: DbDesignDocument,
+    options: Option<ExportOptions>,
+) -> Result<String, String> {
+    export_sql_with(&doc, options.unwrap_or_default())
 }
 
-/// 直接把 SQL 写到设计文件同目录的 `<主名>.sql`，返回落盘路径
+/// 把 SQL 写到设计文件同目录的 `<主名>.sql`，返回落盘路径
+///
+/// **以传入的 doc 为准**（不再从磁盘重读）—— 改了没保存就导出，导出的也是眼前这份。
 #[tauri::command]
-pub fn dbd_export_sql_file(path: String) -> Result<String, String> {
-    export_sql_file(&path)
+pub fn dbd_export_sql_file(
+    doc: DbDesignDocument,
+    path: String,
+    options: Option<ExportOptions>,
+) -> Result<String, String> {
+    export_sql_file(&path, &doc, options.unwrap_or_default())
+}
+
+/// 导出 SQL 到指定路径（「另存为」；不要求设计文件已落盘），返回落盘路径
+#[tauri::command]
+pub fn dbd_export_sql_to(
+    doc: DbDesignDocument,
+    target: String,
+    options: Option<ExportOptions>,
+) -> Result<String, String> {
+    export_sql_to(&target, &doc, options.unwrap_or_default())
 }
 
 /// 结构说明（Markdown 文本）

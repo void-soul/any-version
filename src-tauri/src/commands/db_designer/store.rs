@@ -32,6 +32,34 @@ pub fn validate(doc: &DbDesignDocument) -> ValidationReport {
         r.errors.push(format!("未知方言 {}（可选：{}）", doc.dialect, DIALECTS.join(" / ")));
     }
 
+    // ── 公共字段（文档级配置，导出时附加到每张表）──
+    // 只做**轻量**校验：类型越界 / 名称为空 / 启用项之间重名。
+    //
+    // 刻意**不套用**「通用裸名必须带表前缀」与外键索引那几条 error 级规则：
+    // 那是给「表自己的字段」设计的，而公共字段是用户明确配的全局名
+    // （比如他就想统一叫 `remark`）。拿表级规则去卡配置项是添乱。
+    let mut seen_common: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for f in &doc.common_fields {
+        let name = f.name.trim();
+        if name.is_empty() {
+            r.errors.push("公共字段里有字段名为空的，请补上名字或删掉该项".to_string());
+            continue;
+        }
+        if !BASE_TYPES.contains(&f.r#type.base.as_str()) {
+            r.errors.push(format!(
+                "公共字段「{}」的类型 {} 不在白名单里",
+                name, f.r#type.base
+            ));
+        }
+        let key = name.to_ascii_lowercase();
+        let cnt = seen_common.entry(key).or_insert(0);
+        *cnt += 1;
+        if *cnt > 1 {
+            r.errors.push(format!("公共字段名重复 {name:?}（重名会导致只附加一份或追加两次）"));
+        }
+    }
+
     // ── 节点 ──
     let mut seen_names: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for n in &doc.nodes {
@@ -101,6 +129,21 @@ pub fn validate(doc: &DbDesignDocument) -> ValidationReport {
                     // 复合主键是合法需求，但连线引用它时要小心 —— 提示而不是拦
                     r.warnings.push(format!("表「{}」有 {} 个主键字段（复合主键）", n.name, pks));
                 }
+                // 一张表只能有一个自增列：MySQL 报 1067「there can be only one auto column」，
+                // PG / SQLite 虽能建出来但语义诡异（第二个 SERIAL 没人用）。
+                let autos: Vec<&DbField> = t.fields.iter().filter(|f| f.auto_increment).collect();
+                if autos.len() > 1 {
+                    r.errors.push(format!(
+                        "表「{}」有 {} 个自增字段（{}）：一张表只能有一个自增列",
+                        n.name,
+                        autos.len(),
+                        autos
+                            .iter()
+                            .map(|f| f.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" / ")
+                    ));
+                }
                 for idx in &t.indexes {
                     if !INDEX_KINDS.contains(&idx.kind.as_str()) {
                         r.errors.push(format!(
@@ -119,6 +162,68 @@ pub fn validate(doc: &DbDesignDocument) -> ValidationReport {
                             ));
                         }
                     }
+                    // 方言能力差异：这些索引在目标库上要么建不了，要么会被降级成语义不同的东西。
+                    //
+                    // 级别选择：TEXT/BLOB 上的普通索引按 **warning** 处理而不是 error ——
+                    // MySQL 确实会拒绝它，但用户的可选方案只有「换前缀长度」或「换类型」，
+                    // 两者都属于改设计；卡住导出就是死锁。所以放行、跳过该索引、
+                    // 并在导出的 SQL 里留一行注释说明（与「默认值被忽略」同一套处理）。
+                    if doc.dialect == "mysql" && idx.kind != "fulltext" {
+                        for fname in &idx.fields {
+                            if let Some(f) = t.fields.iter().find(|x| &x.name == fname) {
+                                if matches!(f.r#type.base.as_str(), "text" | "blob") {
+                                    r.warnings.push(format!(
+                                        "表「{}」索引「{}」建在 {} 列上：MySQL 不允许 TEXT/BLOB 列进普通或唯一索引（需要指定前缀长度，如 {}(191)），导出会跳过它",
+                                        n.name, idx.name, f.name, f.name
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    if idx.kind == "fulltext" && doc.dialect != "mysql" {
+                        r.warnings.push(format!(
+                            "表「{}」索引「{}」是全文索引，但{}没有全文索引语法（SQLite 需 FTS5 虚拟表），导出时会降级为普通索引",
+                            n.name,
+                            idx.name,
+                            if doc.dialect == "postgres" { "PostgreSQL" } else { "SQLite" }
+                        ));
+                    }
+                }
+                // 字符串型默认值漏了 SQL 引号：`DEFAULT enabled` 是语法错误，整份建表语句都跑不起来。
+                // 导出时会自动补引号，这里提前告诉用户 —— 让他知道设计文件里存的是
+                // 「SQL 字面量」而不是「字符串内容」。
+                for f in &t.fields {
+                    let Some(def) = f.default.as_deref().map(str::trim).filter(|d| !d.is_empty())
+                    else {
+                        continue;
+                    };
+                    if matches!(
+                        f.r#type.base.as_str(),
+                        "char" | "varchar" | "enum" | "uuid" | "date" | "time" | "datetime"
+                            | "timestamp"
+                    ) && super::export::default_needs_quoting(&f.r#type.base, def)
+                    {
+                        r.warnings.push(format!(
+                            "表「{}」字段「{}」的默认值 {} 缺少 SQL 引号（导出时会自动补成 '{}'）：设计文件里存的是 SQL 字面量，字符串值要自己带引号",
+                            n.name,
+                            f.name,
+                            def,
+                            def.replace('\'', "''")
+                        ));
+                    }
+                }
+                // 同理：默认值在部分类型上根本不被允许，导出会被忽略（放行但要说清）
+                if doc.dialect == "mysql" {
+                    for f in &t.fields {
+                        if matches!(f.r#type.base.as_str(), "text" | "blob" | "json") {
+                            if let Some(def) = f.default.as_ref().filter(|d| !d.trim().is_empty()) {
+                                r.warnings.push(format!(
+                                    "表「{}」字段「{}」（{}）的默认值 {} 不会导出：MySQL 不允许 TEXT/BLOB/JSON 列带默认值",
+                                    n.name, f.name, f.r#type.base, def
+                                ));
+                            }
+                        }
+                    }
                 }
             }
             "view" => {
@@ -133,6 +238,34 @@ pub fn validate(doc: &DbDesignDocument) -> ValidationReport {
     for (name, cnt) in seen_names {
         if cnt > 1 {
             r.errors.push(format!("节点名「{}」重复 {}", name, cnt));
+        }
+    }
+
+    // ── 索引名唯一 ──
+    // MySQL 的索引名是**表内**唯一，PG / SQLite 是**全库**唯一（后者索引建在表外，更严格）。
+    // 所以按最严的口径（全库唯一）判重：重名时 MySQL 跨表可以活，PG / SQLite 直接
+    // `relation "idx_x" already exists` 建表失败。AI 很爱给不同表都写 idx_user 这类名字。
+    let mut seen_idx: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for n in &doc.nodes {
+        let Some(t) = n.table.as_ref() else { continue };
+        for idx in &t.indexes {
+            if idx.name.trim().is_empty() {
+                continue;
+            }
+            seen_idx
+                .entry(idx.name.to_lowercase())
+                .or_default()
+                .push(n.name.clone());
+        }
+    }
+    for (name, tables) in seen_idx {
+        if tables.len() > 1 {
+            r.errors.push(format!(
+                "索引名「{}」被多个表共用（{}）：PostgreSQL / SQLite 的索引名要求全库唯一，重名会建表失败，请加上表名前缀",
+                name,
+                tables.join(" / ")
+            ));
         }
     }
 

@@ -1167,6 +1167,7 @@ pub fn run() {
                 commands::db_designer::commands::dbd_sync_relations,
                 commands::db_designer::commands::dbd_export_sql,
                 commands::db_designer::commands::dbd_export_sql_file,
+                commands::db_designer::commands::dbd_export_sql_to,
                 commands::db_designer::commands::dbd_export_outline,
                 commands::db_designer::commands::dbd_export_outline_file,
                 commands::db_designer::commands::dbd_rename_field,

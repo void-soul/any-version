@@ -295,6 +295,7 @@ pub fn reverse_ddl(text: &str, dialect: &str, name: &str) -> Result<DbDesignDocu
         description: format!("由 DDL 反推（{}）", dialect),
         dialect: if DIALECTS.contains(&dialect) { dialect.to_string() } else { "mysql".to_string() },
         folder_id: None,
+        common_fields: Vec::new(),
         nodes: Vec::new(),
         relations: Vec::new(),
         updated_at: chrono::Utc::now().to_rfc3339(),
@@ -688,9 +689,19 @@ let (type_raw, tail) = match rest.find(|c: char| c == '(' || c.is_whitespace()) 
     }
     if let Some(i) = tail_low.find("default") {
         let after = tail[i + 7..].trim_start();
+        // **保留字面量原样（含引号）**：设计文件里存的是「SQL 字面量」而不是
+        // 「字符串内容」。早先这里把引号剥了，于是 `DEFAULT 'new'` 存成 `new`，
+        // 导出时拼出 `DEFAULT new` —— 语法错误；而校验也无从判断用户是「忘了加引号」
+        // 还是「本来就该按字符串处理」。
         let v = if after.starts_with('\'') {
             // 找的是**结尾**那个引号：after[1..] 里再找一次，别拿开引号当结尾
-            after[1..].find('\'').map(|e| after[1..1 + e].to_string())
+            after[1..]
+                .find('\'')
+                .map(|e| after[..1 + e + 1].to_string())
+        } else if after.starts_with('"') {
+            after[1..]
+                .find('"')
+                .map(|e| after[..1 + e + 1].to_string())
         } else {
             after
                 .split_whitespace()
@@ -910,6 +921,7 @@ pub fn reverse_sqlite(path: &str, name: &str) -> Result<DbDesignDocument, String
         description: format!("由 SQLite 库反推：{}", path),
         dialect: "sqlite".to_string(),
         folder_id: None,
+        common_fields: Vec::new(),
         nodes: Vec::new(),
         relations: Vec::new(),
         updated_at: chrono::Utc::now().to_rfc3339(),
@@ -1251,9 +1263,11 @@ mod tests {
         let doc = reverse_ddl(ddl, "mysql", "t").unwrap();
         assert_eq!(doc.nodes.len(), 1, "注释里的建表不该被解析: {:?}", doc.nodes.len());
         assert_eq!(doc.nodes[0].table.as_ref().unwrap().fields.len(), 2);
+        // 引号要**一起存**：设计文件里存的是 SQL 字面量，剥掉引号再导出就会得到
+        // `DEFAULT semi;colon`（语法错误，而且分号还会把语句截断）。
         assert_eq!(
             doc.nodes[0].table.as_ref().unwrap().fields[0].default.as_deref(),
-            Some("semi;colon")
+            Some("'semi;colon'")
         );
     }
 

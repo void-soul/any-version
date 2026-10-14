@@ -8,7 +8,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::export::{export_outline, export_sql};
+use super::export::{export_outline, export_sql_with, ExportOptions};
 use super::models::*;
 use super::store::validate;
 
@@ -49,12 +49,32 @@ pub fn write_json(path: &str, doc: &DbDesignDocument) -> Result<(), String> {
 }
 
 /// 导出 SQL 到设计文件同目录的 `<主名>.sql`（`订单库.dbdesign.json` → `订单库.sql`）。
-pub fn export_sql_file(path: &str) -> Result<String, String> {
-    let doc = load_file(path)?;
-    let sql = export_sql(&doc)?;
+///
+/// **以传入的 `doc` 为准，不重新读磁盘** —— 与「复制到剪贴板」那条路径保持一致。
+/// 早先这里是 `load_file(path)` 再导出，于是「改了没保存就点导出」拿到的是磁盘上的
+/// 旧版本，而剪贴板那条路用的是内存里的当前设计：同一个按钮，两种结果。
+pub fn export_sql_file(path: &str, doc: &DbDesignDocument, opts: ExportOptions) -> Result<String, String> {
+    let sql = export_sql_with(doc, opts)?;
     let out = sibling_path(path, "sql");
     fs::write(&out, &sql).map_err(|e| format!("写入 SQL 失败 {}: {}", out.display(), e))?;
     Ok(out.to_string_lossy().to_string())
+}
+
+/// 导出 SQL 到**任意**指定路径（「另存为」用；不要求设计文件已落盘）。
+pub fn export_sql_to(
+    target: &str,
+    doc: &DbDesignDocument,
+    opts: ExportOptions,
+) -> Result<String, String> {
+    let sql = export_sql_with(doc, opts)?;
+    if let Some(parent) = Path::new(target).parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("创建目录失败 {}: {}", parent.display(), e))?;
+        }
+    }
+    fs::write(target, &sql).map_err(|e| format!("写入 SQL 失败 {}: {}", target, e))?;
+    Ok(target.to_string())
 }
 
 /// 导出结构说明到同目录的 `<主名>.md`。
@@ -93,6 +113,7 @@ pub fn new_document(name: &str, dialect: &str) -> DbDesignDocument {
             "mysql".to_string()
         },
         folder_id: None,
+        common_fields: Vec::new(),
         nodes: Vec::new(),
         relations: Vec::new(),
         updated_at: chrono::Utc::now().to_rfc3339(),
@@ -191,11 +212,26 @@ mod tests {
         let p = dir.join("订单库.dbdesign.json").to_string_lossy().to_string();
         save_file(&p, &one_table_doc("mysql")).unwrap();
 
-        let sql_path = export_sql_file(&p).unwrap();
+        let sql_path = export_sql_file(&p, &one_table_doc("mysql"), ExportOptions::default()).unwrap();
         assert!(sql_path.ends_with("订单库.sql"), "{}", sql_path);
         assert!(!sql_path.contains("dbdesign"), "{}", sql_path);
         let sql = fs::read_to_string(&sql_path).unwrap();
         assert!(sql.contains("CREATE TABLE `orders`"), "{}", sql);
+
+        // 导出以**传入的 doc** 为准：改了没保存也要能导出眼前这份
+        let mut edited = one_table_doc("mysql");
+        edited.name = "改过的名字".to_string();
+        let sql2 = export_sql_file(&p, &edited, ExportOptions::default()).unwrap();
+        assert!(
+            fs::read_to_string(&sql2).unwrap().contains("改过的名字"),
+            "不该导出磁盘上的旧版本"
+        );
+
+        // 另存为：写到任意路径，且不需要设计文件已落盘
+        let custom = dir.join("别处.sql").to_string_lossy().to_string();
+        let got = export_sql_to(&custom, &one_table_doc("postgres"), ExportOptions::default()).unwrap();
+        assert_eq!(got, custom);
+        assert!(fs::read_to_string(&custom).unwrap().contains("CREATE TABLE"));
 
         let md_path = export_outline_file(&p).unwrap();
         assert!(md_path.ends_with("订单库.md"), "{}", md_path);
