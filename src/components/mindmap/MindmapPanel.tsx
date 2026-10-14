@@ -15,6 +15,7 @@ import {
   edgeGlow, headerTint, highlightColor, neonRing, neonTextGlow,
 } from "../../utils/graphHighlight";
 import { MindmapMarkdown } from "./MindmapMarkdown";
+import { HoverPreview, useHoverPreview } from "../shared/HoverPreview";
 import { MarkdownFieldEditor } from "./MarkdownFieldEditor";
 import { NodeFormFields } from "./NodeFormFields";
 import VexEmptyState from "../VexEmptyState";
@@ -828,11 +829,9 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   const [treeW, setTreeW] = usePaneWidth("tree");
   const treeListRef = useRef<HTMLDivElement | null>(null);
   const [detailNode, setDetailNode] = useState<MindmapNode | null>(null);
-  const [preview, setPreview] = useState<{ node: MindmapNode; x: number; y: number } | null>(null);
-  // 预览气泡悬停状态：鼠标移入气泡后保持打开（此时可滚动查看长内容），移出才关闭。
-  // 关闭加 250ms 延迟，否则鼠标从节点移向气泡的瞬间气泡就消失了。
-  const previewHoverRef = useRef(false);
-  const previewCloseTimer = useRef<number | null>(null);
+  // 预览气泡：定位 / 250ms 延迟关闭 / 移入本体不关，都在共享 hook 里。
+  // 通用实现见 components/shared/HoverPreview（数据库设计的表列表共用同一份）。
+  const hp = useHoverPreview();
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
   const [lastSaved, setLastSaved] = useState<number | null>(null);
   // ── 自由关系线 ──
@@ -1233,7 +1232,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     onDocumentUpdate({ ...full, nodes: full.nodes.filter(n => !removed.has(n.id)), links: links.filter(l => !removed.has(l.sourceId) && !removed.has(l.targetId)) });
     if (selectedId === nodeId) setSelectedId(null);
     if (detailNode?.id === nodeId) setDetailNode(null);
-    setPreview(null);
+    hp.hideNow();
     setLinkDraft(prev => (prev && (removed.has(prev.sourceId) || removed.has(prev.targetId)) ? null : prev));
   }, [selectedId, detailNode, full, links, onDocumentUpdate, onHistoryPush]);
 
@@ -1285,8 +1284,8 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
             onSelect: () => selectNode(n.id), onOpenDetail: () => openDetail(n),
             onToggle: () => setCollapsed(cur => { const nx = new Set(cur); nx.has(n.id) ? nx.delete(n.id) : nx.add(n.id); return nx; }),
             onAddChild: () => addChildNode(n.id),
-            onPreview: (e) => { if (previewCloseTimer.current) window.clearTimeout(previewCloseTimer.current); setPreview({ node: n, x: e.clientX, y: e.clientY }); },
-            onPreviewEnd: () => { if (previewCloseTimer.current) window.clearTimeout(previewCloseTimer.current); previewCloseTimer.current = window.setTimeout(() => { if (!previewHoverRef.current) setPreview(null); }, 250); },
+            onPreview: (e) => hp.show({ title: n.name, x: e.clientX, y: e.clientY, accent: effectiveNodeColor(n), content: <MindmapMarkdown content={n.detail || t("mindmap.missingView")} /> }),
+            onPreviewEnd: () => hp.scheduleHide(),
             onDelete: () => deleteNode(n.id),
             onContextMenu: (e) => { setSelectedId(n.id); setCtxMenu({ x: e.clientX, y: e.clientY, nodeId: n.id }); } }
         : prevData;
@@ -1632,7 +1631,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       else if (e.key === "Tab") { e.preventDefault(); addChildNode(); }
       else if (e.key === "Enter") { if (selectedId) { e.preventDefault(); const n = byId.get(selectedId); if (n) setDetailNode(n); } }
       else if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) { e.preventDefault(); navigateByKey(e.key); }
-      else if (e.key === "Escape") { setSelectedId(null); setCtxMenu(null); setPreview(null); setLinkDraft(null); setLinkFrom(null); }
+      else if (e.key === "Escape") { setSelectedId(null); setCtxMenu(null); hp.hideNow(); setLinkDraft(null); setLinkFrom(null); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -1645,7 +1644,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     <div className="relative flex h-full min-h-0">
       <ReactFlow className="min-w-0 flex-1" nodes={flowNodes} edges={edges} nodeTypes={mmNodeTypes} edgeTypes={mmEdgeTypes}
         onNodesChange={onNodesChange} onNodeDrag={onNodeDrag} onNodeDragStop={onNodeDragStop} onConnect={onConnect} onConnectStart={onConnectStart} onConnectEnd={onConnectEnd} onMove={onViewportMove}
-        onPaneClick={() => { setSelectedId(null); setCtxMenu(null); setPreview(null); setLinkFrom(null); }}
+        onPaneClick={() => { setSelectedId(null); setCtxMenu(null); hp.hideNow(); setLinkFrom(null); }}
         onNodeContextMenu={(e, n) => onNodeContextMenu(e, n as Node)}
         onEdgeClick={(e, ed) => { const l = links.find(x => `mm-l-${x.id}` === ed.id); if (l) openLinkEditor(l, e); }}
         connectionLineType={CONNECTION_LINE_BY_STYLE[edgeStyle]}
@@ -1742,9 +1741,9 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
                     {/* 行尾悬浮操作：预览详细内容 / 打开编辑弹框（与日历定位行为一致） */}
                     <span className="hidden shrink-0 items-center gap-0.5 group-hover/row:flex">
                       <button type="button" className="rounded p-0.5 text-slate-500 transition hover:bg-white/10 hover:text-cyan-300"
-                        onMouseEnter={(e) => { if (previewCloseTimer.current) { window.clearTimeout(previewCloseTimer.current); previewCloseTimer.current = null; } setPreview({ node: x.node, x: e.clientX, y: e.clientY }); }}
-                        onMouseMove={(e) => { setPreview(prev => (prev && prev.node.id === x.node.id) ? prev : { node: x.node, x: e.clientX, y: e.clientY }); }}
-                        onMouseLeave={() => { previewCloseTimer.current = window.setTimeout(() => { if (!previewHoverRef.current) setPreview(null); }, 250); }}
+                        onMouseEnter={(e) => hp.show({ title: x.node.name, x: e.clientX, y: e.clientY, accent: effectiveNodeColor(x.node), content: <MindmapMarkdown content={x.node.detail || t("mindmap.missingView")} /> })}
+                        onMouseMove={(e) => { if (!hp.preview || hp.preview.title !== x.node.name) hp.show({ title: x.node.name, x: e.clientX, y: e.clientY, accent: effectiveNodeColor(x.node), content: <MindmapMarkdown content={x.node.detail || t("mindmap.missingView")} /> }); }}
+                        onMouseLeave={() => hp.scheduleHide()}
                         onClick={(e) => e.stopPropagation()}
                         title={t("mindmap.previewOnly")}>
                         <Eye className="h-3 w-3" />
@@ -1904,27 +1903,12 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
             onClick={() => { deleteNode(ctxMenu.nodeId); setCtxMenu(null); }}><Trash2 className="h-3.5 w-3.5" />{t("mindmap.delete")}</button>
         </div>)}
       {/* 悬浮只读预览气泡（跟随鼠标；鼠标移入气泡后保持打开，可滚动查看长内容） */}
-      {preview && (() => {
-        const pc = effectiveNodeColor(preview.node);
-        const left = Math.min(preview.x + 14, window.innerWidth - 380);
-        const top = Math.min(preview.y + 14, window.innerHeight - 340);
-        return (
-          <div className="fixed z-[300]" style={{ left, top }}
-            onMouseEnter={() => { previewHoverRef.current = true; if (previewCloseTimer.current) { window.clearTimeout(previewCloseTimer.current); previewCloseTimer.current = null; } }}
-            onMouseLeave={() => { previewHoverRef.current = false; setPreview(null); }}
-            onWheel={(e) => e.stopPropagation()}>
-            <div className="w-[350px] rounded-card border border-white/10 bg-surface-panel shadow-2xl">
-              <div className="flex items-center gap-1.5 border-b border-white/10 px-3 py-2">
-                <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: pc, boxShadow: `0 0 6px ${pc}` }} />
-                <span className="min-w-0 truncate text-caption font-semibold" style={{ color: pc }}>{preview.node.name}</span>
-              </div>
-              <div className="max-h-[300px] overflow-y-auto p-3">
-                <MindmapMarkdown content={preview.node.detail || t("mindmap.missingView")} />
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {hp.preview && (
+        <HoverPreview
+          preview={hp.preview}
+          hoverGuard={hp.hoverGuard}
+        />
+      )}
       {detailNode && <DetailModal node={detailNode} accent={accent} projectRoot={full.document.sourceDesc} onUpdate={updateNode} onClose={() => setDetailNode(null)} />}
     </div>
   );

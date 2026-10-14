@@ -176,7 +176,11 @@
     "arrange": "Arrange selection",
     "arrangeHint": "Tidy up only the highlighted tables into parent/child order; others stay put",
     "arrangeDone": "Arranged {{count}} tables",
-    "arrangeNeedMore": "Select a table with at least one related table first"
+    "arrangeNeedMore": "Select a table with at least one related table first",
+    "viewNoFields": "This view has no fields",
+    "fieldCount": "{{count}} fields",
+    "indexCount": "{{count}} indexes",
+    "relCount": "{{count}} relations"
   },
   "suno": {
     "urlPlaceholder": "Paste a Suno profile URL (e.g. https://suno.com/@username)",

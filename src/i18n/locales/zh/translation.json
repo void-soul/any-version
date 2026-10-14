@@ -176,7 +176,11 @@
     "arrange": "整理选中系列",
     "arrangeHint": "只把高亮中的表按父子关系整齐排列，其余表不动",
     "arrangeDone": "已整理 {{count}} 张表",
-    "arrangeNeedMore": "先选中一张表（且它至少有一张相关表）"
+    "arrangeNeedMore": "先选中一张表（且它至少有一张相关表）",
+    "viewNoFields": "该视图没有字段",
+    "fieldCount": "{{count}} 个字段",
+    "indexCount": "{{count}} 个索引",
+    "relCount": "{{count}} 条关联"
   },
   "suno": {
     "urlPlaceholder": "粘贴 Suno 用户主页 URL（如 https://suno.com/@用户名）",

@@ -66,6 +66,7 @@ import { useAiPanelWidth } from "../ai/paneWidth";
 import { createEventBuffer, useEventBufferSnapshot } from "../../utils/eventBuffer";
 import { ResultNote } from "../shared/Note";
 import { ThinkingBlock } from "../shared/ThinkingBlock";
+import { HoverPreview, useHoverPreview } from "../shared/HoverPreview";
 import { theamedConfirm } from "../shared/ThemedAlert";
 import { toast } from "../shared/Toast";
 import {
@@ -202,7 +203,47 @@ function newId(prefix: string): string {
 }
 
 function emptyField(base = "bigint"): DbField {
-  return { name: "id", type: { base }, nullable: false, pk: false, autoIncrement: false, unique: false, comment: "" };
+  // 字段名默认 `field` 而不是 `id`：裸 id 会被命名校验判为 error
+  //（应用侧 validate_naming 要求主键用 <实体>_id，且 id 命中通用裸名黑名单）
+  return { name: "field", type: { base }, nullable: false, pk: false, autoIncrement: false, unique: false, comment: "" };
+}
+
+/**
+ * 表列表悬浮预览的正文：注释 + 完整字段清单 + 统计。
+ *
+ * **用普通 DOM 而不是 markdown**：字段天然是三列对齐的表（名 / 类型 / 标记 / 注释），
+ * 走 markdown 反而要 `await invoke` 调后端的 `dbd_export_outline`（那是整文档级的、
+ * 异步 IPC，每次悬浮发一次不可接受），或者把那段 Rust 逻辑复制一份到 TS。
+ */
+function TablePreviewBody({ row }: { row: { comment: string; fields: DbField[]; indexCount: number; relCount: number } }) {
+  const { t } = useTranslation();
+  return (
+    <div className="space-y-1.5">
+      {row.comment && <p className="text-micro leading-relaxed text-slate-400">{row.comment}</p>}
+      {row.fields.length === 0 ? (
+        <p className="text-micro text-slate-600">{t("dbd.viewNoFields")}</p>
+      ) : (
+        <div className="space-y-px">
+          {row.fields.map((f) => (
+            <div key={f.name} className="flex items-baseline gap-1.5 text-micro">
+              <span className="shrink-0 font-mono text-slate-200">{f.name}</span>
+              <span className="shrink-0 text-slate-500">{typeLabel(f.type)}</span>
+              {f.pk && <span className="shrink-0 text-amber-400/90">PK</span>}
+              {f.unique && !f.pk && <span className="shrink-0 text-emerald-400/80">UQ</span>}
+              {f.comment && (
+                <span className="min-w-0 flex-1 truncate text-slate-500" title={f.comment}>{f.comment}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex items-center gap-2 border-t border-white/10 pt-1.5 text-micro text-slate-500">
+        <span>{t("dbd.fieldCount", { count: row.fields.length })}</span>
+        {row.indexCount > 0 && <span>{t("dbd.indexCount", { count: row.indexCount })}</span>}
+        {row.relCount > 0 && <span>{t("dbd.relCount", { count: row.relCount })}</span>}
+      </div>
+    </div>
+  );
 }
 
 export default function DbDesignerPanel() {
@@ -211,6 +252,8 @@ export default function DbDesignerPanel() {
   const [path, setPath] = useState<string>("");
   const [dirty, setDirty] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // 表列表的悬浮字段预览：定位 / 延迟关闭 / 移入本体不关，都在与思维导图共用的 hook 里
+  const hp = useHoverPreview();
   /** 布局变化计数：+1 就让画布重新适应视野（自动布局后必须做，否则停在角落） */
   const [fitSignal, setFitSignal] = useState(0);
   /** 表导航：点表名 → 选中它 + 画布平移过去（表一多，画布上「找到那张表」全靠拖） */
@@ -888,7 +931,19 @@ export default function DbDesignerPanel() {
    * 一张被引用多少次就当作父节点；成环的表同样当根，不会死循环。
    */
   const tableTreeRows = useMemo(() => {
-    type Row = { id: string; name: string; color: string; depth: number; related: boolean; relCount: number; comment: string };
+    // fields / indexes 一并带下来：悬浮预览要展示完整字段，而它们本来就在 doc.nodes 里，
+    // 悬浮时再按 id 去 find 一遍纯属多余（列表就几十行，但没必要的二次查找就不做）。
+    type Row = {
+      id: string;
+      name: string;
+      color: string;
+      depth: number;
+      related: boolean;
+      relCount: number;
+      comment: string;
+      fields: DbField[];
+      indexCount: number;
+    };
     if (!doc) return [] as Row[];
     // 每张表被多少张表引用（from = 引用方）
     const refCount = new Map<string, number>();
@@ -917,6 +972,8 @@ export default function DbDesignerPanel() {
         related: selectedId !== null && relatedIds.has(n.id),
         relCount: relCountOf(n.id),
         comment: n.comment ?? "",
+        fields: n.table?.fields ?? [],
+        indexCount: (n.table?.indexes ?? []).length,
       });
       for (const r of doc.relations) {
         if (r.to.node !== id) continue;
@@ -935,6 +992,8 @@ export default function DbDesignerPanel() {
         related: selectedId !== null && relatedIds.has(n.id),
         relCount: relCountOf(n.id),
         comment: n.comment ?? "",
+        fields: n.table?.fields ?? [],
+        indexCount: (n.table?.indexes ?? []).length,
       });
     }
     return rows;
@@ -1692,7 +1751,9 @@ export default function DbDesignerPanel() {
               )}
             </button>
             {tableNavOpen ? (
-              <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1">
+              // 列表滚动时立刻关掉悬浮预览：预览是 fixed 定位的，滚动列表它不会跟着走，
+              // 会「留在原地」指向已经滚走的表。思维导图没这问题（它不滚列表）。
+              <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1" onScroll={() => hp.hideNow()}>
                 {tableTreeRows.map((r) => (
                   <button
                     key={r.id}
@@ -1709,9 +1770,27 @@ export default function DbDesignerPanel() {
                           : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
                     }`}
                     style={{ paddingLeft: 6 + r.depth * 10 }}
-                    // 注释同时进 tooltip：列表里放不下（一行一个表是刻意的），
-                    // 但「这张表是干什么的」必须能看见 —— 注释是 AI 产出里最值钱的部分。
-                    title={r.comment ? `${r.name}\n${r.comment}` : r.name}
+                    // 悬浮展示完整字段（与思维导图的节点预览共用 shared/HoverPreview）。
+                    // 原生 title 只能塞一行字，放不下「这张表有哪些字段」—— 而表列表
+                    // 刻意做成一行一个（字段最多、名字最短），不给悬浮就只能放大画布去看，
+                    // 那是另一件事。onMouseMove 只在换行时重建内容，避免逐帧 setState。
+                    onMouseEnter={(e) => hp.show({
+                      title: r.name,
+                      x: e.clientX,
+                      y: e.clientY,
+                      accent: /^#[0-9a-f]{6}$/i.test(r.color ?? "") ? r.color : undefined,
+                      content: <TablePreviewBody row={r} />,
+                    })}
+                    onMouseMove={(e) => {
+                      if (hp.preview?.title !== r.name) {
+                        hp.show({
+                          title: r.name, x: e.clientX, y: e.clientY,
+                          accent: /^#[0-9a-f]{6}$/i.test(r.color ?? "") ? r.color : undefined,
+                          content: <TablePreviewBody row={r} />,
+                        });
+                      }
+                    }}
+                    onMouseLeave={() => hp.scheduleHide()}
                   >
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-1">
@@ -2364,6 +2443,8 @@ export default function DbDesignerPanel() {
           />
         </aside>
       ) : null}
+      {/* 表列表的悬浮字段预览（fixed 定位，随鼠标） */}
+      {hp.preview && <HoverPreview preview={hp.preview} width={320} maxHeight={340} hoverGuard={hp.hoverGuard} />}
       </div>
     </div>
   );
