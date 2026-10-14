@@ -28,6 +28,15 @@ pub struct RestoreOutcome {
 /// 幂等：没有写入过时不会有任何副作用（只返回说明），因此可以放心在
 /// 「勾选使用官方模型 → 启动」时每次都调。
 pub fn restore_tool_config(tool_config: &ToolConfig) -> Result<RestoreOutcome, String> {
+    let outcome = restore_tool_config_inner(tool_config)?;
+    // 还原成功 = 我们不再持有这个工具的配置 → 两本账都清掉。
+    // 不清的话，下次写入前的 stash 判定会以为「原来就没有这些键」，把已被还原掉的
+    // 用户值当成不存在，漂移检测也会一直报陈旧条目。
+    super::ledger::clear_tool(&tool_config.id);
+    Ok(outcome)
+}
+
+fn restore_tool_config_inner(tool_config: &ToolConfig) -> Result<RestoreOutcome, String> {
     let Some(cfg) = tool_config.config_file.as_ref() else {
         return Ok(RestoreOutcome {
             files: Vec::new(),
@@ -168,6 +177,80 @@ fn restore_custom_writer(writer: &str, tool_id: &str) -> Result<RestoreOutcome, 
 }
 
 // ─── 备份（接管别人的文件前先存一份）───
+
+// ─── 配置账本（抄 magpie stash：接管前把原值存下来）───
+
+/// 读一个点号路径当前的值（`None` = 该键不存在 **或形态不支持**），供账本记录接管前的原值。
+///
+/// 与漂移检测用的是**同一个读取口径** —— 口径不一致的话，账本记的和后来比的不是一回事，
+/// 会凭空报一堆漂移。
+///
+/// 非标量（数组/表）**返回 `None`**：那类值基本都由 `tool_config_extras` 写（pi 的 models、
+/// omp 的 modelRoles），不走 `write` 映射；强行序列化比对只会因为键序/空白差异误报漂移。
+pub(crate) fn read_key_for_ledger(
+    path: &Path,
+    dotted: &str,
+    format: super::launch::WriteFormat,
+) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    match format {
+        super::launch::WriteFormat::Toml => {
+            let doc: toml_edit::DocumentMut = text.parse().ok()?;
+            let item = lookup_toml_path(doc.as_table(), dotted)?;
+            toml_scalar_text(item)
+        }
+        super::launch::WriteFormat::Json => {
+            let stripped = super::launch::strip_jsonc(&text);
+            let doc: serde_json::Value = serde_json::from_str(&stripped).ok()?;
+            let mut cur = &doc;
+            for seg in dotted.split('.') {
+                cur = cur.get(seg)?;
+            }
+            match cur {
+                serde_json::Value::String(s) => Some(s.clone()),
+                serde_json::Value::Bool(b) => Some(b.to_string()),
+                serde_json::Value::Number(n) => Some(n.to_string()),
+                _ => None,
+            }
+        }
+        // YAML：暂不支持（我们声明里用 YAML 的键值形态还没有能稳定回读的路径）
+        super::launch::WriteFormat::Yaml => None,
+    }
+}
+
+/// 按点号路径在 TOML 表里逐层下钻（支持 `[a.b]` 表头与 `a.b = x` dotted key 两种写法）。
+fn lookup_toml_path<'a>(root: &'a dyn toml_edit::TableLike, dotted: &str) -> Option<&'a toml_edit::Item> {
+    // 先按整体键试一次（dotted key 写法：`a.b = 1` 在表里是键 "a.b"）
+    if let Some(item) = root.get(dotted) {
+        return Some(item);
+    }
+    let mut cur = root;
+    for (idx, seg) in dotted.split('.').enumerate() {
+        let item = cur.get(seg)?;
+        if idx + 1 == dotted.split('.').count() {
+            return Some(item);
+        }
+        cur = item.as_table_like()?;
+    }
+    None
+}
+
+/// TOML 标量 → 账本文本（与 `launch::ledger_value_text` 同一形态）。
+fn toml_scalar_text(item: &toml_edit::Item) -> Option<String> {
+    if let Some(s) = item.as_str() {
+        return Some(s.to_string());
+    }
+    if let Some(b) = item.as_bool() {
+        return Some(b.to_string());
+    }
+    if let Some(i) = item.as_integer() {
+        return Some(i.to_string());
+    }
+    if let Some(f) = item.as_float() {
+        return Some(f.to_string());
+    }
+    None
+}
 
 fn backup_dir(tool_id: &str) -> PathBuf {
     crate::commands::utils::get_home_dir()
@@ -419,6 +502,126 @@ fn remove_toml_keys_text(text: &str, paths: &[String]) -> Option<String> {
         None
     } else {
         Some(out)
+    }
+}
+
+#[cfg(test)]
+mod ledger_tests {
+    use super::read_key_for_ledger;
+    use crate::commands::ai::launch::launch_write_format_for_test;
+    use std::path::PathBuf;
+
+    /// 端到端：写一份配置 → 记进账本 → 外部改掉一个值 → 漂移检测必须抓到。
+    /// 纯函数测试抓不到「读取口径与写入口径不一致」这类问题，必须过一遍真实文件。
+    #[test]
+    fn json_ledger_detects_external_edit() {
+        let dir = std::env::temp_dir().join(format!("ledger-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+        let file_s = file.display().to_string();
+
+        // 1) 初始配置：两个我们将来会写的键 + 一个用户自己的键
+        std::fs::write(
+            &file,
+            r#"{"model":"claude-sonnet-4","env":{"ANTHROPIC_BASE_URL":"https://old.example"},"userKey":"keep"}"#,
+        )
+        .unwrap();
+        let fmt = launch_write_format_for_test(&file, "json");
+
+        // 2) 接管前读原值 → stash
+        let before = read_key_for_ledger(&file, "env.ANTHROPIC_BASE_URL", fmt);
+        assert_eq!(before.as_deref(), Some("https://old.example"));
+        assert_eq!(
+            read_key_for_ledger(&file, "env.NOT_THERE", fmt),
+            None,
+            "不存在的键必须读到 None（= 原来没有 → 还原时删掉）"
+        );
+
+        // 3) 我们写入
+        std::fs::write(
+            &file,
+            r#"{"model":"claude-sonnet-4","env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8080"},"userKey":"keep"}"#,
+        )
+        .unwrap();
+        let applied = vec![crate::commands::ai::ledger::ManagedKey {
+            path: "env.ANTHROPIC_BASE_URL".to_string(),
+            value: "http://127.0.0.1:8080".to_string(),
+        }];
+        let mut stash = std::collections::BTreeMap::new();
+        stash.insert("env.ANTHROPIC_BASE_URL".to_string(), before);
+        let record = {
+            crate::commands::ai::ledger::record_write("ledger-test-tool", &file_s, &applied, &stash);
+            crate::commands::ai::ledger::load_applied()
+                .tools
+                .get("ledger-test-tool")
+                .cloned()
+                .expect("账本里应有该工具")
+        };
+
+        // 3.5) 没被改 → 无漂移
+        let read = |_f: &str, p: &str| read_key_for_ledger(&file, p, fmt);
+        assert!(crate::commands::ai::ledger::diff_record(&record, &read).is_empty());
+
+        // 4) 外部把值改掉（模拟用户手改 / 另一个工具覆写共享配置文件）
+        std::fs::write(
+            &file,
+            r#"{"model":"claude-sonnet-4","env":{"ANTHROPIC_BASE_URL":"https://rogue.example"},"userKey":"keep"}"#,
+        )
+        .unwrap();
+        let items = crate::commands::ai::ledger::diff_record(&record, &read);
+        assert_eq!(items.len(), 1, "应抓到 1 处漂移：{items:?}");
+        assert_eq!(items[0].kind, "changed");
+        assert_eq!(items[0].current.as_deref(), Some("https://rogue.example"));
+
+        // 5) 外部把键整个删掉
+        std::fs::write(&file, r#"{"model":"claude-sonnet-4","userKey":"keep"}"#).unwrap();
+        let items = crate::commands::ai::ledger::diff_record(&record, &read);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].kind, "removed");
+
+        // 6) 清账本
+        crate::commands::ai::ledger::clear_tool("ledger-test-tool");
+        assert!(crate::commands::ai::ledger::load_applied()
+            .tools
+            .get("ledger-test-tool")
+            .is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn toml_ledger_reads_dotted_and_nested_paths() {
+        let dir = std::env::temp_dir().join(format!("ledger-toml-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file: PathBuf = dir.join("config.toml");
+        std::fs::write(
+            &file,
+            "model = \"anyversion/gpt-5\"\n\n[model_providers.anyversion]\nbase_url = \"http://127.0.0.1:8080\"\nflag = true\ncount = 7\n",
+        )
+        .unwrap();
+        let fmt = launch_write_format_for_test(&file, "toml");
+
+        // 顶层标量
+        assert_eq!(
+            read_key_for_ledger(&file, "model", fmt).as_deref(),
+            Some("anyversion/gpt-5")
+        );
+        // 嵌套表下的标量
+        assert_eq!(
+            read_key_for_ledger(&file, "model_providers.anyversion.base_url", fmt).as_deref(),
+            Some("http://127.0.0.1:8080")
+        );
+        // 布尔与整数也要能读出来（否则会误报漂移）
+        assert_eq!(
+            read_key_for_ledger(&file, "model_providers.anyversion.flag", fmt).as_deref(),
+            Some("true")
+        );
+        assert_eq!(
+            read_key_for_ledger(&file, "model_providers.anyversion.count", fmt).as_deref(),
+            Some("7")
+        );
+        // 不存在的 → None
+        assert_eq!(read_key_for_ledger(&file, "model_providers.other.base_url", fmt), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

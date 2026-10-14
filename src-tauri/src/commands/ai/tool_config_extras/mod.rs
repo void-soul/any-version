@@ -23,6 +23,7 @@ use std::path::Path;
 
 use crate::commands::ai::tool_config_restore::RestoreOutcome;
 
+pub(crate) mod claude_code;
 pub(crate) mod codex;
 pub(crate) mod omp;
 pub(crate) mod zcode;
@@ -103,6 +104,7 @@ pub(crate) fn apply_extras(ctx: &ExtrasCtx<'_>) -> Result<Vec<String>, String> {
         "codex-cli" | "chatgptdesktop" => codex::apply(ctx),
         "zcode" => zcode::apply(ctx),
         "omp" => omp::apply(ctx),
+        "claude-code" => claude_code::apply(ctx),
         _ => Ok(Vec::new()),
     }
 }
@@ -119,6 +121,7 @@ pub(crate) fn restore_extras(tool_id: &str, main_path: &Path) -> Result<RestoreO
         "codex-cli" | "chatgptdesktop" => codex::restore(main_path),
         "zcode" => zcode::restore(main_path),
         "omp" => omp::restore(main_path),
+        "claude-code" => claude_code::restore(main_path),
         _ => Ok(RestoreOutcome::default()),
     }
 }

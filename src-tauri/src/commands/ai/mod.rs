@@ -8,6 +8,8 @@ pub mod balance;
 pub mod headroom;
 pub mod route;
 pub mod aggregate;
+pub mod affinity;
+pub mod ledger;
 pub mod detect;
 pub mod skills;
 pub mod mcp;

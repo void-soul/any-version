@@ -32,20 +32,61 @@ pub fn declared_image_support(
         .and_then(|c| c.supports_image)
 }
 
-/// 纯函数：清洗链路——保序去重、丢弃仓库里已不存在的供应商/模型。
+/// 链路上被清掉的成员 + 原因（供前端如实告知，避免「配置自己变短了却不知道为什么」）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DroppedMember {
+    pub provider_id: String,
+    pub provider_name: String,
+    pub model_id: String,
+    /// `provider_gone` = 供应商已删除；`model_gone` = 该模型已从供应商列表里消失
+    pub reason: String,
+    /// 展示文案
+    pub message: String,
+}
+
+/// 清洗结果：保留下来的成员 + 被清掉的成员及原因。
+pub struct ChainNormalizeOutcome {
+    pub kept: Vec<RouteCandidate>,
+    pub dropped: Vec<DroppedMember>,
+}
+
+/// 纯函数：清洗链路**并报告被丢弃的成员与原因**。
 ///
-/// 触发场景：删除供应商、编辑供应商时删掉了某个模型、配置文件被手工改坏。
-pub fn normalize_route_chain(chain: &[RouteCandidate], providers: &[AiProvider]) -> Vec<RouteCandidate> {
-    let mut out: Vec<RouteCandidate> = Vec::new();
+/// 「模型已从供应商列表里消失」是 orca `04b4e962` 说的那类故障的前半段：
+/// 记住的模型不再被提供 → 请求一出手就失败。我们这边对应的是「链路里引用的模型
+/// 已经不在仓库里」。以前 [`normalize_route_chain`] 是静默丢弃（还会顺手落库），
+/// 用户只会看到列表变短了，说不出为什么。
+pub fn normalize_route_chain_reporting(
+    chain: &[RouteCandidate],
+    providers: &[AiProvider],
+) -> ChainNormalizeOutcome {
+    let mut kept: Vec<RouteCandidate> = Vec::new();
+    let mut dropped: Vec<DroppedMember> = Vec::new();
     for candidate in chain {
         let Some(provider) = providers.iter().find(|p| p.id == candidate.provider_id) else {
+            dropped.push(DroppedMember {
+                provider_id: candidate.provider_id.clone(),
+                provider_name: candidate.provider_id.clone(),
+                model_id: candidate.model_id.trim().to_string(),
+                reason: "provider_gone".to_string(),
+                message: "供应商已不存在".to_string(),
+            });
             continue;
         };
         let model_id = candidate.model_id.trim();
         if model_id.is_empty() {
+            // 脏数据，不算「消失」，不打扰用户
             continue;
         }
         if !provider.models.iter().any(|m| m.id == model_id) {
+            dropped.push(DroppedMember {
+                provider_id: provider.id.clone(),
+                provider_name: provider.name_or_id().to_string(),
+                model_id: model_id.to_string(),
+                reason: "model_gone".to_string(),
+                message: format!("模型「{model_id}」已不在 {} 的模型列表里", provider.name_or_id()),
+            });
             continue;
         }
         let entry = RouteCandidate {
@@ -54,14 +95,32 @@ pub fn normalize_route_chain(chain: &[RouteCandidate], providers: &[AiProvider])
             // 显式能力声明是用户手工标的，必须跟着候选活下来（清洗只针对失效的供应商/模型）
             supports_image: candidate.supports_image,
         };
-        if !out.contains(&entry) {
-            out.push(entry);
+        if !kept.contains(&entry) {
+            kept.push(entry);
         }
-        if out.len() >= MAX_ROUTE_CHAIN {
+        if kept.len() >= MAX_ROUTE_CHAIN {
             break;
         }
     }
-    out
+    ChainNormalizeOutcome { kept, dropped }
+}
+
+/// 读取链路，附带**被清掉的成员及原因**（不落库，纯查询）。
+///
+/// 前端据此告知用户「哪几个成员因为引用了已不存在的模型被移出链路」，
+/// 而不是让人对着变短的列表猜。
+#[tauri::command]
+pub fn get_route_chain_health() -> Result<(Vec<RouteCandidate>, Vec<DroppedMember>), String> {
+    let config = load_ai_config();
+    let outcome = normalize_route_chain_reporting(&config.route_chain, &config.providers);
+    Ok((outcome.kept, outcome.dropped))
+}
+
+/// 纯函数：清洗链路——保序去重、丢弃仓库里已不存在的供应商/模型。
+///
+/// 触发场景：删除供应商、编辑供应商时删掉了某个模型、配置文件被手工改坏。
+pub fn normalize_route_chain(chain: &[RouteCandidate], providers: &[AiProvider]) -> Vec<RouteCandidate> {
+    normalize_route_chain_reporting(chain, providers).kept
 }
 
 /// 仓库候选视图（前端路由链页左栏：勾选哪些候选入链）。
@@ -78,6 +137,13 @@ pub struct RouteCandidateView {
     pub order: Option<usize>,
     /// 是否指向聚合服务自身（自引用）：入链会造成请求递归，前端禁止勾选
     pub self_referential: bool,
+    /// 该成员当前**不可用**的原因（可直接展示）；`None` = 可用。
+    ///
+    /// 以前这里只有一个 `self_referential`，而它只看 `openai_url`；运行期却按
+    /// openai → anthropic → google 取端点。于是「只填了 `anthropic_url`」的供应商
+    /// 前端不标红、保存不剔除、入运行时被静默丢弃 —— 用户以为它在链里。
+    /// 现在三处读同一个判定（`aggregate::member_availability`）。
+    pub unusable_reason: Option<String>,
 }
 
 /// 纯函数：由仓库（providers）+ 链路推导出候选视图（保持仓库顺序）。
@@ -89,7 +155,9 @@ pub fn describe_candidates(
 ) -> Vec<RouteCandidateView> {
     let mut out = Vec::new();
     for provider in providers {
-        let self_ref = super::aggregate::is_self_referential(&provider.openai_url, aggregate_port);
+        // 与运行期构建候选同一个判定，避免「界面说可用、实际被丢弃」
+        let avail = super::aggregate::member_availability(provider, aggregate_port);
+        let self_ref = avail.unusable_reason == Some(super::aggregate::MemberIssue::SelfReferential);
         for model in &provider.models {
             let order = chain
                 .iter()
@@ -104,6 +172,7 @@ pub fn describe_candidates(
                 in_chain: order.is_some(),
                 order,
                 self_referential: self_ref,
+                unusable_reason: avail.unusable_reason.map(|r| r.message().to_string()),
             });
         }
     }
@@ -125,6 +194,11 @@ pub fn get_route_chain() -> Result<Vec<RouteCandidate>, String> {
 /// 保存链路（清洗后落库，返回实际保存的内容）。
 ///
 /// 额外剔除「指向聚合服务自身」的自引用候选：把「本地聚合」加进自己的链路会造成请求递归。
+///
+/// **只剔自引用，不剔「缺 Key / 没端点」**：后者是「暂时不就绪」（用户正在编辑供应商、
+/// 刚新增还没填 Key），把它们也删掉等于「一次普通保存就把配置清空」—— CodexPlusPlus
+/// 踩过这个坑（`42c080a` 的提交信息里记着「一次普通保存就把正在用的聚合成员静默删掉」）。
+/// 缺 Key 这类状态改为在候选视图里如实显示原因（`unusable_reason`），由用户自己决定。
 #[tauri::command]
 pub fn save_route_chain(chain: Vec<RouteCandidate>) -> Result<Vec<RouteCandidate>, String> {
     let mut config: AiConfig = load_ai_config();
@@ -133,8 +207,12 @@ pub fn save_route_chain(chain: Vec<RouteCandidate>) -> Result<Vec<RouteCandidate
         .into_iter()
         .filter(|c| {
             let provider = config.providers.iter().find(|p| p.id == c.provider_id);
+            // 与候选视图、运行期构建同一套判定（以前这里只看 openai_url）
             !provider
-                .map(|p| super::aggregate::is_self_referential(&p.openai_url, port))
+                .map(|p| {
+                    super::aggregate::member_availability(p, port).unusable_reason
+                        == Some(super::aggregate::MemberIssue::SelfReferential)
+                })
                 .unwrap_or(false)
         })
         .collect::<Vec<_>>();
@@ -222,6 +300,59 @@ mod tests {
         let providers = vec![provider("a", &refs)];
         let chain: Vec<RouteCandidate> = model_ids.iter().map(|m| candidate("a", m)).collect();
         assert_eq!(normalize_route_chain(&chain, &providers).len(), MAX_ROUTE_CHAIN);
+    }
+
+    /// 只填了 `anthropic_url` 的供应商也必须被判出自引用。
+    /// 以前候选视图与保存清洗只看 `openai_url`，这类供应商前端不标红、保存不剔除，
+    /// 却在运行期被 `build_candidates` 静默丢弃 —— 用户以为它在链里。
+    #[test]
+    fn anthropic_only_provider_is_flagged_self_referential() {
+        let port = 15888u16;
+        let mut p = provider("agg", &["m1"]);
+        p.openai_url = String::new();
+        p.anthropic_url = format!("http://127.0.0.1:{port}");
+
+        let views = describe_candidates(&[p.clone()], &[candidate("agg", "m1")], port);
+        assert!(
+            views[0].self_referential,
+            "anthropic-only 的自引用必须被标出：{:?}",
+            views[0]
+        );
+    }
+
+    /// 缺 Key / 没端点要在视图里如实给出原因（**不**在保存时被静默删除）
+    #[test]
+    fn unavailable_reasons_are_reported_not_hidden() {
+        let mut no_key = provider("a", &["m1"]);
+        no_key.api_key = "  ".to_string();
+        let mut no_endpoint = provider("b", &["m1"]);
+        no_endpoint.openai_url = String::new();
+
+        let views = describe_candidates(
+            &[no_key, no_endpoint],
+            &[],
+            15888,
+        );
+        let reason_of = |id: &str| {
+            views
+                .iter()
+                .find(|v| v.provider_id == id)
+                .and_then(|v| v.unusable_reason.clone())
+        };
+        assert!(reason_of("a").unwrap().contains("API Key"), "{:?}", reason_of("a"));
+        assert!(
+            reason_of("b").unwrap().contains("未配置任何端点"),
+            "{:?}",
+            reason_of("b")
+        );
+    }
+
+    /// 健康成员不应带任何不可用原因
+    #[test]
+    fn healthy_member_has_no_reason() {
+        let views = describe_candidates(&[provider("a", &["m1"])], &[candidate("a", "m1")], 15888);
+        assert!(views[0].unusable_reason.is_none());
+        assert!(!views[0].self_referential);
     }
 
     #[test]

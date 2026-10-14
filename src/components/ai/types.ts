@@ -212,6 +212,13 @@ export interface RouteCandidateView {
   order: number | null;
   /** 指向聚合服务自身（自引用）：入链会造成请求递归，禁止勾选 */
   self_referential: boolean;
+  /**
+   * 该成员当前不可用的原因（可直接展示）；null = 可用。
+   *
+   * 后端与运行期构建候选共用同一套判定（`aggregate::member_availability`），
+   * 所以这里非 null 就意味着「勾了也不会真的进候选」。
+   */
+  unusable_reason: string | null;
 }
 
 export interface AiConfig {

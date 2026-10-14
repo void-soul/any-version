@@ -10,6 +10,7 @@
 //! - 链路热更新：每次请求实时读取配置，改完链路无需重启服务
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use axum::{
@@ -151,6 +152,284 @@ fn is_retryable(class: FailureClass) -> bool {
     retry_budget(class) > 1
 }
 
+/// `Retry-After` 的信任上限：**1 小时**。
+///
+/// 抄 magpie `internal/gateway/routing.go:101` 的 `longestWait = 1h`。我们以前直接
+/// `.min(24h)` 收下厂商给的任何值 —— 遇到脏数据（`Retry-After: 86400`、或把毫秒当秒填）
+/// 就把候选冻一整天，期间这条链少一个可选项。厂商说的话要信，但只信到小时级别；
+/// 想更长的等待，去读「什么时候恢复」那条（[`parse_resets_at`]）。
+pub const RETRY_AFTER_TRUST_CAP_SECS: u64 = 60 * 60;
+
+/// 「厂商明确说了什么时候恢复」的信任上限：7 天（抄 magpie 的 `longestWritten`）。
+/// 超过就当没读懂 —— 一个声称要等半年的限额信息一定是解析错了。
+pub const RESETS_WRITTEN_CAP_SECS: u64 = 7 * 24 * 60 * 60;
+
+/// 从错误体里解析「厂商说自己什么时候恢复」，返回 Unix **毫秒**。
+///
+/// 抄 magpie `internal/gateway/routing.go` 的四种 `resets*` 解析（`:520-617`）。
+/// 我们以前只会按固定时长冷却，等于「明知道 19 分钟后恢复，却先冻 1 小时」。
+/// 形态：
+/// - `resets_at`（RFC3339 / unix 秒）—— ChatGPT 系
+/// - `resets_in_seconds` / `resetsAfter` —— 相对秒数
+/// - `usage limit reached|<10 位 unix>` —— Claude Code 系
+/// - `resets in 0h 19min` / `resets in 19m` —— 相对时长
+/// - 中文「将在 2026-10-11 20:16:02 重置」（含可选时区偏移）
+///
+/// `now_ms` 由调用方传入，便于测试。解析不出或超出 7 天上限 → `None`（走固定时长兜底）。
+pub fn parse_resets_at(body: &str, now_ms: u64) -> Option<u64> {
+    let lower = body.to_ascii_lowercase();
+
+    // 1) resets_at / resets_in_seconds
+    if let Some(v) = json_u64_field(body, &["resets_at", "resetsAt", "reset_at"]) {
+        if let Some(ms) = unix_to_ms(v) {
+            if in_trust_window(ms, now_ms) {
+                return Some(ms);
+            }
+        }
+    }
+    if let Some(secs) = json_u64_field(body, &["resets_in_seconds", "resetsInSeconds"]) {
+        let ms = now_ms.saturating_add(secs.saturating_mul(1000));
+        if in_trust_window(ms, now_ms) {
+            return Some(ms);
+        }
+    }
+
+    // 2) usage limit reached|<unix>（Claude Code 把 10 位时间戳拼在文案后面）
+    for marker in ["usage limit reached|", "usage limit reached:", "usage limit reached "] {
+        if let Some(idx) = lower.find(marker) {
+            let tail = &lower[idx + marker.len()..];
+            let digits: String = tail
+                .chars()
+                .skip_while(|c| !c.is_ascii_digit())
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            if digits.len() == 10 {
+                if let Ok(secs) = digits.parse::<u64>() {
+                    let ms = secs.saturating_mul(1000);
+                    if in_trust_window(ms, now_ms) {
+                        return Some(ms);
+                    }
+                }
+            }
+        }
+    }
+
+    // 3) resets in 0h 19min / resets in 19m / resets in 19 minutes
+    if let Some(idx) = lower.find("resets in") {
+        let secs = parse_relative_duration(&lower[idx + "resets in".len()..]);
+        if secs > 0 {
+            let ms = now_ms.saturating_add(secs.saturating_mul(1000));
+            if in_trust_window(ms, now_ms) {
+                return Some(ms);
+            }
+        }
+    }
+
+    // 4) 中文「将在 2026-10-11 20:16:02 重置」（时区偏移可选）
+    if let Some(idx) = body.find("将在") {
+        let tail: String = body[idx + "将在".len()..].chars().take(40).collect();
+        if let Some(ms) = parse_cn_reset_time(&tail) {
+            if in_trust_window(ms, now_ms) {
+                return Some(ms);
+            }
+        }
+    }
+    if let Some(idx) = body.find("将于") {
+        let tail: String = body[idx + "将于".len()..].chars().take(40).collect();
+        if let Some(ms) = parse_cn_reset_time(&tail) {
+            if in_trust_window(ms, now_ms) {
+                return Some(ms);
+            }
+        }
+    }
+    None
+}
+
+/// 恢复时刻必须在「未来 5 分钟」~「未来 7 天」之间才采信。
+/// 过去的时间（时钟漂移 / 已过期）当没读懂；太远的当解析错了。
+fn in_trust_window(ms: u64, now_ms: u64) -> bool {
+    let five_min_ms = 5 * 60 * 1000;
+    let cap_ms = RESETS_WRITTEN_CAP_SECS.saturating_mul(1000);
+    ms > now_ms.saturating_add(five_min_ms) && ms <= now_ms.saturating_add(cap_ms)
+}
+
+/// 10 位按 unix 秒、13 位按毫秒处理；其他位数不采信。
+fn unix_to_ms(v: u64) -> Option<u64> {
+    match v {
+        v if (1_000_000_000..10_000_000_000).contains(&v) => Some(v.saturating_mul(1000)),
+        v if v > 10_000_000_000 => Some(v),
+        _ => None,
+    }
+}
+
+/// 从 JSON 里取第一个能解析成 u64 的字段。
+///
+/// **顶层和 `error` 子对象都要看**：限额信息在真实响应里通常是嵌在 `error` 下的
+/// （`{"error":{"resets_in_seconds":1140}}`），只看顶层会整条漏掉。
+fn json_u64_field(body: &str, names: &[&str]) -> Option<u64> {
+    let parsed: Value = serde_json::from_str(body).ok()?;
+    let mut scopes: Vec<&Value> = vec![&parsed];
+    if let Some(err) = parsed.get("error") {
+        scopes.push(err);
+    }
+    for scope in scopes {
+        for name in names {
+            match scope.get(*name) {
+                Some(Value::Number(n)) => {
+                    if let Some(u) = n.as_u64() {
+                        return Some(u);
+                    }
+                }
+                Some(Value::String(s)) => {
+                    if let Ok(u) = s.trim().parse::<u64>() {
+                        return Some(u);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+/// 解析 `0h 19min` / `19m` / `2 hours 5 minutes` / `20分` 这类相对时长（秒）。
+///
+/// 逐个扫「数字 + 单位」对并累加；没有任一带单位的数字 → 0（当没读懂）。
+fn parse_relative_duration(text: &str) -> u64 {
+    let chars: Vec<char> = text.chars().collect();
+    let mut total: u64 = 0;
+    let mut found = false;
+    let mut i = 0usize;
+    while i < chars.len() {
+        if !chars[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let mut num = String::new();
+        while i < chars.len() && chars[i].is_ascii_digit() {
+            num.push(chars[i]);
+            i += 1;
+        }
+        let value: u64 = num.parse().unwrap_or(0);
+        // 单位：吞掉数字与单位之间的分隔符（空格/逗号），读到下一个数字或 12 字符为止
+        let mut unit = String::new();
+        while i < chars.len() && !chars[i].is_ascii_digit() && unit.chars().count() < 12 {
+            unit.push(chars[i]);
+            i += 1;
+        }
+        // 分隔符要先去掉：`" minutes"` 不 strip 就 `starts_with('m')` 判false，
+        // `"resets in 2 hours 5 minutes"` 会被整段丢掉
+        let u = unit.trim().to_ascii_lowercase();
+        let secs = if u.starts_with('h') || u.contains("小时") {
+            value.saturating_mul(3600)
+        } else if u.starts_with('m') || u.contains("分") {
+            value.saturating_mul(60)
+        } else if u.starts_with('s') || u.contains("秒") {
+            value
+        } else {
+            0
+        };
+        if secs > 0 {
+            total = total.saturating_add(secs);
+            found = true;
+        }
+    }
+    if found { total } else { 0 }
+}
+
+/// 解析中文「2026-10-11 20:16:02（可选时区）」这类绝对时刻。
+///
+/// 严格校验（抄 magpie `resetsWritten:589-617` 的防误读）：
+/// - 月份 1~12、日 1~31、时 0~23、分秒 0~59 —— 挡掉「2026-13-45」这类路过的日期；
+/// - 数字原样拼成时间戳后再 round-trip 回年月日比对 —— 挡掉 2 月 31 日这类溢出。
+/// 无时区信息按 **本地时区** 处理（厂商文案通常给本地时间）。
+fn parse_cn_reset_time(text: &str) -> Option<u64> {
+    // 抓第一组 `YYYY-MM-DD`
+    let bytes: Vec<char> = text.chars().collect();
+    let mut h: u32 = 0;
+    let mut mi: u32 = 0;
+    let mut se: u32 = 0;
+    let mut i = 0usize;
+    // 年
+    let mut num = String::new();
+    while i < bytes.len() && num.len() < 4 && bytes[i].is_ascii_digit() {
+        num.push(bytes[i]);
+        i += 1;
+    }
+    if num.len() != 4 || i >= bytes.len() || bytes[i] != '-' {
+        return None;
+    }
+    let y: i64 = num.parse().ok()?;
+    i += 1;
+    num.clear();
+    while i < bytes.len() && num.len() < 2 && bytes[i].is_ascii_digit() {
+        num.push(bytes[i]);
+        i += 1;
+    }
+    if num.len() != 2 || i >= bytes.len() || bytes[i] != '-' {
+        return None;
+    }
+    let mo: u32 = num.parse().ok()?;
+    i += 1;
+    num.clear();
+    while i < bytes.len() && num.len() < 2 && bytes[i].is_ascii_digit() {
+        num.push(bytes[i]);
+        i += 1;
+    }
+    if num.len() != 2 {
+        return None;
+    }
+    let d: u32 = num.parse().ok()?;
+    // 校验月/日范围
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) {
+        return None;
+    }
+    // 找时间部分（跳过日期与时间之间的任意非数字串）
+    let rest: String = bytes[i.min(bytes.len())..].iter().collect();
+    let time_part = rest.trim_start_matches(|c: char| !c.is_ascii_digit());
+    let tparts: Vec<&str> = time_part.split(':').collect();
+    if tparts.len() >= 2 {
+        h = tparts[0].get(..2)?.parse().ok()?;
+        mi = tparts[1].get(..2)?.parse().ok()?;
+        if tparts.len() >= 3 && tparts[2].len() >= 2 {
+            se = tparts[2][..2].parse().ok()?;
+        }
+    }
+    if h > 23 || mi > 59 || se > 59 {
+        return None;
+    }
+    // 拼时间戳并 round-trip 校验（挡掉 2 月 31 日这种溢出）
+    let candidate = local_time_to_millis(y, mo, d, h, mi, se)?;
+    if round_trip_local(candidate) != (y, mo, d, h, mi, se) {
+        return None;
+    }
+    Some(candidate)
+}
+
+/// 把本地年月日时分秒转成 Unix 毫秒（用 `chrono::Local` 的时区偏移）。
+fn local_time_to_millis(y: i64, mo: u32, d: u32, h: u32, mi: u32, se: u32) -> Option<u64> {
+    use chrono::{Local, TimeZone};
+    let naive = chrono::NaiveDate::from_ymd_opt(y as i32, mo, d)?.and_hms_opt(h, mi, se)?;
+    let local: chrono::DateTime<Local> = Local.from_local_datetime(&naive).earliest()?;
+    Some(local.timestamp_millis().max(0) as u64)
+}
+
+/// 把时间戳换回本地年月日时分秒（校验用）。
+fn round_trip_local(ms: u64) -> (i64, u32, u32, u32, u32, u32) {
+    use chrono::{Local, TimeZone, Datelike, Timelike};
+    match Local.timestamp_millis_opt(ms as i64).single() {
+        Some(dt) => (
+            dt.year() as i64,
+            dt.month(),
+            dt.day(),
+            dt.hour(),
+            dt.minute(),
+            dt.second(),
+        ),
+        None => (0, 0, 0, 0, 0, 0),
+    }
+}
+
 /// 冷却时长（切换后多久内不再尝试该候选）。
 pub fn cooldown_for(
     class: FailureClass,
@@ -160,7 +439,6 @@ pub fn cooldown_for(
     const TRANSIENT_BASE: u64 = 30;
     const TRANSIENT_MAX: u64 = 5 * 60;
     const RATE_LIMIT_DEFAULT: u64 = 60;
-    const RATE_LIMIT_MAX: u64 = 24 * 60 * 60;
     const AUTH_OR_BILLING: u64 = 60 * 60;
     const MODEL_UNAVAILABLE: u64 = 6 * 60 * 60;
     match class {
@@ -169,7 +447,10 @@ pub fn cooldown_for(
         }
         FailureClass::ModelUnavailable => std::time::Duration::from_secs(MODEL_UNAVAILABLE),
         FailureClass::RateLimit => std::time::Duration::from_secs(
-            retry_after.unwrap_or(RATE_LIMIT_DEFAULT).min(RATE_LIMIT_MAX),
+            // 封顶 1 小时（magpie longestWait），不再盲信 24h
+            retry_after
+                .unwrap_or(RATE_LIMIT_DEFAULT)
+                .min(RETRY_AFTER_TRUST_CAP_SECS),
         ),
         FailureClass::Transient => {
             // 30s → 60s → 120s → 240s → 300s（封顶）
@@ -179,6 +460,31 @@ pub fn cooldown_for(
         }
         FailureClass::Fatal => std::time::Duration::from_secs(0),
     }
+}
+
+/// 「限额类」失败的冷却：优先用厂商说的恢复时刻，退化到默认时长。
+///
+/// 抄 magpie 的 `failQuota`（`routing.go:651-682`）的取值优先级：
+/// 「用户自设 > 厂商说的恢复时刻 > Retry-After > 固定兜底」。
+/// 这是 magpie ② 里对我们价值最高的一条：以前只知道「要等」，现在能等到点。
+pub fn quota_cooldown_for(
+    default_secs: u64,
+    retry_after: Option<u64>,
+    resets_at_ms: Option<u64>,
+    now_ms: u64,
+) -> std::time::Duration {
+    let cap_ms = RETRY_AFTER_TRUST_CAP_SECS.saturating_mul(1000);
+    // 1) 厂商明确说了恢复时刻 → 用它（但仍受 1 小时上限约束，避免脏数据把候选冻太久；
+    //    超过上限时先试 Retry-After，两者都没有就用默认值）
+    if let Some(target) = resets_at_ms.filter(|t| *t > now_ms && *t <= now_ms.saturating_add(cap_ms)) {
+        let secs = target.saturating_sub(now_ms).div_ceil(1000);
+        return std::time::Duration::from_secs(secs.max(1));
+    }
+    // 2) Retry-After（封顶 1 小时）
+    if let Some(secs) = retry_after {
+        return std::time::Duration::from_secs(secs.clamp(1, RETRY_AFTER_TRUST_CAP_SECS));
+    }
+    std::time::Duration::from_secs(default_secs)
 }
 
 /// 候选健康状态（服务进程内维护；重启即清空）。
@@ -216,6 +522,7 @@ fn record_failure(
     key: &str,
     class: FailureClass,
     retry_after: Option<u64>,
+    resets_at_ms: Option<u64>,
 ) -> std::time::Duration {
     let mut guard = match health.lock() {
         Ok(g) => g,
@@ -223,7 +530,16 @@ fn record_failure(
     };
     let entry = guard.entry(key.to_string()).or_default();
     entry.consecutive_failures = entry.consecutive_failures.saturating_add(1);
-    let cooldown = cooldown_for(class, retry_after, entry.consecutive_failures);
+    // 限额类优先「等到厂商说的那个点」，而不是一律固定时长（抄 magpie failQuota）
+    let cooldown = match class {
+        FailureClass::Billing | FailureClass::RateLimit => quota_cooldown_for(
+            cooldown_for(class, retry_after, entry.consecutive_failures).as_secs(),
+            retry_after,
+            resets_at_ms,
+            now_ms(),
+        ),
+        _ => cooldown_for(class, retry_after, entry.consecutive_failures),
+    };
     entry.cooldown_until_ms = Some(now_ms().saturating_add(cooldown.as_millis() as u64));
     cooldown
 }
@@ -268,6 +584,11 @@ pub fn filter_self_referential(
 ///
 /// 高危场景：把「本地聚合」这类指向本服务的供应商也加进聚合链，
 /// 转发时就会打到自己 → 请求无限递归。启动与转发两侧都要拦。
+///
+/// 解析 authority 时必须剥掉 **userinfo**（`http://user:pass@host:port`）与
+/// **query / fragment**（`http://host:port?x=1`）—— 两者都会让端口号解析失败，
+/// 于是「真递归」被判成「不是自引用」。反过来，路径前缀（`/v1`）不需要比：
+/// 只要 host + 端口对上就是同一个监听器。
 pub fn is_self_referential(base_url: &str, aggregate_port: u16) -> bool {
     let raw = base_url.trim();
     if raw.is_empty() {
@@ -277,21 +598,130 @@ pub fn is_self_referential(base_url: &str, aggregate_port: u16) -> bool {
         Some((_scheme, rest)) => rest,
         None => raw,
     };
-    let authority = without_scheme.split('/').next().unwrap_or("").trim();
+    // query / fragment 之后的部分不属于 authority
+    let authority = without_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("")
+        .trim();
     if authority.is_empty() {
         return false;
     }
-    let (host, port_part) = match authority.rfind(':') {
-        Some(idx) => (&authority[..idx], Some(&authority[idx + 1..])),
-        None => (authority, None),
+    // userinfo：最后一个 `@` 之后才是 host[:port]（密码里可能有 `@`，故用 rfind）
+    let host_port = match authority.rfind('@') {
+        Some(idx) => &authority[idx + 1..],
+        None => authority,
+    };
+    let (host, port_part) = match host_port.rfind(':') {
+        Some(idx) => (&host_port[..idx], Some(&host_port[idx + 1..])),
+        None => (host_port, None),
     };
     let host = host.trim().trim_matches('[').trim_matches(']').to_ascii_lowercase();
-    let is_loopback = matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1" | "0.0.0.0");
     let port_matches = port_part
         .and_then(|p| p.parse::<u16>().ok())
         .map(|p| p == aggregate_port)
         .unwrap_or(false);
-    is_loopback && port_matches
+    if !port_matches {
+        return false;
+    }
+    is_local_host(&host)
+}
+
+/// host 是否指向本机。**端口相等是前提**（调用方已判），这里只判主机。
+///
+/// 覆盖：`localhost` 及其子域、`::1` / `[::]` / IPv6 回环、`0.0.0.0`、
+/// 以及整个 `127.0.0.0/8`（`127.0.0.2`、`127.1` 这类写法都指向本机）。
+/// 以前只认 4 个字面量，`127.0.0.0/8` 的其余地址会漏判成「不是自引用」→ 真递归。
+fn is_local_host(host: &str) -> bool {
+    if host.is_empty() {
+        return false;
+    }
+    if host == "localhost" || host.ends_with(".localhost") {
+        return true;
+    }
+    // IPv6 回环：::1 / :: / 0:0:0:0:0:0:0:1
+    let ipv6 = host.trim_start_matches("::ffff:");
+    if ipv6 == "::1" || ipv6 == "::" {
+        return true;
+    }
+    if host == "0.0.0.0" {
+        return true;
+    }
+    // IPv4：解析 dotted-quad，判 A 段是不是 127
+    let parts: Vec<&str> = host.split('.').collect();
+    if parts.len() == 4 && parts.iter().all(|p| p.parse::<u8>().is_ok()) {
+        return parts[0] == "127";
+    }
+    // 短写法：`a.b` = `a.0.0.b`（所以 `127.1` 就是 `127.0.0.1`）、`a.b.c` = `a.0.b.c`。
+    // A 段是 127 就够，不必看其余段。
+    if (2..=3).contains(&parts.len()) && parts.iter().all(|p| p.parse::<u8>().is_ok()) {
+        return parts[0] == "127";
+    }
+    false
+}
+
+/// 一个供应商作为「聚合链成员」时的可用性判定结果。
+///
+/// **这是成员可用性的唯一真相源**：`route.rs` 的候选视图、保存时的清洗，
+/// 以及 `build_candidates` 的构建期过滤都读它。以前三处各判各的：
+/// 前两处只看 `openai_url`，运行期却按 openai → anthropic → google 取，
+/// 于是「只填了 `anthropic_url`」的供应商前端不标红、保存不剔除、入运行时被静默丢弃 ——
+/// 用户以为它在链里。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemberAvailability {
+    /// 运行期实际会用到的出站协议（`None` = 三种端点都没填）。
+    pub outbound: Option<Outbound>,
+    /// 运行期实际会用到的 base_url（已 trim 掉尾部 `/`）。
+    pub base_url: String,
+    /// 不可用原因（可直接展示给用户）；`None` = 可用。
+    pub unusable_reason: Option<MemberIssue>,
+}
+
+/// 成员不可用的原因。`Copy` + `Display` 便于前端直接拿到文案。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemberIssue {
+    /// 三种协议端点一个都没填
+    NoEndpoint,
+    /// 端点有，但没填 API Key
+    NoApiKey,
+    /// 端点指向聚合服务自身（会递归）
+    SelfReferential,
+}
+
+impl MemberIssue {
+    pub fn message(self) -> &'static str {
+        match self {
+            MemberIssue::NoEndpoint => "未配置任何端点（openai_url / anthropic_url / google_url 全为空）",
+            MemberIssue::NoApiKey => "缺少 API Key",
+            MemberIssue::SelfReferential => "指向聚合服务自身，会造成请求递归",
+        }
+    }
+}
+
+/// 判定一个供应商能否作为聚合链成员。
+///
+/// 与 [`pick_outbound`] 的取端点优先级严格一致（openai → anthropic → google），
+/// 这是本函数存在的全部意义：**三处调用点必须看到同一个答案**。
+pub fn member_availability(provider: &AiProvider, aggregate_port: u16) -> MemberAvailability {
+    let picked = pick_outbound(provider);
+    let base = picked
+        .as_ref()
+        .map(|(_, b, _)| b.trim().trim_end_matches('/').to_string())
+        .unwrap_or_default();
+    let issue = if picked.is_none() {
+        Some(MemberIssue::NoEndpoint)
+    } else if base.is_empty() || provider.api_key.trim().is_empty() {
+        Some(MemberIssue::NoApiKey)
+    } else if is_self_referential(&base, aggregate_port) {
+        Some(MemberIssue::SelfReferential)
+    } else {
+        None
+    };
+    MemberAvailability {
+        outbound: picked.map(|(o, _, _)| o),
+        base_url: base,
+        unusable_reason: issue,
+    }
 }
 
 // ─── 候选与出站协议 ───
@@ -421,23 +851,29 @@ fn build_candidates(
     aggregate_port: u16,
 ) -> Vec<AggCandidate> {
     let mut out = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
     for candidate in chain {
         let Some(provider) = providers.iter().find(|p| p.id == candidate.provider_id) else {
+            skipped.push(format!("{}: 供应商已不存在", candidate.provider_id));
             continue;
         };
-        let Some((outbound, base, include_v1)) = pick_outbound(provider) else {
+        // 可用性判定只有一个真相源（与前端候选视图、保存清洗完全同一套口径）
+        let avail = member_availability(provider, aggregate_port);
+        let Some(outbound) = avail.outbound else {
+            skipped.push(format!(
+                "{}: {}",
+                provider.name_or_id(),
+                avail.unusable_reason.map(|r| r.message()).unwrap_or("不可用")
+            ));
             continue;
         };
-        let base = base.trim().trim_end_matches('/').to_string();
-        if base.is_empty() || provider.api_key.trim().is_empty() {
-            continue;
-        }
-        if is_self_referential(&base, aggregate_port) {
-            continue;
-        }
+        let base = avail.base_url.clone();
+        let include_v1 = pick_outbound(provider)
+            .map(|(_, _, v)| v)
+            .unwrap_or(None);
         out.push(AggCandidate {
             provider_id: provider.id.clone(),
-            provider_name: if provider.name.trim().is_empty() { provider.id.clone() } else { provider.name.clone() },
+            provider_name: provider.name_or_id().to_string(),
             outbound,
             base_url: base,
             api_key: provider.api_key.clone(),
@@ -446,6 +882,11 @@ fn build_candidates(
             headers: crate::proxy::headers::normalize(&provider.custom_headers),
             supports_image: candidate.supports_image,
         });
+    }
+    // 静默丢弃是这条链路上最难排查的问题：用户看到「模型在链里」，实际根本没进候选。
+    // 把被丢掉的成员连同原因打出来，至少能从日志定位到是哪几个、为什么。
+    if !skipped.is_empty() {
+        eprintln!("[aggregate] 构建期剔除 {} 个候选: {}", skipped.len(), skipped.join("；"));
     }
     out
 }
@@ -521,6 +962,10 @@ struct AggregateEntry {
 }
 
 static AGGREGATE: OnceLock<Mutex<Option<AggregateEntry>>> = OnceLock::new();
+
+/// 每次请求热更新链路时刷新（供 `get_aggregate_status` 返回真实候选数）。
+/// 以前 `candidate_count` 在状态查询里恒为 0、前端也从未渲染 → 有效候选数没有任何来源。
+static AGG_CANDIDATE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Clone)]
 struct AggState {
@@ -714,6 +1159,9 @@ pub async fn start_aggregate_service(app: tauri::AppHandle) -> Result<AggregateS
     *AGGREGATE.get_or_init(|| Mutex::new(None)).lock().unwrap() =
         Some(AggregateEntry { port, handle });
 
+    // 记下真实候选数，供状态查询返回（以前恒为 0）
+    AGG_CANDIDATE_COUNT.store(candidates.len(), Ordering::Relaxed);
+
     if candidates.is_empty() {
         emit_aggregate_log(
             &app,
@@ -773,7 +1221,7 @@ pub async fn get_aggregate_status() -> AggregateStatus {
     AggregateStatus {
         running: alive,
         port,
-        candidate_count: 0,
+        candidate_count: AGG_CANDIDATE_COUNT.load(Ordering::Relaxed),
         detail: if alive { "运行中".to_string() } else { "服务无响应".to_string() },
     }
 }
@@ -803,12 +1251,20 @@ async fn list_models() -> Json<Value> {
     }))
 }
 
-async fn chat_completions(State(state): State<AggState>, Json(body): Json<Value>) -> Response {
-    forward(state, "openai", body).await
+async fn chat_completions(
+    State(state): State<AggState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    forward(state, "openai", &headers, body).await
 }
 
-async fn messages(State(state): State<AggState>, Json(body): Json<Value>) -> Response {
-    forward(state, "anthropic", body).await
+async fn messages(
+    State(state): State<AggState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    forward(state, "anthropic", &headers, body).await
 }
 
 /// `/v1/messages/count_tokens`：Anthropic 入站时的 token 估算（Claude Code 会先探测这个端点）。
@@ -831,7 +1287,20 @@ fn messages_of(body: &Value) -> Vec<Value> {
 }
 
 /// 共享转发流程（OpenAI / Anthropic 入口通用）。
-async fn forward(state: AggState, inbound: &'static str, mut body: Value) -> Response {
+async fn forward(
+    state: AggState,
+    inbound: &'static str,
+    headers: &axum::http::HeaderMap,
+    mut body: Value,
+) -> Response {
+    // 会话亲和：算一次会话键，供「候选重排」与「成功后记账」共用
+    let conv_key = {
+        let pairs: Vec<(&str, &str)> = headers
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.to_str().unwrap_or("")))
+            .collect();
+        super::affinity::conversation_id(&pairs, &body, inbound)
+    };
     // 每次请求实时读取配置：链路热更新、重试次数与压缩设置即改即生效
     let config = load_ai_config();
     let retry_count = config.aggregate.retry_count.clamp(1, 5) as usize;
@@ -851,7 +1320,33 @@ async fn forward(state: AggState, inbound: &'static str, mut body: Value) -> Res
 
     // 链路热更新：实时解析候选，变更时打日志
     let chain = normalize_route_chain(&config.route_chain, &config.providers);
-    let candidates = build_candidates(&config.providers, &chain, state.port);
+    let mut candidates = build_candidates(&config.providers, &chain, state.port);
+    // 热更新后候选数会变（用户刚补了 Key / 删了供应商），状态查询要能看到真实值
+    AGG_CANDIDATE_COUNT.store(candidates.len(), Ordering::Relaxed);
+
+    // ── 会话亲和：把上次回答这个对话的候选提到最前（保 prompt cache）──
+    {
+        let keys: Vec<String> = candidates
+            .iter()
+            .map(|c| format!("{}::{}", c.provider_id, c.model_id))
+            .collect();
+        let health = state.health.clone();
+        let is_resting = move |k: &str| cooldown_remaining_secs(&health, k).is_some();
+        let stick = super::affinity::get(&conv_key, now_ms());
+        let decision = super::affinity::decide(stick.as_ref(), &keys, &is_resting, now_ms());
+        if decision == super::affinity::AffinityDecision::Kept {
+            let who = stick.as_ref().map(|s| s.who.clone()).unwrap_or_default();
+            super::affinity::promote(&mut candidates, &who, |c| {
+                format!("{}::{}", c.provider_id, c.model_id)
+            });
+            emit_aggregate_log(
+                &state.app,
+                "route",
+                "info",
+                format!("会话亲和：沿用上次回答的候选 {}", who),
+            );
+        }
+    }
     let signature = candidates
         .iter()
         .map(|c| format!("{}::{}::{}", c.provider_id, c.model_id, c.outbound.as_str()))
@@ -1021,6 +1516,11 @@ async fn forward(state: AggState, inbound: &'static str, mut body: Value) -> Res
             match result {
                 Ok(response) => {
                     clear_health(&state.health, &key);
+                    // 会话亲和记账：**只有成功回答后才记**（抄 magpie `answered` 的时机）。
+                    // cache_read 先记 None：此刻响应体还没解析（流式的 usage 在生成器内部），
+                    // 拿不到证据就不该阻断下一次的粘连。TODO(真机)：非流式路径可从
+                    // `finish_non_stream` 的 usage 回填，让「cache 太小就不粘」这条规则真正生效。
+                    super::affinity::record(&conv_key, &key, None, now_ms());
                     if idx > 0 || attempts > 1 {
                         emit_aggregate_log(
                             &state.app,
@@ -1153,7 +1653,10 @@ async fn forward(state: AggState, inbound: &'static str, mut body: Value) -> Res
                     }
                     // 达到该类别的重试预算 → 记冷却并切换到下一个候选
                     if attempts >= retry_budget(err.class).min(retry_count.max(1)) {
-                        let cooldown = record_failure(&state.health, &key, err.class, err.retry_after);
+                        // 厂商可能明确说了「什么时候恢复」→ 优先等到那个点，而不是固定时长
+                        let resets_at = parse_resets_at(&err.error_body, now_ms());
+                        let cooldown =
+                            record_failure(&state.health, &key, err.class, err.retry_after, resets_at);
                         emit_aggregate_log(
                             &state.app,
                             "route",
@@ -1489,6 +1992,40 @@ impl CrossStreamConverter {
             Self::OpenaiToAnthropic(c) => c.usage(),
         }
     }
+    /// 异常路径：只闭合已打开的 content block，不发终止事件
+    fn close_open_blocks(&mut self) -> Vec<String> {
+        match self {
+            Self::AnthropicToOpenai(c) => c.close_open_blocks(),
+            Self::OpenaiToAnthropic(c) => c.close_open_blocks(),
+        }
+    }
+    /// 完整收尾：闭合块 + 终止事件。幂等。
+    fn finish(&mut self) -> Vec<String> {
+        match self {
+            Self::AnthropicToOpenai(c) => c.finish(),
+            Self::OpenaiToAnthropic(c) => c.finish(),
+        }
+    }
+    fn is_terminated(&self) -> bool {
+        match self {
+            Self::AnthropicToOpenai(c) => c.is_terminated(),
+            Self::OpenaiToAnthropic(c) => c.is_terminated(),
+        }
+    }
+}
+
+/// 把转换器产出的一行 SSE 文本（`event: x` / `data: y`）转成 axum `Event`。
+fn to_event(raw: &str) -> axum::response::sse::Event {
+    use axum::response::sse::Event;
+    let mut event = Event::default();
+    for line in raw.lines() {
+        if let Some(rest) = line.strip_prefix("event:") {
+            event = event.event(rest.trim());
+        } else if let Some(rest) = line.strip_prefix("data:") {
+            event = event.data(rest.trim());
+        }
+    }
+    event
 }
 
 /// 跨协议流式转发（仅 a↔o）：用流式转换器把上游 chunk 转成入口协议的 SSE 事件。
@@ -1525,6 +2062,8 @@ fn stream_cross_protocol(
         };
         let mut buffer = String::new();
         tokio::pin!(stream);
+        // 上游是否已发过 [DONE]（OpenAI 出站下它即完整终止，补收尾会重复发）
+        let mut sent_done = false;
         // 空闲超时：两个 chunk 之间超过 `idle_timeout` 无数据就终止流（首字节之后不能换
         // 候选 —— 上游已在产出，换一家会重复计费，只能把错误传给客户端让它立刻失败）
         loop {
@@ -1537,14 +2076,33 @@ fn stream_cross_protocol(
                     emit_aggregate_log(&app, "route", "warn", format!(
                         "候选 {} / {} 流式空闲超时，已终止该流: {msg}", provider_id, model
                     ));
-                    yield Ok::<_, std::convert::Infallible>(Event::default().data(format!("{{\"error\":\"{msg}\"}}")));
+                    // 先闭合已打开的 block 再报错；流已终止则只记日志，不再写事件
+                    for ev in conv.close_open_blocks() {
+                        yield Ok::<_, std::convert::Infallible>(to_event(&ev));
+                    }
+                    if conv.is_terminated() {
+                        emit_aggregate_log(&app, "route", "warn", format!(
+                            "候选 {} / {} 在终止事件之后超时，丢弃错误事件", provider_id, model
+                        ));
+                    } else {
+                        yield Ok::<_, std::convert::Infallible>(Event::default().data(format!("{{\"error\":\"{msg}\"}}")));
+                    }
                     break;
                 }
             };
             let chunk = match r {
                 Ok(c) => c,
                 Err(e) => {
-                    yield Ok::<_, std::convert::Infallible>(Event::default().data(format!("{{\"error\":\"{}\"}}", e)));
+                    for ev in conv.close_open_blocks() {
+                        yield Ok::<_, std::convert::Infallible>(to_event(&ev));
+                    }
+                    if conv.is_terminated() {
+                        emit_aggregate_log(&app, "route", "warn", format!(
+                            "候选 {} / {} 在终止事件之后断流，丢弃错误事件", provider_id, model
+                        ));
+                    } else {
+                        yield Ok::<_, std::convert::Infallible>(Event::default().data(format!("{{\"error\":\"{}\"}}", e)));
+                    }
                     break;
                 }
             };
@@ -1556,22 +2114,28 @@ fn stream_cross_protocol(
                     None => continue,
                 };
                 if data_str == "[DONE]" {
+                    sent_done = true;
                     yield Ok::<_, std::convert::Infallible>(Event::default().data("[DONE]"));
+                    // 只发 [DONE] 不带 finish_reason 的上游：Anthropic 出站需补收尾
+                    if inbound == "anthropic" {
+                        for ev in conv.finish() {
+                            yield Ok::<_, std::convert::Infallible>(to_event(&ev));
+                        }
+                    }
                     continue;
                 }
                 if let Ok(cj) = serde_json::from_str::<Value>(&data_str) {
                     for ev in conv.convert_chunk(&cj) {
-                        let mut event = Event::default();
-                        for line in ev.lines() {
-                            if let Some(rest) = line.strip_prefix("event:") {
-                                event = event.event(rest.trim());
-                            } else if let Some(rest) = line.strip_prefix("data:") {
-                                event = event.data(rest.trim());
-                            }
-                        }
-                        yield Ok::<_, std::convert::Infallible>(event);
+                        yield Ok::<_, std::convert::Infallible>(to_event(&ev));
                     }
                 }
+            }
+        }
+        // 循环自然结束（上游没发 finish_reason 就断了）：补收尾，
+        // 否则客户端拿到的是未闭合的 content block（Anthropic 客户端会报错/挂住）
+        if !sent_done {
+            for ev in conv.finish() {
+                yield Ok::<_, std::convert::Infallible>(to_event(&ev));
             }
         }
         // 跨协议流式的 usage 从转换器聚合而来，按入口协议形态落账
@@ -1662,6 +2226,25 @@ mod tests {
             include_v1: None,
             headers: vec![],
             supports_image: None,
+        }
+    }
+
+    fn provider_for_test(id: &str, openai_url: &str) -> AiProvider {
+        AiProvider {
+            id: id.to_string(),
+            name: id.to_string(),
+            category: "provider".to_string(),
+            api_key: "sk-test".to_string(),
+            website: String::new(),
+            openai_url: openai_url.to_string(),
+            anthropic_url: String::new(),
+            google_url: String::new(),
+            models: vec![],
+            active_model_id: None,
+            custom_headers: vec![],
+            openai_include_v1: None,
+            anthropic_include_v1: None,
+            promotions: vec![],
         }
     }
 
@@ -1823,9 +2406,15 @@ mod tests {
         assert_eq!(cooldown_for(FailureClass::Transient, None, 99).as_secs(), 300);
         assert_eq!(cooldown_for(FailureClass::RateLimit, None, 1).as_secs(), 60);
         assert_eq!(cooldown_for(FailureClass::RateLimit, Some(120), 1).as_secs(), 120);
+        // 抄 magpie longestWait：Retry-After 只信到 1 小时。脏数据（把毫秒当秒填、
+        // 或厂商返回 86400）以前会把候选冻一整天，期间这条链少一个可选项。
         assert_eq!(
             cooldown_for(FailureClass::RateLimit, Some(999_999), 1).as_secs(),
-            24 * 3600
+            RETRY_AFTER_TRUST_CAP_SECS
+        );
+        assert_eq!(
+            cooldown_for(FailureClass::RateLimit, Some(86_400), 1).as_secs(),
+            RETRY_AFTER_TRUST_CAP_SECS
         );
         assert_eq!(cooldown_for(FailureClass::Authentication, None, 1).as_secs(), 3600);
         assert_eq!(cooldown_for(FailureClass::Billing, None, 1).as_secs(), 3600);
@@ -1835,12 +2424,108 @@ mod tests {
         );
     }
 
+    /// 限额类优先「等到厂商说的那个点」（抄 magpie `failQuota` 的取值优先级）。
+    #[test]
+    fn quota_cooldown_prefers_written_reset_time() {
+        let now = 1_760_000_000_000u64;
+        // 19 分钟后恢复 → 就等 19 分钟，而不是默认的 1 小时
+        let d = quota_cooldown_for(3600, None, Some(now + 19 * 60 * 1000), now);
+        assert_eq!(d.as_secs(), 19 * 60);
+        // 说了恢复时刻 + 也有 Retry-After → 恢复时刻优先
+        let d = quota_cooldown_for(3600, Some(60), Some(now + 19 * 60 * 1000), now);
+        assert_eq!(d.as_secs(), 19 * 60);
+        // 只有 Retry-After → 用它（封顶 1h）
+        assert_eq!(quota_cooldown_for(3600, Some(300), None, now).as_secs(), 300);
+        assert_eq!(
+            quota_cooldown_for(3600, Some(999_999), None, now).as_secs(),
+            RETRY_AFTER_TRUST_CAP_SECS
+        );
+        // 都没有 → 回落默认
+        assert_eq!(quota_cooldown_for(3600, None, None, now).as_secs(), 3600);
+        // 恢复时刻在 7 天之外（脏数据）→ 不采信，回落 Retry-After / 默认
+        let far = now + 30 * 24 * 3600 * 1000;
+        assert_eq!(quota_cooldown_for(3600, None, Some(far), now).as_secs(), 3600);
+        // 恢复时刻已过期 → 不采信
+        assert_eq!(
+            quota_cooldown_for(3600, None, Some(now - 60_000), now).as_secs(),
+            3600
+        );
+    }
+
+    /// 解析厂商写的「什么时候恢复」——四种形态（抄 magpie 的 resets* 系列）
+    #[test]
+    fn parses_written_reset_times() {
+        let now = 1_760_000_000_000u64;
+
+        // 1) resets_in_seconds（ChatGPT 系）
+        let body = format!(r#"{{"error":{{"resets_in_seconds":1140}}}}"#);
+        let at = parse_resets_at(&body, now).expect("应读出 1140s");
+        assert_eq!(at, now + 1_140_000);
+
+        // 2) resets_at（unix 秒）
+        let unix_secs = (now / 1000) + 600;
+        let body = format!(r#"{{"error":{{"resets_at":{unix_secs}}}}}"#);
+        assert_eq!(parse_resets_at(&body, now), Some(unix_secs * 1000));
+
+        // 3) usage limit reached|<unix>（Claude Code 系）
+        let body = format!("usage limit reached|{unix_secs}");
+        assert_eq!(parse_resets_at(&body, now), Some(unix_secs * 1000));
+
+        // 4) resets in 0h 19min
+        assert_eq!(parse_resets_at("Rate limit reached. resets in 0h 19min", now), Some(now + 19 * 60 * 1000));
+
+        // 5) resets in 2 hours 5 minutes
+        assert_eq!(
+            parse_resets_at("resets in 2 hours 5 minutes", now),
+            Some(now + (2 * 3600 + 5 * 60) * 1000)
+        );
+    }
+
+    /// 读不出 / 明显不合法 → 返回 None（走固定时长兜底），绝不猜
+    #[test]
+    fn refuses_unreadable_or_invalid_reset_times() {
+        let now = 1_760_000_000_000u64;
+        // 没有任何恢复信息
+        assert_eq!(parse_resets_at("rate limit exceeded", now), None);
+        // 月份 13 → 明显是路过的日期，挡掉（magpie 的严格校验）
+        assert_eq!(parse_resets_at("将在 2026-13-45 12:00:00 重置", now), None);
+        // 过去的时间（已过期）→ 当没读懂
+        let past = (now / 1000) - 600;
+        assert_eq!(parse_resets_at(&format!("usage limit reached|{past}"), now), None);
+        // 超过 7 天上限 → 当没读懂
+        let far = (now / 1000) + 30 * 24 * 3600;
+        assert_eq!(parse_resets_at(&format!("usage limit reached|{far}"), now), None);
+        // 2 月 31 日这类溢出必须被 round-trip 校验挡掉
+        assert_eq!(parse_resets_at("将在 2027-02-31 10:00:00 重置", now), None);
+    }
+
+    #[test]
+    fn record_failure_uses_reset_time_for_billing() {
+        let health: Arc<Mutex<HashMap<String, CandidateHealth>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let key = "p::m";
+        let now = now_ms();
+        // 约 19 分钟后恢复 → 冷却应接近 19 分钟，而不是固定 1 小时
+        let d = record_failure(
+            &health,
+            key,
+            FailureClass::Billing,
+            None,
+            Some(now + 19 * 60 * 1000),
+        );
+        assert!(
+            d.as_secs() > 18 * 60 && d.as_secs() <= 19 * 60 + 5,
+            "应等到厂商说的恢复点，实际 {}s",
+            d.as_secs()
+        );
+    }
+
     #[test]
     fn test_health_record_and_clear() {
         let health: Arc<Mutex<HashMap<String, CandidateHealth>>> = Arc::new(Mutex::new(HashMap::new()));
         let key = "p::m";
         assert!(cooldown_remaining_secs(&health, key).is_none());
-        let d = record_failure(&health, key, FailureClass::RateLimit, Some(90));
+        let d = record_failure(&health, key, FailureClass::RateLimit, Some(90), None);
         assert_eq!(d.as_secs(), 90);
         let remaining = cooldown_remaining_secs(&health, key).unwrap_or(0);
         assert!(remaining > 0 && remaining <= 90, "剩余冷却异常: {}", remaining);
@@ -1862,6 +2547,83 @@ mod tests {
         assert!(!is_self_referential("http://127.0.0.1:15889/v1", 15888));
         assert!(!is_self_referential("", 15888));
         assert!(!is_self_referential("http://127.0.0.1/v1", 15888));
+    }
+
+    /// 漏判回归：userinfo / query / fragment 会让端口号解析失败，
+    /// 于是「真递归」被判成「不是自引用」→ 转发时打到自己。
+    #[test]
+    fn self_referential_sees_through_userinfo_and_query() {
+        // 以前这些全部返回 false（真递归漏判）
+        for url in [
+            "http://user:pass@127.0.0.1:15888/v1",
+            "http://token@localhost:15888/v1",
+            "http://127.0.0.1:15888?x=1",
+            "http://127.0.0.1:15888/v1#frag",
+            "http://127.0.0.1:15888/?a=b",
+        ] {
+            assert!(is_self_referential(url, 15888), "应判为自引用：{url}");
+        }
+    }
+
+    /// 漏判回归：整个 `127.0.0.0/8` 都指向本机，不只是 `127.0.0.1`。
+    #[test]
+    fn self_referential_covers_whole_loopback_block() {
+        for url in [
+            "http://127.0.0.2:15888/v1",
+            "http://127.1:15888/v1",
+            "http://127.0.0.1:15888/v1",
+            "http://[::1]:15888/v1",
+            "http://[::]:15888/v1",
+            "http://0.0.0.0:15888/v1",
+            "http://app.localhost:15888/v1",
+        ] {
+            assert!(is_self_referential(url, 15888), "应判为自引用：{url}");
+        }
+    }
+
+    /// 反向：userinfo 里的 host 不是本机、或端口不同，都不该误判
+    #[test]
+    fn self_referential_does_not_over_trigger() {
+        for url in [
+            "http://user:pass@api.openai.com:15888/v1",
+            "http://127.0.0.1:15889/v1",
+            // 端口号在 host 里但不是端口（IPv6 无括号写法）仍按 rfind 处理，不误判为非本机
+            "http://192.168.1.5:15888/v1",
+        ] {
+            assert!(!is_self_referential(url, 15888), "不应判为自引用：{url}");
+        }
+    }
+
+    /// 成员可用性：三处（候选视图 / 保存清洗 / 运行期构建）必须看到同一个答案。
+    /// 以前前端只看 `openai_url`，运行期却按 openai → anthropic → google 取。
+    #[test]
+    fn member_availability_matches_running_pick_outbound() {
+        let mut p = provider_for_test("agg", "http://127.0.0.1:15888");
+        // 只填 anthropic / google 端点
+        p.openai_url = String::new();
+        p.anthropic_url = "http://127.0.0.1:15888".to_string();
+        p.google_url = String::new();
+
+        let avail = member_availability(&p, 15888);
+        assert_eq!(avail.outbound, Some(Outbound::Anthropic));
+        assert_eq!(avail.unusable_reason, Some(MemberIssue::SelfReferential));
+    }
+
+    #[test]
+    fn member_availability_reports_missing_key_and_endpoint() {
+        let mut no_endpoint = provider_for_test("x", "");
+        no_endpoint.openai_url = String::new();
+        let avail = member_availability(&no_endpoint, 15888);
+        assert_eq!(avail.outbound, None);
+        assert_eq!(avail.unusable_reason, Some(MemberIssue::NoEndpoint));
+
+        let mut no_key = provider_for_test("y", "https://api.example.com/v1");
+        no_key.api_key = String::new();
+        let avail = member_availability(&no_key, 15888);
+        assert_eq!(avail.unusable_reason, Some(MemberIssue::NoApiKey));
+
+        let ok = provider_for_test("z", "https://api.example.com/v1");
+        assert_eq!(member_availability(&ok, 15888).unusable_reason, None);
     }
 
     #[test]

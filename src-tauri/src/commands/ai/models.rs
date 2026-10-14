@@ -279,6 +279,11 @@ pub struct ProviderPromotion {
 }
 
 impl AiProvider {
+    /// 展示名：用户没起名就退回 id（避免日志/剔除原因里出现空名字）
+    pub fn name_or_id(&self) -> &str {
+        if self.name.trim().is_empty() { &self.id } else { &self.name }
+    }
+
     /// 某协议端点是否需要在拼接时补 `/v1`（聚合/代理拼 URL 时统一走这里）。
     pub fn include_v1_for(&self, protocol: &str) -> Option<bool> {
         match protocol {

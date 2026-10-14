@@ -45,6 +45,15 @@ import type {
   AggregateLog,
 } from "./types";
 
+/** 被清洗掉的链路成员 + 原因（后端 `get_route_chain_health` 返回） */
+export interface DroppedMember {
+  providerId: string;
+  providerName: string;
+  modelId: string;
+  reason: string;
+  message: string;
+}
+
 const ckey = (c: RouteCandidate) => `${c.provider_id}::${c.model_id}`;
 /// 聚合日志最多保留行数（超出丢弃最旧的）
 const MAX_LOG_LINES = 500;
@@ -143,6 +152,8 @@ export default function RouteAggregate() {
   const { t } = useTranslation();
   const [candidates, setCandidates] = useState<RouteCandidateView[]>([]);
   const [chain, setChain] = useState<RouteCandidate[]>([]);
+  /// 引用了「已不存在的供应商/模型」而被清洗掉的成员（如实告知，不再静默消失）
+  const [droppedMembers, setDroppedMembers] = useState<DroppedMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
@@ -167,16 +178,19 @@ export default function RouteAggregate() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [views, savedChain, headroomCfg, aggCfg, status, autoStartList] = await Promise.all([
+      const [views, chainHealth, headroomCfg, aggCfg, status, autoStartList] = await Promise.all([
         invoke<RouteCandidateView[]>("list_route_candidates"),
-        invoke<RouteCandidate[]>("get_route_chain"),
+        // 一次拿到「有效链路 + 被清掉的成员及原因」：以前只取链路，
+        // 被丢弃的成员静默消失，用户只能对着变短的列表猜。
+        invoke<[RouteCandidate[], DroppedMember[]]>("get_route_chain_health"),
         invoke<HeadroomConfig>("get_headroom_config"),
         invoke<AggregateConfig>("get_aggregate_config"),
         invoke<AggregateStatus>("get_aggregate_status"),
         invoke<string[]>("get_auto_start_services"),
       ]);
       setCandidates(views);
-      setChain(savedChain);
+      setChain(chainHealth[0]);
+      setDroppedMembers(chainHealth[1]);
       setHeadroom(headroomCfg);
       setAggregate(aggCfg);
       setAggStatus(status);
@@ -309,6 +323,9 @@ export default function RouteAggregate() {
       }
       const views = await invoke<RouteCandidateView[]>("list_route_candidates");
       setCandidates(views);
+      // 同步刷新「已失效成员」提示：保存会触发清洗，用户可能刚勾了已消失的模型
+      const [, dropped] = await invoke<[RouteCandidate[], DroppedMember[]]>("get_route_chain_health");
+      setDroppedMembers(dropped);
     } catch (e) {
       console.error("保存路由链失败", e);
       setLogs(prev =>
@@ -462,7 +479,13 @@ export default function RouteAggregate() {
             ) : grouped.map(group => {
               // 自引用（指向聚合服务自身）：入链会造成请求递归，整组禁用
               const selfRef = group.items.some(v => v.self_referential);
+              // 后端把「不可用原因」如实带上来（缺 Key / 没端点 / 自引用）。
+              // 自引用是硬错误（会递归）→ 不可选；其余是「暂时不就绪」→
+              // 仍然允许勾选（用户可能正在补 Key），但要看得见原因。
+              // 以前只有自引用一种标记，于是「缺 Key 的成员」在链里完全看不出来，
+              // 而运行期早就把它丢掉了。
               const selectable = group.items.filter(v => !v.self_referential);
+              const softIssue = group.items.find(v => !v.self_referential && v.unusable_reason);
               const selectedCount = selectable.filter(v => isInChain(v)).length;
               const total = selectable.length;
               const allSelected = total > 0 && selectedCount === total;
@@ -485,6 +508,14 @@ export default function RouteAggregate() {
                         title={t("aggregate.selfReferentialHint")}
                       >
                         !
+                      </span>
+                    ) : softIssue ? (
+                      // 「暂时不就绪」：可勾选，但要看得见原因
+                      <span
+                        className="w-3 h-3 flex-shrink-0 rounded-sm border border-amber-500/50 text-[8px] leading-none flex items-center justify-center text-amber-400"
+                        title={softIssue.unusable_reason ?? ""}
+                      >
+                        ?
                       </span>
                     ) : (
                       <TriCheckbox
@@ -526,11 +557,12 @@ export default function RouteAggregate() {
                           <button
                             key={`${v.provider_id}::${v.model_id}`}
                             onClick={() => toggle(v)}
+                            title={v.unusable_reason ?? undefined}
                             className={`w-full text-left flex items-center gap-2 pl-6 pr-2 py-1 rounded-md border transition-colors cursor-pointer ${
                               inChain
                                 ? "border-[var(--module-accent)]/40 bg-[var(--module-accent)]/10"
                                 : "border-transparent hover:bg-white/5"
-                            }`}
+                            } ${v.unusable_reason ? "opacity-60" : ""}`}
                           >
                             <input
                               type="checkbox"
@@ -539,6 +571,11 @@ export default function RouteAggregate() {
                               className="w-3 h-3 accent-[var(--module-accent)] pointer-events-none"
                             />
                             <span className="text-tiny text-slate-300 font-mono truncate flex-grow min-w-0">{v.model_name}</span>
+                            {v.unusable_reason && (
+                              <span className="text-micro text-amber-400/90 flex-shrink-0 truncate max-w-[40%]">
+                                {v.unusable_reason}
+                              </span>
+                            )}
                             {inChain && (
                               <span className="text-micro font-mono text-[var(--module-accent)] flex-shrink-0">#{v.order}</span>
                             )}
@@ -559,6 +596,27 @@ export default function RouteAggregate() {
             <span className="text-caption font-bold text-slate-300">{t("aggregate.chainTitle")}</span>
             <span className="text-micro text-slate-600">{t("aggregate.count", { count: chain.length })}</span>
           </div>
+          {/* 引用了已不存在的供应商/模型的成员被清洗掉了 —— 如实说明是哪几个、为什么。
+              这类成员以前是静默丢弃（还会顺手落库），用户只看到列表变短却说不出原因。 */}
+          {droppedMembers.length > 0 && (
+            <div className="px-3 py-2 border-b border-amber-500/20 bg-amber-500/[0.06]">
+              <div className="text-tiny text-amber-300/90 leading-relaxed">
+                {droppedMembers.length === 1
+                  ? droppedMembers[0].message
+                  : `有 ${droppedMembers.length} 个成员因引用了已不存在的供应商 / 模型被移出链路`}
+              </div>
+              <ul className="mt-1 space-y-0.5">
+                {droppedMembers.slice(0, 5).map((d, i) => (
+                  <li key={`${d.providerId}::${d.modelId}::${i}`} className="text-micro text-amber-200/60 truncate">
+                    · {d.message}
+                  </li>
+                ))}
+                {droppedMembers.length > 5 && (
+                  <li className="text-micro text-amber-200/40">… 还有 {droppedMembers.length - 5} 个</li>
+                )}
+              </ul>
+            </div>
+          )}
           <div className="flex-1 min-h-0 overflow-y-auto p-2">
             {chain.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-slate-600 gap-1.5 py-8">

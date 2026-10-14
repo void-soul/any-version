@@ -1236,6 +1236,24 @@ fn format_model_name_with_ctx(raw: &str, tool_config: &ToolConfig, one_m: bool) 
 /// 避免 "provider.anyversion.models.LongCat-2.0.name" 被误拆成 LongCat-2 → 0 → name。
 const MODEL_NAME_DOT_ESCAPE: &str = "__DOT__";
 
+/// 账本里存的值形态：标量取字符串形态（布尔/数字统一成字面量文本），
+/// 数组/对象存 JSON 文本。**只用于「和后来读到的值比对」，不是配置内容。**
+/// 测试用：按文件扩展名 + 声明默认值解析写入格式。
+#[cfg(test)]
+pub(crate) fn launch_write_format_for_test(p: &std::path::Path, default: &str) -> WriteFormat {
+    write_format_for(p, default)
+}
+
+pub(crate) fn ledger_value_text(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Null => String::new(),
+        other => serde_json::to_string(other).unwrap_or_default(),
+    }
+}
+
 fn write_tool_config_generic(
     tool_config: &ToolConfig,
     model_id: Option<&str>,
@@ -1524,6 +1542,33 @@ fn write_tool_config_generic(
             WriteFormat::Json => write_json_config(&p, &existing, &ws, None, tool_config)?,
         }
         eprintln!("[config_file] ✓ 已写入配置到 {}", p.display());
+
+        // 记进「配置账本」：存下我们在这个文件里写了什么 + 接管前的原值。
+        // 这样以后能查出「配置后来被谁改了」（用户手改 / 别的工具反向覆写 /
+        // 官方客户端升级重写）。接管前的原值只在该键**第一次**被接管时记。
+        let applied_keys: Vec<crate::commands::ai::ledger::ManagedKey> = ws
+            .iter()
+            .map(|(sub, v)| crate::commands::ai::ledger::ManagedKey {
+                path: sub.clone(),
+                value: ledger_value_text(v),
+            })
+            .collect();
+        if !applied_keys.is_empty() {
+            let mut stash: std::collections::BTreeMap<String, Option<String>> =
+                std::collections::BTreeMap::new();
+            for (sub, _) in &ws {
+                stash.insert(
+                    sub.clone(),
+                    super::tool_config_restore::read_key_for_ledger(&p, sub, format),
+                );
+            }
+            crate::commands::ai::ledger::record_write(
+                &tool_config.id,
+                &p.display().to_string(),
+                &applied_keys,
+                &stash,
+            );
+        }
     }
 
     // 通用映射写完之后，再跑「平铺路径说不清」的附加结构化写入：数组内按 id 查找合并、
