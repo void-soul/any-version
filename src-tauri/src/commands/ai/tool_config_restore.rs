@@ -513,10 +513,15 @@ mod ledger_tests {
 
     /// 端到端：写一份配置 → 记进账本 → 外部改掉一个值 → 漂移检测必须抓到。
     /// 纯函数测试抓不到「读取口径与写入口径不一致」这类问题，必须过一遍真实文件。
+    ///
+    /// **账本目录必须重定向到临时目录** —— 否则 `record_write` 会写进用户真实的
+    /// `~/.any-version/ledger/`，既污染用户账本，又让并行测试互相干扰。
     #[test]
     fn json_ledger_detects_external_edit() {
-        let dir = std::env::temp_dir().join(format!("ledger-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kira-ledger-json-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
+        crate::commands::ai::ledger::set_ledger_dir_for_test(dir.join("ledger"));
         let file = dir.join("settings.json");
         let file_s = file.display().to_string();
 
@@ -590,7 +595,8 @@ mod ledger_tests {
 
     #[test]
     fn toml_ledger_reads_dotted_and_nested_paths() {
-        let dir = std::env::temp_dir().join(format!("ledger-toml-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kira-ledger-toml-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let file: PathBuf = dir.join("config.toml");
         std::fs::write(

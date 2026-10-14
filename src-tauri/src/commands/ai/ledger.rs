@@ -25,6 +25,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -83,11 +84,35 @@ pub struct DriftItem {
 }
 
 /// 账本目录（**不放在工具配置目录里**）。
+///
+/// **测试构建下默认隔离到进程级临时目录**：写配置的那些单测（`write_tool_config_generic`
+/// 的调用方）用临时目录当配置文件，但账本路径走的是 `get_home_dir()`，
+/// 于是测试会把 `kimidesktop` 之类的条目写进用户真实的 `~/.any-version/ledger/`
+/// —— 既污染用户账本，又因并行共享该文件而 flaky（2026-10-14 实测过一次偶发失败）。
+/// 这里在 `cfg(test)` 下直接改道，既不需要每个测试显式调用，也不依赖 `OnceLock::set`
+/// 只能设一次的限制。
 fn ledger_dir() -> PathBuf {
+    if let Some(dir) = LEDGER_DIR_OVERRIDE.get() {
+        return dir.clone();
+    }
+    #[cfg(test)]
+    {
+        return std::env::temp_dir().join(format!("kira-test-ledger-{}", std::process::id()));
+    }
+    #[cfg(not(test))]
     crate::commands::utils::get_home_dir()
         .join(".any-version")
         .join("ledger")
 }
+
+/// 测试注入点：把账本目录改到指定目录。**只给测试用**，且只有首次调用生效
+/// （底层是 `OnceLock`）；不调用时也已是隔离的临时目录。
+#[cfg(test)]
+pub(crate) fn set_ledger_dir_for_test(dir: PathBuf) {
+    let _ = LEDGER_DIR_OVERRIDE.set(dir);
+}
+
+static LEDGER_DIR_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
 
 fn applied_path() -> PathBuf {
     ledger_dir().join("applied.json")
@@ -97,14 +122,39 @@ fn stash_path() -> PathBuf {
     ledger_dir().join("stash.json")
 }
 
-/// 原子写（先写临时文件再 rename）；失败不抛 —— 账本丢失不该阻断主流程。
+/// 原子写：先写临时文件，再替换目标。**替换这一步在 Windows 上必须先删目标**。
+///
+/// `std::fs::rename` 用的是 `MoveFileEx`，**目标已存在时会失败且不覆盖**
+/// （实测：`Cannot create a file when that file already exists.`），
+/// 也就是「第二次写账本必定失败」。之前的实现把错误用 `let _ =` 吞掉，
+/// 症状是账本永远停在第一次的内容，而漂移检测会拿陈旧条目误报
+/// （2026-10-14 由账本端到端测试的偶发失败暴露）。
+/// 因此这里显式先删再 rename，并给几次重试——文件可能被索引/扫描器短暂占用。
 fn write_atomic<T: Serialize>(path: &PathBuf, value: &T) -> Result<(), String> {
     let dir = path.parent().ok_or("账本路径无父目录")?;
     crate::commands::ai::tool_config_custom::ensure_dir(dir)?;
     let text = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, text).map_err(|e| format!("写 {} 失败: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, path).map_err(|e| format!("替换 {} 失败: {e}", path.display()))
+
+    let mut last_err = String::new();
+    for attempt in 0..5u32 {
+        if path.exists() {
+            // 删不掉不算终止：下面的 rename 仍可能成功（目标已消失等情形），失败信息由 rename 分支给出
+            if let Err(e) = std::fs::remove_file(path) {
+                last_err = format!("删除旧 {} 失败: {e}", path.display());
+            }
+        }
+        match std::fs::rename(&tmp, path) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                last_err = format!("替换 {} 失败: {e}", path.display());
+                // rename 失败不会消耗 tmp（内容仍在），直接退避重试即可
+                std::thread::sleep(std::time::Duration::from_millis(20u64 * (attempt as u64 + 1)));
+            }
+        }
+    }
+    Err(last_err)
 }
 
 pub fn load_applied() -> AppliedLedger {
@@ -122,7 +172,19 @@ fn read_json<T: for<'de> Deserialize<'de> + Default>(path: &PathBuf) -> Option<T
 }
 
 /// 记一次写入：**接管前先把原值存进 stash**（只在该键第一次被接管时存）。
+/// 账本读-改-写的进程内互斥。
+///
+/// **必须有**：账本是「读整份 → 改一处 → 写整份」，两个写者交错就会丢条目——
+/// A 删掉自己的条目后 B 拿着**删除前**的旧副本写回，A 的删除就被复活了。
+/// 生产上同样会发生（用户同时启动两个工具、或 UI 与后台任务同时写配置）；
+/// 2026-10-14 由端到端测试的偶发失败暴露（3 次里 2 次 flake）。
+static LEDGER_LOCK: Mutex<()> = Mutex::new(());
+
+/// 记账本。两本都写；**写失败必须打日志**（之前用 `let _ =` 吞掉，
+/// 于是「账本没更新」这件事完全不可见，漂移检测拿着陈旧条目误报也看不出原因）。
 pub fn record_write(tool_id: &str, file: &str, applied: &[ManagedKey], stash: &BTreeMap<String, Option<String>>) {
+    // 全程持锁：读-改-写必须是一个临界区，否则并发写者会互相覆盖
+    let _guard = LEDGER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut applied_ledger = load_applied();
     let mut stash_ledger = load_stash();
 
@@ -140,20 +202,29 @@ pub fn record_write(tool_id: &str, file: &str, applied: &[ManagedKey], stash: &B
     rec.at = now_ms();
     rec.files.insert(file.to_string(), applied.to_vec());
 
-    let _ = write_atomic(&applied_path(), &applied_ledger);
-    let _ = write_atomic(&stash_path(), &stash_ledger);
+    if let Err(e) = write_atomic(&applied_path(), &applied_ledger) {
+        eprintln!("[ledger] 写 applied 账本失败（漂移检测会不准）: {e}");
+    }
+    if let Err(e) = write_atomic(&stash_path(), &stash_ledger) {
+        eprintln!("[ledger] 写 stash 账本失败（还原将无法精确回填）: {e}");
+    }
 }
 
 /// 还原成功后清掉该工具的账本（**两本都清** —— 我们不再持有这个工具的配置）。
 pub fn clear_tool(tool_id: &str) {
+    let _guard = LEDGER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut applied_ledger = load_applied();
     let mut stash_ledger = load_stash();
     applied_ledger.tools.remove(tool_id);
     stash_ledger
         .entries
         .retain(|k, _| !k.starts_with(&format!("{tool_id}::")));
-    let _ = write_atomic(&applied_path(), &applied_ledger);
-    let _ = write_atomic(&stash_path(), &stash_ledger);
+    if let Err(e) = write_atomic(&applied_path(), &applied_ledger) {
+        eprintln!("[ledger] 清 applied 账本失败: {e}");
+    }
+    if let Err(e) = write_atomic(&stash_path(), &stash_ledger) {
+        eprintln!("[ledger] 清 stash 账本失败: {e}");
+    }
 }
 
 /// 纯函数：把账本与「现在实际的值」比对，得出漂移清单。
