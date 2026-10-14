@@ -9,11 +9,11 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { CONNECTION_LINE_BY_STYLE, EDGE_STYLES, edgePath, useEdgeStyle, type EdgeStyle } from "../../utils/graphEdgeStyle";
+import EdgeStyleSelect from "../shared/EdgeStyleSelect";
 import {
   EDGE_FLOW_CLASS, EDGE_GLOW_CLASS, GRAPH_DIMMED_CLASS,
   edgeGlow, headerTint, highlightColor, neonRing, neonTextGlow,
 } from "../../utils/graphHighlight";
-import EdgeStyleSelect from "../shared/EdgeStyleSelect";
 import { MindmapMarkdown } from "./MindmapMarkdown";
 import { MarkdownFieldEditor } from "./MarkdownFieldEditor";
 import { NodeFormFields } from "./NodeFormFields";
@@ -1354,13 +1354,22 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   const edges = useMemo<Edge[]>(() => {
     const visible = new Set(visibleNodes.map(n => n.id));
     const out: Edge[] = [];
+    /* ── 高亮口径：整块连线**只在这里定义一次**，下面两个循环共用 ──
+     *
+     * 判据是 `relatedIds`（= 自己 + 父 + 子 + 关系边两端），不是写死 `=== selectedId`：
+     * 节点那边的三态（selected / related / dimmed）用的就是 relatedIds，两边口径一旦
+     * 分家就会出现「节点亮了、连着它的线还暗着」。
+     *
+     * `hasSel` 那层判断不能省：relatedIds 在未选中时是**空集**，只看它的话
+     * 「什么都没选」会被算成「全都不相关」，整图连线一起压暗。 */
+    const hasSel = selectedId !== null;
+    const relOf = (a: string, b: string) => hasSel && (relatedIds.has(a) || relatedIds.has(b));
     // 树形主连线（实线，走主输入/输出口）
     for (const n of visibleNodes) {
       if (!n.parentId || !visible.has(n.parentId)) continue;
-      // 关联边 = 与选中项直接相连（父↔子）；其余在选中时压暗。
       // 样式经 `data` 传给自定义 edge（ColorEdge 不吃 edge.style —— 它自己画 path）。
-      const rel = selectedId !== null && (n.parentId === selectedId || n.id === selectedId);
-      const dim = selectedId !== null && !rel;
+      const rel = relOf(n.parentId, n.id);
+      const dim = hasSel && !rel;
       out.push({ id: `mm-e-${n.id}`, source: n.parentId, target: n.id, sourceHandle: "out", targetHandle: "in", type: "colorE",
         animated: rel, zIndex: rel ? 10 : 0,
         style: rel ? { filter: edgeGlow(effectiveNodeColor(n)) } : undefined,
@@ -1370,8 +1379,8 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     for (const l of links) {
       if (!visible.has(l.sourceId) || !visible.has(l.targetId)) continue;
       const src = byId.get(l.sourceId);
-      const rel = selectedId !== null && (l.sourceId === selectedId || l.targetId === selectedId);
-      const dim = selectedId !== null && !rel;
+      const rel = relOf(l.sourceId, l.targetId);
+      const dim = hasSel && !rel;
       out.push({
         id: `mm-l-${l.id}`, source: l.sourceId, target: l.targetId, sourceHandle: "out", targetHandle: "in",
         type: "relationE",
@@ -1389,7 +1398,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       } as Edge);
     }
     return out;
-  }, [visibleNodes, byId, selectedId, links, openLinkEditor, removeLink, edgeStyle]);
+  }, [visibleNodes, byId, selectedId, relatedIds, links, openLinkEditor, removeLink, edgeStyle]);
 
   // 受控节点：React Flow 拖放时把位置写入 posOverrides。仅处理 position 变更，
   // 选择由 selectedId 管理。一次 setState → 一次渲染 → 收敛，无反馈循环。
@@ -1648,14 +1657,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
         <Controls className="canvas-flow-controls" showInteractive={false} />
       </ReactFlow>
 
-      {/* 连线样式（右下角浮层）：与 ER 设计 / JSON 图共用一份偏好 */}
-      <div className="absolute bottom-3 right-3 z-10">
-        <EdgeStyleSelect
-          value={edgeStyle}
-          onChange={setEdgeStyle}
-          className="rounded-full border border-white/10 bg-slate-900/80 px-2 py-1 text-tiny text-slate-300 shadow backdrop-blur outline-none hover:bg-slate-900"
-        />
-      </div>
+      {/* 连线样式原先是这里的右下角浮层，已挪到左侧设置区（与「布局」并排一行）*/}
 
       {/* 连线规则提示：拖线＝改上级（拖到节点卡片上松手同样改上级）；关系线模式下拖线＝加一条带文字的关系线 */}
       <div className="pointer-events-none absolute bottom-2 left-1/2 z-10 -translate-x-1/2">
@@ -1765,7 +1767,17 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
               入口统一放第一栏（文档栏）底部。收起成窄条时整块隐藏，避免挤在 36px 宽里 */}
           <div className={`pointer-events-auto flex shrink-0 flex-col gap-1 p-1.5 pt-0 ${treeOpen ? "" : "hidden"}`}>
             <div className="rounded-ctl border border-white/10 bg-slate-900/95 p-1 shadow-lg flex flex-col gap-0.5">
-              <button type="button" className={`${button} w-full justify-start`} onClick={relayout} title={t("mindmap.autoLayout")}><LayoutGrid className="h-3 w-3" />{t("mindmap.layout")}</button>
+              {/* 「布局」与「连线样式」并排一行：两者都是画布级的观感设置，
+                  原来连线样式是画布右下角的浮层，和这里隔了一整个画布。
+                  外观沿用 button 常量，与下面这些按钮同一套。 */}
+              <div className="grid grid-cols-2 gap-0.5">
+                <button type="button" className={`${button} justify-start`} onClick={relayout} title={t("mindmap.autoLayout")}><LayoutGrid className="h-3 w-3" />{t("mindmap.layout")}</button>
+                <EdgeStyleSelect
+                  value={edgeStyle}
+                  onChange={setEdgeStyle}
+                  className={`${button} justify-start appearance-none px-1.5`}
+                />
+              </div>
               {/* 布局方式：原下拉框改为按钮组 —— 与同类操作按钮同一外观，且一步直达（少一次展开） */}
               <div className="grid grid-cols-4 gap-0.5" title={t("mindmap.layoutDir")}>
                 {(Object.keys(LAYOUT_DIR_KEYS) as LayoutDir[]).map((k) => (
