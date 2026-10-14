@@ -18,18 +18,19 @@
 // 而「系列」的口径与配色完全同一份（见 series.ts）—— 颜色成对、位置也一定成对。
 
 import type { DbDesignDocument, DbDesignNode } from "./types";
-import { fkFieldsOf, relationFieldsOf, type FieldRowMode } from "./types";
+import type { FieldRowMode } from "./types";
 import { groupByPrefix } from "./series";
+import {
+  CARD_W,
+  CORRIDOR,
+  adjacency,
+  estimateHeight,
+  layoutGroupCore,
+  layoutLooseGrid,
+  originalIndex,
+  type BlockLayout,
+} from "./layoutCore";
 
-/** 节点卡片宽度（与 DesignNodeCard 的 w-[288px] 对齐；改那边记得改这里） */
-const CARD_W = 288;
-/**
- * 卡片之间的走廊宽度（切向净空）。
- *
- * 它是「线不穿表」的主要保证：环上相邻两张卡的弧距必须 ≥ 卡宽 + 走廊，
- * 于是连线只走在这条走廊里，不可能横穿卡片。
- */
-const CORRIDOR = 120;
 /**
  * 圈与圈之间的**最小径向间距**。
  *
@@ -51,67 +52,13 @@ const ORDER_SWEEPS = 3;
 /** 系列块之间的纵向间距 */
 const BLOCK_GAP = 160;
 const PAD = 40;
-/** 卡片高度估算：字段一行 ≈ 18px，表头 ≈ 46px（与卡片实际样式同量级即可，宁可高估） */
-const ROW_H = 18;
-const HEADER_H = 58;
 
 export interface LayoutOptions {
   /** 卡片里显示哪些字段行：keys = 主键 + 外键 + 关联字段，all = 全部字段 */
   fieldRows: FieldRowMode;
 }
 
-/**
- * 这张表在当前显示模式下会渲染几行字段。
- *
- * 口径必须与 `DesignNodeCard` 里 `shown` 的筛选**逐字一致**：布局坐标要写进设计
- * 文件，估矮了卡片就会互相压住。所以这里直接复用卡片自己用的两个 helper，
- * 而不是再写一遍「哪些算外键」—— 两边各写一份迟早会漂。
- */
-function visibleFieldCount(doc: DbDesignDocument, node: DbDesignNode, mode: FieldRowMode): number {
-  const fields = node.table?.fields ?? [];
-  if (mode === "all") return fields.length;
-  const fk = fkFieldsOf(doc, node.id);
-  const rel = relationFieldsOf(doc, node.id);
-  return fields.filter((f) => f.pk || fk.includes(f.name) || rel.includes(f.name)).length;
-}
 
-function estimateHeight(doc: DbDesignDocument, node: DbDesignNode, mode: FieldRowMode): number {
-  const rows =
-    node.kind === "view"
-      ? mode === "all"
-        ? 3
-        : 1
-      : Math.max(1, visibleFieldCount(doc, node, mode));
-  return HEADER_H + rows * ROW_H + (node.comment ? 18 : 0) + 12;
-}
-
-/** 一个系列的布局结果：局部坐标 + 该块占位尺寸（用于把各块摆开、并居中） */
-interface GroupLayout {
-  positions: Record<string, { x: number; y: number }>;
-  width: number;
-  height: number;
-}
-
-/** 节点在文档中的原始次序：所有排序的稳定兜底，保证同一份设计每次算出来一样 */
-function originalIndex(n: DbDesignNode): number {
-  const m = n.id.match(/(\d+)/);
-  return m ? Number(m[1]) : 0;
-}
-
-/** 块内邻接表（不含 n-n：它在画布上是一张自动生成的中间表，参与只会把布局搅乱） */
-function adjacency(doc: DbDesignDocument, group: DbDesignNode[]): Map<string, Set<string>> {
-  const ids = new Set(group.map((n) => n.id));
-  const adj = new Map<string, Set<string>>();
-  for (const n of group) adj.set(n.id, new Set());
-  for (const r of doc.relations) {
-    if (r.kind === "n-n") continue;
-    if (!ids.has(r.from.node) || !ids.has(r.to.node)) continue;
-    if (r.from.node === r.to.node) continue;
-    adj.get(r.from.node)!.add(r.to.node);
-    adj.get(r.to.node)!.add(r.from.node);
-  }
-  return adj;
-}
 
 /**
  * 第 ring 圈的半径：按「这一圈能放几张卡」反解，而不是拍一个固定值。
@@ -138,11 +85,11 @@ function ringCapacity(r: number): number {
  *    这才是「线和线不重叠」的真正来源。
  * 4. 角度起点固定正上方；排序并列时一律按文档序 → 完全可复现。
  */
-function layoutGroup(group: DbDesignNode[], doc: DbDesignDocument, opts: LayoutOptions): GroupLayout {
+function layoutGroup(group: DbDesignNode[], doc: DbDesignDocument, opts: LayoutOptions): BlockLayout {
   const mode = opts.fieldRows;
   const heights: Record<string, number> = {};
   for (const n of group) heights[n.id] = estimateHeight(doc, n, mode);
-  const adj = adjacency(doc, group);
+  const { adj } = adjacency(doc, group);
   const positions: Record<string, { x: number; y: number }> = {};
 
   // 中心放枢纽：连接数最多者（并列取文档序靠前），单表系列它就是自己
@@ -233,9 +180,35 @@ function layoutGroup(group: DbDesignNode[], doc: DbDesignDocument, opts: LayoutO
  * 各块垂直堆叠并水平居中。这样「不相干的表不会互相挡道」「同一系列的连线是辐射短线」，
  * 而不是让所有表挤进同一套分层里、连线横穿整幅图。
  */
+export type LayoutMode = "radial" | "coreLeftRight";
+
+/**
+ * 默认布局方式。
+ *
+ * 为什么默认 `coreLeftRight`（而不是更早的 `radial`）：实际用下来，
+ * 「被引用的主表在左、引用别人的明细表在右」才是用户看惯了的方向 ——
+ * 引用关系一眼可读，星型结构的紧凑度反而不重要（真人维护的设计，方向比省地方重要）。
+ *
+ * 单一常量是刻意的：曾经默认散在三处（函数默认参数 / localStorage 缺省 / 下拉首项），
+ * 改一处忘另一处就会出现「界面显示 A、实际排的是 B」。现在都读这里。
+ */
+export const DEFAULT_LAYOUT_MODE: LayoutMode = "coreLeftRight";
+
+/** 两种算法都在同一份「系列」口径下分块，切换算法不会改变配色。首项即默认项。 */
+export const LAYOUT_MODES: { value: LayoutMode; labelKey: string }[] = [
+  { value: DEFAULT_LAYOUT_MODE, labelKey: "dbd.layoutModeCore" },
+  { value: "radial", labelKey: "dbd.layoutModeRadial" },
+];
+
+/**
+ * `mode` 缺省 = {@link DEFAULT_LAYOUT_MODE}。
+ * `coreLeftRight` 把引用方向编码进坐标（主表在左、明细表在右，两侧上下均分）；
+ * `radial` 是枢纽+ 放射圈，星型结构更紧凑。
+ */
 export function computeLayout(
   doc: DbDesignDocument,
   opts: LayoutOptions,
+  mode: LayoutMode = DEFAULT_LAYOUT_MODE,
 ): Record<string, { x: number; y: number }> {
   const nodes = doc.nodes.filter((n) => n.kind === "table");
   if (nodes.length === 0) return {};
@@ -254,26 +227,13 @@ export function computeLayout(
   const loose = groups.filter(isIsolated).flatMap((g) => g);
   const blocks = groups.filter((g) => !isIsolated(g));
 
-  const laid: GroupLayout[] = [];
-  for (const g of blocks) laid.push(layoutGroup(g, doc, opts));
+  const laid: BlockLayout[] = [];
+  for (const g of blocks) {
+    laid.push(mode === "coreLeftRight" ? layoutGroupCore(g, doc, opts) : layoutGroup(g, doc, opts));
+  }
 
   if (loose.length > 0) {
-    const cols = Math.max(1, Math.ceil(Math.sqrt(loose.length * 1.4)));
-    const positions: Record<string, { x: number; y: number }> = {};
-    const rows = loose.map((n) => estimateHeight(doc, n, opts.fieldRows));
-    const rowH = Math.max(...rows);
-    loose.forEach((n, i) => {
-      positions[n.id] = {
-        x: PAD + (i % cols) * (CARD_W + CORRIDOR),
-        y: PAD + Math.floor(i / cols) * (rowH + CORRIDOR),
-      };
-    });
-    const rowCount = Math.ceil(loose.length / cols);
-    laid.push({
-      positions,
-      width: PAD * 2 + cols * CARD_W + (cols - 1) * CORRIDOR,
-      height: PAD * 2 + rowCount * rowH + (rowCount - 1) * CORRIDOR,
-    });
+    laid.push(layoutLooseGrid(loose, doc, opts, PAD));
   }
 
   // 各块水平居中：放射块接近圆形、宽度不一，不居中会参差不齐

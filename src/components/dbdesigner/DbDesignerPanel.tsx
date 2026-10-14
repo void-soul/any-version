@@ -21,7 +21,8 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { CONNECTION_LINE_BY_STYLE, useEdgeStyle } from "../../utils/graphEdgeStyle";
-import { computeLayout } from "./layout";
+import { cardClickAction, clickRoleOf } from "./cardClick";
+import { DEFAULT_LAYOUT_MODE, computeLayout, type LayoutMode } from "./layout";
 import { buildArrangeSubDoc, groupByPrefix, relatedTableIds } from "./series";
 import EdgeStyleSelect from "../shared/EdgeStyleSelect";
 import { Menu } from "../shared/Menu";
@@ -192,6 +193,9 @@ function assignSeriesColors(doc: DbDesignDocument): Map<string, string> {
   return byNode;
 }
 
+/** 布局方式的偏好键（放射 / 核心左右），与连线样式同一套持久化做法 */
+const LAYOUT_MODE_KEY = "kira.graph.dbd.layoutMode";
+
 const MIN_DOCK_HEIGHT = 150;
 const MIN_CANVAS_HEIGHT = 120;
 const DEFAULT_DOCK_HEIGHT = 320;
@@ -235,17 +239,44 @@ function TablePreviewBody({ row }: { row: { comment: string; fields: DbField[]; 
         <p className="text-micro text-slate-600">{t("dbd.viewNoFields")}</p>
       ) : (
         <div className="space-y-px">
-          {row.fields.map((f) => (
-            <div key={f.name} className="flex items-baseline gap-1.5 text-micro">
-              <span className="shrink-0 font-mono text-slate-200">{f.name}</span>
-              <span className="shrink-0 text-slate-500">{typeLabel(f.type)}</span>
-              {f.pk && <span className="shrink-0 text-amber-400/90">PK</span>}
-              {f.unique && !f.pk && <span className="shrink-0 text-emerald-400/80">UQ</span>}
-              {f.comment && (
-                <span className="min-w-0 flex-1 truncate text-slate-500" title={f.comment}>{f.comment}</span>
-              )}
-            </div>
-          ))}
+          {/* 字段用**真表格**展示，不用 flex 行。
+              flex 行里字段名长短不一，类型与注释就跟着参差不齐，扫一眼对不上是哪一列；
+              表格靠固定列宽天然对齐，跨表看字段清单时能直接按列比较
+              （用户要求）。宽度按 320px 气泡分配：名字可截断、类型与注释各留够，
+              完整内容都在 title 里。 */}
+          <table className="w-full table-fixed text-micro">
+            <colgroup>
+              <col className="w-[38%]" />
+              <col className="w-[26%]" />
+              <col className="w-[11%]" />
+              <col />
+            </colgroup>
+            <tbody>
+              {row.fields.map((f) => (
+                <tr key={f.name} className="align-top odd:bg-white/[0.015]">
+                  <td
+                    className="truncate py-0.5 pr-1.5 font-mono text-slate-200"
+                    title={f.name}
+                  >
+                    {f.name}
+                  </td>
+                  <td className="truncate py-0.5 pr-1.5 font-mono text-slate-500" title={typeLabel(f.type)}>
+                    {typeLabel(f.type)}
+                  </td>
+                  <td className="whitespace-nowrap py-0.5 pr-1.5">
+                    {f.pk ? (
+                      <span className="text-amber-400/90">PK</span>
+                    ) : f.unique ? (
+                      <span className="text-emerald-400/80">UQ</span>
+                    ) : null}
+                  </td>
+                  <td className="truncate py-0.5 text-slate-500" title={f.comment || undefined}>
+                    {f.comment}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
       <div className="flex items-center gap-2 border-t border-white/10 pt-1.5 text-micro text-slate-500">
@@ -262,7 +293,19 @@ export default function DbDesignerPanel() {
   const [doc, setDoc] = useState<DbDesignDocument | null>(null);
   const [path, setPath] = useState<string>("");
   const [dirty, setDirty] = useState(false);
+  /**
+   * 两个「选中」必须分开，否则没法实现「点表头只高亮、点字段才开面板」：
+   *
+   * - `selectedId`：**底部面板正在编辑哪张表**。点字段区域设置它，面板由它驱动
+   *   （字段/索引/关联三个页签 + 表名/注释/标签/颜色都挂在它上面）。
+   * - `highlightId`：**画布上哪张表高亮**（含一跳关联的高亮与无关项的淡化）。
+   *   点表头设置它。整理选中、左侧导航的高亮也看它。
+   *
+   * 早先只有一个 selectedId，点哪都是「选中 + 开面板」；拆开之后面板的三十几处渲染
+   * 一行都不用改，只是「高亮」不再由面板目标决定。
+   */
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
   // 表列表的悬浮字段预览：定位 / 延迟关闭 / 移入本体不关，都在与思维导图共用的 hook 里
   const hp = useHoverPreview();
   /** 布局变化计数：+1 就让画布重新适应视野（自动布局后必须做，否则停在角落） */
@@ -273,6 +316,19 @@ export default function DbDesignerPanel() {
   const [tableNavOpen, setTableNavOpen] = useState(false);
   /** 连线样式（曲线 / 直角折线 / 直线）：与思维导图、JSON 图共用一份偏好 */
   const [edgeStyle, setEdgeStyle] = useEdgeStyle();
+
+  /**
+   * 布局方式（核心左右 / 放射）。localStorage 持久化，形态与连线样式一致：
+   * 两者都只影响观感、不进设计文件，但用户会希望「上次用哪个」。
+   * 没有偏好记录时读 `DEFAULT_LAYOUT_MODE`，与 `computeLayout` 的缺省同一个来源 ——
+   * 曾经这里写死`radial` 而函数默认 `radial`，改默认时漏了一处，
+   * 会出现「下拉显示核心左右、实际排出来是放射」。
+   */
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>(() => {
+    const saved = localStorage.getItem(LAYOUT_MODE_KEY);
+    // 认得的值才采纳；存了别的东西（改版后废弃的选项）回落到默认
+    return saved === "radial" || saved === "coreLeftRight" ? saved : DEFAULT_LAYOUT_MODE;
+  });
   /**
    * 高亮强度 / 淡化强度：持久化偏好（localStorage），默认值 = 改动前的观感。
    * 画布右下角的悬浮面板直接改它，rfNodes / rfEdges 的 useMemo 都依赖它 → 实时重画。
@@ -528,6 +584,7 @@ export default function DbDesignerPanel() {
     setPath("");
     setDirty(true);
     setSelectedId(null);
+    setHighlightId(null);
     setPositions({});
   };
 
@@ -545,6 +602,7 @@ export default function DbDesignerPanel() {
       setPath(picked);
       setDirty(false);
       setSelectedId(null);
+      setHighlightId(null);
       setPositions({});
     } catch (e) {
       setResult({ ok: false, msg: String(e) });
@@ -652,6 +710,7 @@ export default function DbDesignerPanel() {
     setPath("");
     setDirty(true);
     setSelectedId(null);
+    setHighlightId(null);
     setPositions({});
     setResult({ ok: true, msg: t("dbd.reversed", { count: next.nodes.length, from }) });
   };
@@ -706,6 +765,8 @@ export default function DbDesignerPanel() {
     };
     patchDoc({ ...doc, nodes: [...doc.nodes, node] });
     setSelectedId(node.id);
+    // 新建表沿用「选中即聚焦」的观感：既开面板也点亮，跟用户点表头的效果一致
+    setHighlightId(node.id);
   };
 
   const updateNode = (id: string, patch: Partial<DbDesignNode>) => {
@@ -722,6 +783,8 @@ export default function DbDesignerPanel() {
       relations: doc.relations.filter((r) => r.from.node !== id && r.to.node !== id),
     });
     if (selectedId === id) setSelectedId(null);
+    // 高亮的那张被删了要跟着清，否则画布上留一个「有高亮却没有面板」的幽灵状态
+    if (highlightId === id) setHighlightId(null);
   };
 
   /**
@@ -991,8 +1054,8 @@ export default function DbDesignerPanel() {
    * 看清「这张表跟谁有关系」的办法。
    */
   const relatedIds = useMemo(
-    () => (doc ? relatedTableIds(doc, selectedId) : new Set<string>()),
-    [doc, selectedId],
+    () => (doc ? relatedTableIds(doc, highlightId) : new Set<string>()),
+    [doc, highlightId],
   );
 
   /**
@@ -1038,7 +1101,7 @@ export default function DbDesignerPanel() {
         name: n.name,
         color: n.color ?? "",
         depth,
-        related: selectedId !== null && relatedIds.has(n.id),
+        related: highlightId !== null && relatedIds.has(n.id),
         relCount: relCountOf(n.id),
         comment: n.comment ?? "",
         fields: n.table?.fields ?? [],
@@ -1058,7 +1121,7 @@ export default function DbDesignerPanel() {
       if (rows.some((x) => x.id === n.id)) continue;
       rows.push({
         id: n.id, name: n.name, color: n.color ?? "", depth: 0,
-        related: selectedId !== null && relatedIds.has(n.id),
+        related: highlightId !== null && relatedIds.has(n.id),
         relCount: relCountOf(n.id),
         comment: n.comment ?? "",
         fields: n.table?.fields ?? [],
@@ -1066,7 +1129,7 @@ export default function DbDesignerPanel() {
       });
     }
     return rows;
-  }, [doc, selectedId, relatedIds]);
+  }, [doc, highlightId, relatedIds]);
   const rfNodes: Node[] = useMemo(() => {
     if (!doc) return [];
     const cache = nodeObjCache.current;
@@ -1075,12 +1138,12 @@ export default function DbDesignerPanel() {
     const dimOpacity = dimmedOpacity(lookPrefs.dim);
     for (const n of visibleNodes) {
       const p = positions[n.id] ?? { x: n.x ?? 0, y: n.y ?? 0 };
-      const selected = selectedId === n.id;
+      const selected = highlightId === n.id;
       /** 有选中项时，只有它和它的关联表点亮，其余压暗 */
-      const related = selectedId !== null && relatedIds.has(n.id);
+      const related = highlightId !== null && relatedIds.has(n.id);
       /** 压暗只在「确实选中了某张表」时才做 ——
        *  没选中是一种状态，不该被当成「这张表跟谁都没关系」。 */
-      const dimmed = selectedId !== null && !selected && !related;
+      const dimmed = highlightId !== null && !selected && !related;
       // 展开态只由「节点里显示」这一档决定：选「全部字段」= 表显示全部字段、
       // 视图展开 SQL 全文。早先另有一个「常驻展开」开关与它重复（两者对表的结果
       // 完全一样，只对视图的 SQL 有差别），已合并进这个下拉。
@@ -1145,7 +1208,7 @@ export default function DbDesignerPanel() {
     }
     return out;
   // lookPrefs 在依赖里：滑块一动就得重算节点（否则卡片保持旧样式）
-}, [doc, positions, selectedId, relatedIds, measuredMap, fieldRows, visibleNodes, lookPrefs]);
+}, [doc, positions, highlightId, relatedIds, measuredMap, fieldRows, visibleNodes, lookPrefs]);
 
   const rfEdges: Edge[] = useMemo(() => {
     if (!doc) return [];
@@ -1167,8 +1230,8 @@ export default function DbDesignerPanel() {
     const onCanvas = new Set(visibleNodes.map((n) => n.id));
     return doc.relations.filter((r) => onCanvas.has(r.from.node) && onCanvas.has(r.to.node)).map((r) => {
       // 选中关联高亮：这条线是否与当前选中表相连
-      const related = selectedId !== null && (r.from.node === selectedId || r.to.node === selectedId);
-      const dimmed = selectedId !== null && !related;
+      const related = highlightId !== null && (r.from.node === highlightId || r.to.node === highlightId);
+      const dimmed = highlightId !== null && !related;
       const own = ownColorOf(r.from.node);
       // 弱化档（选中了别的表）：**要退后，但不能退到看不见**。
       // 早先这里是 rgba(148,163,184,0.18) + 1px，在深色画布上等于隐形 ——
@@ -1216,7 +1279,7 @@ export default function DbDesignerPanel() {
       };
     });
   // lookPrefs 也要在依赖里：滑块一动，连线的粗细/颜色/辉光要立刻跟着变
-}, [doc, edgeStyle, visibleNodes, selectedId, lookPrefs]);
+}, [doc, edgeStyle, visibleNodes, highlightId, lookPrefs]);
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     // 位置：一次性写本地覆盖（思维导图同款，避免每帧重建文档）
@@ -1461,7 +1524,9 @@ export default function DbDesignerPanel() {
           currentDoc: doc,
         },
       });
-      const pos = computeLayout(generated, { fieldRows });
+      // 新表的位置跟随用户当前的布局偏好：否则界面选「核心左右」、AI 生成的新表却摆成放射，
+      // 同一幅画里两种形态混着，比一开始就用放射还怪。
+      const pos = computeLayout(generated, { fieldRows }, layoutMode);
       const placed: DbDesignDocument = {
         ...generated,
         // **公共字段配置必须从原文档带过来**：AI 返回的是一份全新文档（它只管表结构），
@@ -1481,6 +1546,7 @@ export default function DbDesignerPanel() {
       patchDoc(placed);
       setPositions({});
       setSelectedId(null);
+      setHighlightId(null);
       setFitSignal((n) => n + 1);
       // 侧栏保持展开：需求文本还在，用户改一句话就能再生成一轮
       toast(t("dbd.aiDone", { count: placed.nodes.length }), "ok");
@@ -1524,7 +1590,7 @@ export default function DbDesignerPanel() {
       confirmText: t("dbd.layoutBtn"),
     });
     if (!ok) return;
-    const pos = computeLayout(doc, { fieldRows });
+    const pos = computeLayout(doc, { fieldRows }, layoutMode);
     patchDoc({
       ...doc,
       nodes: doc.nodes.map((n) => {
@@ -1558,15 +1624,15 @@ export default function DbDesignerPanel() {
    * 只会让「点一下看看排得怎么样」变成一件有心理负担的事。
    */
   const arrangeHighlighted = () => {
-    if (!doc || !selectedId) return;
-    const ids = relatedTableIds(doc, selectedId);
+    if (!doc || !highlightId) return;
+    const ids = relatedTableIds(doc, highlightId);
     // 只有一张表时排了等于没排，直接说清楚而不是默默挪一下
     if (ids.size < 2) {
       toast(t("dbd.arrangeNeedMore"), "err");
       return;
     }
     const sub = buildArrangeSubDoc(doc, ids);
-    const pos = computeLayout(sub, { fieldRows });
+    const pos = computeLayout(sub, { fieldRows }, layoutMode);
     if (Object.keys(pos).length === 0) return;
     // 排完整体平移到原高亮区域的左上角：否则这批表会被搬到画布原点，
     // 视觉上像「图表跳了一下」，用户的空间记忆就断了
@@ -1605,6 +1671,38 @@ export default function DbDesignerPanel() {
     ["parent", t("dbd.relFilterParent")],
     ["child", t("dbd.relFilterChild")],
   ] as const;
+
+  /**
+   * 卡片点击分流（用户明确要求的两条）：
+   *
+   * - **点表头 → 只高亮**（连同它的一跳关联一起点亮、其余淡化），**不开底部面板**。
+   * - **点字段区域 → 打开底部编辑面板**（显示这张表的全部字段页签），**不高亮**。
+   *
+   * 靠卡片上的 `data-dbd-role` 区分：`table-header` / `field-row` / `field-area`
+   * （见 DesignNodeCard）。为什么不把回调塞进 node data：data 会进 `rfNodes` 的依赖数组，
+   * 每次渲染新建函数就会让整张图重算，而这里只需要一个字符串判断。
+   *
+   * 点字段**不改高亮**：既不清掉已有的高亮，也不把被点的表点亮 —— 用户要的是
+   * 「读字段时不惊动画布」。
+   */
+  const onCardClick = useCallback(
+    (e: React.MouseEvent, n: { id: string }) => {
+      const act = cardClickAction(clickRoleOf(e.target));
+      if (act.kind === "openDock") {
+        setSelectedId(n.id); // 面板目标；dock 由 selectedAlive 的既有 effect 展开
+        setDockTab("fields"); // 从「索引/关联」页签点字段时切回字段，避免看不到点的是啥
+        return;
+      }
+      setHighlightId(n.id);
+      // 点表头高亮**别的**表时，把还停在上一张表上的面板收掉。
+      //
+      // 为什么必须收：面板标题写着 A 的名字，画布却高亮着 B —— 用户看到的是
+      // 「我明明在点 B，为什么下面编辑的还能是 A」，改字段时最容易改错对象。
+      // 点的是**同一张**表则保留面板（用户就是想在高亮它的同时继续编辑）。
+      setSelectedId((cur) => (cur === n.id ? cur : null));
+    },
+    [],
+  );
 
   return (
     <div
@@ -1866,12 +1964,15 @@ export default function DbDesignerPanel() {
                   <button
                     key={r.id}
                     onClick={() => {
+                      // 导航点表名 = 「我要看这张表」：高亮 + 画布移过去 + 打开面板。
+                      // 三个都做，因为它本来就是唯一带「定位」的入口（画布上找一张表全靠拖）。
+                      setHighlightId(r.id);
                       setSelectedId(r.id);
                       setCenterTargetId(r.id);
                       setCenterSignal((s) => s + 1);
                     }}
                     className={`flex w-full items-center gap-1 rounded py-1 pr-1.5 text-left text-tiny cursor-pointer transition-colors ${
-                      r.id === selectedId
+                      r.id === highlightId
                         ? "bg-[var(--module-accent-soft)] text-[var(--module-accent)]"
                         : r.related
                           ? "text-cyan-300 hover:bg-white/5"
@@ -1879,20 +1980,28 @@ export default function DbDesignerPanel() {
                     }`}
                     style={{ paddingLeft: 6 + r.depth * 10 }}
                     // 悬浮展示完整字段（与思维导图的节点预览共用 shared/HoverPreview）。
+                    //
+                    // **锚点用行的右缘 + 顶边，不是鼠标坐标**：跟随鼠标时每一行弹出的位置
+                    // 都不同，眼睛要重新找；按列对齐后所有预览的左边框落在同一条竖线上，
+                    // 上下扫过列表时视线不用横向漂移（用户要求）。
                     // 原生 title 只能塞一行字，放不下「这张表有哪些字段」—— 而表列表
                     // 刻意做成一行一个（字段最多、名字最短），不给悬浮就只能放大画布去看，
                     // 那是另一件事。onMouseMove 只在换行时重建内容，避免逐帧 setState。
-                    onMouseEnter={(e) => hp.show({
-                      title: r.name,
-                      x: e.clientX,
-                      y: e.clientY,
-                      accent: /^#[0-9a-f]{6}$/i.test(r.color ?? "") ? r.color : undefined,
-                      content: <TablePreviewBody row={r} />,
-                    })}
+                    onMouseEnter={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      hp.show({
+                        title: r.name,
+                        x: rect.right,
+                        y: rect.top,
+                        accent: /^#[0-9a-f]{6}$/i.test(r.color ?? "") ? r.color : undefined,
+                        content: <TablePreviewBody row={r} />,
+                      });
+                    }}
                     onMouseMove={(e) => {
                       if (hp.preview?.title !== r.name) {
+                        const rect = e.currentTarget.getBoundingClientRect();
                         hp.show({
-                          title: r.name, x: e.clientX, y: e.clientY,
+                          title: r.name, x: rect.right, y: rect.top,
                           accent: /^#[0-9a-f]{6}$/i.test(r.color ?? "") ? r.color : undefined,
                           content: <TablePreviewBody row={r} />,
                         });
@@ -1950,8 +2059,13 @@ export default function DbDesignerPanel() {
                 onNodeDragStop={onNodeDragStop}
                 onConnect={onConnect}
                 connectionLineType={CONNECTION_LINE_BY_STYLE[edgeStyle]}
-                onNodeClick={(_, n) => setSelectedId(n.id)}
-                onPaneClick={() => setSelectedId(null)}
+                onNodeClick={onCardClick}
+                onPaneClick={() => {
+                  // 点空白：两个「选中」一起清掉。面板随之收起（现有规则：取消选中 = 收缩），
+                  // 高亮与淡化也一并解除。
+                  setSelectedId(null);
+                  setHighlightId(null);
+                }}
                 connectionMode={ConnectionMode.Loose}
                 fitView
                 minZoom={0.2}
@@ -1976,10 +2090,15 @@ export default function DbDesignerPanel() {
                   onHighlight={setHighlightStrength}
                   onDim={setDimStrength}
                   onReset={resetLookPrefs}
+                  layoutMode={layoutMode}
+                  onLayoutMode={(m) => {
+                    setLayoutMode(m);
+                    localStorage.setItem(LAYOUT_MODE_KEY, m);
+                  }}
                   onAutoLayout={() => void autoLayout()}
                   onArrange={arrangeHighlighted}
                   onAutoColor={autoColorAll}
-                  arrangeDisabled={!selectedId || relatedIds.size < 2}
+                  arrangeDisabled={!highlightId || relatedIds.size < 2}
                 />
               </div>
             </ReactFlowProvider>

@@ -95,12 +95,19 @@ describe("系列分组：表名前缀 ∪ 外键", () => {
   });
 });
 
+/**
+ * 放射布局专属用例。
+ *
+ * **每个用例都显式传 "radial"**：这个 describe 测的就是放射语义（圆心、环上挨着），
+ * 不该跟着 `DEFAULT_LAYOUT_MODE` 走 —— 默认值一改，这里的断言就会集体失效，
+ * 然后要花时间分辨「是算法坏了」还是「默认值变了」（本次就踩了这个坑）。
+ */
 describe("computeLayout（枢纽放射）", () => {
   it("星型结构：连接最多的表落在圆心，同伴环绕它", () => {
     // order_item 被 6 张表引用 → 它是枢纽
     const nodes = [n("t0"), ...Array.from({ length: 6 }, (_, i) => n(`t${i + 1}`))];
     const rels = Array.from({ length: 6 }, (_, i) => rel(`t${i + 1}`, "t0"));
-    const pos = computeLayout(docOf(nodes, rels), OPTS);
+    const pos = computeLayout(docOf(nodes, rels), OPTS, "radial");
     // 圆心 = 距其它表平均距离最小的那个
     let best = "";
     let bestD = Infinity;
@@ -120,7 +127,7 @@ describe("computeLayout（枢纽放射）", () => {
   it("卡片互不重叠（任意两张表不压在一起）", () => {
     const nodes = [n("t0"), ...Array.from({ length: 9 }, (_, i) => n(`t${i + 1}`))];
     const rels = Array.from({ length: 9 }, (_, i) => rel(`t${i + 1}`, "t0"));
-    const pos = computeLayout(docOf(nodes, rels), OPTS);
+    const pos = computeLayout(docOf(nodes, rels), OPTS, "radial");
     const ids = Object.keys(pos);
     for (let i = 0; i < ids.length; i++) {
       for (let j = i + 1; j < ids.length; j++) {
@@ -133,7 +140,7 @@ describe("computeLayout（枢纽放射）", () => {
     const nodes = [n("t0"), ...Array.from({ length: 7 }, (_, i) => n(`t${i + 1}`))];
     const rels = Array.from({ length: 7 }, (_, i) => rel(`t${i + 1}`, "t0"));
     const doc = docOf(nodes, rels);
-    expect(computeLayout(doc, OPTS)).toEqual(computeLayout(doc, OPTS));
+    expect(computeLayout(doc, OPTS, "radial")).toEqual(computeLayout(doc, OPTS, "radial"));
   });
 
   it("相连的表在环上挨着（连线是短弦而不是横穿圆心的长线）", () => {
@@ -144,13 +151,13 @@ describe("computeLayout（枢纽放射）", () => {
     );
     const groups = groupByPrefix(doc);
     expect(groups).toHaveLength(2);
-    const pos = computeLayout(doc, OPTS);
+    const pos = computeLayout(doc, OPTS, "radial");
     // 每组内部：相连的两张表中心距 < 该组外接直径的一半
     expect(dist(pos, "t0", "t1")).toBeLessThan(dist(pos, "t0", "t2"));
   });
 
   it("单表系列也能落到画布上（不是 undefined）", () => {
-    const pos = computeLayout(docOf([n("t0"), n("t1")]), OPTS);
+    const pos = computeLayout(docOf([n("t0"), n("t1")]), OPTS, "radial");
     expect(pos.t0).toBeDefined();
     expect(pos.t1).toBeDefined();
   });

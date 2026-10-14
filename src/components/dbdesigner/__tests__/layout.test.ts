@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { computeLayout } from "../layout";
+import { LAYOUT_MODES, computeLayout, type LayoutMode } from "../layout";
+import { CARD_W, estimateHeight } from "../layoutCore";
 import type { DbDesignDocument, DbDesignNode, DbField } from "../types";
 
 function field(name: string, pk = false): DbField {
@@ -63,7 +64,9 @@ describe("computeLayout", () => {
     expect(pos.t4.y).toBeGreaterThan(pos.t0.y);
   });
 
-  it("星型：被最多表引用的那张落在圆心，其余环绕它（不再强制「父在左」）", () => {
+  it("放射：被最多表引用的那张落在圆心，其余环绕它", () => {
+    // 显式 radial：「圆心 / 环绕」是放射特有的形态，核心左右算法里枢纽在中间列。
+    // 不跟着默认走 —— 默认值一改这条就失效，却看不出是算法坏了还是默认值变了。
     const doc = docOf(
       [
         table("users", [field("user_id", true)]),
@@ -77,7 +80,7 @@ describe("computeLayout", () => {
         { id: "r3", from: { node: "order_sku", field: "order_id" }, to: { node: "orders", field: "order_id" }, kind: "1-n" },
       ],
     );
-    const pos = computeLayout(doc, opts);
+    const pos = computeLayout(doc, opts, "radial");
     // orders 被引用 3 次 → 枢纽 → 落在圆心（到其余三张平均距离最小）
     const avg = (id: string) =>
       ["users", "order_item", "order_sku"].reduce((s, k) => s + Math.hypot(pos[id].x - pos[k].x, pos[id].y - pos[k].y), 0) / 3;
@@ -147,7 +150,8 @@ describe("computeLayout", () => {
     // 而坐标要写进设计文件 —— 所以外键行必须计入高度。
     // 放射布局下高度不再决定层间距（那由卡片宽度与圈容量反解），但仍决定卡片自身占位，
     // 这里验证「字段多的表估出来更高」，且两种档位下都不重叠。
-    const gapWithFk = (fkCount: number) => {
+    const gapWithFk = (fkCount: number, mode2: LayoutMode) => {
+      const mode = "keys" as const;
       const fields = [field("id", true)];
       for (let i = 0; i < fkCount; i++) fields.push(field(`u${i}`));
       const doc = docOf(
@@ -162,23 +166,33 @@ describe("computeLayout", () => {
           { id: "rt2", from: { node: "t2", field: "user_id" }, to: { node: "users", field: "id" }, kind: "1-n" },
         ],
       );
-      const pos = computeLayout(doc, { fieldRows: "keys" });
-      // 三张表两两不重叠（这里用 generous 的高度上限，宁可宽松也不能漏）
+      const pos = computeLayout(doc, { fieldRows: mode }, mode2);
+      // 三张表两两不重叠。
+      //
+      // 高度用 `estimateHeight` 算**真实值**，不拍「宽松上界」：早先这里写死 300，
+      // 而卡片实际只有 ~140px 高、行间距 ~188 —— 300 > 188，于是把正常间距判成重叠（误报，
+      // 切到核心左右模式后暴露）。这条测的本来就是「高度估算准不准」，
+      // 拿一个与估算无关的常数去判重叠，等于没测到点上。
       const ids = ["users", "t1", "t2"];
+      const h = new Map(doc.nodes.map((nd) => [nd.id, estimateHeight(doc, nd, mode)]));
       for (let i = 0; i < ids.length; i++) {
         for (let j = i + 1; j < ids.length; j++) {
           const p = pos[ids[i]];
           const q = pos[ids[j]];
-          const hitX = p.x < q.x + 288 && q.x < p.x + 288;
-          const hitY = p.y < q.y + 300 && q.y < p.y + 300;
+          const hp = h.get(ids[i]) ?? 0;
+          const hq = h.get(ids[j]) ?? 0;
+          const hitX = p.x < q.x + CARD_W && q.x < p.x + CARD_W;
+          const hitY = p.y < q.y + hq && q.y < p.y + hp;
           expect(hitX && hitY, `${ids[i]} 与 ${ids[j]} 重叠`).toBe(false);
         }
       }
       return pos;
     };
     // 外键越多，卡片越高 → 环上占位更大，但布局仍然稳定合法
-    expect(() => gapWithFk(1)).not.toThrow();
-    expect(() => gapWithFk(3)).not.toThrow();
+    for (const m of LAYOUT_MODES) {
+      expect(() => gapWithFk(1, m.value)).not.toThrow();
+      expect(() => gapWithFk(3, m.value)).not.toThrow();
+    }
   });
 
   it("空文档返回空结果，不报错", () => {

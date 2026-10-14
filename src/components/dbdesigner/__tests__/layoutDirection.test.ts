@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { computeLayout } from "../layout";
+import { MIN_CARD_H } from "../layoutCore";
 import { buildArrangeSubDoc, relatedTableIds } from "../series";
 import type { DbDesignDocument } from "../types";
 
@@ -42,7 +43,14 @@ function rel(from: string, to: string, field: string) {
   };
 }
 
-/** 卡片是否重叠（高度给足，宁可宽松也不漏判） */
+/**
+ * 卡片是否重叠。
+ *
+ * 高度用算法自己的下界 `MIN_CARD_H`，不要拍一个「宽松上界」：早先这里写 200px，
+ * 而这些卡片实际只有 106px 高、行间距 170px，200 > 170 于是把**正常间距判成重叠**
+ * —— coreLeftRight 的星型用例因此误报（真实文件里两种模式都是零重叠）。
+ * 用算法的常量，既不会误报，也跟实现一起演进。
+ */
 function anyOverlap(pos: Record<string, { x: number; y: number }>, ids: string[]): string | null {
   for (let i = 0; i < ids.length; i++) {
     for (let j = i + 1; j < ids.length; j++) {
@@ -50,7 +58,7 @@ function anyOverlap(pos: Record<string, { x: number; y: number }>, ids: string[]
       const q = pos[ids[j]];
       if (!p || !q) continue;
       const hitX = p.x < q.x + CARD_W && q.x < p.x + CARD_W;
-      const hitY = p.y < q.y + 200 && q.y < p.y + 200;
+      const hitY = p.y < q.y + MIN_CARD_H && q.y < p.y + MIN_CARD_H;
       if (hitX && hitY) return `${ids[i]}×${ids[j]}`;
     }
   }
@@ -78,15 +86,25 @@ const CHAIN: DbDesignDocument = {
  *   1. 卡片互不重叠（用户抱怨「表压在一起」）
  *   2. 可复现（坐标会写进设计文件，两次必须一样）
  *   3. 「整理选中」与整份布局口径一致，且只动选中的那几张表
+ *
+ * 这三条**必须两种模式都成立**，所以下面用 `MODES` 遍历，而不是依赖 `DEFAULT_LAYOUT_MODE`：
+ * 默认值一改就集体失效，既看不出是算法坏了还是默认值变了，���等于这些不变量根本没被测到。
  */
-describe("layout（放射布局的不变量）", () => {
+/** 两种布局算法：不变量对两者都必须成立 */
+const MODES = ["radial", "coreLeftRight"] as const;
+
+describe("layout（两种算法都要满足的不变量）", () => {
   it("链式结构：卡片互不重叠", () => {
-    const pos = computeLayout(CHAIN, { fieldRows: "all" });
-    expect(anyOverlap(pos, ["t1", "t2", "t3"])).toBeNull();
+    for (const mode of MODES) {
+      const pos = computeLayout(CHAIN, { fieldRows: "all" }, mode);
+      expect(anyOverlap(pos, ["t1", "t2", "t3"]), `${mode} 下重叠`).toBeNull();
+    }
   });
 
-  it("连接最多的表落在圆心（链式里中段的 article 度数 2，是事实上的枢纽）", () => {
-    const pos = computeLayout(CHAIN, { fieldRows: "all" });
+  it("放射：连接最多的表落在圆心（链式里中段的 article 度数 2，是事实上的枢纽）", () => {
+    // 显式传 radial：这条测的是「圆心」这个放射特有的形态，
+    // 核心左右算法里枢纽在中间列而不是圆心，用隐式默认会随默认值变化而失效
+    const pos = computeLayout(CHAIN, { fieldRows: "all" }, "radial");
     // user 只被引用 1 次、comment 被引用 0 次，article 被引用 1 次且引用了 user → 度数 2 最高
     const avg = (id: string) =>
       (["t1", "t2", "t3"] as const)
@@ -97,9 +115,11 @@ describe("layout（放射布局的不变量）", () => {
   });
 
   it("可复现：同一份设计算两次坐标完全一致（坐标会写进设计文件）", () => {
-    expect(computeLayout(CHAIN, { fieldRows: "all" })).toEqual(
-      computeLayout(CHAIN, { fieldRows: "all" }),
-    );
+    for (const mode of MODES) {
+      expect(computeLayout(CHAIN, { fieldRows: "all" }, mode)).toEqual(
+        computeLayout(CHAIN, { fieldRows: "all" }, mode),
+      );
+    }
   });
 
   it("星型：六张表都围着枢纽，互不重叠", () => {
@@ -110,10 +130,12 @@ describe("layout（放射布局的不变量）", () => {
       relations.push(rel(`t${i}`, "t0", `order_id`) as any);
     }
     const doc = { id: "d", name: "d", dialect: "mysql", nodes, relations } as any;
-    const pos = computeLayout(doc, { fieldRows: "all" });
-    const ids = Object.keys(pos);
-    expect(ids).toHaveLength(7);
-    expect(anyOverlap(pos, ids)).toBeNull();
+    for (const mode of MODES) {
+      const pos = computeLayout(doc, { fieldRows: "all" }, mode);
+      const ids = Object.keys(pos);
+      expect(ids).toHaveLength(7);
+      expect(anyOverlap(pos, ids), `${mode} 下重叠`).toBeNull();
+    }
   });
 
   it("整理选中：只排选中的那几张，且与整份布局用同一个算法（不会自成一套）", () => {
@@ -122,17 +144,18 @@ describe("layout（放射布局的不变量）", () => {
     expect([...ids].sort()).toEqual(["t1", "t2", "t3"]);
 
     const sub = buildArrangeSubDoc(CHAIN, ids);
-    const subPos = computeLayout(sub, { fieldRows: "all" });
-    // 只含选中的三张
-    expect(Object.keys(subPos).sort()).toEqual(["t1", "t2", "t3"]);
-    expect(anyOverlap(subPos, ["t1", "t2", "t3"])).toBeNull();
-    // 与整份布局的相对位置一致（同样是 user 在圆心）
-    const fullPos = computeLayout(CHAIN, { fieldRows: "all" });
-    const avg = (pos: Record<string, { x: number; y: number }>, id: string) =>
-      (["t1", "t2", "t3"] as const)
-        .filter((k) => k !== id)
-        .reduce((s, k) => s + Math.hypot(pos[id].x - pos[k].x, pos[id].y - pos[k].y), 0) / 2;
-    expect(avg(subPos, "t1")).toBeLessThanOrEqual(avg(fullPos, "t1"));
+    for (const mode of MODES) {
+      const subPos = computeLayout(sub, { fieldRows: "all" }, mode);
+      // 只含选中的三张
+      expect(Object.keys(subPos).sort()).toEqual(["t1", "t2", "t3"]);
+      expect(anyOverlap(subPos, ["t1", "t2", "t3"]), `${mode} 下重叠`).toBeNull();
+      const fullPos = computeLayout(CHAIN, { fieldRows: "all" }, mode);
+      const avg = (pos: Record<string, { x: number; y: number }>, id: string) =>
+        (["t1", "t2", "t3"] as const)
+          .filter((k) => k !== id)
+          .reduce((s, k) => s + Math.hypot(pos[id].x - pos[k].x, pos[id].y - pos[k].y), 0) / 2;
+      expect(avg(subPos, "t1")).toBeLessThanOrEqual(avg(fullPos, "t1"));
+    }
   });
 
   it("选中集合里的表落在互不相干的系列时也不会压在一起", () => {
@@ -147,7 +170,9 @@ describe("layout（放射布局的不变量）", () => {
       ],
       relations: [rel("t2", "t1", "user_id")],
     } as any;
-    const pos = computeLayout(doc, { fieldRows: "all" });
-    expect(anyOverlap(pos, ["t1", "t2", "t3"])).toBeNull();
+    for (const mode of MODES) {
+      const pos = computeLayout(doc, { fieldRows: "all" }, mode);
+      expect(anyOverlap(pos, ["t1", "t2", "t3"]), `${mode} 下重叠`).toBeNull();
+    }
   });
 });

@@ -125,6 +125,9 @@ function DesignNodeCardInner({ data }: NodeProps) {
 
       <div
         className="relative flex items-center gap-1.5 border-b border-white/10 px-2.5 py-1.5"
+        // 点表头 = 只高亮，不开底部面板（面板的入口是「点字段」）。
+        // 标记打在表头容器上：表名、图标、字段数、以及它们之间的空白都算表头。
+        data-dbd-role="table-header"
         // 表头底：高亮时用高亮色（选中最浓，是「点亮」最显眼的一块）；
         // 未高亮时混入 16% 表色（表的身份），没有表色就用极淡的白
         style={{
@@ -184,7 +187,7 @@ function DesignNodeCardInner({ data }: NodeProps) {
           {expanded ? <span className="line-clamp-3 font-mono">{node.view?.sql}</span> : "SQL 视图"}
         </div>
       ) : (
-        <div className="py-1">
+        <div className="py-1" data-dbd-role="field-area">
           {shown.length === 0 ? (
             <div className="px-2.5 py-1 text-micro text-slate-600">
               {fields.length === 0 ? "还没有字段" : "（无关联字段）"}
@@ -194,7 +197,14 @@ function DesignNodeCardInner({ data }: NodeProps) {
               /* 三列：字段名 / 类型 / 注释。注释超长截断（完整内容在 title），
                  否则一个宽表能把卡片撑到没法看。
                  group/row：悬停某一行时只有这一行的锚点亮起（一屏几十行时不会全在闪）。 */
-              <div key={f.name} className="group/row relative flex items-center gap-1.5 px-2.5 py-0.5 text-micro hover:bg-white/[0.04]">
+              <div
+                key={f.name}
+                // 点字段 = 开底部编辑面板；点表头 = 只高亮。面板靠这个标记区分两种点击
+                // （见 DbDesignerPanel 的 onNodeClick），所以这里必须打在**行**上：
+                // 打在容器上会被空白处一起吞掉。
+                data-dbd-role="field-row"
+                className="group/row relative flex items-center gap-1.5 px-2.5 py-0.5 text-micro hover:bg-white/[0.04]"
+              >
                 {/* 左：被引用侧（冷色空心）。既接别人的线，也能从这里拖出去 —— 两侧等价。 */}
                 <Handle
                   type="target"

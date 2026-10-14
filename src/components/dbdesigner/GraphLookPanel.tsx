@@ -12,6 +12,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LayoutGrid, Palette, RotateCcw, Rows3, SlidersHorizontal } from "lucide-react";
+import { LAYOUT_MODES, type LayoutMode } from "./layout";
 
 /** 滑块 → 百分比显示 */
 function pct(v: number): string {
@@ -62,6 +63,8 @@ export default function GraphLookPanel({
   onReset,
   maxHighlight,
   maxDim,
+  layoutMode,
+  onLayoutMode,
   onAutoLayout,
   onArrange,
   onAutoColor,
@@ -75,6 +78,9 @@ export default function GraphLookPanel({
   /** 上限由偏好层给（高亮可到 150%，淡化可调至完全看不见） */
   maxHighlight: number;
   maxDim: number;
+  /** 布局方式：放射 / 核心表左右分列（决定自动布局与整理选中用哪套算法） */
+  layoutMode: LayoutMode;
+  onLayoutMode: (m: LayoutMode) => void;
   onAutoLayout: () => void;
   /** 「整理选中的表」：未选中或关联不足 2 张时禁用 */
   onArrange: () => void;
@@ -129,6 +135,20 @@ export default function GraphLookPanel({
         <div className="mb-1 text-micro uppercase tracking-wide text-slate-600">
           {t("dbd.lookArrangeSection")}
         </div>
+        {/* 布局方式：两种算法（放射 / 核心表左右分列）在这里切换。
+            放在「布局整理」里而不是工具栏：它只对下面两个动作有意义。 */}
+        <select
+          value={layoutMode}
+          onChange={(e) => onLayoutMode(e.target.value as LayoutMode)}
+          title={t("dbd.layoutModeHint")}
+          className={"mb-1.5 w-full cursor-pointer rounded-ctl bg-white/5 px-1.5 py-1 text-micro text-slate-200 outline-none"}
+        >
+          {LAYOUT_MODES.map((m) => (
+            <option key={m.value} value={m.value}>
+              {t(m.labelKey)}
+            </option>
+          ))}
+        </select>
         <div className="grid grid-cols-3 gap-1">
           <button
             type="button"
