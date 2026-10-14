@@ -172,7 +172,11 @@
     "indexChosenHint": "按点选顺序组合成复合索引",
     "indexKindIndex": "普通索引",
     "indexKindUnique": "唯一索引",
-    "indexKindFulltext": "全文索引"
+    "indexKindFulltext": "全文索引",
+    "arrange": "整理选中系列",
+    "arrangeHint": "只把高亮中的表按父子关系整齐排列，其余表不动",
+    "arrangeDone": "已整理 {{count}} 张表",
+    "arrangeNeedMore": "先选中一张表（且它至少有一张相关表）"
   },
   "suno": {
     "urlPlaceholder": "粘贴 Suno 用户主页 URL（如 https://suno.com/@用户名）",

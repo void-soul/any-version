@@ -39,6 +39,7 @@ import {
   FilePlus2,
   FolderOpen,
   LayoutGrid,
+  Rows3,
   Palette,
   Plus,
   ListTree,
@@ -1374,6 +1375,74 @@ export default function DbDesignerPanel() {
     toast(t("dbd.layoutDone", { count: Object.keys(pos).length }), "ok");
   };
 
+  /**
+   * 选中表所在的那个系列（按外键连通分量）。
+   *
+   * 与配色、整份自动布局共用同一个「系列」定义（`groupByForeignKey`）——
+   * 三处对「系列」的理解一旦分叉，就会出现「颜色成对、位置却分开」这种自相矛盾的画面。
+   */
+  const seriesOfSelected = useMemo(() => {
+    if (!doc || !selectedId) return null;
+    const tables = doc.nodes.filter((n) => n.kind === "table");
+    return groupByForeignKey(doc, tables).find((g) => g.some((n) => n.id === selectedId)) ?? null;
+  }, [doc, selectedId]);
+
+  /**
+   * 整理**选中表所在的那个系列**（按外键连通分量），其余系列原地不动。
+   *
+   * 为什么是「系列」而不是「高亮的那几张」：高亮（`relatedIds`）只含选中表的
+   * 直接父与直接子，通常就两三张 —— 把它们排齐了，同系列的孙表、兄弟表仍然散着，
+   * 整体依旧不整齐。而「系列」才是那个有完整父子层次的整体，
+   * 排出来才像思维导图的默认布局：根在左、子往右逐层展开、同父的挨着。
+   *
+   * 为什么不全排：整份「自动布局」会把所有系列都重排一遍，用户精心摆过的
+   * 其它系列也跟着动。只动这一个系列，其余坐标原样保留。
+   *
+   * 落点是**子文档**：把这个系列的表和它们之间的关联抽成一份小设计，交给同一个
+   * `computeLayout`（它 `x = PAD + 深度 * (卡宽 + 间距)`，天然就是父左子右）。
+   * 复用它而不是另写一套，是为了两份布局口径永不漂移。
+   *
+   * **不弹确认**：它只改坐标，不改任何数据（字段、关联、索引一概不动），
+   * 且撤销 / 再点一次「自动布局」就能回来。为一个可逆的重排拦一道确认，
+   * 只会让「点一下看看排得怎么样」变成一件有心理负担的事。
+   */
+  const arrangeHighlighted = () => {
+    if (!doc || !selectedId) return;
+    const series = seriesOfSelected;
+    if (!series || series.length < 2) {
+      toast(t("dbd.arrangeNeedMore"), "err");
+      return;
+    }
+    const ids = new Set(series.map((n) => n.id));
+    const sub: DbDesignDocument = {
+      ...doc,
+      nodes: series,
+      // 只保留两端都在这个系列里的关联：指向外部表的关联会让分层多出不存在的一端
+      relations: doc.relations.filter(
+        (r) => r.kind !== "n-n" && ids.has(r.from.node) && ids.has(r.to.node),
+      ),
+    };
+    const pos = computeLayout(sub, { fieldRows });
+    if (Object.keys(pos).length === 0) return;
+    // 排完整体平移到原高亮区域的左上角：否则这批表会被搬到画布原点，
+    // 视觉上像「图表跳了一下」，用户的空间记忆就断了
+    const before = sub.nodes.map((n) => ({ x: n.x ?? 0, y: n.y ?? 0 }));
+    const anchorX = Math.min(...before.map((p) => p.x));
+    const anchorY = Math.min(...before.map((p) => p.y));
+    const after = Object.values(pos);
+    const offX = anchorX - Math.min(...after.map((p) => p.x));
+    const offY = anchorY - Math.min(...after.map((p) => p.y));
+    patchDoc({
+      ...doc,
+      nodes: doc.nodes.map((n) => {
+        const p = pos[n.id];
+        return p ? { ...n, x: Math.round(p.x + offX), y: Math.round(p.y + offY) } : n;
+      }),
+    });
+    setPositions({});
+    toast(t("dbd.arrangeDone", { count: Object.keys(pos).length }), "ok");
+  };
+
   const selected = doc?.nodes.find((n) => n.id === selectedId) ?? null;
   /** dock 只管「当前这张表」：字段、索引都是表级的，关联也必须一致 ——
    *  否则选中 orders 却要在一堆无关表里翻它那几条关系。 */
@@ -1432,6 +1501,15 @@ export default function DbDesignerPanel() {
         <div className="mx-1 h-4 w-px bg-white/10" />
         <button onClick={() => void autoLayout()} disabled={!doc} className="ui-btn px-2 py-1 text-caption disabled:opacity-40" title={t("dbd.autoLayout")}>
           <LayoutGrid className="h-3.5 w-3.5" /> {t("dbd.autoLayout")}
+        </button>
+        {/* 只整理选中表所在的那个系列：整份自动布局会连用户摆好的其它系列一起动 */}
+        <button
+          onClick={arrangeHighlighted}
+          disabled={!doc || !selectedId || !seriesOfSelected}
+          className="ui-btn px-2 py-1 text-caption disabled:opacity-40"
+          title={t("dbd.arrangeHint")}
+        >
+          <Rows3 className="h-3.5 w-3.5" /> {t("dbd.arrange")}
         </button>
         <button
           onClick={autoColorAll}

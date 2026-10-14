@@ -172,7 +172,11 @@
     "indexChosenHint": "Combined into a composite index in the order you clicked",
     "indexKindIndex": "Index",
     "indexKindUnique": "Unique",
-    "indexKindFulltext": "Fulltext"
+    "indexKindFulltext": "Fulltext",
+    "arrange": "Arrange selection",
+    "arrangeHint": "Tidy up only the highlighted tables into parent/child order; others stay put",
+    "arrangeDone": "Arranged {{count}} tables",
+    "arrangeNeedMore": "Select a table with at least one related table first"
   },
   "suno": {
     "urlPlaceholder": "Paste a Suno profile URL (e.g. https://suno.com/@username)",
