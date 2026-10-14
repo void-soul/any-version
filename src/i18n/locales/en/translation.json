@@ -2900,9 +2900,6 @@
     "managedLib": "Managed library",
     "marketHint1": "Skills installed from a Git repo or online source are downloaded to ~/.agents/skills (the skills.sh standard root).",
     "marketHint2": "All supported tools can plug directly into this library.",
-    "builtinTitle": "Built-in skills",
-    "builtinHint1": "Built-in skills ship with Kira; installing puts them in the library, and you then install them for the projects that need them.",
-    "builtinHint2": "Installation is refused when the target already has a skill with the same name (your files are never overwritten). SKILL.md, references/ and scripts/ are all written out, ready to use.",
     "builtinInstall": "Add to library",
     "builtinInstalling": "Installing…",
     "builtinInstalled": "Added to library: {{path}}",
@@ -2977,7 +2974,15 @@
     "libHint": "tick, then install into the projects ticked on the left",
     "tabAdd": "Add skill",
     "projBatchDeleteTitle": "Delete selected skills",
-    "projBatchDeleteDirsHint": "These are real directories owned by the project and will be deleted entirely:"
+    "projBatchDeleteDirsHint": "These are real directories owned by the project and will be deleted entirely:",
+    "projBatchDeleteCount": "{{n}}",
+    "projBatchDeleteConfirmMulti": "Will delete {{n}} skills across {{projects}} projects ({{links}} of them are links; only the link is removed and the library copy stays).",
+    "projBatchDeletedMulti": "Deleted {{n}} skills across {{projects}} projects",
+    "projPruneEmptyDirsHint": "Skill directories left empty, and the .agents / .codebuddy shells around them, are removed as well (kept if they still contain other files).",
+    "projBatchDeleteHint": "Delete the skills picked in any project and clean up the directories left empty",
+    "builtinUpdate": "Update to latest",
+    "builtinUpdated": "Updated to the latest version: {{path}}",
+    "builtinInstalledBadge": "Installed"
   },
   "toollaunch": {
     "officialOnly": "Official models only",

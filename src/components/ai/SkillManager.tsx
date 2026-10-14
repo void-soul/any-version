@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useProjects } from './useProjects';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
@@ -91,6 +91,9 @@ interface ProjectSkillEntry {
 }
 
 type TabKey = 'skills' | 'projects';
+
+/** 「当前项目未勾选任何技能」时的空集。模块级单例，避免每次渲染新建 Set。 */
+const EMPTY_SET: ReadonlySet<string> = new Set<string>();
 
 const MARKET_SOURCES = [
   { name: 'skills.sh 官网', desc: 'Agent Skills 官方生态与规范', url: 'https://skills.sh' },
@@ -205,7 +208,9 @@ export default function SkillManager() {
   /** 右侧勾选的「技能库技能」= 要安装的技能 */
   const [pickedLib, setPickedLib] = useState<Set<string>>(new Set());
   /** 右侧勾选的「项目内已装技能」= 要删除的技能 */
-  const [pickedInstalled, setPickedInstalled] = useState<Set<string>>(new Set());
+  // 按项目分组：{ [projectId]: Set<skillId> }。分组是跨项目批量卸载的前提——
+// 单个 Set 只能表达「某一个项目里勾了哪些」，切项目就没法保留别的项目的勾选了。
+  const [pickedInstalled, setPickedInstalled] = useState<Record<string, Set<string>>>({});
   /** SKILL.md 预览弹窗 */
   const [preview, setPreview] = useState<{ name: string; md: string } | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
@@ -392,6 +397,22 @@ export default function SkillManager() {
     }
   };
 
+  // 更新内置技能：后端会先删掉旧目录再按随包内容重写（否则新版移除的文件会残留）。
+  // 不走「先 uninstall 再 install」的前端两步 —— 那样中间会出现技能库实体短暂消失，
+  // 此刻所有项目里的 junction 都是 broken，失败时还会停在那个状态。
+  const updateBuiltin = async (id: string) => {
+    setBuiltinBusy(id);
+    setBuiltinResult(null);
+    try {
+      const path = await invoke<string>('update_builtin_skill', { skillId: id });
+      setBuiltinResult({ ok: true, msg: t("skillmgr.builtinUpdated", { path }) });
+      loadSkills();
+    } catch (e: any) {
+      setBuiltinResult({ ok: false, msg: String(e) });
+    }
+    setBuiltinBusy(null);
+  };
+
   // 安装内置技能：直接落进技能库。装完它就是普通技能，由用户显式安装给某个项目
   const installBuiltin = async (id: string) => {
     setBuiltinBusy(id);
@@ -491,7 +512,9 @@ export default function SkillManager() {
   /** 切换右侧正在查看的项目，并按需拉它的技能清单 */
   const selectProject = async (id: string) => {
     setSelProject(id);
-    setPickedInstalled(new Set());
+    // **不再清空 pickedInstalled**：它是按项目分组的（见 toggleInstalledPick），
+    // 切项目不该把用户在别的项目里的勾选清掉 —— 批量卸载要跨项目，
+    // 清空就等于永远只能删当前这一个项目。
     if (!projSkills[id]) await loadProjectSkills(id);
   };
 
@@ -513,14 +536,23 @@ export default function SkillManager() {
     });
   };
 
-  const toggleInstalledPick = (skillId: string) => {
+  /** 勾选/取消某个项目里的某个技能。**按项目分组**，因此可跨项目累积。 */
+  const toggleInstalledPick = (projectId: string, skillId: string) => {
     setPickedInstalled((s) => {
-      const n = new Set(s);
-      if (n.has(skillId)) n.delete(skillId);
-      else n.add(skillId);
+      const n = { ...s };
+      const cur = new Set(n[projectId] ?? []);
+      if (cur.has(skillId)) cur.delete(skillId);
+      else cur.add(skillId);
+      if (cur.size === 0) delete n[projectId];
+      else n[projectId] = cur;
       return n;
     });
   };
+
+  /** 当前查看的项目里已勾选的技能（渲染勾选框用） */
+  const pickedInSelProject = pickedInstalled[selProject ?? ""] ?? EMPTY_SET;
+  /** 跨项目勾选总数（按钮上的计数） */
+  const pickedInstalledTotal = Object.values(pickedInstalled).reduce((a, s) => a + s.size, 0);
 
   /** 批量勾选/取消技能库里的全部技能（筛选后一键全选很常用） */
   const toggleAllLib = (list: SkillEntry[]) => {
@@ -580,18 +612,33 @@ export default function SkillManager() {
   };
 
   /**
-   * 批量删除勾选的「项目内技能」：链接只删链接，真实目录整个删。
+   * 批量删除**跨项目**勾选的「项目内技能」：链接只删链接，真实目录整个删，
+   * 顺带清掉因此空掉的 `skills/` 与 `.agents` / `.codebuddy` 等壳目录。
    *
-   * 这是全页最需要讲清楚的一次确认——它会**整目录删除**用户自己写的技能，
-   * 所以确认框里把「哪几个是整目录删」单独列出来，而不是塞进一句话里让人自己找。
+   * 两个刻意的设计：
+   * 1) **确认框按项目分组列出**。跨项目之后「会删掉什么」不再是单一列表能说清的，
+   *    必须让用户看见「哪个项目的哪些技能」，尤其是会被整个删掉的真实目录。
+   * 2) **空目录清理的说明写进确认文案**。用户可能不知道装过技能才会多出
+   *    `.codebuddy/agents` 这类目录，不说清楚会以为应用乱删东西。
    */
   const removePickedInstalled = () => {
-    const ids = [...pickedInstalled];
-    if (ids.length === 0 || !selProject) return;
-    const entries = projSkills[selProject] || [];
-    const dirs = entries.filter((e) => pickedInstalled.has(e.skillId) && e.state === 'local');
-    const links = ids.length - dirs.length;
-    const target = selProject;
+    // 收集所有勾选：{ projectId: Set<skillId> }
+    const targets = Object.entries(pickedInstalled).filter(([, s]) => s.size > 0);
+    if (targets.length === 0) return;
+    const totalIds = targets.reduce((a, [, s]) => a + s.size, 0);
+    // 逐项目算出「哪些是真实目录（会被整个删）」，确认框里要列出来
+    const perProject = targets.map(([pid, sids]) => {
+      const entries = projSkills[pid] || [];
+      const dirs = entries.filter((e) => sids.has(e.skillId) && e.state === 'local');
+      return {
+        pid,
+        name: projects.find((p) => p.id === pid)?.name || pid,
+        total: sids.size,
+        dirs,
+        links: sids.size - dirs.length,
+      };
+    });
+    const totalLinks = perProject.reduce((a, p) => a + p.links, 0);
     setConfirmReq({
       title: t("skillmgr.projBatchDeleteTitle"),
       danger: true,
@@ -599,39 +646,46 @@ export default function SkillManager() {
       confirmText: t("common.delete"),
       desc: (
         <div className="space-y-2">
-          <p>{t("skillmgr.projBatchDeleteConfirm", { n: ids.length, links })}</p>
-          {dirs.length > 0 && (
-            <div className="rounded-ctl border border-rose-500/30 bg-rose-500/10 p-2 space-y-1">
-              <p className="text-tiny font-semibold text-rose-300">
-                {t("skillmgr.projBatchDeleteDirsHint")}
-              </p>
-              <ul className="text-micro text-rose-200/80 space-y-0.5 list-disc pl-4">
-                {dirs.map((d) => (
-                  <li key={d.skillId} className="truncate">{d.name || d.skillId}</li>
-                ))}
-              </ul>
-            </div>
-          )}
+          <p>{t("skillmgr.projBatchDeleteConfirmMulti", { projects: perProject.length, n: totalIds, links: totalLinks })}</p>
+          <div className="rounded-ctl border border-white/10 bg-black/20 p-2 space-y-1 max-h-[200px] overflow-y-auto">
+            {perProject.map((p) => (
+              <div key={p.pid} className="space-y-0.5">
+                <p className="text-micro font-semibold text-slate-300 truncate">{p.name} · {t("skillmgr.projBatchDeleteCount", { n: p.total })}</p>
+                {p.dirs.length > 0 && (
+                  <ul className="text-micro text-rose-200/80 space-y-0.5 list-disc pl-4">
+                    {p.dirs.map((d) => (
+                      <li key={d.skillId} className="truncate">{d.name || d.skillId}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
+          <p className="text-micro text-slate-500">
+            {t("skillmgr.projPruneEmptyDirsHint")}
+          </p>
         </div>
       ),
       onConfirm: async () => {
-        setProjBusy(target);
         const errors: string[] = [];
-        for (const id of ids) {
-          try {
-            await invoke('remove_skill_from_project', { skillId: id, projectId: target });
-          } catch (e: any) {
-            errors.push(`${id}: ${String(e)}`);
+        let n = 0;
+        for (const [pid, sids] of targets) {
+          setProjBusy(pid);
+          for (const sid of sids) {
+            try {
+              await invoke('remove_skill_from_project', { skillId: sid, projectId: pid });
+              n += 1;
+            } catch (e: any) { errors.push(`${sid}: ${String(e)}`); }
           }
+          await loadProjectSkills(pid);
         }
         setProjBusy(null);
-        setPickedInstalled(new Set());
-        await loadProjectSkills(target);
+        setPickedInstalled({});
         void loadProjCounts();
         if (errors.length === 0) {
-          setProjMsg({ id: target, msg: t("skillmgr.projBatchDeleted", { n: ids.length }), ok: true });
+          setProjMsg({ id: selProject ?? '*', msg: t("skillmgr.projBatchDeletedMulti", { projects: targets.length, n }), ok: true });
         } else {
-          setProjMsg({ id: target, msg: errors.join('；'), ok: false });
+          setProjMsg({ id: selProject ?? '*', msg: errors.join('；'), ok: false });
         }
       },
     });
@@ -1022,12 +1076,13 @@ export default function SkillManager() {
                           </span>
                           <button
                             onClick={() => removePickedInstalled()}
-                            disabled={pickedInstalled.size === 0 || projBusy === selProject}
+                            disabled={pickedInstalledTotal === 0 || projBusy === selProject}
+                            title={t("skillmgr.projBatchDeleteHint")}
                             className="flex items-center gap-1 px-2 py-1 rounded-ctl bg-red-500/15 hover:bg-red-500/25 disabled:opacity-40 text-red-300 text-tiny font-semibold cursor-pointer flex-shrink-0"
                           >
                             <Trash2 className="w-3 h-3" />
                             {t("skillmgr.projBatchDelete")}
-                            {pickedInstalled.size > 0 ? ` (${pickedInstalled.size})` : ''}
+                            {pickedInstalledTotal > 0 ? ` (${pickedInstalledTotal})` : ''}
                           </button>
                         </div>
 
@@ -1051,7 +1106,7 @@ export default function SkillManager() {
                         ) : (
                           <div className="space-y-1">
                             {alive.map((e) => {
-                              const on = pickedInstalled.has(e.skillId);
+                              const on = pickedInSelProject.has(e.skillId);
                               return (
                                 <div
                                   key={e.skillId}
@@ -1060,7 +1115,7 @@ export default function SkillManager() {
                                   <input
                                     type="checkbox"
                                     checked={on}
-                                    onChange={() => toggleInstalledPick(e.skillId)}
+                                    onChange={() => selProject && toggleInstalledPick(selProject, e.skillId)}
                                     title={t("skillmgr.projPickToDelete")}
                                     className="w-3 h-3 accent-red-400 flex-shrink-0 cursor-pointer"
                                   />
@@ -1310,13 +1365,13 @@ export default function SkillManager() {
           <div className="flex items-center gap-1">
             <button
               onClick={() => { setShowMarket(true); setShowBuiltin(false); }}
-              className={`flex items-center gap-1 px-2 py-1 rounded-ctl cursor-pointer transition-colors ${showMarket ? 'bg-[var(--module-accent-soft)] text-[var(--module-accent)]' : 'bg-white/5 hover:bg-white/10 text-slate-300'}`}
+              className={`flex items-center gap-1 px-2 py-1 rounded-ctl text-tiny cursor-pointer transition-colors ${showMarket ? 'bg-[var(--module-accent-soft)] text-[var(--module-accent)]' : 'bg-white/5 hover:bg-white/10 text-slate-300'}`}
             >
               <Store className="w-3 h-3" /> {t("skillmgr.tabMarket")}
             </button>
             <button
               onClick={() => { setShowBuiltin(true); setShowMarket(false); }}
-              className={`flex items-center gap-1 px-2 py-1 rounded-ctl cursor-pointer transition-colors ${showBuiltin ? 'bg-[var(--module-accent-soft)] text-[var(--module-accent)]' : 'bg-white/5 hover:bg-white/10 text-slate-300'}`}
+              className={`flex items-center gap-1 px-2 py-1 rounded-ctl text-tiny cursor-pointer transition-colors ${showBuiltin ? 'bg-[var(--module-accent-soft)] text-[var(--module-accent)]' : 'bg-white/5 hover:bg-white/10 text-slate-300'}`}
             >
               <Sparkles className="w-3 h-3" /> {t("skillmgr.tabBuiltin")}
             </button>
@@ -1433,35 +1488,55 @@ export default function SkillManager() {
         {/* ════════ 内置技能 ════════ */}
         {showBuiltin && (
           <div className="space-y-4 max-w-4xl">
-            <Note tone="info" title={t("skillmgr.builtinTitle")}>
-              <p>{t("skillmgr.builtinHint1")}</p>
-              <p>{t("skillmgr.builtinHint2")}</p>
-            </Note>
+            {/* 原先这里有一张「内置技能随 Kira 分发…」的说明块（Note tone=info）。
+                已删除：它讲的是「装完进技能库、再由你显式安装给项目」这套流程，
+                而页面上「添加技能」按钮与装完后的结果条已经把它说清楚了。
+                说明块长期占着弹框顶部，而这里要展示的是技能本身。 */}
 
             {builtins.length === 0 ? (
               <div className="text-center py-16 text-slate-500 text-sm">{t("skillmgr.builtinEmpty")}</div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                {builtins.map((b) => (
+                {builtins.map((b) => {
+                  // 内置技能装进技能库后目录名 === id，据此判断是否已装。
+                  //（安装时不写 manifest，所以没有别的来源可查）
+                  const installed = skills.some((s) => s.id === b.id);
+                  return (
                   <div key={b.id} className="rounded-card bg-white/[0.03] border border-white/10 p-3.5 space-y-2">
                     <div className="flex items-center gap-2">
                       <Sparkles className="w-3.5 h-3.5 text-[var(--module-accent)] flex-shrink-0" />
                       <span className="text-body font-semibold text-slate-100 truncate">{b.name}</span>
-                      <code className="ml-auto text-micro text-slate-600 font-mono truncate">{b.id}</code>
+                      {installed && (
+                        <span className="shrink-0 px-1.5 py-0.5 rounded text-micro font-semibold bg-emerald-500/15 text-emerald-400">
+                          {t("skillmgr.builtinInstalledBadge")}
+                        </span>
+                      )}
+                      <code className={`${installed ? "ml-auto" : "ml-auto"} text-micro text-slate-600 font-mono truncate`}>{b.id}</code>
                     </div>
                     <p className="text-tiny text-slate-400 leading-relaxed">{b.description}</p>
                     <button
-                      onClick={() => void installBuiltin(b.id)}
+                      onClick={() => void (installed ? updateBuiltin(b.id) : installBuiltin(b.id))}
                       disabled={builtinBusy !== null}
-                      className="w-full px-3 py-2 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-body font-semibold text-white flex items-center justify-center gap-2 transition-all cursor-pointer"
+                      className={`w-full px-3 py-2 rounded-ctl disabled:opacity-50 text-body font-semibold text-white flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                        installed
+                          ? "bg-white/8 hover:bg-white/15 border border-white/15"
+                          : "bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)]"
+                      }`}
                     >
                       {builtinBusy === b.id
                         ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        : <Download className="w-3.5 h-3.5" />}
-                      {builtinBusy === b.id ? t("skillmgr.builtinInstalling") : t("skillmgr.builtinInstall")}
+                        : installed
+                          ? <RotateCw className="w-3.5 h-3.5" />
+                          : <Download className="w-3.5 h-3.5" />}
+                      {builtinBusy === b.id
+                        ? t("skillmgr.builtinInstalling")
+                        : installed
+                          ? t("skillmgr.builtinUpdate")
+                          : t("skillmgr.builtinInstall")}
                     </button>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 

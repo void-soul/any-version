@@ -1,4 +1,4 @@
-﻿use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -665,8 +665,40 @@ pub fn remove_skill_from_project(skill_id: String, project_id: String) -> Result
     uninstall_from(&projects_path(), &skill_id, &project_id)
 }
 
+/// 目录是否**真的空**（没有任何条目）。
+///
+/// 只删空目录这条是硬约束：`.codebuddy` / `.agents` 这类目录里常驻着别的东西
+/// （`skills.json`、settings、用户自己的其它文件）。批量卸载后如果无脑删掉整个
+/// 目录，用户的东西就没了 —— 而且这类删除不可逆。
+fn dir_is_empty(path: &Path) -> bool {
+    fs::read_dir(path)
+        .map(|mut it| it.next().is_none())
+        .unwrap_or(false)
+}
+
+/// 技能卸载后清理空掉的壳目录：`skills/` 空了就删，`skills` 的父目录（`.agents` 等）
+/// 也空了一并删。
+///
+/// 逐级向上且**每一级都重新判空**：`.codebuddy/skills` 空了不代表 `.codebuddy` 空
+/// （可能有 settings.json），所以每层都要单独确认。
+///
+/// **刻意不返回被删的目录列表**：调用方那个 `removed` 的语义是「哪些扫描目录里的
+/// 链接被清掉了」，把目录清理信息塞进去会破坏契约 —— 前端拿它计数就会把
+/// 「3 个目录」数成 9。这个错误真的发生过，是既有测试抓到的。
+fn prune_empty_skill_dirs(project_root: &Path, scan_dir_name: &str) {
+    let scan_dir = project_root.join(scan_dir_name);
+    let skills_dir = scan_dir.join("skills");
+    if dir_is_empty(&skills_dir) && fs::remove_dir(&skills_dir).is_ok() {
+        // skills/ 没了，父目录可能也空了（比如这个项目只装过这一个技能）
+        if dir_is_empty(&scan_dir) {
+            let _ = fs::remove_dir(&scan_dir);
+        }
+    }
+}
+
 fn uninstall_from(projects_file: &Path, skill_id: &str, project_id: &str) -> Result<Vec<String>, String> {
     let mut removed: Vec<String> = Vec::new();
+    let project_root = resolve_project_root_in(projects_file, project_id)?;
     for (dir_name, dir) in SKILL_SCAN_DIRS
         .iter()
         .zip(project_skill_dirs_in(projects_file, project_id)?)
@@ -682,6 +714,8 @@ fn uninstall_from(projects_file: &Path, skill_id: &str, project_id: &str) -> Res
             fs::remove_dir_all(&link).map_err(|e| format!("卸载失败 {}: {}", link.display(), e))?;
         }
         removed.push((*dir_name).to_string());
+        // 只有真的清掉了这个目录里的技能，才去看它空没空
+        prune_empty_skill_dirs(&project_root, dir_name);
     }
     if removed.is_empty() {
         return Err(format!("该项目未安装技能「{}」", skill_id));
@@ -2360,6 +2394,37 @@ pub fn install_builtin_skill(skill_id: String) -> Result<String, String> {
     install_builtin_into(&skill_id, &skills_dir())
 }
 
+/// 把内置技能**更新**到最新随包分发的内容。
+///
+/// 与「安装」分开而不是给安装加 `overwrite` 参数，原因有三：
+/// 1) 语义不同：安装是「新增」，拒绝覆盖是对的；更新是「以随包内容为准」，
+///    混在一个命令里将来一定会有人把 overwrite 传错；
+/// 2) 更新会**删掉旧目录**（见下），不可逆，不该和安装共用一条路径；
+/// 3) 前端要按 `installed` 显示不同按钮，两个命令天然对应两种按钮。
+///
+/// **先整个删掉再重写**，不是逐文件覆盖：内置技能改版时可能**删掉**某个文件
+/// （例如把 validate.py 并进了别处），逐文件覆盖会让那个已移除的文件永远留在磁盘上，
+/// 用户看到的是「明明新版没有这个文件，怎么还在」。
+#[tauri::command]
+pub fn update_builtin_skill(skill_id: String) -> Result<String, String> {
+    let dir = skills_dir();
+    // 先确认这个 id 确实是内置技能，避免传任意 id 进来删别人的目录
+    if !BUILTIN_SKILLS.iter().any(|s| s.id == skill_id) {
+        return Err(format!("没有内置技能「{}」", skill_id));
+    }
+    let dest = dir.join(&skill_id);
+    if dest.exists() {
+        fs::remove_dir_all(&dest).map_err(|e| {
+            format!(
+                "删除旧版本失败 {}: {}。可先在技能库里手动删掉它再试",
+                dest.display(),
+                e
+            )
+        })?;
+    }
+    install_builtin_into(&skill_id, &dir)
+}
+
 /// 目标目录可注入的版本（单测必须能指向临时目录，否则会往真实技能库里写）。
 fn install_builtin_into(skill_id: &str, target: &Path) -> Result<String, String> {
     let skill = BUILTIN_SKILLS
@@ -2437,6 +2502,68 @@ mod builtin_skill_tests {
     /// 之前就踩过：示例里两张表主键都叫 `id`、`email` 是裸名、外键没建索引，
     /// 而应用侧 `validate` 早就把这三类判成 error（会拦住保存与导出）。
     /// 提示词那边已经加过同类测试，这里给技能文档补上，两处不再各漏一次。
+    /// 更新内置技能必须**先删掉整个旧目录再重写**，而不是逐文件覆盖。
+    ///
+    /// 逐文件覆盖会留下新版已经移除的文件 —— 用户看到的是「新版明明没有这个文件，
+    /// 怎么还在」，而且再也清不掉（安装路径拒绝覆盖非空目录）。
+    #[test]
+    fn updating_a_builtin_skill_removes_files_the_new_version_dropped() {
+        let dir = std::env::temp_dir().join(format!("kira-builtin-upd-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        // 首次安装
+        let root = PathBuf::from(install_builtin_into("db-designer", &dir).expect("首次安装应成功"));
+        assert!(root.join("SKILL.md").exists());
+        // 模拟「旧版本里有个后来被移除的文件」
+        let stale = root.join("scripts").join("obsolete.py");
+        fs::write(&stale, "# old").unwrap();
+        assert!(stale.exists());
+
+        // 更新：先删旧目录，重写
+        fs::remove_dir_all(&root).unwrap();
+        let root2 = PathBuf::from(install_builtin_into("db-designer", &dir).expect("重装应成功"));
+        assert!(!root2.join("scripts").join("obsolete.py").exists(),
+            "新版已移除的文件不该被留下（逐文件覆盖就会残留它）");
+        assert!(root2.join("SKILL.md").exists(), "新版内容应重新写全");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 批量卸载后必须清掉空壳目录，但**只删真空的**。
+    ///
+    /// 这条是硬约束：`.codebuddy` / `.agents` 里常驻着别的东西（settings、skills.json 等），
+    /// 无脑删整个目录会把用户的东西弄没，且不可逆。
+    #[test]
+    fn pruning_skill_dirs_only_removes_truly_empty_ones() {
+        let root = std::env::temp_dir().join(format!("kira-prune-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+
+        // 情况一：装过又卸干净 -> skills/ 与 .agents 都空，两级都该删
+        let a = root.join("a");
+        fs::create_dir_all(a.join(".agents").join("skills")).unwrap();
+        super::prune_empty_skill_dirs(&a, ".agents");
+        assert!(!a.join(".agents").exists(), "空的 .agents 应被删掉");
+
+        // 情况二：skills/ 空了，但 .agents 里还有别的东西 -> 只能删 skills/
+        let b = root.join("b");
+        fs::create_dir_all(b.join(".agents").join("skills")).unwrap();
+        fs::write(b.join(".agents").join("settings.json"), "{}").unwrap();
+        super::prune_empty_skill_dirs(&b, ".agents");
+        assert!(!b.join(".agents").join("skills").exists(), "空的 skills/ 应被删掉");
+        assert!(b.join(".agents").exists(), "非空的 .agents 必须保留");
+        assert!(b.join(".agents").join("settings.json").exists(), "用户文件不能动");
+
+        // 情况三：skills/ 里还有别的技能 -> 一个都不该删
+        let c = root.join("c");
+        fs::create_dir_all(c.join(".agents").join("skills").join("other")).unwrap();
+        super::prune_empty_skill_dirs(&c, ".agents");
+        assert!(c.join(".agents").join("skills").exists());
+        assert!(c.join(".agents").join("skills").join("other").exists());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn builtin_db_designer_skill_example_passes_the_app_validator() {
         let example = first_json_block(DB_DESIGNER_SKILL_MD)

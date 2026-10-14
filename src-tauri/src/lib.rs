@@ -768,6 +768,7 @@ pub fn run() {
             commands::ai::skills::install_skill_from_source,
             commands::ai::skills::list_builtin_skills,
             commands::ai::skills::install_builtin_skill,
+                commands::ai::skills::update_builtin_skill,
             commands::ai::skills::migrate_legacy_skills,
             commands::ai::config::get_provider_presets,
             commands::ai::balance::query_provider_balance,

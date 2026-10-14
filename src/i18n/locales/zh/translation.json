@@ -2906,9 +2906,6 @@
     "managedLib": "托管库",
     "marketHint1": "从 Git 仓库或线上源安装的技能会统一下载落盘到技能库目录；装好后到「项目」页把它安装给需要的项目。",
     "marketHint2": "技能装给项目后只在该项目里生效——不像公共技能库那样对所有项目全局生效，AI 每次会话看到的技能列表就不会无限膨胀。",
-    "builtinTitle": "内置技能",
-    "builtinHint1": "内置技能随 Kira 分发，装好后进入技能库，再由你显式安装给需要的项目。",
-    "builtinHint2": "技能库里已有同名技能时会拒绝安装（不会覆盖你的文件）。装好后 SKILL.md、references/ 与 scripts/ 一并落盘，可直接用。",
     "builtinInstall": "装入技能库",
     "builtinInstalling": "安装中…",
     "builtinInstalled": "已装入技能库：{{path}}",
@@ -2983,7 +2980,15 @@
     "libHint": "勾选后装到左侧勾选的项目",
     "tabAdd": "添加技能",
     "projBatchDeleteTitle": "删除已勾选的技能",
-    "projBatchDeleteDirsHint": "下面这些是项目自带的真实目录，会被整个删除："
+    "projBatchDeleteDirsHint": "下面这些是项目自带的真实目录，会被整个删除：",
+    "projBatchDeleteCount": "{{n}} 个",
+    "projBatchDeleteConfirmMulti": "将从 {{projects}} 个项目里删除共 {{n}} 个技能（其中 {{links}} 个是链接，只删链接本身，技能库里那份仍然保留）。",
+    "projBatchDeletedMulti": "已从 {{projects}} 个项目删除共 {{n}} 个技能",
+    "projPruneEmptyDirsHint": "卸载后空掉的 skills 目录与 .agents / .codebuddy 等壳目录会被一并删除（里面还有其它文件则保留）。",
+    "projBatchDeleteHint": "删除所有项目里勾选的技能，并把因此空掉的目录清理掉",
+    "builtinUpdate": "更新到最新版本",
+    "builtinUpdated": "已更新到最新版本：{{path}}",
+    "builtinInstalledBadge": "已装入"
   },
   "toollaunch": {
     "officialOnly": "仅支持官方模型",
