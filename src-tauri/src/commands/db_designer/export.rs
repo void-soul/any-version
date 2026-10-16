@@ -69,6 +69,15 @@ pub fn export_outline(doc: &DbDesignDocument) -> String {
         out.push_str(&format!("\n{}\n", doc.description));
     }
     out.push_str(&format!("\n方言：`{}` · 节点 {} 个\n", doc.dialect, doc.nodes.len()));
+    // 决策记录：这些是**为什么**，不是表结构本身。排在最前面，
+    // 所以“不打开应用也能看懂这份设计”的 Markdown 里，读者看到的不只是表结构，
+    // 还有业务约束 —— 比多数据库文档都只写结构、不写动机，使用方看不懂并改掉。
+    if !doc.decisions.is_empty() {
+        out.push_str("\n## 设计决策与约束\n\n");
+        for d in doc.decisions.iter().filter(|d| !d.trim().is_empty()) {
+            out.push_str(&format!("- {}\n", d.trim()));
+        }
+    }
     // 公共字段是**文档级**配置，不属于任何一张表，所以单独列在最前面 ——
     // 不写的话，读者只会以为导出时凭空多了几列。
     if !doc.common_fields.is_empty() {

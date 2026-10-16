@@ -243,6 +243,7 @@ mod tests {
             dialect: "mysql".into(),
             folder_id: None,
         common_fields: Vec::new(),
+        decisions: Vec::new(),
             nodes: vec![
                 table("a", "users", vec![field("id", "bigint", true)]),
                 table("b", "orders", vec![field("id", "bigint", true)]),

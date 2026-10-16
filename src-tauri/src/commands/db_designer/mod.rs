@@ -51,8 +51,9 @@ mod tests {
             description: String::new(),
             dialect: dialect.to_string(),
             folder_id: None,
-        common_fields: Vec::new(),
-            nodes: vec![
+                common_fields: Vec::new(),
+                        decisions: Vec::new(),
+                        nodes: vec![
                 DbDesignNode {
                     id: "n_user".to_string(),
                     kind: "table".to_string(),

@@ -41,6 +41,51 @@ pub struct AiDesignInput {
     /// 本次运行的 id（前端生成）。用于「停止」，不填则不能中途停。
     #[serde(default)]
     pub run_id: Option<String>,
+    /// 最近的对话轮次（滚动窗口，前端只留最近几轮）。
+    ///
+    /// **只存文本，不存模型吐过的整份 JSON**：下一轮模型看到的是更新后的当前设计，
+    /// 旧 JSON 里九成是重复的表定义，存起来只烧 token。
+    #[serde(default)]
+    pub history: Vec<ChatTurn>,
+    /// 已经追问了几轮。写进提示词是为了让模型遵守「3 轮后必须出结果」——
+    /// 光在提示词里写死上限而每次都发同样的话，模型数不清自己问过几轮。
+    #[serde(default)]
+    pub clarify_round: u32,
+}
+
+/// 一轮对话（用户或助手）。
+#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatTurn {
+    /// `"user"` 或 `"assistant"`
+    pub role: String,
+    pub text: String,
+}
+
+/// 模型这一轮的产出：**要么给设计，要么反过来问你**。
+///
+/// 用 `tag = "kind"` 让前端能直接 `switch (outcome.kind)`：
+/// `{"kind":"design","document":{…},"decisions":[…]}` /
+/// `{"kind":"clarify","question":"…","options":[…]}`。
+///
+/// `decisions` 与 `document` **分开放**，而不是让模型把 decisions 写进文档里再回吐：
+/// 它每轮都要重写整份文档，很可能把你之前写的决策丢了或改写。真正的所有权在前端 ——
+/// 保留原文档的决策，只追加本轮新增的。
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum AiOutcome {
+    /// 产出了一份设计（可能带本轮的决策摘要）
+    Design {
+        document: DbDesignDocument,
+        /// 本轮「为什么这么改」。模型没给就是空数组，**不算错误**。
+        decisions: Vec<String>,
+    },
+    /// 业务语义上有歧义，停下来问用户（此时不落图，文档一个字都不改）
+    Clarify {
+        question: String,
+        /// 候选项，供用户点一下就答；模型没给就是空数组（自由输入）。
+        options: Vec<String>,
+    },
 }
 
 /// 已请求停止的 run_id。用 HashSet 而不是每任务一个 AtomicBool：命令是异步的、
@@ -241,7 +286,7 @@ date time datetime timestamp boolean json uuid blob enum
      所以不要同时出现 article_title 和 title 这种冲突命名。
    - **关联两端必须写**当前真实存在的字段名。自动修正会把改名**级联**到 relations 与 indexes，
      但它**不会凭空创建**字段 —— 指向一个不存在的字段名，我这边改不了。
-{common_note}",
+7. 决策记录（**长期记忆**）：每次修改都要在输出的 `decisions` 数组里用一句话写清「为什么这么改」，\n   例如「status 改成枚举并加入已关闭，因为财务要求保留关单记录」。不要写「已遵守命名规范」这类\n   毫无信息的客套话。决策会存进设计文件，下次生成时你还会读到 —— 它是你与用户之间的长期记忆。\n\n8. 业务语义有歧义就先问，不要自己猜：\n   - 必须先问（输出 `clarify`）：字段取值范围、可空性、唯一性、是否需要关联、多对多还是一对多\n     —— 这些猜错就是做错业务。\n   - 不要问（按上面规范自己定）：表名与字段命名、类型选择、索引。\n   每次最多问 3 个问题；追问累计 3 轮后我会在提示词里明说「不要再问了」，那时必须直接给设计。\n\n输出格式（**二选一**）：\n   {{\"document\": {{设计文档}}, \"decisions\": [\"本轮为什么这么改…\"]}}\n   {{\"clarify\": {{\"question\": \"问什么\", \"options\": [\"选项A\", \"选项B\"]}}}}\n     —— 有歧义时只输出后者，不要同时给设计，也不要猜一个先给出来。\n{common_note}",
         schema = FORMAT_SCHEMA,
         example = FORMAT_EXAMPLE,
         common_note = common_note(common),
@@ -297,15 +342,47 @@ fn build_user_prompt(
     dialect: &str,
     text: &str,
     current: Option<&DbDesignDocument>,
+    history: &[ChatTurn],
+    clarify_round: u32,
 ) -> String {
     let bool_hint = bool_default_hint(dialect);
+    let decisions = current.map(|d| d.decisions.as_slice()).unwrap_or(&[]);
+    let mut head = String::new();
+    // 已知决策：它在最前面，因为它是模型判断「该不该动某处」的前提
+    if decisions.iter().any(|d| !d.trim().is_empty()) {
+        head.push_str("已知设计决策与约束（用户与 AI 之前定下的，必须遵守）：\n");
+        for d in decisions.iter().filter(|d| !d.trim().is_empty()) {
+            head.push_str(&format!("- {}\n", d.trim()));
+        }
+        head.push_str("\n");
+    }
+    // 追问轮次：写清楚「你问过几轮」，否则提示词里那句「3 轮后必须产出」模型无从遵守
+    if clarify_round > 0 {
+        head.push_str(&format!(
+            "注意：你已经追问过 {} 轮了。**这轮必须直接给出设计**，不要再输出 clarify。\n\n",
+            clarify_round
+        ));
+    }
+    // 最近几轮对话：滚动窗口，前端只送最近几轮。assistant 那轮记的是决策摘要而非整份 JSON
+    let recent: Vec<&ChatTurn> = history
+        .iter()
+        .filter(|h| !h.text.trim().is_empty())
+        .collect();
+    if !recent.is_empty() {
+        head.push_str("最近几轮对话：\n");
+        for h in recent {
+            let who = if h.role == "assistant" { "AI" } else { "用户" };
+            head.push_str(&format!("{}：{}\n", who, h.text.trim()));
+        }
+        head.push_str("\n");
+    }
     match current.filter(|d| !d.nodes.is_empty()) {
         None => format!(
-            "设计名：{name_hint}\n目标方言：{dialect}\n\n需求：\n{text}\n\n\
+            "{head}设计名：{name_hint}\n目标方言：{dialect}\n\n需求：\n{text}\n\n\
              请按系统提示的标准格式输出 JSON。字段命名用小写蛇形。\n{bool_hint}。"
         ),
         Some(doc) => format!(
-            "设计名：{name_hint}\n目标方言：{dialect}\n\n\
+            "{head}设计名：{name_hint}\n目标方言：{dialect}\n\n\
              当前设计（用户正在做的既有设计，作为基线）：\n{}\n\n\
              用户需求：\n{text}\n\n\
              判断：若需求是对当前设计的修改/扩展，则基于当前设计施加改动并输出完整更新后的设计 JSON\
@@ -334,6 +411,49 @@ fn doc_to_prompt_json(d: &DbDesignDocument) -> serde_json::Value {
         }
     }
     v
+}
+
+/// 把模型返回的 JSON 收成 [`AiOutcome`]：三种形状都要能认。
+///
+/// | 模型写了 | 怎么处理 |
+/// |---|---|
+/// | `{{"clarify":{{...}}}}` | 问问题，不落图 |
+/// | `{{"document":{{...}},"decisions":[...]}}` | 正常产出 |
+/// | `{{"name":...,"nodes":[...]}}`（旧形状） | 正常产出，`decisions` 当空 |
+///
+/// 第三行是为了向后兼容：模型不听话打出旧形状时仍然能用。
+/// 格式不兼容不得导致整份产出作废（Q-0404 的教训）。
+fn parse_outcome(json: serde_json::Value) -> Result<AiOutcome, String> {
+    // 问题分支：先看有没有 clarify（不能直接把它当文档解析，否则会报错误的句子）
+    if let Some(cl) = json.get("clarify").and_then(|c| c.as_object()) {
+        let question = cl
+            .get("question")
+            .and_then(|q| q.as_str())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if question.is_empty() {
+            return Err("AI 说要问问题却没写问问内容".into());
+        }
+        let options = cl
+            .get("options")
+            .and_then(|o| o.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.trim().to_string())).filter(|s| !s.is_empty()).collect())
+            .unwrap_or_default();
+        return Ok(AiOutcome::Clarify { question, options });
+    }
+    // 文档在包装层的 document 里，或者根本就是纯文档（旧形状）
+    let doc_value = match json.get("document") {
+        Some(d) => d.clone(),
+        None => json.clone(),
+    };
+    let doc = parse_document(doc_value)?;
+    let decisions = json
+        .get("decisions")
+        .and_then(|d| d.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.trim().to_string())).filter(|s| !s.is_empty()).collect())
+        .unwrap_or_default();
+    Ok(AiOutcome::Design { document: doc, decisions })
 }
 
 /// 把 AI 返回的 JSON 收成 DbDesignDocument：缺字段就补默认，结构不对就报清楚。
@@ -415,7 +535,7 @@ fn parse_document(json: serde_json::Value) -> Result<DbDesignDocument, String> {
 pub async fn dbd_ai_generate(
     app: tauri::AppHandle,
     input: AiDesignInput,
-) -> Result<DbDesignDocument, String> {
+) -> Result<AiOutcome, String> {
     let run_id = input.run_id.clone().unwrap_or_default();
     let text = input.text.trim();
     if text.is_empty() {
@@ -433,7 +553,14 @@ pub async fn dbd_ai_generate(
         .unwrap_or_else(|| "未命名设计".to_string());
 
     // 画布有表时把当前设计带进提示词：AI 基于它修改（或判断出是全新设计则忽略）
-    let user = build_user_prompt(&name_hint, &dialect, text, input.current_doc.as_ref());
+    let user = build_user_prompt(
+        &name_hint,
+        &dialect,
+        text,
+        input.current_doc.as_ref(),
+        &input.history,
+        input.clarify_round,
+    );
     // 公共字段配置跟着「当前设计」走：新建设计没有配置，修改场景才需要声明
     let common: &[DbField] = input
         .current_doc
@@ -465,6 +592,11 @@ pub async fn dbd_ai_generate(
             emit_progress(&app_opt, "stream", serde_json::json!({ "length": len, "text": tail }));
             // 只有「又多出一个完整节点/关系」才推一次 —— 天然节流，
             // 不会每来 400 字符就刷一遍画布。
+            // 已经出现 clarify 就不再推部分文档：追问分支的语义是「不落图」，
+            // 中途推过去的部分表会留在画布上变成「半套设计」。
+            if acc.contains("\"clarify\"") {
+                return;
+            }
             let partial = extract_partial(acc);
             let grew = partial.nodes.len() > seen_nodes.load(std::sync::atomic::Ordering::Relaxed)
                 || partial.relations.len() > seen_relations.load(std::sync::atomic::Ordering::Relaxed);
@@ -504,31 +636,45 @@ pub async fn dbd_ai_generate(
     let json = ai::channel::parse_json(&text)
         .map_err(|e| format!("AI 返回的内容不是合法 JSON：{}", e))?;
 
-    let mut doc = parse_document(json)?;
-
-    // 落地前过一遍规范化：命名改合规 + 外键补索引。
-    //
-    // 为什么必须在这里做：命名规范是 error 级（阻断保存 / 导出），而提示词只是**概率性**
-    // 约束 —— 改过示例与禁令之后模型仍会写出 type_id / title / status 这类裸名，
-    // 用户拿到的就是「满屏报错且导不出来」的死锁。规范化是确定性的，且与校验共用同一套
-    // 规则（singularize + GENERIC_FIELD_NAMES），不会出现两套口径漂移。
-    //
-    // 顺带把外键索引也补上（同一函数内）：外键字段没索引同样是 error，手写/AI 路径
-    // 原先都不会补，只有反推路径补过。
-    let normalized = super::store::normalize_naming(&mut doc);
-    let touched = normalized.renamed_pk.len()
-        + normalized.renamed_field.len()
-        + normalized.added_index.len();
-    if touched > 0 || !normalized.skipped.is_empty() {
-        tracing::info!(
-            "[dbd] AI 产出已规范化：主键改名 {}、字段改名 {}、补索引 {}、跳过 {}",
-            normalized.renamed_pk.len(),
-            normalized.renamed_field.len(),
-            normalized.added_index.len(),
-            normalized.skipped.len()
-        );
+    // 三种形状都要能认：clarify / 包装的 design / 旧的裸文档
+    let parsed = parse_outcome(json)?;
+    // 追问分支：文档一个字都不动。
+    // 流式期间可能已经推过部分表过去，所以前端要靠这个返回值把画布恢复到本轮开始前 ——
+    // 语义是「这轮什么都没发生，只是我问了句话」。
+    // 两个分支都直接返回
+    match parsed {
+        AiOutcome::Clarify { question, options } => {
+            emit_progress(
+                &Some(app.clone()),
+                "clarify",
+                serde_json::json!({ "question": question }),
+            );
+            return Ok(AiOutcome::Clarify { question, options });
+        }
+        AiOutcome::Design { document, decisions } => {
+            // 落地前过一遍规范化：命名改合规 + 外键补索引。
+            //
+            // 为什么必须在这里做：命名规范是 error 级（阻断保存 / 导出），而提示词只是**概率性**
+            // 约束 —— 改过示例与禁令之后模型仍会写出 type_id / title / status 这类裸名，
+            // 用户拿到的就是「满屏报错且导不出来」的死锁。规范化是确定性的，且与校验共用同一套
+            // 规则（singularize + GENERIC_FIELD_NAMES），不会出现两套口径漂移。
+            let mut d = document;
+            let normalized = super::store::normalize_naming(&mut d);
+            let touched = normalized.renamed_pk.len()
+                + normalized.renamed_field.len()
+                + normalized.added_index.len();
+            if touched > 0 || !normalized.skipped.is_empty() {
+                tracing::info!(
+                    "[dbd] AI 产出已规范化：主键改名 {}、字段改名 {}、补索引 {}、跳过 {}",
+                    normalized.renamed_pk.len(),
+                    normalized.renamed_field.len(),
+                    normalized.added_index.len(),
+                    normalized.skipped.len()
+                );
+            }
+            return Ok(AiOutcome::Design { document: d, decisions });
+        }
     }
-    Ok(doc)
 }
 
 /// 复用 AI 模块的「供应商 + 模型」解析顺序：显式 provider → 全局默认 → 首个可用 → 活跃模型。
@@ -838,7 +984,7 @@ mod tests {
     /// 新建场景（无当前设计）：提示词不带基线，只发需求。
     #[test]
     fn prompt_generate_mode_has_no_current_design() {
-        let p = build_user_prompt("N", "mysql", "需求甲", None);
+        let p = build_user_prompt("N", "mysql", "需求甲", None, &[], 0);
         assert!(p.contains("需求甲"));
         assert!(!p.contains("当前设计"));
     }
@@ -854,7 +1000,7 @@ mod tests {
         node.x = 12.0;
         node.y = 34.0;
         cur.nodes.push(node);
-        let p = build_user_prompt("N", "mysql", "加个字段", Some(&cur));
+        let p = build_user_prompt("N", "mysql", "加个字段", Some(&cur), &[], 0);
         assert!(p.contains("当前设计"), "修改场景必须带当前设计作基线");
         assert!(p.contains("orders"));
         assert!(!p.contains("\"x\""), "布局坐标不该进提示词");
@@ -865,7 +1011,7 @@ mod tests {
     #[test]
     fn prompt_ignores_empty_current_doc() {
         let cur = new_document("cur", "mysql");
-        let p = build_user_prompt("N", "mysql", "需求甲", Some(&cur));
+        let p = build_user_prompt("N", "mysql", "需求甲", Some(&cur), &[], 0);
         assert!(!p.contains("当前设计"));
     }
 
@@ -978,15 +1124,15 @@ mod tests {
     /// 导出的 `BOOLEAN DEFAULT 0` 在 PG 上是直接报错的。这句只能进 user 消息（那里才知道方言）。
     #[test]
     fn bool_default_hint_follows_dialect() {
-        let mysql = build_user_prompt("N", "mysql", "需求甲", None);
+        let mysql = build_user_prompt("N", "mysql", "需求甲", None, &[], 0);
         assert!(mysql.contains("TINYINT(1)"), "MySQL 要说明没有 boolean 类型: {}", mysql);
         assert!(mysql.contains("\"0\" / \"1\""), "{}", mysql);
         assert!(!mysql.contains("\"false\" / \"true\""), "{}", mysql);
 
-        let pg = build_user_prompt("N", "postgres", "需求甲", None);
+        let pg = build_user_prompt("N", "postgres", "需求甲", None, &[], 0);
         assert!(pg.contains("\"false\" / \"true\""), "PG 有原生 BOOLEAN: {}", pg);
 
-        let sqlite = build_user_prompt("N", "sqlite", "需求甲", None);
+        let sqlite = build_user_prompt("N", "sqlite", "需求甲", None, &[], 0);
         assert!(sqlite.contains("INTEGER"), "{}", sqlite);
 
         // 修改场景同样要带上
@@ -995,7 +1141,7 @@ mod tests {
             name: "orders".into(),
             ..Default::default()
         });
-        assert!(build_user_prompt("N", "mysql", "改字段", Some(&cur)).contains("TINYINT(1)"));
+        assert!(build_user_prompt("N", "mysql", "改字段", Some(&cur), &[], 0).contains("TINYINT(1)"));
     }
 
     /// 启用公共字段后，**提示词里必须出现「所有表导出时会自动追加、不要你创建」这段声明**。
@@ -1057,6 +1203,8 @@ mod tests {
             "mysql",
             "设计一个订单系统",
             input.current_doc.as_ref(),
+            &[],
+            0,
         );
         assert!(!user.contains("当前设计"), "空文档不该带基线: {}", user);
     }
@@ -1071,6 +1219,102 @@ mod tests {
         // 只配了空名字的项视同没配
         let blank = vec![DbField { name: "   ".into(), ..Default::default() }];
         assert!(!system_prompt(&blank).contains("公共字段"));
+    }
+
+    /// 新协议的三种形状都要能认。兼容旧形状是硬要求：模型不听话时
+    /// 不能让整份产出作废（Q-0404 的教训）。
+    #[test]
+    fn parse_outcome_accepts_all_three_shapes() {
+        // 包装形式：文档 + 本轮决策
+        let wrapped = parse_outcome(serde_json::json!({
+            "document": { "name": "商品库", "dialect": "mysql",
+                         "nodes": [{ "name": "product", "kind": "table", "table": { "fields": [] } }],
+                         "relations": [] },
+            "decisions": ["status 用枚举，因为业务只允许三种状态", "  ", "多余空行不应进来"]
+        }))
+        .expect("包装形式应该能认");
+        match wrapped {
+            AiOutcome::Design { document, decisions } => {
+                assert_eq!(document.name, "商品库");
+                assert_eq!(decisions.len(), 2, "空白决策该被过滤: {:?}", decisions);
+            }
+            other => panic!("应该是设计分支: {:?}", other),
+        }
+
+        // 旧形状：裸文档（模型忘了包装层）
+        let bare = parse_outcome(serde_json::json!({
+            "name": "旧形状", "dialect": "mysql",
+            "nodes": [{ "name": "product", "kind": "table", "table": { "fields": [] } }],
+            "relations": []
+        }))
+        .expect("旧形状也要能用");
+        match bare {
+            AiOutcome::Design { document, decisions } => {
+                assert_eq!(document.name, "旧形状");
+                assert!(decisions.is_empty(), "没给 decisions 就是空数组，不算错误");
+            }
+            other => panic!("应该是设计分支: {:?}", other),
+        }
+    }
+
+    /// 追问分支：只当确实写了问题才算追问，否则返回错误会把一次正常产出直接报成“说要问却没写内容”。
+    #[test]
+    fn parse_outcome_reads_clarify_branch() {
+        let ok = parse_outcome(serde_json::json!({
+            "clarify": { "question": "订单状态要允许哪些取值？", "options": ["待付/已付/退款", " ", ""] }
+        }))
+        .expect("追问应该能认");
+        match ok {
+            AiOutcome::Clarify { question, options } => {
+                assert_eq!(question, "订单状态要允许哪些取值？");
+                assert_eq!(options, vec!["待付/已付/退款"], "空选项该被过滤: {:?}", options);
+            }
+            other => panic!("应该是追问分支: {:?}", other),
+        }
+        // 没选项也得能用（用户自由输入）
+        let no_opts = parse_outcome(serde_json::json!({ "clarify": { "question": "怎么定？" } })).unwrap();
+        assert!(matches!(no_opts, AiOutcome::Clarify { options, .. } if options.is_empty()));
+        // 写了 clarify 却没写问题内容 = 协议破损，必须报错而不是当成正常产出
+        assert!(parse_outcome(serde_json::json!({ "clarify": { "options": ["a"] } })).is_err());
+    }
+
+    /// **决策记录必须进提示词** —— 它是「AI 与用户之间的长期记忆」，
+    /// 不进提示词就等于没存。
+    #[test]
+    fn prompt_carries_decisions_and_history() {
+        let mut doc = new_document("订单库", "mysql");
+        doc.decisions = vec!["status 含已关闭：财务要求保留关单记录".to_string()];
+        let hist = vec![
+            ChatTurn { role: "user".into(), text: "对库存顺序排".into() },
+            ChatTurn { role: "assistant".into(), text: "已按 created_at 升序排序".into() },
+        ];
+        let p = build_user_prompt("订单库", "mysql", "再加一个字段", Some(&doc), &hist, 0);
+        assert!(p.contains("已知设计决策与约束"), "{}", p);
+        assert!(p.contains("财务要求保留关单记录"), "决策必须原文进提示词: {}", p);
+        assert!(p.contains("最近几轮对话"), "{}", p);
+        assert!(p.contains("已按 created_at 升序排序"), "历史要进提示词: {}", p);
+        assert!(p.contains("用户：对库存顺序排"), "轮次要区分用户/AI: {}", p);
+
+        // 没有决策与历史时不留空段（给模型看到无意义的标题只会占 token）
+        let plain = build_user_prompt("新", "mysql", "设计一个商品库", None, &[], 0);
+        assert!(!plain.contains("已知设计决策"), "{}", plain);
+        assert!(!plain.contains("最近几轮对话"), "{}", plain);
+    }
+
+    /// 追问轮次要写进提示词，否则「达到上限就必须产出」这句口号签形同形会被模型忽略
+    /// （它数不清自己问过几轮）。
+    #[test]
+    fn prompt_states_clarify_rule_and_round_count() {
+        let p = system_prompt(&[]);
+        assert!(p.contains("clarify"), "提示词要教会模型什么时候问: {}", p);
+        assert!(p.contains("不要自己猜"), "{}", p);
+        assert!(p.contains("decisions"), "提示词要要求写决策记录: {}", p);
+
+        let round2 = build_user_prompt("N", "mysql", "继续", None, &[], 2);
+        assert!(round2.contains("已经追问过 2 轮"), "{}", round2);
+        assert!(round2.contains("不要再输出 clarify"), "{}", round2);
+        // 第 1 轮（0 轮已追问）不该出现这句，否则模型第一次就被要求别问
+        assert!(!build_user_prompt("N", "mysql", "开始", None, &[], 0).contains("已经追问过"));
     }
 
     /// **示例本身必须通过我们自己的校验器。**

@@ -113,6 +113,7 @@ pub fn new_document(name: &str, dialect: &str) -> DbDesignDocument {
             "mysql".to_string()
         },
         folder_id: None,
+        decisions: Vec::new(),
         common_fields: Vec::new(),
         nodes: Vec::new(),
         relations: Vec::new(),

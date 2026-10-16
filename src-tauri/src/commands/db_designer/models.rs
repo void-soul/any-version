@@ -371,6 +371,15 @@ pub struct DbDesignDocument {
     /// **缺省 = 空数组 = 不附加**，所以旧文件与不配的设计完全不受影响。
     #[serde(default, deserialize_with = "de_vec")]
     pub common_fields: Vec<DbField>,
+    /// 设计决策与约束：一句话一条记「为什么这么设计」，AI 每次生成都读它。
+    ///
+    /// 存成数组而不是一段文本：便于增删、便于侧栏逐条展示与删除。
+    /// 缺省空数组 → 旧设计文件零影响。
+    ///
+    /// **不要指望模型原样带回**：它每轮都要回吐整份文档，很可能把你的决策丢了或改写。
+    /// 真正的所有权在前端 —— 保留原文档的这份，只追加模型本轮新增的。
+    #[serde(default, deserialize_with = "de_string_vec")]
+    pub decisions: Vec<String>,
     #[serde(default, deserialize_with = "de_vec")]
     pub nodes: Vec<DbDesignNode>,
     #[serde(default, deserialize_with = "de_vec")]
