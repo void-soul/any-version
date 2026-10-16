@@ -2023,19 +2023,6 @@ const aiStatusText = aiBusy
           ]}
         />
 
-        {/* AI 助手：给一段需求 → 生成一份设计文档。**只载入画布，不落盘**（用户再自己保存），
-            避免 AI 直接覆盖正在画的设计。生成结果没有坐标，载入后立刻跑一次自动布局。
-            入口在右侧栏（与思维导图同构），这里只是展开/收起开关；生成中按钮转圈提示。 */}
-        <button
-          onClick={() => setAiOpen((v) => !v)}
-          disabled={!doc}
-          className={`ui-btn px-2 py-1 text-caption disabled:opacity-40 ${aiOpen ? "ui-btn-primary" : ""}`}
-          title={t("dbd.aiTitle")}
-        >
-          {aiBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-          {aiBusy ? t("dbd.aiBusy") : t("dbd.aiGenerate")}
-        </button>
-
         {doc ? (
           <div className="ml-auto flex items-center gap-2">
             <input
