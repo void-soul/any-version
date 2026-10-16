@@ -159,6 +159,9 @@ impl ai::channel::ChannelHooks for DbdHooks {
 // 设计文件的「标准格式」：JSON Schema + 完整示例，直接进提示词。
 // 比堆一堆散文规则稳 —— 规则写多了模型容易漏执行，照着格式抄不会。
 // **schema 必须与 `models.rs`（serde camelCase）保持同步**：那边加/改字段，这里同步改。
+//
+// 下面 `//` 开头的中文注释是**给模型看的**（JSONC，模型照抄格式不照抄注释）：
+// type 的参数形态写在这里而不是只写在下面的散文字典里 —— schema 是最被照抄的一段。
 const FORMAT_SCHEMA: &str = r#"{
   "name": "设计名（字符串）",
   "dialect": "mysql | postgres | sqlite",
@@ -187,6 +190,10 @@ const FORMAT_SCHEMA: &str = r#"{
       "view": { "sql": "视图定义 SQL（仅 kind=view 时填）" }
     }
   ],
+  // type 的参数形态（其余类型只写 base）：char / varchar 用 length；
+  // decimal 用 precision + scale；enum 用 values（字符串数组）。
+  //   {"base": "decimal", "precision": 10, "scale": 2}
+  //   {"base": "enum", "values": ["new", "paid", "closed"]}
   "relations": [
     {
       "from": { "node": "子表（外键所在端）的节点 id 或表名", "field": "外键字段名" },
@@ -278,10 +285,14 @@ date time datetime timestamp boolean json uuid blob enum
    - 每张表至少一个主键（字段 \"pk\":true）；\"autoIncrement\":true 必须是主键
    - **主键名禁止用 \"id\"**：一律用有业务含义的名字（表 user 用 user_id、表 order_item 用 order_item_id），
      外键则引用父表那个主键名。裸 id 会让联表 SQL 到处都是 user.id 这种分不清是谁的列
-   - **通用裸名必须带表名前缀**：name/title/label/desc/description/price/amount/status/type/code/
-     value/content/text/url/phone/email/address/count/total/size/color/comment/note/remark 这类词
-     单独出现时无法分辨属于哪张表，要写成 article_title、article_status、user_name；
-     **已经带下划线的（created_at、user_id、article_title）不用再加前缀**
+   - **通用裸名必须带表名前缀**：这份清单与应用侧校验器 `store.rs::GENERIC_FIELD_NAMES`
+       **逐词对齐（42 个，加新词时两边一起改）**：
+       id/name/title/label/desc/description/price/amount/status/type/code/value/content/text/url/uri/
+       phone/email/address/age/sex/gender/count/num/number/total/size/weight/height/color/comment/
+       note/remark/date/time/year/month/day/sort/order/flag/enabled
+       这些词单独出现时无法分辨属于哪张表，要写成 article_title、article_status、user_name、
+       product_price、order_date、user_enabled；
+       **已经带下划线的（created_at、user_id、article_title）天然豁免，不用再加前缀**
    - **每个外键字段都要有索引**：relations 里的 from.field（非 n-n）必须在本表 indexes 里有一条
      kind 为 index 且包含该字段的记录，如 {{\"name\":\"idx_article_user\",\"kind\":\"index\",\"fields\":[\"user_id\"]}}
    - 主键只用字段 \"pk\":true 表达，不要再写 \"kind\":\"primary\" 的索引
@@ -1840,6 +1851,32 @@ mod tests {
             report.errors.is_empty(),
             "示例自己就违反了我们自己的规则，模型会照抄它：\n{}",
             report.errors.join("\n")
+        );
+    }
+
+    /// 提示词里的通用裸名词表必须与校验器真源**逐词一致**。
+    ///
+    /// 这里已经漂移过一次：提示词只列了 21 个词，而 `store::GENERIC_FIELD_NAMES` 有 42 个。
+    /// 后果不是报错，而是模型写出 `age` / `enabled` / `uri` 这类名字时不会被提醒 ——
+    /// 校验器只查 `store.rs` 那份，于是全靠 `normalize_naming` 兜底**静默改名**，
+    /// 用户看到的字段名和它要的不是一个字，却说不出哪里不对。
+    ///
+    /// 比对的是**顺序敏感的完整清单**（提示词里那段 `a/b/c` 按 `/` 切开），
+    /// 不是「每个词都出现过」—— 后者会因为 `id`、`age` 之类是其它词的子串而漏检。
+    #[test]
+    fn prompt_lists_every_generic_field_name() {
+        use super::super::store::GENERIC_FIELD_NAMES;
+        let prompt = super::system_prompt(&[]);
+        let start = prompt.find("id/name/title").expect("提示词里应有通用裸名词表");
+        let seg = &prompt[start..];
+        let tail = "flag/enabled";
+        let end = seg.find(tail).expect("提示词里的裸名词表应写到 flag/enabled");
+        let listed: Vec<&str> = seg[..end + tail.len()].split('/').map(str::trim).collect();
+        assert_eq!(
+            listed,
+            GENERIC_FIELD_NAMES.to_vec(),
+            "裸名词表与 store.rs 不一致 —— 两边必须同时改：\
+             给 store.rs 加词就补进 system_prompt 第 5 条，删词就两边一起删"
         );
     }
 

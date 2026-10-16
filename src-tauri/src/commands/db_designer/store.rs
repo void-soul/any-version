@@ -310,7 +310,10 @@ pub fn validate(doc: &DbDesignDocument) -> ValidationReport {
 ///
 /// 判定口径是「不含下划线的单词」才查表，所以 `user_name`、`order_status` 天然豁免；
 /// `created_at` 这类审计字段因为带下划线也不受影响。
-const GENERIC_FIELD_NAMES: [&str; 42] = [
+///
+/// **pub(crate)**：`ai.rs` 的测试要断言「提示词里的这份清单与本数组逐词一致」——
+/// 清单已经漂移过一次（提示词只列了 21 个词），靠人记着两边一起改不可靠。
+pub(crate) const GENERIC_FIELD_NAMES: [&str; 42] = [
     "id", "name", "title", "label", "desc", "description", "price", "amount", "status", "type",
     "code", "value", "content", "text", "url", "uri", "phone", "email", "address", "age",
     "sex", "gender", "count", "num", "number", "total", "size", "weight", "height", "color",
