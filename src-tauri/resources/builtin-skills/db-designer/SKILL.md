@@ -1,11 +1,11 @@
 ---
 name: db-designer
-description: 为 any-version 的数据库设计器**生成可直接导入的设计文件**。当用户（或另一个 Agent）要求「根据这段需求设计表结构」「把这份需求/文档变成 ER 图」「产出数据库设计给我导入」「按 any-version 设计格式输出」时使用；也用于把零散的字段清单整理成带主键/外键/索引的完整设计。产物是 `<name>.dbdesign.json`，用户在 any-version 的「数据库设计」模块点「打开」即可看到画布，点「导出 SQL」得到建表语句（不连库、不改库）。导入格式、字段含义与校验规则见 `references/schema.md`，生成后用 `scripts/validate.py` 自检。
+description: 为 any-version 的数据库设计器**生成可直接导入的设计文件**。当用户（或另一个 Agent）要求「根据这段需求设计表结构」「把这份需求/文档变成 ER 图」「产出数据库设计给我导入」「按 any-version 设计格式输出」时使用；也用于把零散的字段清单整理成带主键/外键/索引的完整设计。产物是一份符合格式的 `.dbdesign.json`，any-version 的数据库设计器可直接导入（纯文件，不连库、不改库；导出 SQL 由设计器负责）。导入格式、字段含义与校验规则见 `references/schema.md`，生成后用 `scripts/validate.py` 自检。
 ---
 
 # 生成可导入的数据库设计文件（db-designer）
 
-> 本技能随 Kira（any-version）**内置**分发：AI 模块 → 技能管理 → 「内置」页可安装到任意目录
+> 本技能随 Kira（any-version）**内置**分发，应用内可从技能管理页安装到任意目录
 > （例如 `~/.agents/skills`、某个工具的技能目录）。安装后本目录下的 `references/` 与 `scripts/` 一起带过去。
 
 ## 0. 这份技能解决什么
@@ -79,8 +79,13 @@ any-version 的数据库设计器是**纯文件**的：画的是「表 / 视图�
 }
 ```
 
-顶层可带：`id` / `name` / `description` / `dialect`（`mysql` 默认、`postgres`、`sqlite`）
-/ `folderId` / **`commonFields`（公共字段，见 references/schema.md §8.2）** / `nodes` / `relations` / `updatedAt`。
+顶层可带：`id`（可选，缺省时应用会补） / `name` / `description` / `dialect`（`mysql` 默认、`postgres`、`sqlite`）
+/ `folderId` / **`commonFields`（公共字段，见 references/schema.md §8.2）** /
+**`decisions`（设计决策记录，见 references/schema.md §8.3）** / `nodes` / `relations` / `updatedAt`。
+
+> `decisions` 一句话一条记「为什么这么设计」，应用内 AI 每次生成都会读它 ——
+> 需求里有明确取舍的地方（冗余字段的理由、枚举取值、软删除、时区口径…）就写一条，
+> 别写「本轮新增 3 张表」这种过程记录。详见 §8.3。
 
 > 若目标设计文件启用了 `commonFields`：**不要手动创建那些字段**（如 `created_at`），
 > 导出时会自动附加；你手动写的会因重名被跳过（表自己的定义优先）。
@@ -198,15 +203,7 @@ kira-dbd export-sql <file.dbdesign.json>   # 直接出建表 SQL
 kira-dbd export-sql <file.dbdesign.json> --no-foreign-keys   # 不带外键约束（与应用导出弹框同一个开关）
 ```
 
-## 5. 交付
-
-- 落盘命名：`<主题>.dbdesign.json`（项目根目录或 `.any-version/` 下均可，回复里给出路径）
-- 回复里给出：文件路径 + 表/视图数 + 关联数 + 打开方式
-  （any-version → 数据库设计 → 工具栏「打开」）
-- 建议用户接着做两件事：**点「自动布局」**（关系会分层摆放）、**点「导出 SQL」**（确认能跑）
-- 提醒：导出的 SQL 落在文件旁边（`<主题>.sql`），结构说明是 `<主题>.md`
-
-## 6. 常见错误（踩过的坑）
+## 5. 常见错误（踩过的坑）
 
 1. **关联方向写反** → 外键建到了父表上。记忆：`from` 永远是**子表**（"多"的一端）
 2. **写 `VARCHAR(32)` 整串** → 类型不在白名单里，导出 SQL 时才报错。写 `{ "base": "varchar", "length": 32 }`
