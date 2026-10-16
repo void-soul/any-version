@@ -114,14 +114,52 @@ export interface ChatTurn {
   text: string;
 }
 
+/** 自校验结果（设计落图前回验一遍，不合规就重修） */
+export interface RepairReport {
+  /** 实际重修了几轮 */
+  rounds: number;
+  /** 最终是否已无阻断级错误 */
+  ok: boolean;
+  /** 仍剩的错误（有这些时设计照样落图，但保存/导出会被拦下） */
+  remainingErrors: string[];
+  /** 是否因「重修后反而更糟」而回滚到了更早的版本 */
+  rolledBack: boolean;
+}
+
+/** 增量补丁的实际效果：改了什么，用于给用户一句准确的摘要 */
+export interface PatchApplied {
+  addedTables: string[];
+  updatedTables: string[];
+  removedTables: string[];
+  addedRelations: number;
+  removedRelations: number;
+  /** 因端点表不存在而被丢弃的关联（模型幻觉出一个不存在的表时会发生） */
+  droppedRelations: string[];
+}
+
 /**
- * `dbd_ai_generate` 的返回：**要么给设计，要么反过来问你**。
+ * `dbd_ai_generate` 的返回：**要么给设计，要么给增量，要么反过来问你**。
  *
  * 与后端 `AiOutcome` 一一对应（serde tag = "kind"）。
- * `clarify` 那一支**不落图** —— 文档一个字都不改，等你回答后重新发一轮。
+ * - `design` / `patch` 都带**完整文档**（增量已在后端合并好），前端只认文档；
+ * - `clarify` **不落图** —— 文档一个字都不改，等你回答后重新发一轮。
  */
 export type AiOutcome =
-  | { kind: "design"; document: DbDesignDocument; decisions: string[] }
+  | {
+      kind: "design";
+      document: DbDesignDocument;
+      decisions: string[];
+      repair: RepairReport;
+      /**产出被截断（模型中途写崩了）：表是已完成的那部分，关联与决策记录可能不完整 */
+      truncated: boolean;
+    }
+  | {
+      kind: "patch";
+      document: DbDesignDocument;
+      decisions: string[];
+      applied: PatchApplied;
+      repair: RepairReport;
+    }
   | { kind: "clarify"; question: string; options: string[] };
 
 export interface ValidationReport {

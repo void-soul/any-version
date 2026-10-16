@@ -168,7 +168,15 @@ const FIELD_ROWS_KEY = "kira.dbd.fieldRows";
  *  reasoning 收尾帧带 done=true。 */
 const dbdAiProgressBuffer = createEventBuffer<{
   step?: string;
-  data?: { length?: number; text?: string; done?: boolean };
+  data?: {
+    length?: number;
+    text?: string;
+    done?: boolean;
+    /** step === "repair" 时：自校验重修的进度 */
+    round?: number;
+    max?: number;
+    errors?: number;
+  };
 }>("dbd-ai-progress");
 
 /**
@@ -478,9 +486,26 @@ export default function DbDesignerPanel() {
     }
     return null;
   }, [aiProgress]);
-  /** 状态条 / 胶囊文案：思考中 → 写设计中 → 已完成 */
-  const aiStatusText = aiBusy
-    ? aiStream
+  /**
+ * 自校验重修进度：最后一帧 repair 事件。
+ * 重修期间没有 stream 帧，所以状态条会掉回「思考中」——用它把「正在自动修复 1/2」显示出来，
+ * 否则用户只看到卡住不动，不知道系统在替它改错。
+ */
+const aiRepair = useMemo(() => {
+  for (let i = aiProgress.length - 1; i >= 0; i--) {
+    const e = aiProgress[i];
+    if (e.step === "repair") {
+      return { round: e.data?.round ?? 1, max: e.data?.max ?? 2, errors: e.data?.errors ?? 0 };
+    }
+  }
+  return null;
+}, [aiProgress]);
+
+/** 状态条 / 胶囊文案：思考中 → 写设计中 → 自动修复中 → 已完成 */
+const aiStatusText = aiBusy
+  ? aiRepair
+    ? t("dbd.aiRepairing", { round: aiRepair.round, max: aiRepair.max })
+    : aiStream
       ? t("dbd.aiWritingChars", { count: aiStream.length })
       : aiThinkFinal
         ? t("dbd.aiThinkingChars", { count: aiThinkFinal.length })
@@ -1686,8 +1711,37 @@ export default function DbDesignerPanel() {
       setAiNewDecisions(outcome.decisions);
       setAiClarify(null);
       setAiClarifyRound(0);
-      setAiNewDecisions([]);
-      // 侧栏保持展开：需求文本还在，用户改一句话就能再生成一轮
+      // 侧栏保持展开（你还要接着聊），但输入框清空：它是「你正在写什么」，
+      // 留着上一句会让人以为还没发出去。历史里有上一轮，问「接着改」也够用了。
+      // 自校验结果要说清楚：用户必须知道这份设计**现在能不能用**。
+      // 这正是 Q-0410 那个死锁的教训 —— 「满屏报错且导不出来」而界面一声不吭。
+      if (outcome.kind === "patch") {
+        const a = outcome.applied;
+        const parts: string[] = [];
+        if (a.addedTables.length) parts.push(t("dbd.aiPatchAdded", { count: a.addedTables.length }));
+        if (a.updatedTables.length) parts.push(t("dbd.aiPatchUpdated", { count: a.updatedTables.length }));
+        if (a.removedTables.length) parts.push(t("dbd.aiPatchRemoved", { count: a.removedTables.length }));
+        toast(parts.length ? parts.join("\uff0c") : t("dbd.aiPatchNoop"), "ok");
+        if (a.droppedRelations.length) {
+          toast(t("dbd.aiPatchDropped", { count: a.droppedRelations.length }), "err");
+        }
+      }
+      // 产出被截断：这里必须强调“不完整”——用户看到了表，
+      // 但不知道关联与决策记录被截尾了。不说他会以为完整。
+      if (outcome.kind === "design" && outcome.truncated) {
+        toast(t("dbd.aiTruncated", { count: placed.nodes.length }), "err");
+      }
+      if (outcome.repair.ok) {
+        if (outcome.repair.rounds > 0) {
+          toast(t("dbd.aiRepaired", { rounds: outcome.repair.rounds }), "ok");
+        }
+      } else {
+        // 没修好也照样落图（否则这轮钱白花、你也看不到设计），但明确告知剩余问题
+        toast(
+          t("dbd.aiRepairFailed", { count: outcome.repair.remainingErrors.length }),
+          "err",
+        );
+      }
       toast(t("dbd.aiDone", { count: placed.nodes.length }), "ok");
     } catch (e) {
       const msg = String(e);
@@ -2886,10 +2940,12 @@ export default function DbDesignerPanel() {
                         type="button"
                         disabled={aiBusy}
                         onClick={() => {
-                          // 点一下就答：把选项填进输入框并直接发一轮——
-                          // 这正是“点一下就答”的价值：不要求用户再手动打字。
-                          setAiText(opt);
+                          // 点一下就答：**直接把选项发出去**，不填回输入框。
+                          // 填回去会覆盖用户在被追问的这段时间里已经敲下的新提示词 ——
+                          // 那是真会丢内容的（用户明确反馈过）。输入框的语义是
+                          // 「你正在写什么」，不是「上一句发了什么」。
                           setAiClarify(null);
+                          setAiText("");
                           void runAi(opt);
                         }}
                         className="cursor-pointer rounded-ctl border border-cyan-400/30 bg-cyan-400/10 px-2 py-1 text-tiny text-cyan-100 hover:bg-cyan-400/20"
@@ -2907,6 +2963,7 @@ export default function DbDesignerPanel() {
                       if (e.key !== "Enter") return;
                       e.preventDefault();
                       setAiClarify(null);
+                      setAiText("");
                       void runAi(e.currentTarget.value);
                     }}
                     placeholder={t("dbd.aiClarifyPh")}
@@ -2917,6 +2974,7 @@ export default function DbDesignerPanel() {
                     disabled={aiBusy || !aiText.trim()}
                     onClick={() => {
                       setAiClarify(null);
+                      setAiText("");
                       void runAi();
                     }}
                     className="cursor-pointer rounded-ctl bg-[var(--module-accent)] px-2 py-1 text-tiny text-white disabled:opacity-40"
@@ -2957,11 +3015,14 @@ export default function DbDesignerPanel() {
               />
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => void runAi()}
+                  onClick={() => {
+                    setAiText("");
+                    void runAi();
+                  }}
                   disabled={aiBusy || !aiText.trim() || aiProviders.length === 0}
                   className="ui-btn ui-btn-primary px-3 py-1 text-caption disabled:opacity-40"
                 >
-                  {aiBusy ? t("dbd.aiBusy") : t("dbd.aiGenerate")}
+                  {aiBusy ? t("dbd.aiBusy") : t("dbd.aiSubmit")}
                 </button>
                 {aiBusy ? (
                   <button onClick={() => void cancelAi()} className="ui-btn px-2 py-1 text-caption">
