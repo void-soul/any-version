@@ -21,6 +21,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { CONNECTION_LINE_BY_STYLE, useEdgeStyle } from "../../utils/graphEdgeStyle";
+import { mergeDecisions, trimHistory } from "./aiMemory";
 import { cardClickAction, clickRoleOf } from "./cardClick";
 import { DEFAULT_LAYOUT_MODE, computeLayout, type LayoutMode } from "./layout";
 import {
@@ -49,6 +50,8 @@ import {
   ListTree,
   Sparkles,
   SlidersHorizontal,
+  HelpCircle,
+  Lightbulb,
   Terminal,
   Trash2,
 } from "lucide-react";
@@ -93,6 +96,8 @@ import {
   type DbDesignDocument,
   type DbDesignNode,
   type DbDesignRelation,
+  type AiOutcome,
+  type ChatTurn,
   type DbField,
   type DbIndex,
   type DbTableBody,
@@ -417,6 +422,25 @@ export default function DbDesignerPanel() {
   /** 本轮是主动停止的：控制台收尾显示「已停止」而不是「已完成」 */
   const [aiAborted, setAiAborted] = useState(false);
   const [aiErr, setAiErr] = useState("");
+  /**
+   * 会话历史（滚动窗口，最近 3 轮）。
+   *
+   * **不进设计文件**：它是对话过程的脚手架，不是设计内容。放进文件会让它越滚越大、
+   * 分享文件时把两个 AI 的来回对话也发给了对方。真正的记忆是 `doc.decisions`。
+   */
+  const [aiHistory, setAiHistory] = useState<ChatTurn[]>([]);
+  /** 模型停下来问问题时的状态（非空 = 交洽卡片应渲染出来） */
+  const [aiClarify, setAiClarify] = useState<{ question: string; options: string[] } | null>(null);
+  /** 已追问几轮：传给后端写进提示词，让模型知道自己问过几次 */
+  const [aiClarifyRound, setAiClarifyRound] = useState(0);
+  /** 本轮新增的决策：生成完在侧栏里展示给你看，不对即归入文档形式的“已记入” */
+  const [aiNewDecisions, setAiNewDecisions] = useState<string[]>([]);
+  /** 本轮开始前的文档：追问时用它把画布恢复回来（追问不落图） */
+  const [docSnapshot, setDocSnapshot] = useState<DbDesignDocument | null>(null);
+  /** 决策记录区的展开状态：默认收起——不收起就是一块常驻的字符迹 */
+  const [decisionsOpen, setDecisionsOpen] = useState(false);
+  /** 决策记录的输入草稿（回车即提交） */
+  const [decisionDraft, setDecisionDraft] = useState("");
   const [aiProviders, setAiProviders] = useState<AiProviderLike[]>([]);
   const [aiProviderId, setAiProviderId] = useState("");
   const [aiModelId, setAiModelId] = useState("");
@@ -638,6 +662,12 @@ export default function DbDesignerPanel() {
     setDirty(true);
     setSelectedId(null);
     setHighlightId(null);
+    // 切换文档就清会话历史：旧文档的对话抵到新文档上会让模型拿不上位置的上下文。
+    setAiHistory([]);
+    setAiClarify(null);
+    setAiClarifyRound(0);
+    setAiNewDecisions([]);
+    setDocSnapshot(null);
     setPositions({});
   };
 
@@ -764,6 +794,12 @@ export default function DbDesignerPanel() {
     setDirty(true);
     setSelectedId(null);
     setHighlightId(null);
+    // 切换文档就清会话历史：旧文档的对话抵到新文档上会让模型拿不上位置的上下文。
+    setAiHistory([]);
+    setAiClarify(null);
+    setAiClarifyRound(0);
+    setAiNewDecisions([]);
+    setDocSnapshot(null);
     setPositions({});
     setResult({ ok: true, msg: t("dbd.reversed", { count: next.nodes.length, from }) });
   };
@@ -838,6 +874,9 @@ export default function DbDesignerPanel() {
     if (selectedId === id) setSelectedId(null);
     // 高亮的那张被删了要跟着清，否则画布上留一个「有高亮却没有面板」的幽灵状态
     if (highlightId === id) setHighlightId(null);
+    setAiHistory([]);
+    setAiClarify(null);
+    setAiClarifyRound(0);
   };
 
   /**
@@ -1487,11 +1526,21 @@ export default function DbDesignerPanel() {
    * 不等整篇到齐。位置**只给没排过的新节点**（已排过的一律不动），
    * 否则每来一张表全体重排一次会满屏乱跳；最终那次仍走完整自动布局。
    */
-  const runAi = async () => {
-    if (!doc || !aiText.trim()) return;
+  /**
+   * `overrideText`：追问回答时直接发起下一轮。
+   *
+   * 不把它写进 aiText 再读：那样需要 setState 后等一个循环才能发，
+   * 而且用户会看到输入框先清空再出字——两次变化。
+   */
+  const runAi = async (overrideText?: string) => {
+    const ask = (overrideText ?? aiText).trim();
+    if (!doc || !ask) return;
     setAiBusy(true);
     setAiAborted(false);
     setAiErr("");
+    // 追问不落图：流式期间后端会阻止推部分文档，但一旦模型先写了几张表才转问，
+    // 画布上就会留下半套。快照用来把它撤回去。
+    setDocSnapshot(doc);
     dbdAiProgressBuffer.clear();
     dbdAiPartialBuffer.clear();
     // 运行开始的基线快照：画布有表时 AI 基于它修改（后端提示词带它作基线）。
@@ -1557,9 +1606,12 @@ export default function DbDesignerPanel() {
     });
 
     try {
-      const generated = await invoke<DbDesignDocument>("dbd_ai_generate", {
+      const outcome = await invoke<AiOutcome>("dbd_ai_generate", {
         input: {
-          text: aiText,
+          text: ask,
+          // 会话历史（滚动窗口）与追问轮次：这两个让模型知道「刚问过什么」「你不能再问了」
+          history: aiHistory,
+          clarifyRound: aiClarifyRound,
           name: doc.name || undefined,
           dialect: doc.dialect,
           providerId: aiProviderId || null,
@@ -1577,6 +1629,25 @@ export default function DbDesignerPanel() {
           currentDoc: doc,
         },
       });
+      // 追问分支：文档一个字都不动。流式期间后端已阻止推部分文档，
+      // 但为了不让「半套设计」留在画布上，这里把本轮开始前的文档写回去。
+      if (outcome.kind === "clarify") {
+        if (docSnapshot) patchDoc(docSnapshot);
+        setAiClarify({ question: outcome.question, options: outcome.options });
+        setAiHistory((h) =>
+          trimHistory([...h, { role: "assistant", text: `【追问】${outcome.question}` }]),
+        );
+        // 追问轮次 +1：后端据此在提示词里写明「你已经问过 N 轮，不要再问」。
+        // 它守的是「一直追问下去」这个最坏情况 —— 用户不答就一直问。
+        setAiClarifyRound((n) => n + 1);
+        setAiText("");
+        return;
+      }
+      const generated = outcome.document;
+      // **决策记录的所有权在前端**：模型每轮都要回吐整份文档，
+      // 很可能把你之前写的决策丢了或改写。所以保留原文档的这份，
+      // 只把本轮新增的叠上去（同文不重复追加）。
+      const mergedDecisions = mergeDecisions(doc.decisions, outcome.decisions);
       // 新表的位置跟随用户当前的布局偏好：否则界面选「核心左右」、AI 生成的新表却摆成放射，
       // 同一幅画里两种形态混着，比一开始就用放射还怪。
       const pos = computeLayout(generated, { fieldRows }, layoutMode);
@@ -1586,6 +1657,7 @@ export default function DbDesignerPanel() {
         // 直接采纳的话，用户配好的公共字段会被一次生成抹掉 —— 而这配置只存在于设计文件里，
         // 抹掉就等于白配（还得重新勾一遍）。
         commonFields: doc.commonFields,
+        decisions: mergedDecisions,
         nodes: generated.nodes.map((n) => {
           // 现有表（按 id、再按名字匹配）保持手动摆过的位置，新表才用自动布局
           const old =
@@ -1601,6 +1673,20 @@ export default function DbDesignerPanel() {
       setSelectedId(null);
       setHighlightId(null);
       setFitSignal((n) => n + 1);
+      // 成功之后才记历史。assistant 那一轮**只存决策摘要**，不存整份 JSON ——
+      // 下一轮模型看的是更新后的文档，旧 JSON 里的表定义还是那些，纯烧 token。
+      // 只留最近 3 轮（滚动窗口）。
+      setAiHistory((h) => {
+        const summary =
+          outcome.decisions.length > 0
+            ? `已按需求修改设计（${outcome.decisions.length} 项决策）`
+            : "已按需求修改设计";
+        return trimHistory([...h, { role: "user", text: ask }, { role: "assistant", text: summary }]);
+      });
+      setAiNewDecisions(outcome.decisions);
+      setAiClarify(null);
+      setAiClarifyRound(0);
+      setAiNewDecisions([]);
       // 侧栏保持展开：需求文本还在，用户改一句话就能再生成一轮
       toast(t("dbd.aiDone", { count: placed.nodes.length }), "ok");
     } catch (e) {
@@ -2611,6 +2697,92 @@ export default function DbDesignerPanel() {
 
                         {/* ① 内容区：AI 回复与进度 —— 占满剩余空间（输入框在底部，这里才是「对话」）*/}
             <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3">
+              {/* 设计决策与约束（文档级，AI 每轮都读）。
+                  放在侧栏而不是底部 dock：dock 是**表级**属性（字段/索引/关联），
+                  决策是文档级；而且它与 AI 强相关 —— 生成的当轮就能改。
+                  默认收起：不收起就是一块常驻的字符迹，把对话公主「读字」这件事压缩没了。*/}
+              {doc ? (
+                <div className="shrink-0 rounded-ctl border border-white/10 bg-white/[0.02]">
+                  <button
+                    type="button"
+                    onClick={() => setDecisionsOpen((v) => !v)}
+                    className="flex w-full cursor-pointer items-center gap-1.5 px-2 py-1.5 text-left text-micro text-slate-300 hover:bg-white/[0.03]"
+                  >
+                    <Lightbulb className="h-3 w-3 flex-shrink-0 text-amber-300/80" />
+                    <span className="min-w-0 flex-1 truncate">{t("dbd.aiDecisions")}</span>
+                    {doc.decisions?.length ? (
+                      <span className="shrink-0 rounded-full bg-white/10 px-1.5 text-micro text-slate-300">
+                        {doc.decisions.length}
+                      </span>
+                    ) : null}
+                    <ChevronDown
+                      className={`h-3 w-3 flex-shrink-0 transition-transform ${decisionsOpen ? "" : "-rotate-90"}`}
+                    />
+                  </button>
+                  {decisionsOpen ? (
+                    <div className="space-y-1 border-t border-white/5 p-2">
+                      {doc.decisions?.length ? (
+                        <>
+                          {doc.decisions.map((d) => (
+                            <div key={d} className="group/dec flex items-start gap-1.5">
+                              <span className="min-w-0 flex-1 text-micro leading-relaxed text-slate-300">{d}</span>
+                              <button
+                                type="button"
+                                title={t("dbd.aiDecisionDelete")}
+                                onClick={() =>
+                                  patchDoc({
+                                    ...doc,
+                                    decisions: (doc.decisions ?? []).filter((x) => x !== d),
+                                  })
+                                }
+                                className="shrink-0 cursor-pointer text-slate-600 opacity-0 transition group-hover/dec:opacity-100 hover:text-rose-300"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+                          <div className="border-t border-white/5 pt-1.5">
+                            <textarea
+                              value={decisionDraft}
+                              onChange={(e) => setDecisionDraft(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key !== "Enter") return;
+                                e.preventDefault();
+                                const v = decisionDraft.trim();
+                                if (!v) return;
+                                patchDoc({ ...doc, decisions: mergeDecisions(doc.decisions, [v]) });
+                                setDecisionDraft("");
+                              }}
+                              rows={2}
+                              placeholder={t("dbd.aiDecisionAdd")}
+                              className="w-full resize-none rounded bg-black/30 px-2 py-1 text-micro text-slate-200 outline-none placeholder:text-slate-600"
+                            />
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-micro text-slate-500">{t("dbd.aiDecisionNone")}</p>
+                          <textarea
+                            value={decisionDraft}
+                            onChange={(e) => setDecisionDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key !== "Enter") return;
+                              e.preventDefault();
+                              const v = decisionDraft.trim();
+                              if (!v) return;
+                              patchDoc({ ...doc, decisions: mergeDecisions(doc.decisions, [v]) });
+                              setDecisionDraft("");
+                            }}
+                            rows={2}
+                            placeholder={t("dbd.aiDecisionAdd")}
+                            className="w-full resize-none rounded bg-black/30 px-2 py-1 text-micro text-slate-200 outline-none placeholder:text-slate-600"
+                          />
+                        </>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               <p className="text-micro leading-relaxed text-slate-500">{t("dbd.aiHint")}</p>
               {doc && doc.nodes.length > 0 ? (
                 <p className="text-micro leading-relaxed text-slate-500">
@@ -2697,6 +2869,82 @@ export default function DbDesignerPanel() {
                 emptyText={t("dbd.aiNoProvider")}
               />
             </div>
+
+            {/* 追问卡片：模型有业务歧义就停下来问，而不是自己猜一个先给出来。
+                此时文档一个字都没动（后端不落图），等你回答后再发一轮。*/}
+            {aiClarify ? (
+              <div className="shrink-0 border-b border-white/5 bg-cyan-500/[0.06] p-3">
+                <div className="mb-1.5 flex items-start gap-1.5 text-caption font-semibold text-cyan-200">
+                  <HelpCircle className="mt-px h-3.5 w-3.5 flex-shrink-0" />
+                  <span>{aiClarify.question}</span>
+                </div>
+                {aiClarify.options.length > 0 ? (
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {aiClarify.options.map((opt) => (
+                      <button
+                        key={opt}
+                        type="button"
+                        disabled={aiBusy}
+                        onClick={() => {
+                          // 点一下就答：把选项填进输入框并直接发一轮——
+                          // 这正是“点一下就答”的价值：不要求用户再手动打字。
+                          setAiText(opt);
+                          setAiClarify(null);
+                          void runAi(opt);
+                        }}
+                        className="cursor-pointer rounded-ctl border border-cyan-400/30 bg-cyan-400/10 px-2 py-1 text-tiny text-cyan-100 hover:bg-cyan-400/20"
+                      >
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="flex gap-1.5">
+                  <input
+                    value={aiText}
+                    onChange={(e) => setAiText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter") return;
+                      e.preventDefault();
+                      setAiClarify(null);
+                      void runAi(e.currentTarget.value);
+                    }}
+                    placeholder={t("dbd.aiClarifyPh")}
+                    className="min-w-0 flex-1 rounded-ctl bg-black/30 px-2 py-1 text-tiny text-slate-200 outline-none placeholder:text-slate-600"
+                  />
+                  <button
+                    type="button"
+                    disabled={aiBusy || !aiText.trim()}
+                    onClick={() => {
+                      setAiClarify(null);
+                      void runAi();
+                    }}
+                    className="cursor-pointer rounded-ctl bg-[var(--module-accent)] px-2 py-1 text-tiny text-white disabled:opacity-40"
+                  >
+                    {t("dbd.aiClarifySend")}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {/* 本轮新增的决策：先展示给你看，不对即归入。
+                模型不说谈所以到底干了什么，你也看不到它为什么这么改——
+                而下一轮它会把这条当成已知约束。*/}
+            {aiNewDecisions.length > 0 ? (
+              <div className="shrink-0 border-b border-white/5 px-3 py-2">
+                <div className="mb-1 text-micro text-slate-500">
+                  {t("dbd.aiNewDecisions", { count: aiNewDecisions.length })}
+                </div>
+                <ul className="space-y-0.5">
+                  {aiNewDecisions.map((d) => (
+                    <li key={d} className="flex items-start gap-1.5 text-micro text-slate-300">
+                      <span className="mt-1 h-1 w-1 flex-shrink-0 rounded-full bg-[var(--module-accent)]" />
+                      <span className="min-w-0 flex-1">{d}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
 
             {/* ③ 输入区：固定在底部 */}
             <div className="flex flex-shrink-0 flex-col gap-2 border-t border-white/5 p-3">

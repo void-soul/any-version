@@ -96,10 +96,33 @@ export interface DbDesignDocument {
    * 缺省 / 空数组 = 不附加，旧文件与不配的设计完全不受影响。
    */
   commonFields?: DbField[];
+  /**
+   * 设计决策与约束：一句话一条记「为什么这么设计」，AI 每次生成都读它。
+   *
+   * **所有权在前端**：模型每轮要回吐整份文档，很可能把你写的决策丢了或改写，
+   * 所以采纳时保留这份、只追加模型本轮新增的。缺省 = 空数组（旧文件零影响）。
+   */
+  decisions?: string[];
   nodes: DbDesignNode[];
   relations: DbDesignRelation[];
   updatedAt?: string;
 }
+
+/** 一轮对话（用户或助手），只在会话内存里，不进文件 */
+export interface ChatTurn {
+  role: "user" | "assistant";
+  text: string;
+}
+
+/**
+ * `dbd_ai_generate` 的返回：**要么给设计，要么反过来问你**。
+ *
+ * 与后端 `AiOutcome` 一一对应（serde tag = "kind"）。
+ * `clarify` 那一支**不落图** —— 文档一个字都不改，等你回答后重新发一轮。
+ */
+export type AiOutcome =
+  | { kind: "design"; document: DbDesignDocument; decisions: string[] }
+  | { kind: "clarify"; question: string; options: string[] };
 
 export interface ValidationReport {
   errors: string[];
