@@ -36,9 +36,6 @@ import EdgeStyleSelect from "../shared/EdgeStyleSelect";
 import { Menu } from "../shared/Menu";
 import {
   ArrowRight,
-  Ban,
-  Brain,
-  Check,
   ChevronDown,
   Loader2,
   ChevronUp,
@@ -51,15 +48,14 @@ import {
   ListTree,
   Sparkles,
   SlidersHorizontal,
-  HelpCircle,
-  Lightbulb,
-  Terminal,
   Trash2,
 } from "lucide-react";
 
 import DesignNodeCard, { type DesignNodeData } from "./DesignNodeCard";
 import FieldTable from "./FieldTable";
 import GraphLookPanel from "./GraphLookPanel";
+import AiSidebar from "./AiSidebar";
+import { patchCounts, patchLast, startTurn, type ChatMsg } from "./chatState";
 import CommonFieldsDialog from "./CommonFieldsDialog";
 import ExportDialog from "./ExportDialog";
 import { predictSqlPath, type ExportChoice } from "./exportOptions";
@@ -74,12 +70,9 @@ import {
   relatedEdgeWidth,
   useGraphHighlightPrefs,
 } from "../../utils/graphHighlight";
-import { ModelSelector } from "../ai/ModelSelector";
-import type { ProviderLike } from "../ai/ModelSelector";
 import { useAiPanelWidth } from "../ai/paneWidth";
 import { createEventBuffer, useEventBufferSnapshot } from "../../utils/eventBuffer";
 import { ResultNote } from "../shared/Note";
-import { ThinkingBlock } from "../shared/ThinkingBlock";
 import { HoverPreview, useHoverPreview } from "../shared/HoverPreview";
 import { theamedConfirm } from "../shared/ThemedAlert";
 import { toast } from "../shared/Toast";
@@ -429,8 +422,8 @@ export default function DbDesignerPanel() {
   const [aiText, setAiText] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   /** 本轮是主动停止的：控制台收尾显示「已停止」而不是「已完成」 */
-  const [aiAborted, setAiAborted] = useState(false);
-  const [aiErr, setAiErr] = useState("");
+  const [, setAiAborted] = useState(false);
+  const [, setAiErr] = useState("");
   /**
    * 会话历史（滚动窗口，最近 3 轮）。
    *
@@ -438,19 +431,26 @@ export default function DbDesignerPanel() {
    * 分享文件时把两个 AI 的来回对话也发给了对方。真正的记忆是 `doc.decisions`。
    */
   const [aiHistory, setAiHistory] = useState<ChatTurn[]>([]);
+  /**
+   * 对话气泡（临时，关掉面板就丢）。
+   *
+   * 为什么不进设计文件：它是对话过程的脚手架，不是设计内容，放进文件会让它越滚越大。
+   * 真正的长期记忆是 `doc.decisions`（在顶部那个按钮里）。
+   */
+  const [chatMsgs, setChatMsgs] = useState<ChatMsg[]>([]);
   /** 模型停下来问问题时的状态（非空 = 交洽卡片应渲染出来） */
-  const [aiClarify, setAiClarify] = useState<{ question: string; options: string[] } | null>(null);
+  const [, setAiClarify] = useState<{ question: string; options: string[] } | null>(null);
   /** 已追问几轮：传给后端写进提示词，让模型知道自己问过几次 */
   const [aiClarifyRound, setAiClarifyRound] = useState(0);
   /** 本轮新增的决策：生成完在侧栏里展示给你看，不对即归入文档形式的“已记入” */
-  const [aiNewDecisions, setAiNewDecisions] = useState<string[]>([]);
+  const [, setAiNewDecisions] = useState<string[]>([]);
   /** 本轮开始前的文档：追问时用它把画布恢复回来（追问不落图） */
   const [docSnapshot, setDocSnapshot] = useState<DbDesignDocument | null>(null);
   /** 决策记录区的展开状态：默认收起——不收起就是一块常驻的字符迹 */
   const [decisionsOpen, setDecisionsOpen] = useState(false);
   /** 决策记录的输入草稿（回车即提交） */
   const [decisionDraft, setDecisionDraft] = useState("");
-  const [aiProviders, setAiProviders] = useState<AiProviderLike[]>([]);
+  const [, setAiProviders] = useState<AiProviderLike[]>([]);
   const [aiProviderId, setAiProviderId] = useState("");
   const [aiModelId, setAiModelId] = useState("");
   /** 本次运行的 id：发给后端，用于「停止」 */
@@ -487,6 +487,19 @@ export default function DbDesignerPanel() {
     }
     return null;
   }, [aiProgress]);
+  /** 进度变化时把当轮气泡也更新一下：思考中→正在写、字数不断增长。
+      不跟的话气泡会一直卡在「思考中」，用户以为卡死了。*/
+  useEffect(() => {
+    if (!aiBusy) return;
+    setChatMsgs((m) =>
+      patchLast(m, {
+        status: aiStream ? "writing" : "thinking",
+        thinking: aiThinking?.text,
+        chars: aiStream?.length,
+      }),
+    );
+  }, [aiBusy, aiThinking, aiStream]);
+
   /**
  * 自校验重修进度：最后一帧 repair 事件。
  * 重修期间没有 stream 帧，所以状态条会掉回「思考中」——用它把「正在自动修复 1/2」显示出来，
@@ -1583,6 +1596,8 @@ const aiStatusText = aiBusy
     setAiBusy(true);
     setAiAborted(false);
     setAiErr("");
+    // 开一轮：用户气泡 + 助手占位气泡（进度先去那里【）
+    setChatMsgs((m) => startTurn(m, ask));
     // 追问不落图：流式期间后端会阻止推部分文档，但一旦模型先写了几张表才转问，
     // 画布上就会留下半套。快照用来把它撤回去。
     setDocSnapshot(doc);
@@ -1679,6 +1694,7 @@ const aiStatusText = aiBusy
       if (outcome.kind === "clarify") {
         if (docSnapshot) patchDoc(docSnapshot);
         setAiClarify({ question: outcome.question, options: outcome.options });
+        setChatMsgs((m) => patchLast(m, { status: "clarify", clarify: { question: outcome.question, options: outcome.options } }));
         setAiHistory((h) =>
           trimHistory([...h, { role: "assistant", text: `【追问】${outcome.question}` }]),
         );
@@ -1729,6 +1745,17 @@ const aiStatusText = aiBusy
         return trimHistory([...h, { role: "user", text: ask }, { role: "assistant", text: summary }]);
       });
       setAiNewDecisions(outcome.decisions);
+      setChatMsgs((m) =>
+        patchLast(m, {
+          status: "done",
+          summary: t("dbd.aiDone", { count: placed.nodes.length }),
+          thinking: aiThinking?.text,
+          chars: aiStream?.length,
+          decisions: outcome.decisions,
+          patch: outcome.kind === "patch" ? patchCounts(outcome.applied) : undefined,
+          truncated: outcome.kind === "design" && outcome.truncated,
+        }),
+      );
       setAiClarify(null);
       setAiClarifyRound(0);
       // 侧栏保持展开（你还要接着聊），但输入框清空：它是「你正在写什么」，
@@ -1768,9 +1795,11 @@ const aiStatusText = aiBusy
       // 主动停止不算失败：只闪一句提示，不要把「已取消」当错误堆在界面上
       if (msg.includes("已取消")) {
         setAiAborted(true);
+        setChatMsgs((m) => patchLast(m, { status: "done", error: t("dbd.aiCancelled") }));
         toast(t("dbd.aiCancelled"), "ok");
       } else {
         setAiErr(msg);
+        setChatMsgs((m) => patchLast(m, { status: "error", error: msg, thinking: aiThinking?.text }));
       }
     } finally {
       unsubPartial();
@@ -1779,16 +1808,7 @@ const aiStatusText = aiBusy
     }
   };
 
-  /** 停止生成：后端靠 run_id 在全局集合里对上号（前端不等待结果，界面立刻恢复） */
-  const cancelAi = async () => {
-    const runId = aiRunIdRef.current;
-    if (!runId) return;
-    try {
-      await invoke("dbd_ai_cancel", { runId });
-    } catch (e) {
-      console.error("停止 AI 失败", e);
-    }
-  };
+;
 
   /** 重新布局：算完直接写回 node.x/y，并把拖动覆盖清掉（否则旧坐标会盖住新布局）。
    *  没有撤销栈，所以先问一句 —— 手工摆好的位置会被覆盖。 */
@@ -2749,333 +2769,45 @@ const aiStatusText = aiBusy
 
       {/* AI 助手侧栏（思维导图同款右栏）：全高、左缘可拖宽、工具栏可收起。
           收起不中断生成 —— 流式订阅挂在生成流程里，画布角落的胶囊可恢复。 */}
-      {aiOpen && doc ? (
-        <aside
-          className="relative flex-shrink-0 border-l border-white/10 bg-surface-panel/60"
-          style={{ width: aiPanelW }}
-        >
-          <div className="flex h-full min-h-0 flex-col">
-            <div className="flex flex-shrink-0 items-center gap-2 border-b border-white/5 px-3 py-2">
-              <Sparkles className="h-3.5 w-3.5 flex-shrink-0 text-[var(--module-accent)]" />
-              <span className="min-w-0 flex-1 truncate text-caption font-semibold text-slate-200">
-                {t("dbd.aiTitle")}
-              </span>
-              <button
-                onClick={() => setAiOpen(false)}
-                className="ui-btn shrink-0 p-1"
-                title={t("common.dialogClose")}
-              >
-                ✕
-              </button>
-            </div>
-
-                        {/* ① 内容区：AI 回复与进度 —— 占满剩余空间（输入框在底部，这里才是「对话」）*/}
-            <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3">
-              {/* 设计决策与约束（文档级，AI 每轮都读）。
-                  放在侧栏而不是底部 dock：dock 是**表级**属性（字段/索引/关联），
-                  决策是文档级；而且它与 AI 强相关 —— 生成的当轮就能改。
-                  默认收起：不收起就是一块常驻的字符迹，把对话公主「读字」这件事压缩没了。*/}
-              {doc ? (
-                <div className="shrink-0 rounded-ctl border border-white/10 bg-white/[0.02]">
-                  <button
-                    type="button"
-                    onClick={() => setDecisionsOpen((v) => !v)}
-                    className="flex w-full cursor-pointer items-center gap-1.5 px-2 py-1.5 text-left text-micro text-slate-300 hover:bg-white/[0.03]"
-                  >
-                    <Lightbulb className="h-3 w-3 flex-shrink-0 text-amber-300/80" />
-                    <span className="min-w-0 flex-1 truncate">{t("dbd.aiDecisions")}</span>
-                    {doc.decisions?.length ? (
-                      <span className="shrink-0 rounded-full bg-white/10 px-1.5 text-micro text-slate-300">
-                        {doc.decisions.length}
-                      </span>
-                    ) : null}
-                    <ChevronDown
-                      className={`h-3 w-3 flex-shrink-0 transition-transform ${decisionsOpen ? "" : "-rotate-90"}`}
-                    />
-                  </button>
-                  {decisionsOpen ? (
-                    <div className="space-y-1 border-t border-white/5 p-2">
-                      {doc.decisions?.length ? (
-                        <>
-                          {doc.decisions.map((d) => (
-                            <div key={d} className="group/dec flex items-start gap-1.5">
-                              <span className="min-w-0 flex-1 text-micro leading-relaxed text-slate-300">{d}</span>
-                              <button
-                                type="button"
-                                title={t("dbd.aiDecisionDelete")}
-                                onClick={() =>
-                                  patchDoc({
-                                    ...doc,
-                                    decisions: (doc.decisions ?? []).filter((x) => x !== d),
-                                  })
-                                }
-                                className="shrink-0 cursor-pointer text-slate-600 opacity-0 transition group-hover/dec:opacity-100 hover:text-rose-300"
-                              >
-                                ✕
-                              </button>
-                            </div>
-                          ))}
-                          <div className="border-t border-white/5 pt-1.5">
-                            <textarea
-                              value={decisionDraft}
-                              onChange={(e) => setDecisionDraft(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key !== "Enter") return;
-                                e.preventDefault();
-                                const v = decisionDraft.trim();
-                                if (!v) return;
-                                patchDoc({ ...doc, decisions: mergeDecisions(doc.decisions, [v]) });
-                                setDecisionDraft("");
-                              }}
-                              rows={2}
-                              placeholder={t("dbd.aiDecisionAdd")}
-                              className="w-full resize-none rounded bg-black/30 px-2 py-1 text-micro text-slate-200 outline-none placeholder:text-slate-600"
-                            />
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <p className="text-micro text-slate-500">{t("dbd.aiDecisionNone")}</p>
-                          <textarea
-                            value={decisionDraft}
-                            onChange={(e) => setDecisionDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key !== "Enter") return;
-                              e.preventDefault();
-                              const v = decisionDraft.trim();
-                              if (!v) return;
-                              patchDoc({ ...doc, decisions: mergeDecisions(doc.decisions, [v]) });
-                              setDecisionDraft("");
-                            }}
-                            rows={2}
-                            placeholder={t("dbd.aiDecisionAdd")}
-                            className="w-full resize-none rounded bg-black/30 px-2 py-1 text-micro text-slate-200 outline-none placeholder:text-slate-600"
-                          />
-                        </>
-                      )}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-              <p className="text-micro leading-relaxed text-slate-500">{t("dbd.aiHint")}</p>
-              {doc && doc.nodes.length > 0 ? (
-                <p className="text-micro leading-relaxed text-slate-500">
-                  {t("dbd.aiModifyHint", { count: doc.nodes.length })}
-                </p>
-              ) : null}
-
-              {/* 进度明细：思考/输出字数、实时预览、完成摘要 */}
-              {aiBusy || aiProgress.length > 0 ? (
-                <div className="space-y-1.5 rounded-ctl border border-white/10 bg-slate-950/40 p-2">
-                  <div className="flex items-center gap-1.5 text-micro text-slate-300">
-                    <Sparkles className="h-3 w-3 shrink-0 text-cyan-300" />
-                    {t("dbd.aiStart")}
-                  </div>
-                  {/* 思考过程：原来这里只有一行「思考中 N 字」，看不到在想什么。
-                      换成共享的 ThinkingBlock（可折叠、全文可复制）。 */}
-                  {aiThinking && aiThinking.text ? (
-                    <ThinkingBlock
-                      text={aiThinking.text}
-                      pending={aiBusy && !aiThinking.done}
-                    />
-                  ) : null}
-                  {aiStream ? (
-                    <div className="flex items-center gap-1.5 text-micro text-emerald-200/90">
-                      <Terminal className="h-3 w-3 shrink-0 text-emerald-300" />
-                      {t("dbd.aiWritingChars", { count: aiStream.length })}
-                    </div>
-                  ) : null}
-                  {/* 正文实时预览。思考的预览交给上面的 ThinkingBlock，
-                      不再在这里重复一份（以前同一个 text 在两处各渲染一次） */}
-                  {aiBusy && aiStream ? (
-                    <div className="max-h-32 overflow-y-auto whitespace-pre-wrap rounded border border-emerald-400/15 bg-emerald-400/[0.03] px-1.5 py-1 font-mono text-[8px] leading-3.5 text-emerald-100/80">
-                      {aiStream.text || "…"}
-                      <span className="ml-0.5 inline-block h-2 w-1 animate-pulse bg-emerald-300 align-middle" />
-                    </div>
-                  ) : null}
-                  {aiBusy && !aiThinking && !aiStream ? (
-                    <div className="flex items-center gap-1.5 pl-1">
-                      <Loader2 className="h-3 w-3 animate-spin text-slate-400" />
-                      <span className="text-micro text-slate-500">{t("dbd.aiThinking")}</span>
-                    </div>
-                  ) : null}
-                  {!aiBusy && aiStream && !aiAborted ? (
-                    <>
-                      <div className="flex items-center gap-1.5 text-micro text-emerald-300">
-                        <Check className="h-3 w-3 shrink-0" />
-                        {t("dbd.aiFinished")}
-                      </div>
-                      <div className="text-micro text-emerald-300/80">
-                        {t("dbd.aiDone", { count: doc.nodes.length })}
-                      </div>
-                    </>
-                  ) : null}
-                </div>
-              ) : null}
-              {aiErr ? <p className="break-words text-micro text-rose-400">{aiErr}</p> : null}
-            </div>
-
-            {/* ② 状态与设置：紧贴输入框上方，一行看得见「在干什么 用哪个模型」 */}
-            <div className="flex flex-shrink-0 items-center gap-2 border-t border-white/5 px-3 py-2">
-              <Brain className={`h-3.5 w-3.5 flex-shrink-0 ${aiBusy ? "animate-pulse text-cyan-300" : "text-slate-500"}`} />
-              <span className={`shrink-0 text-micro font-semibold ${
-                aiBusy ? "text-cyan-300" : aiAborted ? "text-amber-300" : "text-emerald-300"
-              }`}>
-                {aiBusy ? t("dbd.aiWorking") : aiAborted ? t("dbd.aiCancelled") : t("dbd.aiDoneShort")}
-              </span>
-              <span className="ml-auto shrink-0 text-micro text-slate-500">{t("dbd.aiModel")}</span>
-              {/* 模型选择器用 AI 模块的共享组件（与思维导图 Agent、API 智能导入同一套 UI） */}
-              <ModelSelector
-                providers={aiProviders as unknown as ProviderLike[]}
-                providerId={aiProviderId}
-                modelId={aiModelId}
-                onSelect={(pid, mid) => {
-                  setAiProviderId(pid);
-                  setAiModelId(mid);
-                  // 记住选择：主模块切换是 <Activity> keep-alive，切回时挂载 effect 会重跑，
-                  // 不持久化的话那次重跑会把这里选好的模型覆盖回默认
-                  void invoke("dbd_save_settings", {
-                    settings: { lastProviderId: pid, lastModelId: mid },
-                  }).catch(() => {});
-                }}
-                disabled={aiBusy}
-                compact
-                emptyText={t("dbd.aiNoProvider")}
-              />
-            </div>
-
-            {/* 追问卡片：模型有业务歧义就停下来问，而不是自己猜一个先给出来。
-                此时文档一个字都没动（后端不落图），等你回答后再发一轮。*/}
-            {aiClarify ? (
-              <div className="shrink-0 border-b border-white/5 bg-cyan-500/[0.06] p-3">
-                <div className="mb-1.5 flex items-start gap-1.5 text-caption font-semibold text-cyan-200">
-                  <HelpCircle className="mt-px h-3.5 w-3.5 flex-shrink-0" />
-                  <span>{aiClarify.question}</span>
-                </div>
-                {aiClarify.options.length > 0 ? (
-                  <div className="mb-2 flex flex-wrap gap-1.5">
-                    {aiClarify.options.map((opt) => (
-                      <button
-                        key={opt}
-                        type="button"
-                        disabled={aiBusy}
-                        onClick={() => {
-                          // 点一下就答：**直接把选项发出去**，不填回输入框。
-                          // 填回去会覆盖用户在被追问的这段时间里已经敲下的新提示词 ——
-                          // 那是真会丢内容的（用户明确反馈过）。输入框的语义是
-                          // 「你正在写什么」，不是「上一句发了什么」。
-                          setAiClarify(null);
-                          setAiText("");
-                          void runAi(opt);
-                        }}
-                        className="cursor-pointer rounded-ctl border border-cyan-400/30 bg-cyan-400/10 px-2 py-1 text-tiny text-cyan-100 hover:bg-cyan-400/20"
-                      >
-                        {opt}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-                <div className="flex gap-1.5">
-                  <input
-                    value={aiText}
-                    onChange={(e) => setAiText(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key !== "Enter") return;
-                      e.preventDefault();
-                      setAiClarify(null);
-                      setAiText("");
-                      void runAi(e.currentTarget.value);
-                    }}
-                    placeholder={t("dbd.aiClarifyPh")}
-                    className="min-w-0 flex-1 rounded-ctl bg-black/30 px-2 py-1 text-tiny text-slate-200 outline-none placeholder:text-slate-600"
-                  />
-                  <button
-                    type="button"
-                    disabled={aiBusy || !aiText.trim()}
-                    onClick={() => {
-                      setAiClarify(null);
-                      setAiText("");
-                      void runAi();
-                    }}
-                    className="cursor-pointer rounded-ctl bg-[var(--module-accent)] px-2 py-1 text-tiny text-white disabled:opacity-40"
-                  >
-                    {t("dbd.aiClarifySend")}
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
-            {/* 本轮新增的决策：先展示给你看，不对即归入。
-                模型不说谈所以到底干了什么，你也看不到它为什么这么改——
-                而下一轮它会把这条当成已知约束。*/}
-            {aiNewDecisions.length > 0 ? (
-              <div className="shrink-0 border-b border-white/5 px-3 py-2">
-                <div className="mb-1 text-micro text-slate-500">
-                  {t("dbd.aiNewDecisions", { count: aiNewDecisions.length })}
-                </div>
-                <ul className="space-y-0.5">
-                  {aiNewDecisions.map((d) => (
-                    <li key={d} className="flex items-start gap-1.5 text-micro text-slate-300">
-                      <span className="mt-1 h-1 w-1 flex-shrink-0 rounded-full bg-[var(--module-accent)]" />
-                      <span className="min-w-0 flex-1">{d}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-
-            {/* ③ 输入区：固定在底部 */}
-            <div className="flex flex-shrink-0 flex-col gap-2 border-t border-white/5 p-3">
-              <textarea
-                value={aiText}
-                onChange={(e) => setAiText(e.target.value)}
-                rows={4}
-                placeholder={t("dbd.aiPh")}
-                className="w-full resize-none rounded-ctl bg-black/30 px-2 py-1.5 text-caption text-slate-200 outline-none placeholder:text-slate-600"
-              />
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    setAiText("");
-                    void runAi();
-                  }}
-                  disabled={aiBusy || !aiText.trim() || aiProviders.length === 0}
-                  className="ui-btn ui-btn-primary px-3 py-1 text-caption disabled:opacity-40"
-                >
-                  {aiBusy ? t("dbd.aiBusy") : t("dbd.aiSubmit")}
-                </button>
-                {aiBusy ? (
-                  <button onClick={() => void cancelAi()} className="ui-btn px-2 py-1 text-caption">
-                    <Ban className="h-3 w-3" /> {t("dbd.aiCancel")}
-                  </button>
-                ) : null}
-                {!aiBusy && aiProviders.length === 0 ? (
-                  <span className="min-w-0 truncate text-micro text-amber-400">{t("dbd.aiNoProvider")}</span>
-                ) : null}
-              </div>
-            </div>
-          </div>
-          {/* 左缘拖宽把手：与思维导图右栏同一套逻辑（拖动方向相反） */}
-          <div
-            className="absolute -left-1 top-0 z-10 flex h-full w-2.5 cursor-col-resize items-center justify-center hover:bg-white/[0.06]"
-            onMouseDown={(e) => {
-              if (e.button !== 0) return;
-              e.preventDefault();
-              const startX = e.clientX;
-              const startW = aiPanelW;
-              const onMove = (ev: MouseEvent) => {
-                setAiPanelW(startW - (ev.clientX - startX));
-              };
-              const onUp = () => {
-                window.removeEventListener("mousemove", onMove);
-                window.removeEventListener("mouseup", onUp);
-              };
-              window.addEventListener("mousemove", onMove);
-              window.addEventListener("mouseup", onUp);
-            }}
-          />
-        </aside>
+      {/* AI 助手侧栏：窄条 / 展开两态 + 气泡式对话。抽成组件是因为这一块
+          既有窄条壳、又有气泡列表、还有追问卡与决策区 —— 内联进来会让本文件
+          再长几百行，且每一处 JSX 改动都要在三层嵌套里定位。 */}
+      {doc ? (
+        <AiSidebar
+          open={aiOpen}
+          busy={aiBusy}
+          width={aiPanelW}
+          messages={chatMsgs}
+          decisions={doc.decisions ?? []}
+          decisionsOpen={decisionsOpen}
+          onToggleDecisions={() => setDecisionsOpen((v) => !v)}
+          onRemoveDecision={(text) =>
+            patchDoc({ ...doc, decisions: (doc.decisions ?? []).filter((x) => x !== text) })
+          }
+          onDecisionDraft={setDecisionDraft}
+          decisionDraft={decisionDraft}
+          onClose={() => setAiOpen(false)}
+          onOpen={() => setAiOpen(true)}
+          onResizeStart={(e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            const startX = e.clientX;
+            const startW = aiPanelW;
+            const onMove = (ev: MouseEvent) => setAiPanelW(startW - (ev.clientX - startX));
+            const onUp = () => {
+              window.removeEventListener("mousemove", onMove);
+              window.removeEventListener("mouseup", onUp);
+            };
+            window.addEventListener("mousemove", onMove);
+            window.addEventListener("mouseup", onUp);
+          }}
+          onAnswer={(answer) => {
+            setAiClarify(null);
+            void runAi(answer);
+          }}
+        />
       ) : null}
+
       {/* 表列表的悬浮字段预览（fixed 定位，随鼠标） */}
       {hp.preview && <HoverPreview preview={hp.preview} width={320} maxHeight={340} hoverGuard={hp.hoverGuard} />}
       </div>
