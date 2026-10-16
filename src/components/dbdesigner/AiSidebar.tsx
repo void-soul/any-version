@@ -74,8 +74,10 @@ export default function AiSidebar(props: Props) {
           <span className="min-w-0 flex-1 truncate text-caption font-semibold text-slate-200">
             {t("dbd.aiTitle")}
           </span>
+          {/* 关闭：写真正的 ✕（U+2715）字符。曾写成字面量 "\u2715"，
+              JSX 文本节点不解析转义 → 界面上显示的是 "u2715" 这六个字符。 */}
           <button onClick={props.onClose} className="ui-btn shrink-0 p-1" title={t("common.dialogClose")}>
-            \u2715
+            ✕
           </button>
         </div>
 
