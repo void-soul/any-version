@@ -4,7 +4,7 @@
 // 对话按**气泡**渲染，用户右对齐、助手左对齐；进度（思考中 / 正在写 / 已完成）
 // 收进当轮的助手气泡，不再单独占一块常驻区域 —— 常驻的进度条会把「读对话」这件事压扁。
 import { useEffect, useRef } from "react";
-import { ChevronDown, HelpCircle, Lightbulb, Loader2, Sparkles } from "lucide-react";
+import { Ban, ChevronDown, HelpCircle, Lightbulb, Loader2, Sparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { ThinkingBlock } from "../shared/ThinkingBlock";
@@ -29,6 +29,15 @@ interface Props {
   onResizeStart: (e: React.MouseEvent) => void;
   onAnswer: (answer: string) => void;
   onOpen: () => void;
+  /** 提示词草稿。父组件持有 —— 发送后清空、追问后重置都在那边做 */
+  text: string;
+  onTextChange: (v: string) => void;
+  /** 发起一轮生成。清空与发起由父组件合成一次，这里只管触发 */
+  onSubmit: () => void;
+  /** 中止本轮生成 */
+  onCancel: () => void;
+  /** 一个可用供应商都没有：提交禁用，并提示先去 AI 模块配置 */
+  noProvider: boolean;
 }
 
 export default function AiSidebar(props: Props) {
@@ -136,6 +145,36 @@ export default function AiSidebar(props: Props) {
           {messages.map((m) => (
             <Bubble key={m.id} msg={m} onAnswer={props.onAnswer} busy={busy} />
           ))}
+        </div>
+
+        {/* 输入区：贴底固定，不跟着气泡滚动。
+            **这里是发起一轮的唯一入口** —— 顶部按钮已撤掉，侧栏收起时靠画布胶囊恢复，
+            但输入提示词只能在这儿打，所以这一块不能省。 */}
+        <div className="flex flex-shrink-0 flex-col gap-2 border-t border-white/5 p-3">
+          <textarea
+            value={props.text}
+            onChange={(e) => props.onTextChange(e.target.value)}
+            rows={4}
+            placeholder={t("dbd.aiPh")}
+            className="w-full resize-none rounded-ctl bg-black/30 px-2 py-1.5 text-caption text-slate-200 outline-none placeholder:text-slate-600"
+          />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={props.onSubmit}
+              disabled={busy || !props.text.trim() || props.noProvider}
+              className="ui-btn ui-btn-primary px-3 py-1 text-caption disabled:opacity-40"
+            >
+              {busy ? t("dbd.aiBusy") : t("dbd.aiSubmit")}
+            </button>
+            {busy ? (
+              <button onClick={props.onCancel} className="ui-btn px-2 py-1 text-caption">
+                <Ban className="h-3 w-3" /> {t("dbd.aiCancel")}
+              </button>
+            ) : null}
+            {!busy && props.noProvider ? (
+              <span className="min-w-0 truncate text-micro text-amber-400">{t("dbd.aiNoProvider")}</span>
+            ) : null}
+          </div>
         </div>
       </div>
 

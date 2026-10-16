@@ -450,7 +450,7 @@ export default function DbDesignerPanel() {
   const [decisionsOpen, setDecisionsOpen] = useState(false);
   /** 决策记录的输入草稿（回车即提交） */
   const [decisionDraft, setDecisionDraft] = useState("");
-  const [, setAiProviders] = useState<AiProviderLike[]>([]);
+  const [aiProviders, setAiProviders] = useState<AiProviderLike[]>([]);
   const [aiProviderId, setAiProviderId] = useState("");
   const [aiModelId, setAiModelId] = useState("");
   /** 本次运行的 id：发给后端，用于「停止」 */
@@ -1808,6 +1808,17 @@ const aiStatusText = aiBusy
     }
   };
 
+  /** 停止生成：后端靠 run_id 在全局集合里对上号（前端不等待结果，界面立刻恢复） */
+  const cancelAi = async () => {
+    const runId = aiRunIdRef.current;
+    if (!runId) return;
+    try {
+      await invoke("dbd_ai_cancel", { runId });
+    } catch (e) {
+      console.error("停止 AI 失败", e);
+    }
+  };
+
 ;
 
   /** 重新布局：算完直接写回 node.x/y，并把拖动覆盖清掉（否则旧坐标会盖住新布局）。
@@ -2792,6 +2803,16 @@ const aiStatusText = aiBusy
             setAiClarify(null);
             void runAi(answer);
           }}
+          text={aiText}
+          onTextChange={setAiText}
+          onSubmit={() => {
+            // runAi 读的是**本次渲染闭包里的** aiText，清空要到下一次渲染才生效，
+            // 所以这里先清空不会把这一轮打成空串（反过来才要担心顺序）。
+            setAiText("");
+            void runAi();
+          }}
+          onCancel={() => void cancelAi()}
+          noProvider={aiProviders.length === 0}
         />
       ) : null}
 
