@@ -79,6 +79,19 @@ pub enum AiOutcome {
         document: DbDesignDocument,
         /// 本轮「为什么这么改」。模型没给就是空数组，**不算错误**。
         decisions: Vec<String>,
+        /// 自校验结果：设计落图前回验一遍，不合规就把错误清单回喂模型重修。
+        repair: RepairReport,
+        /// **产出被截断**（模型中途写崩了）：这里的表是已完成的那部分，但关联与决策记录可能不完整。
+        truncated: bool,
+    },
+    /// 增量修改：模型只说哪几张表改了，没提到的原样保留。
+    /// 经 `apply_patch` 合并到基线文档后，对外仍是一份完整文档。
+    Patch {
+        document: DbDesignDocument,
+        decisions: Vec<String>,
+        /// 这次实际改了什么（给前端展示）
+        applied: crate::commands::db_designer::patch::PatchApplied,
+        repair: RepairReport,
     },
     /// 业务语义上有歧义，停下来问用户（此时不落图，文档一个字都不改）
     Clarify {
@@ -286,7 +299,48 @@ date time datetime timestamp boolean json uuid blob enum
      所以不要同时出现 article_title 和 title 这种冲突命名。
    - **关联两端必须写**当前真实存在的字段名。自动修正会把改名**级联**到 relations 与 indexes，
      但它**不会凭空创建**字段 —— 指向一个不存在的字段名，我这边改不了。
-7. 决策记录（**长期记忆**）：每次修改都要在输出的 `decisions` 数组里用一句话写清「为什么这么改」，\n   例如「status 改成枚举并加入已关闭，因为财务要求保留关单记录」。不要写「已遵守命名规范」这类\n   毫无信息的客套话。决策会存进设计文件，下次生成时你还会读到 —— 它是你与用户之间的长期记忆。\n\n8. 业务语义有歧义就先问，不要自己猜：\n   - 必须先问（输出 `clarify`）：字段取值范围、可空性、唯一性、是否需要关联、多对多还是一对多\n     —— 这些猜错就是做错业务。\n   - 不要问（按上面规范自己定）：表名与字段命名、类型选择、索引。\n   每次最多问 3 个问题；追问累计 3 轮后我会在提示词里明说「不要再问了」，那时必须直接给设计。\n\n输出格式（**二选一**）：\n   {{\"document\": {{设计文档}}, \"decisions\": [\"本轮为什么这么改…\"]}}\n   {{\"clarify\": {{\"question\": \"问什么\", \"options\": [\"选项A\", \"选项B\"]}}}}\n     —— 有歧义时只输出后者，不要同时给设计，也不要猜一个先给出来。\n{common_note}",
+7. 决策记录（**长期记忆**）：每轮都要在输出的 `decisions` 数组里写清**这次定下了什么约束、为什么**。
+   好的例子：
+     - 「订单明细冗余 product_name 与 product_price 快照，保证订单完成后仍能追溯下单时的商品与价格」
+     - 「status 改成枚举并加入已关闭，因为财务要求保留关单记录」
+   决策会**存进设计文件**，下次生成时你还会读到 —— 它是你与用户之间的长期记忆，所以只写
+   **下次改动时需要知道的东西**。
+
+   下面这些**不要写进 decisions**（没有信息量，且会稀释这条列表）：
+   - **过程记录**：「其余 11 张表与 15 组关联原样保留，未做任何改动」「本轮新增 1 张表」
+     —— 用户从界面上已经知道这次改了哪些，重复一遍只是噪声。
+   - **规则复述**：「已遵守命名规范」「已按要求加上索引」—— 规范本来就写在你的提示词里。
+   - **工具行为解释**：「导出 SQL 会自动加反引号」「我没改坐标，位置由界面决定」
+     —— 那是实现细节，不是设计决策；下次生成不需要知道。
+   判断标准：**这句话能不能帮你在几周后避免改错东西？** 不能，就别写。
+
+8. 业务语义有歧义就先问，不要自己猜：
+   - 必须先问（输出 `clarify`）：字段取值范围、可空性、唯一性、是否需要关联、多对多还是一对多
+     —— 这些猜错就是做错业务。
+   - 不要问（按上面规范自己定）：表名与字段命名、类型选择、索引。
+   每次最多问 3 个问题。追问可以轮多，不要因为轮数停止提问；但若累计追问达 8 轮仍然没产出，我会明说「不要再问了」——
+   那个上限是防「你不回答就无限问」的兜底，不是对正常澄清的限制。
+
+9. **修改既有设计时默认只输出增量（patch）**，不要重发整份设计：
+   - 画布上已有设计时，除非需求是「整个重做」，否则一律用 patch。省 token 也避免误改无关的表。
+   - `upsertTables`：**新增或修改的表，给完整定义（含全部字段）**。没提到的表我会原样保留。
+   - `removeTables`：要删的表名（或 id）。删表会连带删掉它的关联。
+   - `upsertRelations` / `removeRelations`：同理，给完整关联定义或 id。
+   - **合并是保守的**：你重提的字段才更新，**你没提到的字段一律保留** —— 所以不必列出没改动的字段，
+     但也**不能用「没提到」来表达删除**（要删字段请把该表重提一次并写全剩余字段，或用 removeTables 删表）。
+   - 表名与关联端点可以写表名，不必写内部 id（我会回认）。坐标 x/y 不要给（位置由界面决定）。
+   - 只有画布上还没有任何表时才用 `document` 全量输出。
+
+输出格式（**三选一**）：
+
+   {{\"document\": {{设计文档}}, \"decisions\": [\"本轮为什么这么改…\"]}}
+
+   {{\"patch\": {{\"upsertTables\": [], \"removeTables\": [], \"upsertRelations\": [], \"removeRelations\": []}}, \"decisions\": []}}
+
+   {{\"clarify\": {{\"question\": \"问什么\", \"options\": [\"选项A\", \"选项B\"]}}}}
+
+     —— 有歧义时只输出第三种，不要同时给设计，也不要猜一个先给出来。
+{common_note}",
         schema = FORMAT_SCHEMA,
         example = FORMAT_EXAMPLE,
         common_note = common_note(common),
@@ -413,6 +467,50 @@ fn doc_to_prompt_json(d: &DbDesignDocument) -> serde_json::Value {
     v
 }
 
+/**
+ * 从可能夹带前后缀、也可能多吐字符的文本里，**截出第一个完整的 JSON 对象**。
+ *
+ * 为什么不能只用 `ai::channel::parse_json`：模型偶尔会在正确的 JSON 后面多带一个括号
+ * 或一句解释。实测回归：`...remark 为通用裸名按规范加 order_ 前缀"]}}` —— 结尾多了一个 `}`，
+ * 严格解析报 `trailing characters` 把**整份设计**作废，而那一份内容完全可用。
+ * 与 Q-0404 同源：格式噪声不应毁掉可用产出。
+ *
+ * 扫描方法同 `complete_elements`：括号配对，字符串内部的括号不参与（注释里的 `{"a":1}`
+ * 很常见）。
+ */
+fn extract_first_json_object(text: &str) -> Option<serde_json::Value> {
+    let bytes = text.as_bytes();
+    let start = text.find('{')?;
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut escape = false;
+    for i in start..bytes.len() {
+        let b = bytes[i];
+        if in_str {
+            if escape {
+                escape = false;
+            } else if b == b'\\' {
+                escape = true;
+            } else if b == b'"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_str = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return serde_json::from_str(&text[start..=i]).ok();
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// 把模型返回的 JSON 收成 [`AiOutcome`]：三种形状都要能认。
 ///
 /// | 模型写了 | 怎么处理 |
@@ -423,7 +521,35 @@ fn doc_to_prompt_json(d: &DbDesignDocument) -> serde_json::Value {
 ///
 /// 第三行是为了向后兼容：模型不听话打出旧形状时仍然能用。
 /// 格式不兼容不得导致整份产出作废（Q-0404 的教训）。
+/// 模型返回的三种形状。分开返回的目的是让 `dbd_ai_generate` 知道自己该回全量
+/// 还是回增量（增量要拿基线文档去合）。
+enum ParsedOutcome {
+    Design {
+        document: DbDesignDocument,
+        decisions: Vec<String>,
+    },
+    Patch {
+        patch: crate::commands::db_designer::patch::DesignPatch,
+        decisions: Vec<String>,
+    },
+    Clarify {
+        question: String,
+        options: Vec<String>,
+    },
+}
+
+/// 只要「设计或追问」的场合用这个（增量分支会被当成失败 —— 那些场合本来就不该有增量）。
 fn parse_outcome(json: serde_json::Value) -> Result<AiOutcome, String> {
+    match parse_shape(json)? {
+        ParsedOutcome::Design { document, decisions } => {
+            Ok(AiOutcome::Design { document, decisions, repair: RepairReport::default(), truncated: false })
+        }
+        ParsedOutcome::Clarify { question, options } => Ok(AiOutcome::Clarify { question, options }),
+        ParsedOutcome::Patch { .. } => Err("这个调用点不接增量补丁".into()),
+    }
+}
+
+fn parse_shape(json: serde_json::Value) -> Result<ParsedOutcome, String> {
     // 问题分支：先看有没有 clarify（不能直接把它当文档解析，否则会报错误的句子）
     if let Some(cl) = json.get("clarify").and_then(|c| c.as_object()) {
         let question = cl
@@ -440,7 +566,13 @@ fn parse_outcome(json: serde_json::Value) -> Result<AiOutcome, String> {
             .and_then(|o| o.as_array())
             .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.trim().to_string())).filter(|s| !s.is_empty()).collect())
             .unwrap_or_default();
-        return Ok(AiOutcome::Clarify { question, options });
+        return Ok(ParsedOutcome::Clarify { question, options });
+    }
+    // 增量分支：模型只说「哪几张表改了」。必须在 document 之前判断。
+    if let Some(p) = json.get("patch") {
+        let patch: crate::commands::db_designer::patch::DesignPatch =
+            serde_json::from_value(p.clone()).map_err(|e| format!("patch 解析失败：{}", e))?;
+        return Ok(ParsedOutcome::Patch { patch, decisions: read_decisions(&json) });
     }
     // 文档在包装层的 document 里，或者根本就是纯文档（旧形状）
     let doc_value = match json.get("document") {
@@ -448,12 +580,20 @@ fn parse_outcome(json: serde_json::Value) -> Result<AiOutcome, String> {
         None => json.clone(),
     };
     let doc = parse_document(doc_value)?;
-    let decisions = json
-        .get("decisions")
+    Ok(ParsedOutcome::Design { document: doc, decisions: read_decisions(&json) })
+}
+
+/// 读 decisions 数组：空白项过滤掉（模型偶尔会写空字符串）。
+fn read_decisions(json: &serde_json::Value) -> Vec<String> {
+    json.get("decisions")
         .and_then(|d| d.as_array())
-        .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.trim().to_string())).filter(|s| !s.is_empty()).collect())
-        .unwrap_or_default();
-    Ok(AiOutcome::Design { document: doc, decisions })
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(|s| s.trim().to_string()))
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// 把 AI 返回的 JSON 收成 DbDesignDocument：缺字段就补默认，结构不对就报清楚。
@@ -529,6 +669,188 @@ fn parse_document(json: serde_json::Value) -> Result<DbDesignDocument, String> {
     }
     Ok(doc)
 }
+
+/// 自校验重修的上限。
+///
+/// 为什么是小数：每轮都是一次带整份文档的完整调用，耗时与花钱都流向提升。
+/// 而多数需要重修的情况只是「模型漏写了一处」—— 第一轮就能救回来；
+/// 需要第三轮通常说明模型并不理解需求，再试只是多花钱。
+const MAX_SELF_REPAIR: u32 = 2;
+
+/// 重修提示词：**只给错误清单**，不给整份错误、不让模型重做无关的部分。
+///
+/// 不这么做的后果是模型偶尔会「顺手把无关的地方也改了」—— 正是要避免的。
+/// `warnings` 一律不喊：它不阻断保存与导出，为它们花钱是纯浪费。
+/// 提示词必须教会模型用增量，并把**保守合并的后果**说清楚。
+    ///
+    /// 不写的后果：模型继续回整份设计（增量无人用），而且它并不知道合并是保守的，
+    /// 所以会误以为「没提到的字段就是删了」—— 于是它把每一张表都重提一遍，
+    /// 增量退化成全量，只是多了层包装。
+    #[test]
+    fn prompt_teaches_the_patch_protocol() {
+        let p = system_prompt(&[]);
+        for needle in [
+            "patch",
+            "upsertTables",
+            "removeTables",
+            "upsertRelations",
+            "removeRelations",
+        ] {
+            assert!(p.contains(needle), "提示词缺少 patch 协议的「{}」", needle);
+        }
+        // 保守合并的后果必须写明：不写模型会猜错
+        assert!(p.contains("保留"), "要告诉它合并是保守的: {}", p);
+        // 三种输出形状都要列出来
+        assert!(p.contains("document"));
+        assert!(p.contains("clarify"));
+        assert!(p.contains("三选一"), "输出形状从二选一变三选一，说明文字也要跟着改: {}", p);
+        // 坐标不要给
+        assert!(p.contains("x/y"), "要告诉它不要管坐标: {}", p);
+    }
+/// 判断一次重修「该不该接受」——**这就是防退化的全部逻辑**，单独抽出来是为了能测。
+///
+/// 模型完全可能把对的地方改错。没有这道闸，就是付两轮 token 换一份更糟的设计。
+/// 判据只有一个：**阻断级错误数严格变少**。持平也算拒绝 —— 原地踏步意味着这轮
+/// 白花钱（token 与耗时都花了，设计一点没变好），继续问只会更糟。
+fn accept_repair(errors_now: usize, errors_before: usize) -> bool {
+    errors_now < errors_before
+}
+
+fn build_repair_prompt(doc: &DbDesignDocument, errors: &[String], attempt: u32) -> String {
+    let retry_note = if attempt > 1 {
+        format!(
+            "你刚进行过 {} 轮自动修复，但下面这些问题**仍然存在**。请一次性全部修好，不要只改其中一部分。\n\n",
+            attempt - 1
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "{retry_note}你上一次的产出超过了我的校验。下面是**阻断级错误**：\n{errors}\n\n\
+         请根据这些错误修正设计。**未被错误指到的表与关联必须原样保留**，\n\
+         不要借机修错的机会去改字段名、删字段或改类型。\n\n\
+         当前设计（需要修正）：\n{doc}\n\n\
+         请按系统提示词的输出格式给出修正后的完整设计。",
+        errors = errors
+            .iter()
+            .enumerate()
+            .map(|(i, e)| format!("  {}. {}", i + 1, e))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        doc = doc_to_prompt_json(doc),
+    )
+}
+
+/// 自校验结果：返回给前端展示用。
+#[derive(serde::Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RepairReport {
+    /// 实际重修了几轮
+    pub rounds: u32,
+    /// 最终是否已无阻断级错误
+    pub ok: bool,
+    /// 仍剩的错误（有这些时设计**照样落图**，但保存/导出会被拦下）
+    pub remaining_errors: Vec<String>,
+    /// 是否因为「重修后反而更糟」而回滚到了更早的版本
+    pub rolled_back: bool,
+}
+
+
+/// 自校验重修：产出过了规范化，回验一遍，不合规就把错误清单回喂给模型。
+///
+/// **全量与增量共用这一段** —— 两条路径产出的都是「一份完整设计文档」，
+/// 后面要走的检查、修正、兜底完全一样，不该有两套口径。
+///
+/// 规范化是**确定性**的那一道，它救不了「关联指向一个不存在的字段」这类错误
+/// （凭空建字段不是它该做的事）。剩下的交给模型，最多 `MAX_SELF_REPAIR` 轮。
+///
+/// **防退化是这一段的关键**：模型完全可能把对的地方改错。没有「只接受错误数变少
+/// 的版本」这道闸，就是付两轮 token 换一份更糟的设计 —— 所以 `best` 始终是错误
+/// 最少的那一版，重试只可能变好，不可能变坏。
+#[allow(clippy::too_many_arguments)]
+async fn self_repair(
+    mut doc: DbDesignDocument,
+    common: &[DbField],
+    app: &tauri::AppHandle,
+    run_id: &str,
+    hooks: &DbdHooks,
+    provider: &ai::models::AiProvider,
+    model: &str,
+) -> Result<(DbDesignDocument, RepairReport), String> {
+    let mut best = doc;
+    let mut best_errors = super::store::validate(&best).errors;
+    let mut rounds = 0u32;
+    let mut rolled_back = false;
+    while !best_errors.is_empty() && rounds < MAX_SELF_REPAIR {
+        if is_cancelled(run_id) {
+            return Err("已取消".into());
+        }
+        rounds += 1;
+        emit_progress(
+            &Some(app.clone()),
+            "repair",
+            serde_json::json!({
+                "round": rounds,
+                "max": MAX_SELF_REPAIR,
+                "errors": best_errors.len(),
+            }),
+        );
+        let repair_user = build_repair_prompt(&best, &best_errors, rounds);
+        let text = ai::channel::complete_chat(
+            hooks,
+            provider,
+            model,
+            &system_prompt(common),
+            &repair_user,
+            0.3,
+            None,
+            ai::usage::tool_ids::DB_DESIGNER,
+        )
+        .await
+        .map_err(|e| format!("AI 自动修复失败：{}", e))?
+        .text;
+        let candidate = match ai::channel::parse_json(&text)
+            .or_else(|_| extract_first_json_object(&text).ok_or_else(|| "no json".to_string()))
+            .map_err(|e| format!("AI 返回的内容不是合法 JSON：{}", e))
+            .and_then(parse_shape)
+        {
+            Ok(ParsedOutcome::Design { document, .. }) => document,
+            // 重修轮里又追问 / 又给增量：都当作这轮失败收手，别把半成品当设计落图
+            Ok(_) => break,
+            Err(e) => {
+                tracing::warn!("[dbd] 自动修复这轮没给出可用设计：{}", e);
+                break;
+            }
+        };
+        let mut candidate = candidate;
+        super::store::normalize_naming(&mut candidate);
+        let errors = super::store::validate(&candidate).errors;
+        if accept_repair(errors.len(), best_errors.len()) {
+            best = candidate;
+            best_errors = errors;
+        } else {
+            // 没进展：这一轮白花了钱，保留之前更好的那版并收手
+            rolled_back = true;
+            tracing::info!(
+                "[dbd] 自动修复无进展（{} -> {}），回滚到上一版",
+                best_errors.len(),
+                errors.len()
+            );
+            break;
+        }
+    }
+    let repair = RepairReport {
+        rounds,
+        ok: best_errors.is_empty(),
+        remaining_errors: best_errors,
+        rolled_back,
+    };
+    if repair.ok && rounds > 0 {
+        tracing::info!("[dbd] 自校验重修 {} 轮后已合规", rounds);
+    }
+    Ok((best, repair))
+}
+
 
 /// 生成设计文档。**同步返回完整文档**（当前是短请求，不必做流式进度）。
 #[tauri::command]
@@ -632,18 +954,42 @@ pub async fn dbd_ai_generate(
     if text.trim().is_empty() {
         return Err("AI返回空".into());
     }
-    // 收尾解析用通道的宽容解析（容忍 markdown 围栏、前后缀、非法转义）
-    let json = ai::channel::parse_json(&text)
-        .map_err(|e| format!("AI 返回的内容不是合法 JSON：{}", e))?;
+    // 上下文解析（容忍会包围栏、前后缀）。失败时再试「只取第一个完整对象」。
+    // 都不行则**降级采纳流式里已经收到的完整表**。
+    //
+    // 为什么必须有这一层（用户实测触发）：模型写很长的 JSON 时会“忘了自己在写 JSON”——
+    // 实测有产出在写 relations 的中途直接跳去写 decisions 的内容，中间整段跳过，
+    // 结果是花括号不平、`decisions` 键整个消失。补括号救不回来（结构断在关键位置）。
+    // 但**断点之前那几张表是完整的**（流式落图一直在用它）—— 为它们报错等于白费一轮还拿不到东西。
+    let mut truncated = false;
+    let json = match ai::channel::parse_json(&text) {
+        Ok(v) => v,
+        Err(e) => match extract_first_json_object(&text) {
+            Some(v) => v,
+            None => {
+                let partial = extract_partial(&text);
+                if partial.nodes.is_empty() {
+                    return Err(format!("AI 返回的内容不是合法 JSON：{}", e));
+                }
+                truncated = true;
+                tracing::warn!(
+                    "[dbd] AI 产出结构损坏，降级采纳已完成的 {} 张表（关联与决策记录可能不完整）",
+                    partial.nodes.len()
+                );
+                serde_json::to_value(partial)
+                    .map_err(|_| format!("AI 返回的内容不是合法 JSON：{}", e))?
+            }
+        },
+    };
 
     // 三种形状都要能认：clarify / 包装的 design / 旧的裸文档
-    let parsed = parse_outcome(json)?;
+    let parsed = parse_shape(json)?;
     // 追问分支：文档一个字都不动。
     // 流式期间可能已经推过部分表过去，所以前端要靠这个返回值把画布恢复到本轮开始前 ——
     // 语义是「这轮什么都没发生，只是我问了句话」。
     // 两个分支都直接返回
     match parsed {
-        AiOutcome::Clarify { question, options } => {
+        ParsedOutcome::Clarify { question, options } => {
             emit_progress(
                 &Some(app.clone()),
                 "clarify",
@@ -651,7 +997,30 @@ pub async fn dbd_ai_generate(
             );
             return Ok(AiOutcome::Clarify { question, options });
         }
-        AiOutcome::Design { document, decisions } => {
+        ParsedOutcome::Patch { patch, decisions } => {
+            // 增量：合并到**当前文档**（你可能在这一轮里手改过东西，基线必须是最新状态）。
+            let Some(base) = input.current_doc.as_ref() else {
+                return Err("画布还没有设计，无法应用增量修改；请先让 AI 生成一份完整设计。".into());
+            };
+            let (merged, applied) = crate::commands::db_designer::patch::apply_patch(base, &patch);
+            tracing::info!(
+                "[dbd] 增量：新增 {} 张 / 更新 {} 张 / 删除 {} 张 / 关联 +{} -{}",
+                applied.added_tables.len(),
+                applied.updated_tables.len(),
+                applied.removed_tables.len(),
+                applied.added_relations,
+                applied.removed_relations
+            );
+            if !applied.dropped_relations.is_empty() {
+                tracing::warn!("[dbd] 丢弃 {} 条指向不存在表的关联", applied.dropped_relations.len());
+            }
+            // 合并结果与全量走同一条链路：规范化 → 自校验重修
+            let mut d = merged;
+            super::store::normalize_naming(&mut d);
+            let (doc, repair) = self_repair(d, common, &app, &run_id, &hooks, &provider, &model).await?;
+            return Ok(AiOutcome::Patch { document: doc, decisions, applied, repair });
+        }
+        ParsedOutcome::Design { document, decisions } => {
             // 落地前过一遍规范化：命名改合规 + 外键补索引。
             //
             // 为什么必须在这里做：命名规范是 error 级（阻断保存 / 导出），而提示词只是**概率性**
@@ -672,7 +1041,8 @@ pub async fn dbd_ai_generate(
                     normalized.skipped.len()
                 );
             }
-            return Ok(AiOutcome::Design { document: d, decisions });
+            let (doc, repair) = self_repair(d, common, &app, &run_id, &hooks, &provider, &model).await?;
+            return Ok(AiOutcome::Design { document: doc, decisions, repair, truncated });
         }
     }
 }
@@ -1221,6 +1591,139 @@ mod tests {
         assert!(!system_prompt(&blank).contains("公共字段"));
     }
 
+    /// 回归（用户实测）：模型输出的 JSON **结尾多了一个花括号**，
+    /// `parse_json` 报 `trailing characters`，整份设计作废 —— 而里面的内容完全可用。
+    ///
+    /// **回归（用户实测，2026-10-16）**：模型写长 JSON 时「忘了自己在写 JSON」——
+    /// 在 relations 中途直接跳去写 decisions 的内容，中间整段被跳过，
+    /// 结果花括号不平（实测 67 开 / 64 闭）、decisions 键整个消失。
+    ///
+    /// 补括号救不回来（结构断在关键位置），但**断裂点之前那几张表是完整的**（流式落图一直在用它）。
+    #[test]
+    fn extract_partial_recovers_tables_before_the_break() {
+        let text = concat!(
+            r#"{"document":{"name":"x","dialect":"mysql","nodes":["#,
+            r#"{"kind":"table","name":"user","table":{"fields":[{"name":"user_id","type":{"base":"bigint"},"pk":true}]}},"#,
+            r#"{"kind":"table","name":"order_info","table":{"fields":[{"name":"order_info_id","type":{"base":"bigint"},"pk":true},"#,
+            r#"{"name":"order_info_remark","type":{"base":"varchar","length":512},"nullable":true}]}}],"relations":["#,
+            r#"{"from":{"node":"t9","field":"order_id"},"to":{"node":"order_info","field":"order"#,
+            "/completed/cancelled、支付状态取 unpaid…",
+        );
+        // 严格解析与「截取第一个对象」都救不回来
+        assert!(extract_first_json_object(text).is_none(), "结构断裂应救不回来");
+        // 但已完成的表能提取出来
+        let doc = extract_partial(text);
+        assert_eq!(doc.nodes.len(), 2, "断裂点之前的表必须能救回");
+        assert_eq!(doc.nodes[0].name, "user");
+        assert_eq!(doc.nodes[1].name, "order_info");
+        let fields: Vec<String> = doc.nodes[1].table.as_ref().unwrap().fields.iter()
+            .map(|f| f.name.clone()).collect();
+        assert!(fields.contains(&"order_info_remark".to_string()), "{:?}", fields);
+    }
+
+    /// 一张表都没写完就崩了 → 真的报错（降级没有意义）。
+    #[test]
+    fn extract_partial_is_empty_when_nothing_finished() {
+        let doc = extract_partial(r#"{"document":{"name":"x","nodes":[{"kind":"table","name":"u","tab"#);
+        assert!(doc.nodes.is_empty(), "半张表不算数");
+    }
+
+
+    /// 与 Q-0404 同源：模型的格式噪声不应毁掉可用产出。
+    #[test]
+    fn extract_json_tolerates_trailing_braces() {
+        // 真实失败样本（摘自用户 1.log）：结尾多一个 }
+        let text = r#"{"document":{"name":"n","dialect":"mysql","nodes":[{"kind":"table","name":"user","table":{"fields":[]}}],"relations":[]},"decisions":["x"]}}"#;
+        let v = extract_first_json_object(text).expect("多一个括号也要能取到完整对象");
+        assert_eq!(v["decisions"][0], "x");
+        assert_eq!(v["document"]["name"], "n");
+        // 且取到的对象能通过真正的业务解析（不是截出半个）
+        let outcome = parse_outcome(v).expect("取到的必须是可用的设计");
+        assert!(matches!(outcome, AiOutcome::Design { .. }));
+    }
+
+    /// 字符串里的括号不得参与配对：注释里写 `{"a":1}` 是常事，
+    /// 若参与了配对，第一个真对象就被提前切掉（真实下获得的是半个 JSON）。
+    #[test]
+    fn extract_json_respects_braces_inside_strings() {
+        let text = r#"{"document":{"name":"n","comment":"形如 { x } 的花括号","dialect":"mysql","nodes":[{"kind":"table","name":"user","table":{"fields":[]}}],"relations":[]}}"#;
+        let v = extract_first_json_object(text).expect("字符串里的括号应被忽略");
+        assert_eq!(v["document"]["comment"], "形如 { x } 的花括号");
+    }
+
+    /// 完全没有 JSON 时才给错（不能为了容错返回一个空对象）。
+    #[test]
+    fn extract_json_gives_up_cleanly() {
+        assert!(extract_first_json_object("没有 JSON 的文本").is_none());
+        assert!(extract_first_json_object(r#"{"a":"没结尾"#).is_none(), "未闭合的对象不能拿去");
+    }
+
+    /// 决策记录只能写「约束与理由」，不能混进过程记录与工具行为解释。
+    ///
+    /// 依据（用户实测）：真实产出的 decisions 里出现了这两类噪声：
+    ///  · 「其余 11 张表与 15 组关联原样保留，未做任何改动」 —— 过程记录，
+    ///    而这信息用户从 toast 就能看到（PatchApplied 已报「更新 1 张表」），写进 decisions 只是噪声。
+    ///  · 「避开 MySQL 保留字，导出 SQL 无需额外反引号」 —— 工具行为解释，
+    ///    而导出器本来就会自动加反引号（quote），这个因果关系本身就是错的。
+    #[test]
+    fn prompt_excludes_process_notes_from_decisions() {
+        let p = system_prompt(&[]);
+        // 三类噪声要明确禁止，不然模型会继续写
+        assert!(p.contains("过程记录"), "要禁止把过程写进 decisions: {}", p);
+        assert!(p.contains("规则复述"), "要禁止复述规范: {}", p);
+        assert!(p.contains("工具行为"), "要禁止解释工具行为: {}", p);
+        // 并给了可操作的判孖标准（不是抽象的「请不要写干脆」）
+        assert!(p.contains("几周后避免改错"), "要给判孖标准: {}", p);
+        // 并给正反例，不然模型不知道该写什么
+        assert!(p.contains("冗余"), "要给好的示例: {}", p);
+    }
+
+    /// **防退化**：只接受错误数严格变少的版本。
+    ///
+    /// 这一行就是自校验的全部价值很多：模型完全可能把对的地方改错，
+    /// 没有这道闸就是付两轮 token 换一份更糟的设计。
+    #[test]
+    fn accept_repair_only_when_errors_strictly_decrease() {
+        assert!(accept_repair(2, 3));
+        assert!(accept_repair(0, 1));
+        // 持平也拒绝：原地踏步意味着这轮 token 白花（设计一点没变好）
+        assert!(!accept_repair(3, 3));
+        // 变差拒绝
+        assert!(!accept_repair(5, 3));
+    }
+
+    /// 重修提示词里必须带上错误清单（不带就无从修正），且带上当前设计。
+    #[test]
+    fn repair_prompt_carries_errors_and_current_design() {
+        let mut doc = new_document("商品库", "mysql");
+        doc.nodes.push(DbDesignNode {
+            id: "t1".into(),
+            name: "product".into(),
+            kind: "table".into(),
+            ..Default::default()
+        });
+        let errors = vec!["关联 r1 指向了不存在的字段 product_nope".to_string()];
+        let p = build_repair_prompt(&doc, &errors, 1);
+        assert!(p.contains("product_nope"), "错误清单必须原文进提示词: {}", p);
+        assert!(p.contains("product"), "当前设计必须进提示词（模型靠它才能改）: {}", p);
+        assert!(p.contains("原样保留"), "要告诉它不要借机拆掉无关的部分: {}", p);
+        assert!(p.contains("1."), "错误要编号方便对照改: {}", p);
+        // 第一轮不说「已经过 N 轮」（那句只对重试意义）
+        assert!(!p.contains("进行过 1 轮"));
+        // 第二轮要提醒它已经修过一次
+        let p2 = build_repair_prompt(&doc, &errors, 2);
+        assert!(p2.contains("进行过 1 轮"), "重试要说明已经过一轮: {}", p2);
+        assert!(p2.contains("一次性全部修好"), "重试要防止它只改一部分: {}", p2);
+    }
+
+    /// 不能只看字面：它不参与重修判定。
+    #[test]
+    fn repair_prompt_says_nothing_about_warnings() {
+        let doc = new_document("x", "mysql");
+        let p = build_repair_prompt(&doc, &["一个错误".to_string()], 1);
+        assert!(!p.contains("warning"), "warnings 不阻断导出，为它们花钱是浪费: {}", p);
+    }
+
     /// 新协议的三种形状都要能认。兼容旧形状是硬要求：模型不听话时
     /// 不能让整份产出作废（Q-0404 的教训）。
     #[test]
@@ -1234,7 +1737,7 @@ mod tests {
         }))
         .expect("包装形式应该能认");
         match wrapped {
-            AiOutcome::Design { document, decisions } => {
+            AiOutcome::Design { document, decisions, .. } => {
                 assert_eq!(document.name, "商品库");
                 assert_eq!(decisions.len(), 2, "空白决策该被过滤: {:?}", decisions);
             }
@@ -1249,7 +1752,7 @@ mod tests {
         }))
         .expect("旧形状也要能用");
         match bare {
-            AiOutcome::Design { document, decisions } => {
+            AiOutcome::Design { document, decisions, .. } => {
                 assert_eq!(document.name, "旧形状");
                 assert!(decisions.is_empty(), "没给 decisions 就是空数组，不算错误");
             }
@@ -1444,3 +1947,4 @@ mod tests {
         );
     }
 }
+
