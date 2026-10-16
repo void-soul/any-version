@@ -159,6 +159,51 @@ export function clampHighlightDepth(v: unknown): HighlightDepth {
  *
  * 用 BFS 而不是递归：外键关系可能成环，递归会无限深；BFS 天然按跳数分层。
  */
+/**
+ * 每张表相差多少跳（选中表自己 = 0）。**远的表亮得越深，越模糊**。
+ *
+ * 为什么不能满足于 `relatedTableIds`：它只返回集合，不包含距离信息。连线需要知道
+ * 「这条边连的是第几跳」才能按层级分清亮度——否则设到 3 跳与
+ * 设到 1 跳画出来完全一样（都是「亮或暗」），而用户拿到了一个当作没用的开关。
+ */
+export function relatedTableHops(
+  doc: DbDesignDocument,
+  selectedId: string | null,
+  depth: number = DEFAULT_HIGHLIGHT_DEPTH,
+): Map<string, number> {
+  const hops = new Map<string, number>();
+  if (!selectedId) return hops;
+  const exists = new Set(doc.nodes.map((n) => n.id));
+  if (!exists.has(selectedId)) return hops;
+  hops.set(selectedId, 0);
+  const maxHops = clampHighlightDepth(depth);
+  const adj = new Map<string, string[]>();
+  const link = (a: string, b: string) => {
+    const list = adj.get(a);
+    if (list) list.push(b);
+    else adj.set(a, [b]);
+  };
+  for (const r of doc.relations) {
+    // 悬空关系不建边（与 relatedTableIds 同口径）
+    if (!exists.has(r.from.node) || !exists.has(r.to.node)) continue;
+    link(r.from.node, r.to.node);
+    link(r.to.node, r.from.node);
+  }
+  let frontier = [selectedId];
+  for (let hop = 1; hop <= maxHops && frontier.length > 0; hop++) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      for (const nb of adj.get(id) ?? []) {
+        if (hops.has(nb)) continue;
+        hops.set(nb, hop);
+        next.push(nb);
+      }
+    }
+    frontier = next;
+  }
+  return hops;
+}
+
 export function relatedTableIds(
   doc: DbDesignDocument,
   selectedId: string | null,
@@ -172,8 +217,10 @@ export function relatedTableIds(
   const exists = new Set(doc.nodes.map((n) => n.id));
   if (!exists.has(selectedId)) return set;
   set.add(selectedId);
-  // 层数钳到 1-5：0 / 负数不该让高亮整个消失（用户看到的是「什么都没亮」），
-  // 99 也不该真的走 99 跳 —— 超出定义域一律当「最深」。
+  // 层数交给 clampHighlightDepth 收敛：非法值（0 / 负数 / 99 / 字符串）一律**回落默认 1 跳**，
+  // 而不是当「最深」—— 理由是回落 1 最安全：传 0 不该让高亮整个消失，而传 99 时
+  // 用户想要的多半是「全都要」，但那份结果不该由一个非法输入默默决定。
+  // （早先这里的注释写的是「当最深」，与实现相反，照注释写测试会得到相反期望。）
   const maxHops = clampHighlightDepth(depth);
   const adj = new Map<string, string[]>();
   const link = (a: string, b: string) => {

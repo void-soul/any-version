@@ -28,6 +28,7 @@ import {
   buildArrangeSubDoc,
   clampHighlightDepth,
   groupByPrefix,
+  relatedTableHops,
   relatedTableIds,
   type HighlightDepth,
 } from "./series";
@@ -1176,6 +1177,15 @@ const aiStatusText = aiBusy
   );
 
   /**
+   * 每张表相差多少跳。连线用它分级亮度（越远越模糊）——
+   * 只有 Set 的话无法区分「1 跳的线」与「3 跳的线」，会让设到 3 跳与 1 跳一样。
+   */
+  const relatedHops = useMemo(
+    () => (doc ? relatedTableHops(doc, highlightId, highlightDepth) : new Map<string, number>()),
+    [doc, highlightId, highlightDepth],
+  );
+
+  /**
    * 表导航的行数据：按引用关系澄清父子并缩进，形成一棵树。
    * 一张被引用多少次就当作父节点；成环的表同样当根，不会死循环。
    */
@@ -1346,9 +1356,18 @@ const aiStatusText = aiBusy
     // 只画「两端都在画布上」的关系：被标签筛掉的表，它的连线也该消失
     const onCanvas = new Set(visibleNodes.map((n) => n.id));
     return doc.relations.filter((r) => onCanvas.has(r.from.node) && onCanvas.has(r.to.node)).map((r) => {
-      // 选中关联高亮：这条线是否与当前选中表相连
-      const related = highlightId !== null && (r.from.node === highlightId || r.to.node === highlightId);
-      const dimmed = highlightId !== null && !related;
+      // **判据必须用 relatedHops 集合，不能写死「与选中表直连」**（那等于 1 跳）。
+      // 写死的后果（用户实测）：表卡按层级亮了，连线却只在 1 跳时亮——
+      // 远越远的表归回「与选中表无关」被弱化，而层级滑块完全影响不到连线。
+      // 思维导图的 MindmapPanel 已经是对的写法（用集合而非直连）。
+      //
+      // 分级：跳数越远线越模糊 —— 否则设到 3 跳与 1 跳画出来一样。
+      const hopA = highlightId === null ? undefined : relatedHops.get(r.from.node);
+      const hopB = highlightId === null ? undefined : relatedHops.get(r.to.node);
+      const nearHop = hopA === undefined ? hopB : hopB === undefined ? hopA : Math.min(hopA, hopB);
+      const related = nearHop !== undefined;
+      const dimmed = highlightId !== null ? !related : false;
+      const hopFade = related ? (nearHop ? Math.max(0.25, 1 - (nearHop - 1) * 0.25) : 1) : 1;
       const own = ownColorOf(r.from.node);
       // 弱化档（选中了别的表）：**要退后，但不能退到看不见**。
       // 早先这里是 rgba(148,163,184,0.18) + 1px，在深色画布上等于隐形 ——
@@ -1385,19 +1404,20 @@ const aiStatusText = aiBusy
           // 关联线更粗 + 泛一层同色辉光（辉光色 = 线色 = 该表自己的颜色），
           // 节点环、表头、连线是同一套语言。粗细/辉光随「高亮强度」缩放。
           strokeWidth: related
-            ? relatedEdgeWidth(lookPrefs.highlight)
+            ? relatedEdgeWidth(lookPrefs.highlight) * hopFade
             : dimmed && !dimOff
               ? dimmedEdgeWidth(lookPrefs.dim)
               : 1.5,
-          ...(related ? { filter: edgeGlow(stroke, lookPrefs.highlight) } : null),
+          ...(related ? { filter: edgeGlow(stroke, lookPrefs.highlight * hopFade) } : null),
         },
         zIndex: related ? 10 : 0,
         markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
       };
     });
   // lookPrefs 也要在依赖里：滑块一动，连线的粗细/颜色/辉光要立刻跟着变
-}, [doc, edgeStyle, visibleNodes, highlightId, lookPrefs]);
-
+  // 依赖里必须含 relatedHops：旧版本只依赖 highlightId，而判据又写死成「与选中表直连」，
+  // 所以拖层级滑块时 relatedIds 变了而连线核心数组一点不重算 —— 表亮了线没活。
+}, [doc, edgeStyle, visibleNodes, highlightId, relatedHops, lookPrefs]);
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     // 位置：一次性写本地覆盖（思维导图同款，避免每帧重建文档）
     setPositions((prev) => {

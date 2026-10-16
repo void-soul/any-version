@@ -4,6 +4,7 @@ import {
   DEFAULT_HIGHLIGHT_DEPTH,
   HIGHLIGHT_DEPTHS,
   clampHighlightDepth,
+  relatedTableHops,
   relatedTableIds,
 } from "../series";
 import type { DbDesignDocument, DbDesignNode, DbDesignRelation } from "../types";
@@ -90,5 +91,58 @@ describe("relatedTableIds（高亮层级）", () => {
     expect(clampHighlightDepth(null)).toBe(1);
     expect(clampHighlightDepth(undefined)).toBe(1);
     expect(clampHighlightDepth("abc")).toBe(1);
+  });
+});
+
+describe("relatedTableHops（连线分级亮度的数据源）", () => {
+  it("记录每张表相差多少跳，选中表自己是 0", () => {
+    // 链式 a-b-c-d-e-f，选中 c → b/d 是 1 跳、a/e 是 2 跳、f 是 3 跳
+    const hops = relatedTableHops(CHAIN, "c", 3);
+    expect(hops.get("c")).toBe(0);
+    expect(hops.get("b")).toBe(1);
+    expect(hops.get("d")).toBe(1);
+    expect(hops.get("a")).toBe(2);
+    expect(hops.get("f")).toBe(3);
+  });
+
+  it("跳数与集合版一致（连线与表卡必须看同一个层级）", () => {
+    // 这个一致性很关键：表卡用 Set、连线用 Map，两者不一致就会出现
+    // 「表亮了但线没活」（这正是用户报的那个 bug）。
+    for (const depth of [1, 2, 3, 5]) {
+      expect(relatedTableHops(CHAIN, "c", depth).size).toBe(relatedTableIds(CHAIN, "c", depth).size);
+    }
+  });
+
+  it("远的跳数到达上限后不再扩展", () => {
+    expect(relatedTableHops(CHAIN, "c", 2).has("f")).toBe(false);
+    expect(relatedTableHops(CHAIN, "c", 3).has("f")).toBe(true);
+    expect(relatedTableHops(CHAIN, "c", 3).get("f")).toBe(3);
+  });
+
+  it("无选中、选中不存在、层级非法 → 都不得出错", () => {
+    expect(relatedTableHops(CHAIN, null, 3).size).toBe(0);
+    expect(relatedTableHops(CHAIN, "nope", 3).size).toBe(0);
+    // 非法值回落到默认 1 跳（与集合版行为一致，见上方用例）
+    for (const bad of [0, -3, 99, "3"]) {
+      expect(relatedTableHops(CHAIN, "c", bad as number).size).toBe(
+        relatedTableIds(CHAIN, "c", bad as number).size,
+      );
+    }
+  });
+
+  it("悬空关系不建边（不得出现画布上没有的表）", () => {
+    const doc = docOf(["a", "b"], [rel("b", "a")]);
+    doc.relations.push({
+      id: "rx",
+      name: "",
+      from: { node: "a", field: "id" },
+      to: { node: "ghost", field: "id" },
+      kind: "1-n",
+      onDelete: "",
+      onUpdate: "",
+      mirror: false,
+    } as DbDesignRelation);
+    expect(relatedTableHops(doc, "a", 3).has("ghost")).toBe(false);
+    expect(relatedTableHops(doc, "a", 3).size).toBe(2);
   });
 });
