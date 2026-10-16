@@ -13,6 +13,12 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LayoutGrid, Palette, RotateCcw, Rows3, SlidersHorizontal } from "lucide-react";
 import { LAYOUT_MODES, type LayoutMode } from "./layout";
+import { HIGHLIGHT_DEPTHS, type HighlightDepth } from "./series";
+
+/** 层级值合法（来自 range 控件，但仍过一次校验：保存本地偏好里的旧值不应该直接当层级用） */
+function toDepth(v: number): HighlightDepth {
+  return (HIGHLIGHT_DEPTHS as readonly number[]).includes(v) ? (v as HighlightDepth) : 1;
+}
 
 /** 滑块 → 百分比显示 */
 function pct(v: number): string {
@@ -26,6 +32,7 @@ function Row({
   max,
   step,
   onChange,
+  display,
 }: {
   label: string;
   value: number;
@@ -33,12 +40,15 @@ function Row({
   max: number;
   step: number;
   onChange: (v: number) => void;
+  /** 右上角的显示文字；不传则按百分比显示。
+   *  层级这类整数指标不能当百分比（“3跳”变成“300%”会让人误解为强度）。 */
+  display?: string;
 }) {
   return (
     <label className="block">
       <span className="flex items-baseline justify-between gap-2 text-micro text-slate-400">
         <span>{label}</span>
-        <span className="font-mono text-slate-300">{pct(value)}</span>
+        <span className="font-mono text-slate-300">{display ?? pct(value)}</span>
       </span>
       <input
         type="range"
@@ -61,6 +71,8 @@ export default function GraphLookPanel({
   onHighlight,
   onDim,
   onReset,
+  depth,
+  onDepth,
   maxHighlight,
   maxDim,
   layoutMode,
@@ -74,6 +86,9 @@ export default function GraphLookPanel({
   dim: number;
   onHighlight: (v: number) => void;
   onDim: (v: number) => void;
+  /** 高亮层级 1-5：几跳内的表不被淡化。整数指标，不用百分比显示。 */
+  depth: HighlightDepth;
+  onDepth: (d: HighlightDepth) => void;
   onReset: () => void;
   /** 上限由偏好层给（高亮可到 150%，淡化可调至完全看不见） */
   maxHighlight: number;
@@ -128,6 +143,18 @@ export default function GraphLookPanel({
           onChange={onHighlight}
         />
         <Row label={t("dbd.lookDim")} value={dim} min={0} max={maxDim} step={0.05} onChange={onDim} />
+      {/* 层级：放在强度之后、分隔线之前。一谱业务设计里表外键全连通，
+          层级抬高会把几乎整份图都点亮（适合看局部），低层级则只点直接邻居（适合干脆的事）。
+          它同时决定「整理选中」整理多少张表。 */}
+      <Row
+        label={t("dbd.lookDepth")}
+        value={depth}
+        min={HIGHLIGHT_DEPTHS[0]}
+        max={HIGHLIGHT_DEPTHS[HIGHLIGHT_DEPTHS.length - 1]}
+        step={1}
+        display={`${depth} 跳`}
+        onChange={(v) => onDepth(toDepth(v))}
+      />
       </div>
       {/* 布局整理：三个「把画面收拾一下」的动作收在这里，而不是工具栏再开一个下拉。
           它们和两个滑块是同一类需求（调整画面），放一起少一个入口、也少一层点击。 */}

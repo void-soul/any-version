@@ -23,7 +23,13 @@ import "@xyflow/react/dist/style.css";
 import { CONNECTION_LINE_BY_STYLE, useEdgeStyle } from "../../utils/graphEdgeStyle";
 import { cardClickAction, clickRoleOf } from "./cardClick";
 import { DEFAULT_LAYOUT_MODE, computeLayout, type LayoutMode } from "./layout";
-import { buildArrangeSubDoc, groupByPrefix, relatedTableIds } from "./series";
+import {
+  buildArrangeSubDoc,
+  clampHighlightDepth,
+  groupByPrefix,
+  relatedTableIds,
+  type HighlightDepth,
+} from "./series";
 import EdgeStyleSelect from "../shared/EdgeStyleSelect";
 import { Menu } from "../shared/Menu";
 import {
@@ -39,10 +45,8 @@ import {
   FileCode,
   FileDown,
   FilePlus2,
-  FolderOpen,
   Plus,
   ListTree,
-  Save,
   Sparkles,
   SlidersHorizontal,
   Terminal,
@@ -100,19 +104,33 @@ import {
 const nodeTypes = { designNode: DesignNodeCard };
 
 /** 画布内的「适应视野」触发器：signal 每 +1 就重新 fitView 一次。
- *  必须待在 ReactFlowProvider 里面（useReactFlow 依赖它），所以单独拆个小组件。 */
-function FitOnSignal({ signal }: { signal: number }) {
-  const { fitView } = useReactFlow();
+ *  必须待在 ReactFlowProvider 里面（useReactFlow 依赖它），所以单独拆个小组件。
+ *
+ *  `ids` 给定时只把这批节点纳入视野：「整理选中」后要定位到刚整理的那几张表，
+ *  而不是把整份设计（几十张表）缩到全览 —— 那等于没定位。ids 走 ref 传，
+ *  这样 effect 只依赖 signal：ids 与 signal 同一次更新里写入，不会触发多余的适配。 */
+function FitOnSignal({ signal, ids }: { signal: number; ids?: string[] }) {
+  const { fitView, getNodes } = useReactFlow();
   const first = useRef(true);
+  const idsRef = useRef(ids);
+  idsRef.current = ids;
   useEffect(() => {
     if (first.current) {
       first.current = false; // 首挂载交给 <ReactFlow fitView>，别动初始视野
       return;
     }
     if (signal > 0) {
-      void fitView({ padding: 0.15, duration: 260 });
+      const want = idsRef.current;
+      const nodes =
+        want && want.length > 0 ? getNodes().filter((n) => want.includes(n.id)) : undefined;
+      // 指定了 ids 但一个都没匹配上（节点刚好被删）→ 退回全图，别让视野卡在空处
+      void fitView({
+        nodes: nodes && nodes.length > 0 ? nodes : undefined,
+        padding: 0.15,
+        duration: 260,
+      });
     }
-  }, [signal, fitView]);
+  }, [signal, fitView, getNodes]);
   return null;
 }
 
@@ -192,6 +210,9 @@ function assignSeriesColors(doc: DbDesignDocument): Map<string, string> {
   });
   return byNode;
 }
+
+/** 高亮层级的偏好键（1-5 跳）。属「摆放/观感」偏好，不进设计文件。 */
+const HIGHLIGHT_DEPTH_KEY = "kira.dbd.highlightDepth";
 
 /** 布局方式的偏好键（放射 / 核心左右），与连线样式同一套持久化做法 */
 const LAYOUT_MODE_KEY = "kira.graph.dbd.layoutMode";
@@ -309,7 +330,17 @@ export default function DbDesignerPanel() {
   // 表列表的悬浮字段预览：定位 / 延迟关闭 / 移入本体不关，都在与思维导图共用的 hook 里
   const hp = useHoverPreview();
   /** 布局变化计数：+1 就让画布重新适应视野（自动布局后必须做，否则停在角落） */
+  /**
+   * 两个分开的适应视野信号，不能共用：
+   *   - `fitSignal`：适应**整窗**（AI 生成落图、自动布局、自动配色）；
+   *   - `fitFocusSignal`：适应**指定的那几张表**（整理选中），依赖 `fitFocusIds`。
+   * 若共用，整理过后再点「自动布局」就会只适应那几张表而不是全图。
+   */
   const [fitSignal, setFitSignal] = useState(0);
+  const [fitFocusSignal, setFitFocusSignal] = useState(0);
+  /** 整理选中后要定位到那几张表：下标这张。与 fitSignal 同次写入，
+   *  避免两个状态分开更新导致视野与坐标不匹配。 */
+  const [arrangeFitIds, setArrangeFitIds] = useState<string[]>([]);
   /** 表导航：点表名 → 选中它 + 画布平移过去（表一多，画布上「找到那张表」全靠拖） */
   const [centerSignal, setCenterSignal] = useState(0);
   const [centerTargetId, setCenterTargetId] = useState<string | null>(null);
@@ -339,10 +370,32 @@ export default function DbDesignerPanel() {
     setDim: setDimStrength,
     reset: resetLookPrefs,
   } = useGraphHighlightPrefs();
+  /** 高亮层级：1 = 只直接上级/下级，可调到五跳。与连线样式一样属观感偏好，
+   *  记 localStorage；「整理选中」的范围也跟它走（两者必须是同一个集合）。 */
+  const [highlightDepth, setHighlightDepthRaw] = useState<HighlightDepth>(() =>
+    clampHighlightDepth(localStorage.getItem(HIGHLIGHT_DEPTH_KEY)),
+  );
+  const setHighlightDepth = useCallback((d: HighlightDepth) => {
+    setHighlightDepthRaw(d);
+    localStorage.setItem(HIGHLIGHT_DEPTH_KEY, String(d));
+  }, []);
   const [report, setReport] = useState<ValidationReport | null>(null);
   /** 校验结果条是否展开：默认展开（有问题就该看得见），收起只留一行摘要把画布还回去 */
   const [reportOpen, setReportOpen] = useState(true);
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  /**
+   * 成功条幅 3 秒后自动消失，**错误条幅一律保留**。
+   *
+   * 分两种处理不是偷懒：成功消息（「已保存 xxx」）只是确认动作做完了，读完即无用；
+   * 错误消息里带路径、校验清单这种要读两遍以上的内容，自动收掉就来不及看 ——
+   * 而失败恰恰是最需要看清的时候。下一个动作（再存一次、导入、导出）会直接覆盖它。
+   */
+  useEffect(() => {
+    if (!result || !result.ok) return;
+    const timer = window.setTimeout(() => setResult(null), 3000);
+    // 期间若来了新消息（成功或失败），撤掉这个定时器，否则会把新消息误关掉
+    return () => window.clearTimeout(timer);
+  }, [result]);
   /** 导出弹框：只在打开时挂载（这样每次打开都是默认选项，不记忆上次选择） */
   const [exportOpen, setExportOpen] = useState(false);
   const [commonFieldsOpen, setCommonFieldsOpen] = useState(false);
@@ -1054,8 +1107,8 @@ export default function DbDesignerPanel() {
    * 看清「这张表跟谁有关系」的办法。
    */
   const relatedIds = useMemo(
-    () => (doc ? relatedTableIds(doc, highlightId) : new Set<string>()),
-    [doc, highlightId],
+    () => (doc ? relatedTableIds(doc, highlightId, highlightDepth) : new Set<string>()),
+    [doc, highlightId, highlightDepth],
   );
 
   /**
@@ -1625,7 +1678,7 @@ export default function DbDesignerPanel() {
    */
   const arrangeHighlighted = () => {
     if (!doc || !highlightId) return;
-    const ids = relatedTableIds(doc, highlightId);
+    const ids = relatedTableIds(doc, highlightId, highlightDepth);
     // 只有一张表时排了等于没排，直接说清楚而不是默默挪一下
     if (ids.size < 2) {
       toast(t("dbd.arrangeNeedMore"), "err");
@@ -1650,6 +1703,10 @@ export default function DbDesignerPanel() {
       }),
     });
     setPositions({});
+    // 整理后必须定位：新排布的边界比原来的大多（放射布局可能拉了上万像素），
+    // 而用户的视野还停在原位置，看不到被整理的那几张。
+    setArrangeFitIds(Object.keys(pos));
+    setFitFocusSignal((n) => n + 1);
     toast(t("dbd.arrangeDone", { count: Object.keys(pos).length }), "ok");
   };
 
@@ -1717,20 +1774,19 @@ export default function DbDesignerPanel() {
           **为什么大半按钮收进了下拉**：平铺 14 个按钮会占满两行、把画布挤到只剩一条，
           而且每加一个动作就再挤一格。收成「同一条主线上的动作进一个菜单」后，
           顶栏固定 8 个入口（收藏模块早就用`shared/Menu` 解决了同一个问题）。
-          留在外面的是高频 / 有状态的三个：打开、保存、AI 生成。*/}
+          文件类动作（打开/新建/保存/另存为）已全部收进「文件」菜单。*/}
       <div className="relative flex flex-wrap items-center gap-1.5 border-b border-white/5 bg-white/[0.02] px-3 py-2">
-        <button onClick={() => void openFile()} className="ui-btn px-2 py-1 text-caption" title={t("dbd.open")}>
-          <FolderOpen className="h-3.5 w-3.5" /> {t("dbd.open")}
-        </button>
-        <button onClick={() => void saveFile(false)} disabled={!doc} className="ui-btn px-2 py-1 text-caption disabled:opacity-40" title={t("dbd.save")}>
-          <Save className="h-3.5 w-3.5" /> {t("dbd.save")}
-        </button>
-        {/* 文件类：新建 / 另存为（打开与保存直连 —— 它们最高频） */}
+        {/* 文件类动作全部收进这一个菜单（打开 / 新建 / 保存 / 另存为）。
+            早先「打开」「保存」是直连按钮、另两个在菜单里 —— 同一类动作分裂在两处，
+            顶栏还多占两格；用户明确要求合并。 */}
         <Menu
           label={t("dbd.menuFile")}
           className="ui-btn px-2 py-1 text-caption"
           items={[
+            { key: "open", label: t("dbd.open"), onSelect: () => void openFile() },
+            { key: "sep1", type: "separator" as const },
             { key: "new", label: t("dbd.new"), onSelect: () => void newDoc() },
+            { key: "save", label: t("dbd.save"), disabled: !doc, onSelect: () => void saveFile(false) },
             { key: "saveAs", label: t("dbd.saveAs"), disabled: !doc, onSelect: () => void saveFile(true) },
           ]}
         />
@@ -2076,6 +2132,7 @@ export default function DbDesignerPanel() {
                     快捷键（滚轮缩放 / 空格拖拽 / 双击适应）仍可用。 */}
                 <Background gap={16} size={1} color="rgba(148,163,184,0.15)" />
                 <FitOnSignal signal={fitSignal} />
+                <FitOnSignal signal={fitFocusSignal} ids={arrangeFitIds} />
                 <CenterOnSignal signal={centerSignal} nodeId={centerTargetId} />
               </ReactFlow>
               {/* 外观调面板（高亮 / 淡化强度）：浮在画布右下角，避开左侧表导航、
@@ -2085,6 +2142,8 @@ export default function DbDesignerPanel() {
                 <GraphLookPanel
                   highlight={lookPrefs.highlight}
                   dim={lookPrefs.dim}
+                  depth={highlightDepth}
+                  onDepth={setHighlightDepth}
                   maxHighlight={HL_BOOST_MAX}
                   maxDim={DIM_MAX}
                   onHighlight={setHighlightStrength}

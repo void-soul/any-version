@@ -10,7 +10,9 @@
 //     （这是早先只用外键连通分量时特意规避的坑，不能又踩回去）。
 // 所以两者取并集：名字像的一堆先聚起来，有外键关系的再跨名字合并。
 //
-// 布局与配色都只调 `groupByPrefix`；`groupByForeignKey` 保留为它的输入之一。
+// 布局与配色都只调 `groupByPrefix`（它自己跑并查集，不经过下面那个函数）。
+// `groupByForeignKey` 保留下来是因为**回归测试拿它当对照实现**：证明「整理选中」
+// 用的集合比「整个外键连通分量」小 —— 那正是这条模块存在的由来。
 
 import type { DbDesignDocument, DbDesignNode } from "./types";
 
@@ -126,8 +128,21 @@ export function groupByPrefix(
   return [...byRoot.values()];
 }
 
+/** 高亮层级的合法范围：1 = 只直接上级/下级，5 = 五跳以内 */
+export const HIGHLIGHT_DEPTHS = [1, 2, 3, 4, 5] as const;
+export type HighlightDepth = (typeof HIGHLIGHT_DEPTHS)[number];
+export const DEFAULT_HIGHLIGHT_DEPTH: HighlightDepth = 1;
+
+/** 把任意输入（localStorage 字符串等）收敛成合法层级，非法值回落默认 */
+export function clampHighlightDepth(v: unknown): HighlightDepth {
+  const n = typeof v === "number" ? v : Number(v);
+  return (HIGHLIGHT_DEPTHS as readonly number[]).includes(n)
+    ? (n as HighlightDepth)
+    : DEFAULT_HIGHLIGHT_DEPTH;
+}
+
 /**
- * 选中表 + 与它直接有外键关系的表（**无向**，一跳）。
+ * 选中表 + 与它有外键关系的表（**无向**，默认一跳；`depth` 可调到五跳）。
  *
  * 这就是界面上高亮的那批表，也就是「整理选中」要整理的那批表 —— 两者必须
  * **同一个定义**：曾经高亮用一份内联写法、整理用 `groupByForeignKey` 的整个连通
@@ -135,16 +150,55 @@ export function groupByPrefix(
  * 高亮看着 6 张、实际整理了 22 张，提示条如实报「已整理 22 张表」——
  * 标签、提示与实现说的不是同一件事。
  *
+ * 层级调大后「整理选中」的范围跟着变（用户确认）：高亮什么就整理什么，两边
+ * 永远不会对不上。代价是层级=5 时可能一次重排整份设计 —— 这正是「整理选中」
+ * 不弹确认的前提（它只改坐标、点一次自动布局就能回来）。
+ *
  * 刻意**不是**连通分量：连通分量会把「同系列但你没选中的表」一起卷进来，
  * 而用户要的是「忽略其他所有节点，只对齐选中的」。
+ *
+ * 用 BFS 而不是递归：外键关系可能成环，递归会无限深；BFS 天然按跳数分层。
  */
-export function relatedTableIds(doc: DbDesignDocument, selectedId: string | null): Set<string> {
+export function relatedTableIds(
+  doc: DbDesignDocument,
+  selectedId: string | null,
+  depth: number = DEFAULT_HIGHLIGHT_DEPTH,
+): Set<string> {
   const set = new Set<string>();
   if (!selectedId) return set;
+  // 只在**真实存在的表**之间连边：指向已删除节点的悬空关系若不滤掉，
+  // 悬空 id 会被当成表加进高亮集 —— 画布上没有这张表，于是它既点亮不了、
+  // 又让「高亮 N 张」的数字对不上实际（实测：加进 zz / yy 两个不存在的节点）。
+  const exists = new Set(doc.nodes.map((n) => n.id));
+  if (!exists.has(selectedId)) return set;
   set.add(selectedId);
+  // 层数钳到 1-5：0 / 负数不该让高亮整个消失（用户看到的是「什么都没亮」），
+  // 99 也不该真的走 99 跳 —— 超出定义域一律当「最深」。
+  const maxHops = clampHighlightDepth(depth);
+  const adj = new Map<string, string[]>();
+  const link = (a: string, b: string) => {
+    const list = adj.get(a);
+    if (list) list.push(b);
+    else adj.set(a, [b]);
+  };
   for (const r of doc.relations) {
-    if (r.from.node === selectedId) set.add(r.to.node);
-    else if (r.to.node === selectedId) set.add(r.from.node);
+    if (!exists.has(r.from.node) || !exists.has(r.to.node)) continue;
+    link(r.from.node, r.to.node);
+    link(r.to.node, r.from.node);
+  }
+  let frontier = [selectedId];
+  const seen = new Set<string>([selectedId]);
+  for (let hop = 0; hop < maxHops && frontier.length > 0; hop++) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      for (const nb of adj.get(id) ?? []) {
+        if (seen.has(nb)) continue;
+        seen.add(nb);
+        next.push(nb);
+        set.add(nb);
+      }
+    }
+    frontier = next;
   }
   return set;
 }
