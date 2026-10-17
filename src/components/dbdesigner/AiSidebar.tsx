@@ -8,6 +8,7 @@ import { Ban, ChevronDown, HelpCircle, Lightbulb, Loader2, Sparkles } from "luci
 import { useTranslation } from "react-i18next";
 
 import { ThinkingBlock } from "../shared/ThinkingBlock";
+import { ModelSelector, type ProviderLike } from "../ai/ModelSelector";
 import type { ChatMsg } from "./chatState";
 
 /** \u6536\u8d77\u65f6\u7684\u7a84\u6761\u5bbd\u5ea6\uff0c\u4e0e\u5de6\u4fa7\u8868\u6811\u7684 w-8 \u5bf9\u9f50 */
@@ -38,6 +39,17 @@ interface Props {
   onCancel: () => void;
   /** 一个可用供应商都没有：提交禁用，并提示先去 AI 模块配置 */
   noProvider: boolean;
+  /**
+   * 当前用哪个供应商 + 模型，以及切换回调。
+   *
+   * 这一组 prop 是**从 Q-0421 的面板重写里丢过一次又找回来的**：
+   * 它连同 `dbd_save_settings` 的写入一起消失，导致用户既选不了模型、
+   * 上次选的也不再被记住。详见 `modelChoice.ts` 顶部。
+   */
+  providers: ProviderLike[];
+  providerId: string;
+  modelId: string;
+  onModelSelect: (providerId: string, modelId: string) => void;
 }
 
 export default function AiSidebar(props: Props) {
@@ -151,6 +163,25 @@ export default function AiSidebar(props: Props) {
             **这里是发起一轮的唯一入口** —— 顶部按钮已撤掉，侧栏收起时靠画布胶囊恢复，
             但输入提示词只能在这儿打，所以这一块不能省。 */}
         <div className="flex flex-shrink-0 flex-col gap-2 border-t border-white/5 p-3">
+          {/* 哪张表会用什么模型生成，**必须在发请求之前就能改** —— 生成一轮几十秒，
+              事后才发现选错了就得整轮重跑。所以选择器贴在输入框上，而不是收进设置里。
+              用 AI 模块的共享组件（与思维导图 Agent、API 智能导入同一套 UI）。 */}
+          <div className="flex items-center gap-2">
+            <span className="shrink-0 text-micro text-slate-500">{t("dbd.aiModel")}</span>
+            <div className="min-w-0 flex-1">
+              <ModelSelector
+                providers={props.providers}
+                providerId={props.providerId}
+                modelId={props.modelId}
+                onSelect={props.onModelSelect}
+                // 生成中不给换：这一轮已经用旧模型发出去了，此刻切换只会在下一次生效，
+                // 让人以为「切换对这一轮也有效」，反而更容易用错模型重跑。
+                disabled={busy}
+                compact
+                placeholder={t("dbd.aiModel")}
+              />
+            </div>
+          </div>
           <textarea
             value={props.text}
             onChange={(e) => props.onTextChange(e.target.value)}

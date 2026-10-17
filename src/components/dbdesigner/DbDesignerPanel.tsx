@@ -22,6 +22,8 @@ import {
 import "@xyflow/react/dist/style.css";
 import { CONNECTION_LINE_BY_STYLE, useEdgeStyle } from "../../utils/graphEdgeStyle";
 import { mergeDecisions, trimHistory } from "./aiMemory";
+import { modelChoiceSettings, resolveModelChoice } from "./modelChoice";
+import type { ProviderLike } from "../ai/ModelSelector";
 import { cardClickAction, clickRoleOf } from "./cardClick";
 import { DEFAULT_LAYOUT_MODE, computeLayout, type LayoutMode } from "./layout";
 import {
@@ -541,20 +543,33 @@ const aiStatusText = aiBusy
         );
         setAiProviders(list);
         const saved = await remembered;
-        // 记住的模型要**先验证还存不存在**再沿用：供应商/模型被删掉后，
-        // 直接套用会得到一个空 id，后端只能回退默认，用户还以为自己选过
-        const prov =
-          (saved?.lastProviderId && list.find((p) => p.id === saved.lastProviderId)) ||
-          (list.length > 0 ? list[0] : undefined);
-        if (!prov) return;
-        const modelId =
-          (saved?.lastModelId && prov.models?.some((m: any) => m.id === saved.lastModelId))
-            ? saved.lastModelId
-            : prov.active_model_id ?? prov.models?.[0]?.id ?? "";
-        setAiProviderId(prov.id);
-        setAiModelId(modelId);
+        // 沿用规则（逐级回落 + 先验证还存不存在）挪到 modelChoice.ts：
+        // 它连同「切换后写回 dbd_save_settings」是一条完整的契约，拆散在两个
+        // effect 里时，其中一半很容易被面板重写顺手带走又没人发现。
+        const choice = resolveModelChoice({ providers: list, remembered: saved });
+        if (!choice) return;
+        setAiProviderId(choice.providerId);
+        setAiModelId(choice.modelId);
       })
       .catch(() => {});
+  }, []);
+
+  /**
+   * 切换 AI 模型。
+   *
+   * **必须持久化**：主模块切换是 `<Activity>` keep-alive，切回时上面那个挂载
+   * effect 会重跑一遍「读设置 + 决定用哪个模型」。不写回的话，你刚选好的模型
+   * 会在切回时被覆盖回默认 —— 这段代码曾经随 UI 一起被删掉过，后果正是
+   * 「选不了模型、而且选的也记不住」。
+   *
+   * 载荷字段名由后端按名读，不能改（见 modelChoice.modelChoiceSettings）。
+   */
+  const onAiModelSelect = useCallback((providerId: string, modelId: string) => {
+    setAiProviderId(providerId);
+    setAiModelId(modelId);
+    void invoke("dbd_save_settings", {
+      settings: modelChoiceSettings({ providerId, modelId }),
+    }).catch(() => {});
   }, []);
   const [dockOpen, setDockOpen] = useState(true);
   /** 用户手动收起后上锁：即使有选中也不自动展开（否则一点「收起」立刻被弹回来）。
@@ -2836,6 +2851,10 @@ const aiStatusText = aiBusy
           }}
           onCancel={() => void cancelAi()}
           noProvider={aiProviders.length === 0}
+          providers={aiProviders as unknown as ProviderLike[]}
+          providerId={aiProviderId}
+          modelId={aiModelId}
+          onModelSelect={onAiModelSelect}
         />
       ) : null}
 
