@@ -97,10 +97,23 @@ fn sibling_path(path: &str, ext: &str) -> PathBuf {
     p.with_file_name(format!("{}.{}", stem, ext))
 }
 
+/// 生成设计文档 id。
+///
+/// ⚠ 必须带进程内自增序号：只用毫秒时间戳的话，**同一毫秒里建的两份设计会拿到
+/// 同一个 id**（连点两次「新建」就够）。id 是 AI 会话的主键，撞了意味着两份设计
+/// 共用同一份对话。`reverse.rs:16` 的注释为同一件事踩过坑（那儿是两张表同 id
+/// 导致索引挂错表），写法照抄那边。
+fn new_document_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("dbd_{}_{}", chrono::Utc::now().timestamp_millis(), seq)
+}
+
 /// 新建一份空设计（前端「新建」按钮用）。
 pub fn new_document(name: &str, dialect: &str) -> DbDesignDocument {
     DbDesignDocument {
-        id: format!("dbd_{}", chrono::Utc::now().timestamp_millis()),
+        id: new_document_id(),
         name: if name.trim().is_empty() {
             "未命名设计".to_string()
         } else {
@@ -246,5 +259,34 @@ mod tests {
         assert_eq!(new_document("", "mongodb").dialect, "mysql");
         assert_eq!(new_document("x", "sqlite").dialect, "sqlite");
         assert_eq!(new_document("", "mysql").name, "未命名设计");
+    }
+
+    /// 回归：id 只有毫秒时间戳时，**同一毫秒连建两份设计会拿到同一个 id**。
+    ///
+    /// 后果不是「不好看」而是数据串联：id 是 AI 会话的主键，撞了就意味着
+    /// 两份设计共用同一份对话（会话索引按 id 索引，见 `chat.rs`）。
+    /// `reverse.rs:16` 的注释早就警告过这个模式 —— 那次是两张表同 id 导致
+    /// 索引挂错表，这次的代价是两份设计互相看到对方的对话。
+    ///
+    /// 用循环而不是「建两份」：两份恰好同毫秒的概率虽低但非零，
+    /// 单次断言会偶发通过，等于没测。
+    #[test]
+    fn documents_created_in_a_row_get_distinct_ids() {
+        let ids: std::collections::HashSet<String> = (0..64)
+            .map(|i| new_document(&format!("设计{}", i), "mysql").id)
+            .collect();
+        assert_eq!(ids.len(), 64, "64 份设计必须拿到 64 个不同的 id");
+    }
+
+    /// id 会被后端当会话 id 用（`chat.rs::chat_path` 只放行字母数字 `_` `-`），
+    /// 所以它的字符集不能随时间格式变化而跑到白名单外面去。
+    #[test]
+    fn new_document_id_is_usable_as_a_session_id() {
+        let id = new_document("x", "mysql").id;
+        assert!(
+            id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'),
+            "会话 id {} 含 chat.rs 不放行的字符，保存时会失败",
+            id
+        );
     }
 }

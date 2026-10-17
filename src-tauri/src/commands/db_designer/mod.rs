@@ -5,6 +5,7 @@
 //   P2 画布 UI（React Flow）  P3 反向工程  P4 Agent 助手 + 内置技能
 pub mod ai;
 pub mod patch;
+pub mod chat;
 pub mod common_fields;
 pub mod commands;
 pub mod export;
