@@ -9,7 +9,9 @@ import { useTranslation } from "react-i18next";
 
 import { ThinkingBlock } from "../shared/ThinkingBlock";
 import { ModelSelector, type ProviderLike } from "../ai/ModelSelector";
+import SessionBar from "./SessionBar";
 import type { ChatMsg } from "./chatState";
+import type { SessionEntry } from "./sessionKey";
 
 /** \u6536\u8d77\u65f6\u7684\u7a84\u6761\u5bbd\u5ea6\uff0c\u4e0e\u5de6\u4fa7\u8868\u6811\u7684 w-8 \u5bf9\u9f50 */
 export const AI_RAIL_W = 36;
@@ -50,6 +52,14 @@ interface Props {
   providerId: string;
   modelId: string;
   onModelSelect: (providerId: string, modelId: string) => void;
+  /** ── 会话（见 sessionKey.ts）── */
+  sessionId: string;
+  sessionPath: string;
+  sessionDocName: string;
+  sessions: SessionEntry[];
+  onSessionSelect: (id: string) => void;
+  onSessionCreate: () => void;
+  onSessionDelete: (id: string) => void;
 }
 
 export default function AiSidebar(props: Props) {
@@ -163,6 +173,18 @@ export default function AiSidebar(props: Props) {
             **这里是发起一轮的唯一入口** —— 顶部按钮已撤掉，侧栏收起时靠画布胶囊恢复，
             但输入提示词只能在这儿打，所以这一块不能省。 */}
         <div className="flex flex-shrink-0 flex-col gap-2 border-t border-white/5 p-3">
+          {/* 会话与模型**都必须在发请求之前就能改**：选错模型 / 看错会话的代价都是整轮重跑。
+              会话条在上、模型选择器在下 —— 「用什么模型、聊哪份设计」是同一个问题的两面。 */}
+          <SessionBar
+            currentId={props.sessionId}
+            currentPath={props.sessionPath}
+            currentTitle={props.sessionDocName}
+            sessions={props.sessions}
+            busy={busy}
+            onSelect={props.onSessionSelect}
+            onCreate={props.onSessionCreate}
+            onDelete={props.onSessionDelete}
+          />
           {/* 哪张表会用什么模型生成，**必须在发请求之前就能改** —— 生成一轮几十秒，
               事后才发现选错了就得整轮重跑。所以选择器贴在输入框上，而不是收进设置里。
               用 AI 模块的共享组件（与思维导图 Agent、API 智能导入同一套 UI）。 */}
@@ -175,7 +197,7 @@ export default function AiSidebar(props: Props) {
                 modelId={props.modelId}
                 onSelect={props.onModelSelect}
                 // 生成中不给换：这一轮已经用旧模型发出去了，此刻切换只会在下一次生效，
-                // 让人以为「切换对这一轮也有效」，反而更容易用错模型重跑。
+                // 让人以为「切换对这一轮也有效」反而更容易用错模型重跑。
                 disabled={busy}
                 compact
                 placeholder={t("dbd.aiModel")}
