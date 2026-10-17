@@ -99,9 +99,31 @@ export function dimmedEdgeWidth(dim = 1): number {
   return round2(Math.max(0.6, 1.3 * (dimmedOpacity(d) / 0.35)));
 }
 
-/** 选中/关联连线的线宽：hl=1 → 2.6（改动前的值）。 */
+/**
+ * 高亮强度是否还能产生**可见**效果（0 = 完全不点亮）。
+ *
+ * 为什么需要这一个开关：节点与连线消费同一档强度，但两边的公式并不同族 ——
+ * 节点侧是纯乘法（浓度 = 基准 × 强度），强度 0 时霓虹环 / 文字辉光 / 表头底色全部归零；
+ * 连线侧原本是带下限的仿射（线宽 = 1.4 + 1.2 × 强度），强度 0 时仍有 1.4px 实心线
+ * + 流光 + 鲜亮箭头。两边一高一低摆在一起，画出来就是**只亮线、表不亮**（用户实测）。
+ *
+ * 所以两端必须共用这一个判据：强度为 0 就是「两端都不点亮」，
+ * 由节点侧让位回常态外观、连线侧把线宽与箭头一起收掉。
+ */
+export function hasVisibleHighlight(boost = 1): boolean {
+  return clampPref(boost, HL_BOOST_MAX) > 0;
+}
+
+/**
+ * 选中/关联连线的线宽：hl=1 → 2.6（改动前的值）。
+ *
+ * **以 1 为基准做纯乘法**（而不是 `1.4 + 1.2·hl` 那种带下限的仿射）：
+ * 强度 0 时连线必须和节点一起归零，否则就成了「只亮线、表不亮」的元凶。
+ * 1.4 那个下限当初是为了避免弱化档隐形（见 dimmedEdgeWidth 的注释），
+ * 高亮档不需要 —— 它已经有流光、辉光、置顶三重提示。
+ */
 export function relatedEdgeWidth(highlight = 1): number {
-  return round2(1.4 + 1.2 * clampPref(highlight, HL_BOOST_MAX));
+  return round2(2.6 * clampPref(highlight, HL_BOOST_MAX));
 }
 
 function round2(v: number): number {
@@ -162,34 +184,58 @@ function mixPct(pct: number, boost: number): number {
  *
  * `boost` 是「高亮强度」偏好：描边宽度与各层辉光透明度都按它缩放，
  * 1 = 改动前的样子。
+ *
+ * 强度 0 返回**空串**（而非一串全透明的废 CSS）：`0 0 0 0px <color>` 是零半径
+ * 零扩散的影子，画出来什么都没有，可它**非空** —— 调用方 `ring ? 高亮 : 默认外观`
+ * 的三元判定为真，卡片原有的 border/shadow 就被顶掉了，比不高亮时还难看。
+ * 返回空串才是诚实的「当前不高亮」。
  */
 export function neonRing(color: string, level: HighlightLevel, boost = 1): string {
   const b = clampPref(boost, HL_BOOST_MAX);
+  if (!hasVisibleHighlight(b)) return "";
   if (level === "select") {
     return `0 0 0 ${round2(2 * b)}px ${color}, 0 0 6px color-mix(in srgb, ${color} ${mixPct(60, b)}%, transparent), 0 0 18px color-mix(in srgb, ${color} ${mixPct(42, b)}%, transparent), 0 0 40px color-mix(in srgb, ${color} ${mixPct(22, b)}%, transparent)`;
   }
   return `0 0 0 ${round2(1 * b)}px ${color}, 0 0 8px color-mix(in srgb, ${color} ${mixPct(48, b)}%, transparent), 0 0 26px color-mix(in srgb, ${color} ${mixPct(26, b)}%, transparent)`;
 }
 
-/** 文字霓虹辉光（选中更亮：两段叠加） */
+/** 文字霓虹辉光（选中更亮：两段叠加）。强度 0 返回空串，理由同 {@link neonRing}。 */
 export function neonTextGlow(color: string, level: HighlightLevel, boost = 1): string {
   const b = clampPref(boost, HL_BOOST_MAX);
+  if (!hasVisibleHighlight(b)) return "";
   if (level === "select") {
     return `0 0 6px color-mix(in srgb, ${color} ${mixPct(90, b)}%, transparent), 0 0 16px color-mix(in srgb, ${color} ${mixPct(55, b)}%, transparent)`;
   }
   return `0 0 8px color-mix(in srgb, ${color} ${mixPct(60, b)}%, transparent)`;
 }
 
-/** 表头/卡片头部的底色浓度（选中更浓，是「点亮」最显眼的一块） */
+/**
+ * 表头/卡片头部的底色浓度（选中更浓，是「点亮」最显眼的一块）。
+ *
+ * **强度 0 必须返回空串**，且这一点比看上去重要：调用方是
+ * `hlHeader || 未高亮时的常态底色`，`||` 只认「非空字符串」。
+ * 若这里返回 `color-mix(in srgb, C 0%, transparent)`（全透明），它照样短路 ——
+ * 表头底色被一条全透明色盖掉，**高亮强度往左拖，表反而比常态更暗**，
+ * 滑块方向整个反了。返回空串才能让常态底色回来。
+ */
 export function headerTint(color: string, level: HighlightLevel, boost = 1): string {
+  const b = clampPref(boost, HL_BOOST_MAX);
+  if (!hasVisibleHighlight(b)) return "";
   return level === "select"
-    ? `color-mix(in srgb, ${color} ${mixPct(26, boost)}%, transparent)`
-    : `color-mix(in srgb, ${color} ${mixPct(14, boost)}%, transparent)`;
+    ? `color-mix(in srgb, ${color} ${mixPct(26, b)}%, transparent)`
+    : `color-mix(in srgb, ${color} ${mixPct(14, b)}%, transparent)`;
 }
 
-/** 关联边的同色辉光（与节点环同色，一套语言） */
+/**
+ * 关联边的同色辉光（与节点环同色，一套语言）。
+ *
+ * 强度 0 返回 `none`：CSS 里 `drop-shadow(0 0 0px C)` 虽然合法，但会把整条
+ * `filter` 变成一个恒等变换，React Flow 的边缘抗锯齿与 `animated` 的 dash
+ * 动画都要过这一层，白付渲染成本还不换来任何像素。
+ */
 export function edgeGlow(color: string, boost = 1): string {
   const b = clampPref(boost, HL_BOOST_MAX);
+  if (!hasVisibleHighlight(b)) return "none";
   return `drop-shadow(0 0 ${round2(3 * b)}px ${color})`;
 }
 

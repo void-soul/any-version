@@ -14,6 +14,7 @@ import {
   readPref,
   relatedEdgeWidth,
   edgeGlow,
+  hasVisibleHighlight,
   headerTint,
   highlightColor,
   neonRing,
@@ -122,5 +123,54 @@ describe("graphHighlight 强度偏好", () => {
     expect(clampPref(9, HL_BOOST_MAX)).toBe(HL_BOOST_MAX);
     expect(readPref("1.5", HL_BOOST_MAX)).toBe(1.5);
     expect(readPref("0.5", 1)).toBe(0.5);
+  });
+});
+
+/**
+ * 「高亮强度」滑到 0 时的两端一致性（用户实测：数据库设计器里**只亮线、表不亮**）。
+ *
+ * 根因在公式不同族：节点侧是**纯乘法**（浓度 = 基准 × 强度），强度 0 时霓虹环、
+ * 文字辉光、表头底色全部归零；连线侧却是**带下限的仿射**（线宽 = 1.4 + 1.2 × 强度），
+ * 强度 0 时仍有 1.4px 实心线 + 流光 + 鲜亮箭头。一高一低摆在一起，就是「只亮线」。
+ *
+ * 两端必须共用 `hasVisibleHighlight` 这一个判据。
+ */
+describe("graphHighlight 强度归零时两端一致", () => {
+  it("节点侧：强度 0 时全部让位，不能留零尺寸影子顶掉默认外观", () => {
+    expect(hasVisibleHighlight(0)).toBe(false);
+    // `0 0 0 0px <color>` 是零半径零扩散的影子，画出来什么都没有，
+    // 但它**非空** → 调用方的 `ring ? 高亮 : 默认外观` 判定为真 →
+    // 卡片原有的 border/shadow 被顶掉。返回空串才是「不高亮」。
+    expect(neonRing("#ef4444", "select", 0)).toBe("");
+    expect(neonRing("#ef4444", "related", 0)).toBe("");
+    expect(neonTextGlow("#ef4444", "select", 0)).toBe("");
+    // 最关键的一条：`DesignNodeCard` 用 `hlHeader || 常态底色`，
+    // 返回空串才能让常态底色回来 —— 否则表头变成全透明，
+    // **比不高亮时还暗**，滑块往左拖表反而变暗，方向是反的。
+    expect(headerTint("#ef4444", "select", 0)).toBe("");
+  });
+
+  it("连线侧：强度 0 时线宽与辉光一起归零", () => {
+    expect(relatedEdgeWidth(0)).toBe(0);
+    expect(edgeGlow("#ef4444", 0)).toBe("none");
+  });
+
+  it("两端判据必须一致：节点还有高亮 ⟺ 连线还有可见线宽", () => {
+    for (const b of [0, 0.05, 0.25, 1, 1.5]) {
+      expect(hasVisibleHighlight(b)).toBe(relatedEdgeWidth(b) > 0);
+    }
+  });
+
+  it("默认（=1）仍复现改动前的观感：选中环 2px、表头 26%、线宽 2.6", () => {
+    expect(hasVisibleHighlight(1)).toBe(true);
+    expect(neonRing("#ef4444", "select", 1)).toContain("0 0 0 2px");
+    expect(headerTint("#ef4444", "select", 1)).toContain("26%");
+    expect(relatedEdgeWidth(1)).toBe(2.6);
+  });
+
+  it("线宽随强度单调，且上限仍被夹住", () => {
+    const seq = [0, 0.25, 0.5, 1, 1.5].map(relatedEdgeWidth);
+    for (let i = 1; i < seq.length; i++) expect(seq[i]).toBeGreaterThan(seq[i - 1]);
+    expect(relatedEdgeWidth(99)).toBe(relatedEdgeWidth(HL_BOOST_MAX));
   });
 });
