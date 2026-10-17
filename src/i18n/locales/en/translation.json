@@ -178,6 +178,7 @@
     "aiPh": "e.g. a blog system: users publish articles and like them, articles belong to categories with a name and sort order…",
     "aiModel": "Model",
     "session": "Session",
+    "sessionLoading": "Loading session",
     "sessionManage": "AI sessions",
     "sessionNew": "New session (clears the conversation)",
     "sessionCurrent": "current",

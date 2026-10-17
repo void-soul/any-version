@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { resolveSessionId, sessionTitle, createSessionId, isUsableMessage } from "../sessionKey";
+import { resolveSessionId, sessionTitle, createSessionId, isUsableMessage, createLoadSeq } from "../sessionKey";
 
 /**
  * 「这份设计当前绑着哪个会话」的判据。
@@ -168,4 +168,90 @@ describe("isUsableMessage", () => {
     expect(isUsableMessage({ id: "m1", role: "user" })).toBe(true);
     expect(isUsableMessage({ id: "m1", role: "assistant" })).toBe(true);
   });
+});
+/**
+ * 「读盘中」闸门的状态机。
+ *
+ * 它防的是串台换个入口复活：换文档 / 切会话后，会话是从磁盘异步读回来的，
+ * 这段窗口里 `sessionId` 与 `aiHistory` 还是上一份的 —— 用户此时回车就是把
+ * 「新表 + 旧对话」发给模型、并存进旧会话。
+ *
+ * 三条不变量，逐条钉住：
+ *  1. 后继者接管后，先发的那次 `alive` 必须为假（否则它会覆盖新会话）；
+ *  2. 被接管的那些**不允许**收尾（否则会把「读盘中」提前归零，放行一次串台发送）；
+ *  3. 同步完成的操作（新建会话不读盘）也必须收尾，否则「读盘中」永久卡死。
+ */
+describe("createLoadSeq", () => {
+  it("过期读取会被后继者作废", () => {
+    let loading = false;
+    const seq = createLoadSeq((v) => { loading = v; });
+    const a = seq.begin();
+    const b = seq.begin();
+    expect(seq.alive(a)).toBe(false);
+    expect(seq.alive(b)).toBe(true);
+    expect(loading).toBe(true);
+  });
+
+  it("被接管的那次不能收尾 —— 收尾只归仍然有效的那次", () => {
+    let loading = false;
+    const seq = createLoadSeq((v) => { loading = v; });
+    const a = seq.begin();
+    const b = seq.begin();
+    seq.settle(a);
+    expect(loading, "过期的收尾不能把读盘中提前归零").toBe(true);
+    seq.settle(b);
+    expect(loading).toBe(false);
+    expect(seq.settled()).toBe(true);
+  });
+
+  it("同步完成的操作（新建会话不读盘）也能收尾，否则永久卡在读盘中", () => {
+    let loading = false;
+    const seq = createLoadSeq((v) => { loading = v; });
+    const t = seq.begin();
+    expect(loading).toBe(true);
+    seq.settle(t);
+    expect(loading).toBe(false);
+  });
+
+  it("没有未完成的读取时 settled 为真（避免界面一直显示读盘中）", () => {
+    let loading = true;
+    const seq = createLoadSeq((v) => { loading = v; });
+    seq.settle(seq.begin());
+    expect(seq.settled()).toBe(true);
+    expect(loading).toBe(false);
+  });
+});
+
+/**
+ * 真实世界的顺序是 **live 先返回、stale 后返回**（后发起的请求通常先读完）。
+ * 这条钉的是那个顺序：过期的收尾**不能把已归零的「读盘中」顶回 true**。
+ *
+ * 它与上面那条（stale 先 settle）是不同的顺序，两者都要测 ——
+ * 只测一个会让人以为 `settle` 是 `pending -= 1` 的另一种写法。
+ */
+it("live 先返回、stale 后返回：loading 只由 live 那次决定，之后不被 stale 顶回", () => {
+  let loading = false;
+  const seq = createLoadSeq((v) => { loading = v; });
+  const a = seq.begin();
+  const b = seq.begin();
+  seq.settle(b); // live 先回
+  expect(loading).toBe(false);
+  seq.settle(a); // stale 后回（必须被忽略）
+  expect(loading, "过期的收尾不能把已归零的读盘点回 true").toBe(false);
+  expect(seq.settled()).toBe(true);
+});
+
+it("pending 不是在飞操作数：三次 begin 后中间那次 settle 就应归零", () => {
+  let loading = false;
+  const seq = createLoadSeq((v) => { loading = v; });
+  const a = seq.begin();
+  const b = seq.begin();
+  const c = seq.begin();
+  seq.settle(c);
+  expect(loading, "被接管的读取即使没回来也不算在飞").toBe(false);
+  // 若实现写成 pending -= 1，这里会停在 2 并被下面这条抓住
+  seq.settle(b);
+  expect(loading).toBe(false);
+  seq.settle(a);
+  expect(loading, "改成 -= 1 会永久卡住，这条会红").toBe(false);
 });

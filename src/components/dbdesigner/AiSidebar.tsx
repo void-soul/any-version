@@ -60,6 +60,12 @@ interface Props {
   onSessionSelect: (id: string) => void;
   onSessionCreate: () => void;
   onSessionDelete: (id: string) => void;
+  /**
+   * 「读盘中」：会话正从磁盘读回来。这段时间 `sessionId` 与 `aiHistory`
+   * 还是上一份的，此时回车就是把「新表 + 旧对话」发给模型并存进旧会话 ——
+   * **串台换个入口复活**。所以发送按钮禁用。
+   */
+  chatLoading: boolean;
 }
 
 export default function AiSidebar(props: Props) {
@@ -214,10 +220,11 @@ export default function AiSidebar(props: Props) {
           <div className="flex items-center gap-2">
             <button
               onClick={props.onSubmit}
-              disabled={busy || !props.text.trim() || props.noProvider}
+              disabled={busy || props.chatLoading || !props.text.trim() || props.noProvider}
+              title={props.chatLoading ? t("dbd.sessionLoading") : undefined}
               className="ui-btn ui-btn-primary px-3 py-1 text-caption disabled:opacity-40"
             >
-              {busy ? t("dbd.aiBusy") : t("dbd.aiSubmit")}
+              {busy ? t("dbd.aiBusy") : props.chatLoading ? t("dbd.sessionLoading") : t("dbd.aiSubmit")}
             </button>
             {busy ? (
               <button onClick={props.onCancel} className="ui-btn px-2 py-1 text-caption">

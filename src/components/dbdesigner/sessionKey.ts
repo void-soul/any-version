@@ -46,6 +46,63 @@ export function createSessionId(): string {
 let seq = 0;
 
 /**
+ * 会话切换的**闸门 + 「读盘中」状态机**。
+ *
+ * 为什么要有「读盘中」：换文档 / 切会话后，会话是从磁盘异步读回来的，
+ * 这段窗口里 `sessionId` 与 `aiHistory` **还是上一份的**。用户此时回车，
+ * 就会把「新表 + 旧对话」发给模型、并把这一轮存进旧会话 —— 串台只是换了个入口
+ * 复活。所以这段时间必须**禁用发送**。
+ *
+ * 为什么抽成纯对象：这段逻辑原本写死在 3000 行的面板组件里，
+ * 「过期读取会被丢弃」「后继者负责收尾」这两条不变量**结构上就测不到**。
+ *
+ * 收尾规则（`settle` 的调用时机就是契约）：
+ * - 只有 `alive(token)` 为真的那次操作才允许 settle —— 被后继者接管的
+ *   那些直接丢弃，它们的收尾由后继者负责；
+ * - 同步完成的操作（新建会话不读盘）也要 settle，否则会把「读盘中」卡死；
+ * - 每次 `begin` 都把「读盘中」置真，所以**最后一次操作一定是真**，
+ *   loading 不会永远卡住，也不会提前归零。
+ */
+export interface LoadSeq {
+  /** 开始一次会话切换，返回本次 token。顺带进入「读盘中」。 */
+  begin: () => number;
+  /** token 是否仍然有效（没被后继者接管）。 */
+  alive: (token: number) => boolean;
+  /**
+   * 「读盘中」是否已归零 —— 即当前没有**仍会生效的**会话读取。
+   *
+   * 措辞很要紧：`pending` **不是**在飞操作数（被接管的那些即使还没回来也不算），
+   * 所以 `settle` 是直接置 0 而不是 `-= 1`。下一个人读到「计数器」很可能顺手
+   * 改成 `-= 1`，那会把 loading **永久卡死**（begin×3 → 中间 settle → 2 →
+   * 再 begin → 3 → settle → 2，永不为 0）。测试里有一条专门钉住这点。
+   */
+  settled: () => boolean;
+  /** 由仍然有效的操作收尾，把「读盘中」置否。 */
+  settle: (token: number) => void;
+}
+
+export function createLoadSeq(onChange: (loading: boolean) => void): LoadSeq {
+  let n = 0;
+  let pending = 0;
+  const emit = () => onChange(pending > 0);
+  return {
+    begin: () => {
+      n += 1;
+      pending += 1;
+      emit();
+      return n;
+    },
+    alive: (token: number) => token === n,
+    settled: () => pending === 0,
+    settle: (token: number) => {
+      if (token !== n) return; // 已被接管：收尾归后继者管
+      pending = 0;
+      emit();
+    },
+  };
+}
+
+/**
  * 定出这份设计该用哪个会话。优先级不能调换：
  *
  * 1. path 命中索引 → 用它。文件被移动/改名后靠这条认回原会话 ——

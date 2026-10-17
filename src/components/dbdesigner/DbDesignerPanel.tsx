@@ -24,6 +24,7 @@ import { CONNECTION_LINE_BY_STYLE, useEdgeStyle } from "../../utils/graphEdgeSty
 import { mergeDecisions, trimHistory } from "./aiMemory";
 import { modelChoiceSettings, resolveModelChoice } from "./modelChoice";
 import {
+  createLoadSeq,
   createSessionId,
   isUsableMessage,
   resolveSessionId,
@@ -474,13 +475,15 @@ export default function DbDesignerPanel() {
   /** 会话索引（弹框列表 + resolveSessionId 的输入） */
   const [sessions, setSessions] = useState<SessionEntry[]>([]);
   /**
-   * 会话读取的竞态闸门。
+   * 「读盘中」—— 换文档 / 切会话后，会话要从磁盘异步读回来，这段窗口里
+   * `sessionId` 与 `aiHistory` 还是上一份的。用户此时回车就是把「新表 + 旧对话」
+   * 发给模型、并把这一轮存进旧会话，**串台换个入口复活**。
    *
-   * 快速连点两个文件时，先发起的 `dbd_get_chat` 可能后到达，把**后**一个会话的
-   * 数据覆盖掉 —— 表现为「打开 B，结果看到 A 的对话」。所以每次读取领一个
-   * 自增 token，回来时若已被更新的请求取代就整个丢弃。
+   * 所以这段时间禁用发送。`chatLoadSeq` 同时是那道竞态闸门
+   * （后发起的接管先发起的），状态机与不变量见 `sessionKey.ts::createLoadSeq`。
    */
-  const chatLoadSeqRef = useRef(0);
+  const [chatLoading, setChatLoading] = useState(false);
+  const chatLoadSeqRef = useRef(createLoadSeq((loading) => setChatLoading(loading)));
   /**
    * 最新的 `chatMsgs`，供**写盘**时读。
    *
@@ -821,7 +824,7 @@ const aiStatusText = aiBusy
    */
   const loadChatForDoc = useCallback(
     async (d: DbDesignDocument, filePath: string) => {
-      const token = ++chatLoadSeqRef.current;
+      const token = chatLoadSeqRef.current.begin();
       let index: SessionEntry[] = [];
       try {
         const got = await invoke<{ sessions: SessionEntry[] }>("dbd_get_session_index");
@@ -837,7 +840,7 @@ const aiStatusText = aiBusy
         // 会话读不出来 → 当成空会话（后端已做同样兜底，这里防的是 invoke 本身失败）
       }
       // 期间用户又切了文档 → 这次结果作废
-      if (token !== chatLoadSeqRef.current) return;
+      if (!chatLoadSeqRef.current.alive(token)) return;
 
       setSessionId(r.id);
       setChatMsgs((chat.chatMsgs ?? []).filter(isUsableMessage) as ChatMsg[]);
@@ -858,6 +861,9 @@ const aiStatusText = aiBusy
       // 刻意**不**在这里 setSessions(index)：读索引失败时 index 是空数组，
       // 那会把内存里已有的列表清空 —— 一次读失败让用户看到「会话全没了」。
       void touchSession(r.id, filePath);
+      // 读到会话、状态已归位 → 「读盘中」解除。上面那条 `return` 是被后继者
+      // 接管的情况，此时**不** settle：收尾归接管者管（见 createLoadSeq 的契约）。
+      chatLoadSeqRef.current.settle(token);
     },
     [touchSession],
   );
@@ -872,6 +878,9 @@ const aiStatusText = aiBusy
     setSelectedId(null);
     setHighlightId(null);
     setPositions({});
+    // 草稿随文档一起换，**同步清**：它的语义是「你正在写什么」，绑定的是当前这份设计。
+    // 放在 loadChatForDoc 里等读取完成再清太晚 —— 那几毫秒里敲的字会被一起抹掉。
+    setAiText("");
     void loadChatForDoc(d, "");
   };
 
@@ -879,14 +888,19 @@ const aiStatusText = aiBusy
    * 切到某个会话。
    *
    * **改 `doc.id` → 文档变脏**：换了个身份就该落盘，否则下次打开又认回旧会话。
-   * 旧会话的内容不动 —— 切走时已经存过了。
+   * **旧会话的内容不动** —— 切走时已经存过了。
+   *
+   * **刻意不清输入草稿**（只有 `newDoc` / `openFile` 清）：草稿只在**换文档**时
+   * 才会"主动说错话"—— 它写的是另一批表。而会话切换不改表，草稿仍然切题；
+   * `sessionId` 与 `aiHistory` 在这里已被正确刷新，所以保留草稿**不构成串台**。
+   * 清掉反而会吃掉用户正在写的东西。
    */
   const switchSession = useCallback(
     async (id: string) => {
       if (!doc || id === sessionId) return;
       // 领 token 作废在飞的读取：否则 openFile 尚未返回的那次 loadChatForDoc
       // 会在切换之后才到，把用户刚切好的会话又回滚回去（设计文档第三节的要求）。
-      const token = ++chatLoadSeqRef.current;
+      const token = chatLoadSeqRef.current.begin();
       void saveChatNow();
       setDoc({ ...doc, id });
       setDirty(true);
@@ -896,12 +910,12 @@ const aiStatusText = aiBusy
           "dbd_get_chat",
           { id },
         );
-        if (token !== chatLoadSeqRef.current) return;
+        if (!chatLoadSeqRef.current.alive(token)) return;
         setChatMsgs((chat.chatMsgs ?? []).filter(isUsableMessage) as ChatMsg[]);
         setAiHistory((chat.aiHistory ?? []) as ChatTurn[]);
         setAiClarifyRound(chat.aiClarifyRound ?? 0);
       } catch {
-        if (token !== chatLoadSeqRef.current) return;
+        if (!chatLoadSeqRef.current.alive(token)) return;
         setChatMsgs([]);
         setAiHistory([]);
         setAiClarifyRound(0);
@@ -910,6 +924,7 @@ const aiStatusText = aiBusy
       setAiNewDecisions([]);
       setDocSnapshot(null);
       void touchSession(id, path);
+      chatLoadSeqRef.current.settle(token);
     },
     [doc, sessionId, path, saveChatNow, touchSession],
   );
@@ -918,8 +933,9 @@ const aiStatusText = aiBusy
   const createSession = useCallback(() => {
     if (!doc) return;
     const id = createSessionId();
-    // 同样要作废在飞的读取：不然它在返回后会把刚建的新会话 id 覆盖回去
-    ++chatLoadSeqRef.current;
+    // 同样要作废在飞的读取：不然它在返回后会把刚建的新会话 id 覆盖回去。
+    // 它是同步完成的（不读盘），所以自己 settle —— 不 settle 就把「读盘中」卡死了。
+    const token = chatLoadSeqRef.current.begin();
     void saveChatNow();
     setDoc({ ...doc, id });
     setDirty(true);
@@ -931,6 +947,7 @@ const aiStatusText = aiBusy
     setAiNewDecisions([]);
     setDocSnapshot(null);
     void touchSession(id, path);
+    chatLoadSeqRef.current.settle(token);
   }, [doc, path, saveChatNow, touchSession]);
 
   /**
@@ -949,18 +966,18 @@ const aiStatusText = aiBusy
       }
       setSessions((prev) => prev.filter((s) => s.id !== id));
       if (id !== sessionId) return;
-      const token = ++chatLoadSeqRef.current;
+      const token = chatLoadSeqRef.current.begin();
       try {
         const chat = await invoke<{ chatMsgs?: unknown[]; aiHistory?: unknown[]; aiClarifyRound?: number }>(
           "dbd_get_chat",
           { id },
         );
-        if (token !== chatLoadSeqRef.current) return;
+        if (!chatLoadSeqRef.current.alive(token)) return;
         setChatMsgs((chat.chatMsgs ?? []).filter(isUsableMessage) as ChatMsg[]);
         setAiHistory((chat.aiHistory ?? []) as ChatTurn[]);
         setAiClarifyRound(chat.aiClarifyRound ?? 0);
       } catch {
-        if (token !== chatLoadSeqRef.current) return;
+        if (!chatLoadSeqRef.current.alive(token)) return;
         setChatMsgs([]);
         setAiHistory([]);
         setAiClarifyRound(0);
@@ -969,6 +986,7 @@ const aiStatusText = aiBusy
       setAiClarify(null);
       setAiNewDecisions([]);
       setDocSnapshot(null);
+      chatLoadSeqRef.current.settle(token);
     },
     [sessionId],
   );
@@ -990,6 +1008,7 @@ const aiStatusText = aiBusy
       setSelectedId(null);
       setHighlightId(null);
       setPositions({});
+      setAiText("");
       void loadChatForDoc(d, picked);
     } catch (e) {
       setResult({ ok: false, msg: String(e) });
@@ -1881,7 +1900,13 @@ const aiStatusText = aiBusy
    */
   const runAi = async (overrideText?: string) => {
     const ask = (overrideText ?? aiText).trim();
-    if (!doc || !ask) return;
+    // 「读盘中」也要挡：换文档 / 切会话的那一瞬，`sessionId` 与 `aiHistory`
+    // 还是上一份的，此时**任何**入口发出去都是「新表 + 旧对话」。
+    //
+    // 闸门放在这里而不是逐个给按钮加 `disabled` —— 发起一轮的入口有三个
+    // （发送按钮、追问卡的选项、追问卡的自由输入），UI 上漏一个就绕过了。
+    // 只禁发送按钮是不够的：追问卡那会儿还亮着（旧会话的气泡还没被替换）。
+    if (!doc || !ask || chatLoading) return;
     setAiBusy(true);
     setAiAborted(false);
     setAiErr("");
@@ -2283,9 +2308,12 @@ const aiStatusText = aiBusy
           label={t("dbd.menuFile")}
           className="ui-btn px-2 py-1 text-caption"
           items={[
-            { key: "open", label: t("dbd.open"), onSelect: () => void openFile() },
+            // 生成中禁掉打开/新建：`runAi` 的流式落图与收尾 patchDoc 都基于**它闭包里
+            // 那份 doc**，此时换文档会把新画布整体覆盖成旧文档的内容并置脏 ——
+            // 后果比「对话串台」更重（设计文件被覆盖，不只是聊天记录）。
+            { key: "open", label: t("dbd.open"), disabled: aiBusy, onSelect: () => void openFile() },
             { key: "sep1", type: "separator" as const },
-            { key: "new", label: t("dbd.new"), onSelect: () => void newDoc() },
+            { key: "new", label: t("dbd.new"), disabled: aiBusy, onSelect: () => void newDoc() },
             { key: "save", label: t("dbd.save"), disabled: !doc, onSelect: () => void saveFile(false) },
             { key: "saveAs", label: t("dbd.saveAs"), disabled: !doc, onSelect: () => void saveFile(true) },
           ]}
@@ -3133,6 +3161,7 @@ const aiStatusText = aiBusy
           onSessionSelect={(id) => void switchSession(id)}
           onSessionCreate={() => void createSession()}
           onSessionDelete={(id) => void deleteSession(id)}
+          chatLoading={chatLoading}
         />
       ) : null}
 

@@ -178,6 +178,7 @@
     "aiPh": "例：一个博客系统，用户可以发布文章、给文章点赞，文章属于分类，分类有名称和排序…",
     "aiModel": "模型",
     "session": "会话",
+    "sessionLoading": "读取会话中",
     "sessionManage": "AI 会话",
     "sessionNew": "新建会话（对话清空）",
     "sessionCurrent": "当前",
