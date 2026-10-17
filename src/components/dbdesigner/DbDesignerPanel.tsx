@@ -28,6 +28,7 @@ import {
   buildArrangeSubDoc,
   clampHighlightDepth,
   groupByPrefix,
+  relatedEdgeIds,
   relatedTableHops,
   relatedTableIds,
   type HighlightDepth,
@@ -67,6 +68,7 @@ import {
   dimmedEdgeStroke,
   dimmedEdgeWidth,
   dimmedOpacity,
+  hasVisibleHighlight,
   relatedEdgeWidth,
   useGraphHighlightPrefs,
 } from "../../utils/graphHighlight";
@@ -1199,6 +1201,19 @@ const aiStatusText = aiBusy
   );
 
   /**
+   * 该亮的**连线**（与 relatedIds / relatedHops 同一次 BFS 的产物，见 series.highlightScope）。
+   *
+   * 判据必须是「这条线是从选中表走出去 d 步以内**走得到**的」，
+   * 不能是「两端有一端在 d 跳集合内」——后者会把同一跳层内部的横向连线也点亮，
+   * 产出「两端都只是远房亲戚、线却亮着」的连线，而它们的表是暗的：
+   * 屏幕上就是**只亮线、不亮表**（用户实测，见 series.relatedEdgeIds 的注释）。
+   */
+  const relatedEdges = useMemo(
+    () => (doc ? relatedEdgeIds(doc, highlightId, highlightDepth) : new Set<string>()),
+    [doc, highlightId, highlightDepth],
+  );
+
+  /**
    * 表导航的行数据：按引用关系澄清父子并缩进，形成一棵树。
    * 一张被引用多少次就当作父节点；成环的表同样当根，不会死循环。
    */
@@ -1369,16 +1384,16 @@ const aiStatusText = aiBusy
     // 只画「两端都在画布上」的关系：被标签筛掉的表，它的连线也该消失
     const onCanvas = new Set(visibleNodes.map((n) => n.id));
     return doc.relations.filter((r) => onCanvas.has(r.from.node) && onCanvas.has(r.to.node)).map((r) => {
-      // **判据必须用 relatedHops 集合，不能写死「与选中表直连」**（那等于 1 跳）。
-      // 写死的后果（用户实测）：表卡按层级亮了，连线却只在 1 跳时亮——
-      // 远越远的表归回「与选中表无关」被弱化，而层级滑块完全影响不到连线。
-      // 思维导图的 MindmapPanel 已经是对的写法（用集合而非直连）。
+      // **判据必须用 relatedEdges（BFS 实际走过的边），不能写死「与选中表直连」**（那等于 1 跳），
+      // 也不能退回「两端有一端在集合内」—— 那会点亮同一跳层内部的横向连线，
+      // 造成「线亮着、两端表却暗着」（用户实测的「只亮线、不亮表」）。
+      // 层级语义的完整定义见 series.highlightScope。
       //
       // 分级：跳数越远线越模糊 —— 否则设到 3 跳与 1 跳画出来一样。
+      const related = relatedEdges.has(r.id);
       const hopA = highlightId === null ? undefined : relatedHops.get(r.from.node);
       const hopB = highlightId === null ? undefined : relatedHops.get(r.to.node);
       const nearHop = hopA === undefined ? hopB : hopB === undefined ? hopA : Math.min(hopA, hopB);
-      const related = nearHop !== undefined;
       const dimmed = highlightId !== null ? !related : false;
       const hopFade = related ? (nearHop ? Math.max(0.25, 1 - (nearHop - 1) * 0.25) : 1) : 1;
       const own = ownColorOf(r.from.node);
@@ -1404,9 +1419,12 @@ const aiStatusText = aiBusy
         sourceHandle,
         targetHandle,
         type: edgeStyle,
-        // 多对多常驻流动；选中表的关联线也流动 —— 静态图里「哪几条线跟我有关」
-        // 只能靠眼睛扫，流动一眼就分出来了
-        animated: r.kind === "n-n" || related,
+        // 多对多常驻流动 —— **仅在没有选中任何表时**。静态图里 m:n 确实只能靠流动认出来；
+        // 但一旦选中了某张表，常驻流动就变成了「与高亮无关却最抢眼的线」：
+        // 它既不在高亮范围里、又比被压暗的线活跃，看上去就像「线亮了表没亮」
+        // （用户实测）。所以有选中项时 n-n 老老实实按高亮/压暗走。
+        // 选中表的关联线仍然流动 —— 这正是要突出它的时候。
+        animated: (highlightId === null && r.kind === "n-n") || related,
         // 流动节奏统一走 graph-edge-flow：内置 `.animated` 是 dasharray:5 / 0.5s，
         // 太快，看着像虚线在抖而不是「有东西在流动」
         className: EDGE_FLOW_CLASS,
@@ -1424,13 +1442,18 @@ const aiStatusText = aiBusy
           ...(related ? { filter: edgeGlow(stroke, lookPrefs.highlight * hopFade) } : null),
         },
         zIndex: related ? 10 : 0,
-        markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
+        // 箭头**不受 strokeWidth 影响**：线宽归零到看不见了，箭头若照画，
+        // 满屏仍是实心表色的三角 —— 那正是「只亮线、表不亮」的残留半边。
+        // 所以箭头与线宽走同一个强度判据（见 graphHighlight.hasVisibleHighlight）。
+        markerEnd: related && !hasVisibleHighlight(lookPrefs.highlight)
+          ? undefined
+          : { type: MarkerType.ArrowClosed, color: stroke },
       };
     });
-  // lookPrefs 也要在依赖里：滑块一动，连线的粗细/颜色/辉光要立刻跟着变
-  // 依赖里必须含 relatedHops：旧版本只依赖 highlightId，而判据又写死成「与选中表直连」，
-  // 所以拖层级滑块时 relatedIds 变了而连线核心数组一点不重算 —— 表亮了线没活。
-}, [doc, edgeStyle, visibleNodes, highlightId, relatedHops, lookPrefs]);
+  // lookPrefs 也要在依赖里：滑块一动，连线的粗细/颜色/辉光要立刻跟着变。
+  // 依赖里必须含 relatedEdges 与 relatedHops：判据全靠它们，漏一个都会让
+  // 拖层级滑块时表卡变了、连线核心数组一点不重算 —— 「表亮线不活」。
+  }, [doc, edgeStyle, visibleNodes, highlightId, relatedEdges, relatedHops, lookPrefs]);
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     // 位置：一次性写本地覆盖（思维导图同款，避免每帧重建文档）
     setPositions((prev) => {

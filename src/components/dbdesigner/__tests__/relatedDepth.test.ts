@@ -4,6 +4,7 @@ import {
   DEFAULT_HIGHLIGHT_DEPTH,
   HIGHLIGHT_DEPTHS,
   clampHighlightDepth,
+  relatedEdgeIds,
   relatedTableHops,
   relatedTableIds,
 } from "../series";
@@ -144,5 +145,112 @@ describe("relatedTableHops（连线分级亮度的数据源）", () => {
     } as DbDesignRelation);
     expect(relatedTableHops(doc, "a", 3).has("ghost")).toBe(false);
     expect(relatedTableHops(doc, "a", 3).size).toBe(2);
+  });
+});
+
+/**
+ * 连线（边）的高亮口径 —— **层级指的是「从选中表走出去能走多远」**，
+ * 不是「两端只要有一端落在集合里就算」。
+ *
+ * 这两者不等价，差在**同一跳层内部的横向连线**：
+ * 选中 x，一跳邻居 a；a 下面挂着 c、d（都是 2 跳），而 c 与 d 之间也有一条线。
+ * 集合口径会点亮 c–d —— 但从 x 出发要走 x→a→c→d 第 3 步才到，
+ * 层级=2 时它根本不该亮。两端只是「远房亲戚」的线亮着、表却暗着，
+ * 屏幕上就是**只亮线、不亮表**（用户实测）。
+ *
+ * 所以连线的高亮必须取自 BFS **实际走过**的关系集合。
+ */
+describe("relatedEdgeIds（连线的高亮口径）", () => {
+  /**
+   * 带「同层横向边」的拓扑，专门用来区分两种口径：
+   *   x ──1跳── a ──2跳── c ──┐
+   *   │          └──2跳── d ──┘   （c 与 d 之间还有一条线，同属第 2 层内部）
+   *   └──1跳── b
+   */
+  const LATERAL = docOf(
+    ["x", "a", "b", "c", "d"],
+    [rel("a", "x"), rel("b", "x"), rel("c", "a"), rel("d", "a"), rel("d", "c")],
+  );
+  /** 每个 fixture 的选中项（CHAIN 选中间的 c，LATERAL 选根 x） */
+  const CASES: Array<[string, DbDesignDocument]> = [
+    ["CHAIN", CHAIN],
+    ["LATERAL", LATERAL],
+  ];
+  const sel = (doc: DbDesignDocument) => (doc === CHAIN ? "c" : "x");
+  const sorted = (s: Set<string>) => [...s].sort();
+  /** 某条关系的两端 id */
+  const ends = (doc: DbDesignDocument, edgeId: string) => {
+    const r = doc.relations.find((x) => x.id === edgeId)!;
+    return [r.from.node, r.to.node] as const;
+  };
+
+  it("层级=d：点亮的连线 = 从选中表出发 d 步以内实际走过的那些", () => {
+    // 链 a-b-c-d-e-f，选中 c
+    expect(sorted(relatedEdgeIds(CHAIN, "c", 1))).toEqual(["c-b", "d-c"]);
+    expect(sorted(relatedEdgeIds(CHAIN, "c", 2))).toEqual(["b-a", "c-b", "d-c", "e-d"]);
+    expect(sorted(relatedEdgeIds(CHAIN, "c", 3))).toEqual(["b-a", "c-b", "d-c", "e-d", "f-e"]);
+  });
+
+  it("同一跳层内部的横向连线不该亮（那不是走得到的路）", () => {
+    expect(sorted(relatedTableIds(LATERAL, "x", 2))).toEqual(["a", "b", "c", "d", "x"]);
+    expect(sorted(relatedEdgeIds(LATERAL, "x", 2))).toEqual(["a-x", "b-x", "c-a", "d-a"]);
+    expect(relatedEdgeIds(LATERAL, "x", 2).has("d-c")).toBe(false);
+    // 层级放到 3，才真的走得到 c-d
+    expect(relatedEdgeIds(LATERAL, "x", 3).has("d-c")).toBe(true);
+  });
+
+  it("层级=d 时，亮线的两端必须都在 d 跳集合内（表不许比线暗）", () => {
+    // 用户抱怨的那句「线亮了表却没亮」，在这条不变量下不可能再出现。
+    for (const [name, doc] of CASES) {
+      for (const d of [1, 2, 3, 4, 5]) {
+        const ids = relatedTableIds(doc, sel(doc), d);
+        for (const eid of relatedEdgeIds(doc, sel(doc), d)) {
+          for (const end of ends(doc, eid)) {
+            expect(`${name}/${d}/${eid}/${end}: ${ids.has(end)}`).toBe(
+              `${name}/${d}/${eid}/${end}: true`,
+            );
+          }
+        }
+      }
+    }
+  });
+
+  it("层级滑块真的往外扩：层数越大，亮线与亮表集合只增不减", () => {
+    for (const [, doc] of CASES) {
+      for (let d = 2; d <= 5; d++) {
+        const prevEdges = relatedEdgeIds(doc, sel(doc), d - 1);
+        const nowEdges = relatedEdgeIds(doc, sel(doc), d);
+        for (const eid of prevEdges) expect(nowEdges.has(eid)).toBe(true);
+        const prevNodes = relatedTableIds(doc, sel(doc), d - 1);
+        const nowNodes = relatedTableIds(doc, sel(doc), d);
+        for (const nid of prevNodes) expect(nowNodes.has(nid)).toBe(true);
+      }
+    }
+  });
+
+  it("与表卡口径一致：亮线的端点集合恰好等于亮表集合（补上旧测试只比 size 的漏洞）", () => {
+    for (const [, doc] of CASES) {
+      for (const d of [1, 2, 3, 4, 5]) {
+        const ids = relatedTableIds(doc, sel(doc), d);
+        const touched = new Set<string>();
+        for (const eid of relatedEdgeIds(doc, sel(doc), d)) {
+          for (const end of ends(doc, eid)) touched.add(end);
+        }
+        for (const n of touched) expect(ids.has(n)).toBe(true);
+        // 反向：被点亮的表（选中表自己除外）至少要连着一条亮线，
+        // 否则就出现「表亮着、却没有任何线交代它为什么亮」
+        for (const n of ids) {
+          if (n === sel(doc)) continue;
+          expect(`${n}@${d}`).toBe(`${[...touched].includes(n) ? n : "MISS:" + n}@${d}`);
+        }
+      }
+    }
+  });
+
+  it("无选中 / 选中不存在 / 悬空关系：空集且不抛", () => {
+    const ghost = docOf(["a", "b"], [rel("b", "a"), rel("b", "zz"), rel("qq", "a")]);
+    expect(relatedEdgeIds(CHAIN, null, 5).size).toBe(0);
+    expect(relatedEdgeIds(CHAIN, "nope", 5).size).toBe(0);
+    expect(sorted(relatedEdgeIds(ghost, "a", 5))).toEqual(["b-a"]);
   });
 });

@@ -41,6 +41,14 @@ export interface DesignNodeData extends Record<string, unknown> {
    */
   related: boolean;
   /**
+   * 与当前高亮无关、需压暗（面板侧算好再传进来）。
+   *
+   * 曾经只在这个文件里用而没写进类型 —— 靠 `extends Record<string, unknown>`
+   * 的索引签名才没编译报错，于是改字段名/删字段 TS 一次都抓不到。
+   * 高亮状态字段必须全部显式声明：它们是这个组件唯一的输入契约。
+   */
+  dimmed: boolean;
+  /**
    * 高亮强度倍率（持久化偏好，1 = 默认观感）：缩放霓虹环 / 文字辉光 / 表头底色浓度。
    * 由面板侧滑块实时传入 —— 必须进 rfNodes 的缓存失效判定，否则拖滑块时
    * 卡片会卡在旧样式（节点对象被复用、data 不重建）。

@@ -14,7 +14,7 @@
 // `groupByForeignKey` 保留下来是因为**回归测试拿它当对照实现**：证明「整理选中」
 // 用的集合比「整个外键连通分量」小 —— 那正是这条模块存在的由来。
 
-import type { DbDesignDocument, DbDesignNode } from "./types";
+import type { DbDesignDocument, DbDesignNode, DbDesignRelation } from "./types";
 
 /**
  * 按外键连通分量把表分组，返回的每个组内节点必然互相引用得到。
@@ -160,6 +160,78 @@ export function clampHighlightDepth(v: unknown): HighlightDepth {
  * 用 BFS 而不是递归：外键关系可能成环，递归会无限深；BFS 天然按跳数分层。
  */
 /**
+ * 高亮层级的**唯一口径**：一次 BFS 同时得出「亮哪些表」与「亮哪些连线」。
+ *
+ * 层级 = **从选中表出发能走多远**。所以亮的是 d 步以内**实际走过**的那些连线，
+ * 而不是「两端只要有一端落在 d 跳集合里就算」。两者差在**同层内部的横向边**：
+ * 选中 x，一跳邻居 a，a 下面挂着 c、d（都是 2 跳），而 c 与 d 之间也有一条线 ——
+ * 集合口径会点亮 c–d，可从 x 出发要走 x→a→c→d 第三步才到，层级=2 时它不该亮。
+ * 多出来的这类线，两端都只是远房亲戚，屏幕上就是**线亮着、表却暗着**（用户实测）。
+ *
+ * 三个口径都从这里派生（`relatedTableIds` / `relatedTableHops` / `relatedEdgeIds`），
+ * 「高亮什么」与「点亮哪些线」必须是同一次遍历的产物 —— 分头各算一遍，
+ * 迟早会在某张图上分叉，而分叉的表现是纯观感问题，不会报错、只会让人以为哪里坏了。
+ *
+ * 用 BFS 而不是递归：外键关系可能成环，递归会无限深；BFS 天然按跳数分层。
+ */
+export interface HighlightScope {
+  /** 每张表相差多少跳（选中表自己 = 0）。不在表里的 id 查不到。 */
+  hops: Map<string, number>;
+  /** d 步以内 BFS 实际走过的关系 id —— 连线高亮的唯一来源。 */
+  edgeIds: Set<string>;
+}
+
+export function highlightScope(
+  doc: DbDesignDocument,
+  selectedId: string | null,
+  depth: number = DEFAULT_HIGHLIGHT_DEPTH,
+): HighlightScope {
+  const hops = new Map<string, number>();
+  const edgeIds = new Set<string>();
+  if (!selectedId) return { hops, edgeIds };
+  // 只在**真实存在的表**之间连边：指向已删除节点的悬空关系若不滤掉，
+  // 悬空 id 会被当成表加进高亮集 —— 画布上没有这张表，于是它既点亮不了、
+  // 又让「高亮 N 张」的数字对不上实际（实测：加进 zz / yy 两个不存在的节点）。
+  const exists = new Set(doc.nodes.map((n) => n.id));
+  if (!exists.has(selectedId)) return { hops, edgeIds };
+  hops.set(selectedId, 0);
+  // 层数交给 clampHighlightDepth 收敛：非法值（0 / 负数 / 99 / 字符串）一律**回落默认 1 跳**，
+  // 而不是当「最深」—— 理由是回落 1 最安全：传 0 不该让高亮整个消失，而传 99 时
+  // 用户想要的多半是「全都要」，但那份结果不该由一个非法输入默默决定。
+  const maxHops = clampHighlightDepth(depth);
+  /** 节点 id → 从它连出去的关系（无向：关系两端各存一次） */
+  const adj = new Map<string, DbDesignRelation[]>();
+  const link = (r: DbDesignRelation, at: string) => {
+    const list = adj.get(at);
+    if (list) list.push(r);
+    else adj.set(at, [r]);
+  };
+  for (const r of doc.relations) {
+    if (!exists.has(r.from.node) || !exists.has(r.to.node)) continue;
+    link(r, r.from.node);
+    link(r, r.to.node);
+  }
+  let frontier = [selectedId];
+  for (let hop = 1; hop <= maxHops && frontier.length > 0; hop++) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      for (const r of adj.get(id) ?? []) {
+        // 关系存了两遍（from 侧、to 侧），对端就是「不是 id 的那一头」
+        const nb = r.from.node === id ? r.to.node : r.from.node;
+        // 先记边再判已访问：走到已访问的邻居那条线**也是**从选中表走得到的路，
+        // 仍属于本层级范围（x-a-c-d 里 x-a 那条会被 a 再走一次，不该漏）。
+        edgeIds.add(r.id);
+        if (hops.has(nb)) continue;
+        hops.set(nb, hop);
+        next.push(nb);
+      }
+    }
+    frontier = next;
+  }
+  return { hops, edgeIds };
+}
+
+/**
  * 每张表相差多少跳（选中表自己 = 0）。**远的表亮得越深，越模糊**。
  *
  * 为什么不能满足于 `relatedTableIds`：它只返回集合，不包含距离信息。连线需要知道
@@ -171,37 +243,22 @@ export function relatedTableHops(
   selectedId: string | null,
   depth: number = DEFAULT_HIGHLIGHT_DEPTH,
 ): Map<string, number> {
-  const hops = new Map<string, number>();
-  if (!selectedId) return hops;
-  const exists = new Set(doc.nodes.map((n) => n.id));
-  if (!exists.has(selectedId)) return hops;
-  hops.set(selectedId, 0);
-  const maxHops = clampHighlightDepth(depth);
-  const adj = new Map<string, string[]>();
-  const link = (a: string, b: string) => {
-    const list = adj.get(a);
-    if (list) list.push(b);
-    else adj.set(a, [b]);
-  };
-  for (const r of doc.relations) {
-    // 悬空关系不建边（与 relatedTableIds 同口径）
-    if (!exists.has(r.from.node) || !exists.has(r.to.node)) continue;
-    link(r.from.node, r.to.node);
-    link(r.to.node, r.from.node);
-  }
-  let frontier = [selectedId];
-  for (let hop = 1; hop <= maxHops && frontier.length > 0; hop++) {
-    const next: string[] = [];
-    for (const id of frontier) {
-      for (const nb of adj.get(id) ?? []) {
-        if (hops.has(nb)) continue;
-        hops.set(nb, hop);
-        next.push(nb);
-      }
-    }
-    frontier = next;
-  }
-  return hops;
+  return highlightScope(doc, selectedId, depth).hops;
+}
+
+/**
+ * d 步以内 BFS 实际走过的那批关系 —— **连线高亮的唯一口径**。
+ *
+ * 早先这里是「`min(hopA, hopB) !== undefined`」（两端有一端在集合内就算），
+ * 那会把同一跳层内部的横向连线也点亮，产出「表只是远房亲戚、线却亮着」的连线，
+ * 也就是用户报的**只亮线、不亮表**。
+ */
+export function relatedEdgeIds(
+  doc: DbDesignDocument,
+  selectedId: string | null,
+  depth: number = DEFAULT_HIGHLIGHT_DEPTH,
+): Set<string> {
+  return highlightScope(doc, selectedId, depth).edgeIds;
 }
 
 export function relatedTableIds(
@@ -209,45 +266,7 @@ export function relatedTableIds(
   selectedId: string | null,
   depth: number = DEFAULT_HIGHLIGHT_DEPTH,
 ): Set<string> {
-  const set = new Set<string>();
-  if (!selectedId) return set;
-  // 只在**真实存在的表**之间连边：指向已删除节点的悬空关系若不滤掉，
-  // 悬空 id 会被当成表加进高亮集 —— 画布上没有这张表，于是它既点亮不了、
-  // 又让「高亮 N 张」的数字对不上实际（实测：加进 zz / yy 两个不存在的节点）。
-  const exists = new Set(doc.nodes.map((n) => n.id));
-  if (!exists.has(selectedId)) return set;
-  set.add(selectedId);
-  // 层数交给 clampHighlightDepth 收敛：非法值（0 / 负数 / 99 / 字符串）一律**回落默认 1 跳**，
-  // 而不是当「最深」—— 理由是回落 1 最安全：传 0 不该让高亮整个消失，而传 99 时
-  // 用户想要的多半是「全都要」，但那份结果不该由一个非法输入默默决定。
-  // （早先这里的注释写的是「当最深」，与实现相反，照注释写测试会得到相反期望。）
-  const maxHops = clampHighlightDepth(depth);
-  const adj = new Map<string, string[]>();
-  const link = (a: string, b: string) => {
-    const list = adj.get(a);
-    if (list) list.push(b);
-    else adj.set(a, [b]);
-  };
-  for (const r of doc.relations) {
-    if (!exists.has(r.from.node) || !exists.has(r.to.node)) continue;
-    link(r.from.node, r.to.node);
-    link(r.to.node, r.from.node);
-  }
-  let frontier = [selectedId];
-  const seen = new Set<string>([selectedId]);
-  for (let hop = 0; hop < maxHops && frontier.length > 0; hop++) {
-    const next: string[] = [];
-    for (const id of frontier) {
-      for (const nb of adj.get(id) ?? []) {
-        if (seen.has(nb)) continue;
-        seen.add(nb);
-        next.push(nb);
-        set.add(nb);
-      }
-    }
-    frontier = next;
-  }
-  return set;
+  return new Set(highlightScope(doc, selectedId, depth).hops.keys());
 }
 
 /**
