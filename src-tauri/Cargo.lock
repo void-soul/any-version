@@ -2750,7 +2750,7 @@ dependencies = [
 
 [[package]]
 name = "kira"
-version = "2.7.4"
+version = "2.7.5"
 dependencies = [
  "aes",
  "aes-gcm",
