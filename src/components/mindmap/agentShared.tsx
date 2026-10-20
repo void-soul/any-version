@@ -278,14 +278,34 @@ export function startAgentTurn(userText: string) {
  */
 export function patchAgentTurn(patch: Partial<Pick<AgentMessage, "text" | "status" | "summary" | "patch" | "truncated" | "error">>) {
   for (let i = agentMsgs.length - 1; i >= 0; i--) {
-    if (agentMsgs[i].role !== "agent") continue;
+    const msg = agentMsgs[i];
+    if (msg.role !== "agent") continue;
+    // 只补丁「本轮还没结束」的占位气泡（thinking / writing）。
+    // 已结束的历史气泡一律不动 —— 追问等路径不会先开新轮，盲改最后一条会把
+    // 上一轮的回执（摘要 / 改动计数 / 失败原因）覆盖成这一轮的状态。
+    if (msg.status !== "thinking" && msg.status !== "writing") break;
     const out = agentMsgs.slice();
-    out[i] = { ...out[i], ...patch };
+    out[i] = { ...msg, ...patch };
     agentMsgs = out;
     emitAgentMsgs();
     return;
   }
-  pushAgentMessage("agent", patch.text ?? patch.summary ?? patch.error ?? "");
+  // 没有在跑的气泡（例如请求发出前就失败）：新推一条，历史保持原样。
+  agentMsgs = [
+    ...agentMsgs,
+    {
+      id: ++agentMsgSeq,
+      role: "agent",
+      text: patch.text ?? patch.summary ?? patch.error ?? "",
+      ts: Date.now(),
+      status: patch.status ?? "done",
+      summary: patch.summary,
+      patch: patch.patch,
+      truncated: patch.truncated,
+      error: patch.error,
+    },
+  ];
+  emitAgentMsgs();
 }
 
 /** 本轮 ops → 计数摘要（渲染只需要「几个节点」，不必把整份 ops 塞进气泡） */
