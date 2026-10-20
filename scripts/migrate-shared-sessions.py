@@ -9,7 +9,7 @@
   会把链接物化 —— 已在 `session_transfer/codebuddy.rs` 加了共享模式短路。
 
 做的事：
-  1. 选当前账号的 6 类目录，整体 rename 到 <store>/shared-sessions/codebuddy-cn/（同盘瞬间）
+  1. 选当前账号的 4 类目录，整体 rename 到 <store>/shared-sessions/codebuddy-cn/（同盘瞬间）
   2. 其他账号：把「共享目录里没有的」会话复制过去并合并 index.json
   3. 删除其他账号的原目录，建 junction 指向共享目录
   4. 校验：每个账号的 junction 可读、会话数、释放空间
@@ -42,7 +42,9 @@ except Exception:
 
 STORE_DEFAULT = r"D:\any-versions\buddy"
 ORIG_MARK = ".orig-test-"
-KINDS = ["history", "check-point", "file-tree", "plan-task", "genie-cache", "connectors"]
+# 只含 <uid>/CodeBuddyIDE/<uid>/ 这一层的 4 类。genie-cache 的真实位置是
+# <uid>/CodeBuddyIDE/genie-cache（少一层 uid），connectors 在 CodeBuddyIDE 层不存在。
+KINDS = ["history", "check-point", "file-tree", "plan-task"]
 FILE_ATTRIBUTE_REPARSE_POINT = 0x400
 
 _lines = []

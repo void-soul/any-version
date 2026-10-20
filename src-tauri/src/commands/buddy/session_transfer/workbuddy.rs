@@ -148,6 +148,13 @@ fn transfer_local_sessions(
     let data_root = data_dir_for_workbuddy()?;
 
     // 1) 旧版 per-uid 扩展目录合并（5.x 通常不存在，仅兼容旧版落盘结构）
+    //
+    // 共享模式短路：WorkBuddy 5.x 的会话本来就只有一份（`~/.workbuddy/workbuddy.db` 的
+    // sessions 行 + `~/.workbuddy/projects/<hash>/<id>.jsonl` 正文），没有 per-uid 副本，
+    // 所以目录级合并对 5.x 是纯冗余。更危险的是两个平台**共用同一批 uid**：CN 的
+    // `<Data>/<uid>/CodeBuddyIDE/<uid>/history` 现在是指向共享根的 junction，
+    // 不短路就会拿 CN 的共享会话去和 WorkBuddy 目标账号「合并」（源和目标其实是同一份物理数据）。
+    // 判定为共享时只做第 2/3 步的 user_id 重映射 —— 这正是 CN 共享模式的等价语义。
     let extension_roots = select_extension_data_roots(source_uid)?;
     if extension_roots.is_empty() {
         eprintln!(
@@ -161,6 +168,24 @@ fn transfer_local_sessions(
         // 点处理冲突说没有冲突」的三段自相矛盾（处理端对 WorkBuddy 恒返回空）。
         let mut pending_conflicts: Vec<PendingConflict> = Vec::new();
         for (label, extension_data_dir) in extension_roots {
+            let shared = codebuddy::target_sessions_shared(&extension_data_dir, target_uid)
+                || codebuddy::target_sessions_shared(&extension_data_dir, source_uid);
+            if shared {
+                eprintln!(
+                    "[Buddy WB Transfer] {} 下 uid={} 的会话目录是共享链接，跳过目录级合并（只重映射 user_id）",
+                    label,
+                    target_uid
+                );
+                tracker.record_in(
+                    "",
+                    &format!("shared:{}", label),
+                    SessionSyncStatus::Skipped,
+                    "sharedDirectory",
+                    None,
+                    None,
+                );
+                continue;
+            }
             report.scanned_workspaces += codebuddy::sync_history_between_accounts(
                 &extension_data_dir,
                 source_uid,
@@ -728,5 +753,49 @@ mod tests {
         let (config, electron) = resolve_runtime_dirs(&dest).unwrap();
         assert_eq!(config, dest);
         assert_eq!(electron, dest.join("app"));
+    }
+
+    /// 两个平台共用同一批 uid：CN 的会话目录已换成共享 junction 后，WorkBuddy 的
+    /// 「旧版扩展目录」探测仍会命中它（`account_has_history` 跟随链接看 `is_dir()`）。
+    /// 短路条件必须同时覆盖来源与目标账号，否则会拿同一份物理数据自我合并。
+    #[test]
+    fn detects_shared_extension_dirs_for_both_source_and_target() {
+        let root = make_temp();
+        let shared_history = root.join("shared").join("history");
+        std::fs::create_dir_all(shared_history.join("ws1").join("conv-1")).unwrap();
+
+        let extension = root.join("extension");
+        let source_uid = "uid-workbuddy-source";
+        let target_uid = "uid-workbuddy-target";
+        let mut linked = 0;
+        for uid in [source_uid, target_uid] {
+            let account_root = extension.join(uid).join("CodeBuddyIDE").join(uid);
+            std::fs::create_dir_all(&account_root).unwrap();
+            if crate::commands::cache::create_junction(
+                &account_root.join("history"),
+                &shared_history,
+            )
+            .is_ok()
+            {
+                linked += 1;
+            }
+        }
+        if linked < 2 {
+            // 非 Windows / 无 mklink：跳过
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+
+        assert!(codebuddy::target_sessions_shared(&extension, source_uid));
+        assert!(codebuddy::target_sessions_shared(&extension, target_uid));
+        assert!(!codebuddy::target_sessions_shared(&extension, "uid-not-managed"));
+
+        // 只删链接不应带走共享数据
+        for uid in [source_uid, target_uid] {
+            let history = extension.join(uid).join("CodeBuddyIDE").join(uid).join("history");
+            std::fs::remove_dir(&history).unwrap();
+        }
+        assert!(shared_history.join("ws1").join("conv-1").is_dir());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

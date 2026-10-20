@@ -159,7 +159,10 @@ pub(crate) fn is_reparse_point(path: &Path) -> bool {
 ///
 /// 共享模式下所有账号读写同一份会话数据，切号**不需要复制**（复制只会把链接物化成真实目录）。
 /// 目录名不硬编码：`<Data>/<uid>/<IDE>/<uid>/history` 的 IDE 层靠扫描发现。
-fn target_sessions_shared(extension_data_dir: &Path, target_uid: &str) -> bool {
+///
+/// WorkBuddy 也复用这个判定：两个平台共用同一批 uid，WorkBuddy 切号的「旧版扩展目录」探测
+/// 会命中 CN 的共享 junction，不短路就会拿 CN 会话去合并（2026-10-20 实测）。
+pub(crate) fn target_sessions_shared(extension_data_dir: &Path, target_uid: &str) -> bool {
     let account_outer = extension_data_dir.join(target_uid);
     let Ok(entries) = std::fs::read_dir(&account_outer) else {
         return false;
@@ -175,16 +178,12 @@ fn target_sessions_shared(extension_data_dir: &Path, target_uid: &str) -> bool {
 
 /// 共享模式下的会话分类目录（与 `scripts/migrate-shared-sessions.py` 的 KINDS 一致）。
 ///
-/// 口径与复制链路的 [`AUXILIARY_KINDS`] 对齐：`history` + 5 类辅助目录，
-/// 否则 `genie-cache` / `connectors` 会在每个账号各留一份真实副本。
-const SHARED_KINDS: [&str; 6] = [
-    "history",
-    "check-point",
-    "file-tree",
-    "plan-task",
-    "genie-cache",
-    "connectors",
-];
+/// **只含 `<uid>/CodeBuddyIDE/<uid>/` 这一层的 4 类**。不能照搬 [`AUXILIARY_KINDS`]：
+/// 2026-10-20 实测，`genie-cache` 的真实位置是 `<uid>/CodeBuddyIDE/genie-cache`（**少一层 uid**，
+/// 20 个账号下各有 10~34 项真实数据），`connectors` 在 `CodeBuddyIDE` 层根本不存在
+/// （ConnectorService 读 `<uid>/CodeBuddyIDE/connectors/connector-servers.json`，日志是 ENOENT）。
+/// 把这两类建在 uid 层只会得到客户端永不读取的空链接。
+const SHARED_KINDS: [&str; 4] = ["history", "check-point", "file-tree", "plan-task"];
 
 /// 接管时原目录的改名后缀（`history.kira-shared-bak`）。
 const TAKEOVER_BAK_SUFFIX: &str = ".kira-shared-bak";
