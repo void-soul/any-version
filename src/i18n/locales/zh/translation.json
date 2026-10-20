@@ -5174,6 +5174,7 @@
     "switch": "切换",
     "noAccounts": "暂无账号",
     "noAccountsHint": "点击「从本机导入」读取当前登录账号，或通过「导入 JSON」恢复备份。",
+    "accountsLoading": "正在加载账号…",
     "dataDir": "数据目录",
     "expiresAt": "到期",
     "countdownFormat": "紧凑写法：55.21 = 55 天 21 小时（负号 = 已经过了那个时刻）；悬停看完整日期",

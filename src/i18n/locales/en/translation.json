@@ -5246,6 +5246,7 @@
     "switch": "Switch",
     "noAccounts": "No accounts",
     "noAccountsHint": "Click “Import from local” to read the current login, or “Import JSON” to restore a backup.",
+    "accountsLoading": "Loading accounts…",
     "dataDir": "Data dir",
     "expiresAt": "Expires",
     "countdownFormat": "Compact form: 55.21 = 55 days 21 hours (a minus sign means that moment has passed); hover for the full date",

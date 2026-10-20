@@ -890,6 +890,11 @@ export default function BuddyPanel() {
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [paths, setPaths] = useState<BuddyPaths | null>(null);
   const [busy, setBusy] = useState(false);
+  // 平台切换加载态：切换后立即清空旧平台数据并盖一层遮罩，避免快速来回切时
+  // 上一个平台的账号短暂挂在新标签下（加载完成前用户也不该点到行内按钮）。
+  const [platformLoading, setPlatformLoading] = useState(false);
+  // 请求代次：平台每切一次 +1，异步结果回来时代次不一致就丢弃（防乱序覆盖）。
+  const platformEpochRef = useRef(0);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   // 切换进度（检查客户端已退出 → 合并 → 写入 → 启动），由后端 buddy-switch-progress 事件驱动
   const [switchProgress, setSwitchProgress] = useState<BuddySwitchProgress | null>(null);
@@ -997,6 +1002,7 @@ export default function BuddyPanel() {
   const [calendarDay, setCalendarDay] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    const epoch = platformEpochRef.current;
     try {
       const [list, current, pathInfo, view] = await Promise.all([
         invoke<BuddyAccount[]>("buddy_list_accounts", { platform }),
@@ -1004,12 +1010,17 @@ export default function BuddyPanel() {
         invoke<BuddyPaths>("buddy_get_paths", { platform }),
         invoke<BuddyAccountView>("buddy_get_account_view", { platform }),
       ]);
+      // 平台已经切走：这是上一个平台的迟到响应，丢掉，别把它的账号画到当前标签下
+      if (platformEpochRef.current !== epoch) return;
       setAccounts(list);
       setCurrentId(current);
       setPaths(pathInfo);
       setAccountView(view);
     } catch (e) {
+      if (platformEpochRef.current !== epoch) return;
       setMessage({ ok: false, text: String(e) });
+    } finally {
+      if (platformEpochRef.current === epoch) setPlatformLoading(false);
     }
   }, [platform]);
 
@@ -1042,13 +1053,25 @@ export default function BuddyPanel() {
 
 
 
+  // 切换平台：先让旧请求作废、清空旧平台数据，再拉新列表。
+  // 不清空的话，加载期间新标签下会挂着上一个平台的账号（快速来回切时尤其明显）。
   useEffect(() => {
-    load();
+    platformEpochRef.current += 1;
+    setAccounts([]);
+    setCurrentId(null);
+    setPaths(null);
+    setAccountView({ orderMode: "lastUsed" });
+    setSessions([]);
+    setSessionConflicts([]);
+    setConflictResolutions({});
     setSelectedIds(new Set());
-  }, [load]);
+    setPlatformLoading(true);
+    void load();
+  }, [platform, load]);
 
   // 会话加载（关键字防抖 300ms，与参考实现一致）
   const loadSessions = useCallback(async () => {
+    const epoch = platformEpochRef.current;
     setSessionsBusy(true);
     try {
       const list = await invoke<BuddySessionRecord[]>("buddy_list_sessions", {
@@ -1056,13 +1079,15 @@ export default function BuddyPanel() {
         keyword: sessionKeyword || null,
         status: sessionStatus || null,
       });
+      if (platformEpochRef.current !== epoch) return;
       setSessions(list ?? []);
       // 加载后默认展开全部分组
       setExpandedGroups(new Set((list ?? []).map((s) => s.cwd)));
     } catch (e) {
+      if (platformEpochRef.current !== epoch) return;
       setMessage({ ok: false, text: String(e) });
     } finally {
-      setSessionsBusy(false);
+      if (platformEpochRef.current === epoch) setSessionsBusy(false);
     }
   }, [platform, sessionKeyword, sessionStatus]);
 
@@ -1072,22 +1097,28 @@ export default function BuddyPanel() {
 
   // 冲突处理结果：会话明细要显示「处理过了」而不是初始状态，所以与冲突列表一起拉
   const loadConflictResolutions = useCallback(async () => {
+    const epoch = platformEpochRef.current;
     try {
       const list = await invoke<BuddyConflictResolution[]>("buddy_list_conflict_resolutions", { platform });
+      if (platformEpochRef.current !== epoch) return;
       const map: Record<string, BuddyConflictResolution> = {};
       for (const r of list) map[r.id] = r;
       setConflictResolutions(map);
     } catch {
+      if (platformEpochRef.current !== epoch) return;
       setConflictResolutions({});
     }
   }, [platform]);
 
   // 待裁决冲突：进入面板 / 切换平台 / 切换账号后都拉一次（切换时冲突落盘，之后随时可处理）
   const loadConflicts = useCallback(async () => {
+    const epoch = platformEpochRef.current;
     try {
       const list = await invoke<BuddyPendingConflict[]>("buddy_list_session_conflicts", { platform });
+      if (platformEpochRef.current !== epoch) return;
       setSessionConflicts(list);
     } catch {
+      if (platformEpochRef.current !== epoch) return;
       // 拉取失败不打扰用户：横幅与处理入口都依赖这份列表，失败时按「无冲突」降级
       setSessionConflicts([]);
     }
@@ -1431,7 +1462,7 @@ export default function BuddyPanel() {
     []
   );
 
-  /** `https://www.codebuddy.cn` → `www.codebuddy.cn`（徽标只显示 host，scheme 太占地方） */
+  /** `https://www.codebuddy.cn` → `www.codebuddy.cn`（tooltip 里去掉 scheme，读起来更短） */
   const shortOrigin = (origin?: string | null) => {
     const v = (origin || "").trim();
     if (!v) return "?";
@@ -2179,6 +2210,7 @@ export default function BuddyPanel() {
             <button
               key={p.id}
               onClick={() => setPlatform(p.id)}
+              aria-busy={platform === p.id && platformLoading}
               className={`px-2.5 py-1 rounded-md text-caption whitespace-nowrap shrink-0 transition cursor-pointer ${
                 platform === p.id
                   ? "bg-[var(--module-accent)]/25 text-white font-semibold"
@@ -2187,6 +2219,9 @@ export default function BuddyPanel() {
             >
               <span className="mr-1">{p.emoji}</span>
               {p.label}
+              {platform === p.id && platformLoading && (
+                <Loader2 className="inline-block w-3 h-3 ml-1 animate-spin align-[-1px]" />
+              )}
             </button>
           ))}
         </div>
@@ -2397,7 +2432,9 @@ export default function BuddyPanel() {
         <>
           <div className="flex items-center gap-2 px-4 py-1.5 border-b border-white/5 flex-shrink-0 text-tiny">
             <span className="text-slate-500">
-              {t("buddy.count", { count: accounts.length, platform: platformLabel })}
+              {platformLoading
+                ? t("buddy.accountsLoading")
+                : t("buddy.count", { count: accounts.length, platform: platformLabel })}
             </span>
             {globalQuota.hasData && (
               <span className="flex items-center gap-1 text-slate-500">
@@ -2418,8 +2455,9 @@ export default function BuddyPanel() {
             <select
               value={accountView.orderMode}
               onChange={(e) => void changeOrderMode(e.target.value)}
+              disabled={platformLoading}
               title={t("buddy.sortBy")}
-              className="bg-black/30 border border-white/10 rounded px-1 py-0.5 text-tiny text-slate-300 outline-none cursor-pointer"
+              className="bg-black/30 border border-white/10 rounded px-1 py-0.5 text-tiny text-slate-300 outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <option value="lastUsed">{t("buddy.sortDefault")}</option>
               <option value="quota">{t("buddy.sortQuota")}</option>
@@ -2458,7 +2496,7 @@ export default function BuddyPanel() {
             </button>
             <button
               onClick={importFromJson}
-              disabled={busy}
+              disabled={busy || platformLoading}
               className={TOOL_BTN}
               title={t("buddy.importJson")}
             >
@@ -2543,24 +2581,39 @@ export default function BuddyPanel() {
             </div>
           )}
 
-          <div className="flex-1 overflow-auto">
-            {accounts.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-3 p-6">
-                <Users className="w-10 h-10 text-slate-600" />
-                <p className="text-body">{t("buddy.noAccounts")}</p>
-                <p className="text-tiny text-slate-600 max-w-sm text-center">{t("buddy.noAccountsHint")}</p>
-                <button
-                  onClick={() => {
-                    setAddMode("oauth");
-                    setOauth(null);
-                    setTokenInput("");
-                    setShowAdd(true);
-                  }}
-                  className="mt-1 px-3 py-1.5 rounded-ctl text-caption ui-btn-primary text-white font-semibold cursor-pointer transition"
-                >
-                  {t("buddy.addAccount")}
-                </button>
+          <div className="flex-1 overflow-auto relative">
+            {/* 平台切换遮罩：加载完成前挡住整张表（含行内按钮），避免误点旧平台的账号行 */}
+            {platformLoading && (
+              <div
+                className="absolute inset-0 z-30 flex items-center justify-center bg-slate-950/80 backdrop-blur-[1px]"
+                aria-live="polite"
+                aria-busy="true"
+              >
+                <div className="flex items-center gap-2 text-caption text-slate-300">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  {t("buddy.accountsLoading")}
+                </div>
               </div>
+            )}
+            {accounts.length === 0 ? (
+              platformLoading ? null : (
+                <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-3 p-6">
+                  <Users className="w-10 h-10 text-slate-600" />
+                  <p className="text-body">{t("buddy.noAccounts")}</p>
+                  <p className="text-tiny text-slate-600 max-w-sm text-center">{t("buddy.noAccountsHint")}</p>
+                  <button
+                    onClick={() => {
+                      setAddMode("oauth");
+                      setOauth(null);
+                      setTokenInput("");
+                      setShowAdd(true);
+                    }}
+                    className="mt-1 px-3 py-1.5 rounded-ctl text-caption ui-btn-primary text-white font-semibold cursor-pointer transition"
+                  >
+                    {t("buddy.addAccount")}
+                  </button>
+                </div>
+              )
             ) : (
               <div
                 style={{
@@ -2627,6 +2680,18 @@ export default function BuddyPanel() {
                   const quota = summarizeQuota(parseQuotaItems(acc.quotaRaw));
                   const planBadge = getPlanBadge(acc);
                   const cellEditingAcc = editingCell && editingCell.accId === acc.id ? editingCell : null;
+                  // 认证域提示统一在这里生成：账号列只放一个圆点，悬停才看域名。
+                  const originTip = acc.authOrigin
+                    ? acc.authOriginMatches === false
+                      ? t("buddy.authOriginMismatchTip", {
+                          origin: shortOrigin(acc.authOrigin),
+                          client: shortOrigin(acc.platformAuthOrigin),
+                        })
+                      : t("buddy.authOriginMatchTip", {
+                          origin: shortOrigin(acc.authOrigin),
+                          client: shortOrigin(acc.platformAuthOrigin),
+                        })
+                    : undefined;
                   return (
                     <div
                       key={acc.id}
@@ -2672,30 +2737,25 @@ export default function BuddyPanel() {
                           {t(`buddy.plan.${planBadge.toLowerCase()}`, { defaultValue: planBadge })}
                         </span>
                         {/* 「当前」不再占账号列的位置：整行有绿色描边（见行的 className） */}
-                        <span className="font-semibold text-white truncate max-w-[150px]" title={acc.email}>{displayName(acc)}</span>
-                        {/* 认证域徽标：绿=与客户端同域；琥珀=跨域（切号时会把 auth.domain 对齐到客户端域，实测可用） */}
+                        {/* 认证域：只留一个同色圆点（绿=与客户端同域；琥珀=跨域）。
+                            完整域名太长，会把账号名挤掉；悬停圆点才显示，不占列宽。 */}
                         {acc.authOrigin && (
+                          // 外层 12px 命中区、内层 6px 圆点：点本身够小不占位，悬停却容易命中
+                          // （直接给 6px 的 span 加 title，鼠标得精准停在那个点上才看得到域名）
                           <span
-                            title={
-                              acc.authOriginMatches === false
-                                ? t("buddy.authOriginMismatchTip", {
-                                    origin: shortOrigin(acc.authOrigin),
-                                    client: shortOrigin(acc.platformAuthOrigin),
-                                  })
-                                : t("buddy.authOriginMatchTip", {
-                                    origin: shortOrigin(acc.authOrigin),
-                                    client: shortOrigin(acc.platformAuthOrigin),
-                                  })
-                            }
-                            className={`inline-flex items-center text-micro px-1 py-0.5 rounded border flex-shrink-0 ${
-                              acc.authOriginMatches === false
-                                ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
-                                : "bg-emerald-500/15 text-emerald-300 border-emerald-500/25"
-                            }`}
+                            title={originTip}
+                            role="img"
+                            aria-label={originTip}
+                            className="inline-flex h-3 w-3 flex-shrink-0 items-center justify-center cursor-help"
                           >
-                            {shortOrigin(acc.authOrigin)}
+                            <span
+                              className={`h-1.5 w-1.5 rounded-full ${
+                                acc.authOriginMatches === false ? "bg-amber-400" : "bg-emerald-400"
+                              }`}
+                            />
                           </span>
                         )}
+                        <span className="font-semibold text-white truncate max-w-[150px]" title={acc.email}>{displayName(acc)}</span>
                       </div>
                       {/* 积分：构成条（一段一方块，块内是剩余天数）+ 右侧剩余总额 —— 填充列 */}
                       <div
@@ -2820,10 +2880,7 @@ export default function BuddyPanel() {
                           className={ACC_BTN}
                           title={
                             acc.authOriginMatches === false
-                              ? t("buddy.authOriginMismatchTip", {
-                                  origin: shortOrigin(acc.authOrigin),
-                                  client: shortOrigin(acc.platformAuthOrigin),
-                                })
+                              ? originTip
                               : t("buddy.switch")
                           }
                         >
