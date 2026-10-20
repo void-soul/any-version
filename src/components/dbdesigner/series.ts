@@ -14,7 +14,11 @@
 // `groupByForeignKey` 保留下来是因为**回归测试拿它当对照实现**：证明「整理选中」
 // 用的集合比「整个外键连通分量」小 —— 那正是这条模块存在的由来。
 
-import type { DbDesignDocument, DbDesignNode, DbDesignRelation } from "./types";
+import {
+  DEFAULT_GRAPH_DEPTH, GRAPH_DEPTHS, clampGraphDepth, graphScope,
+  type GraphDepth, type GraphScope,
+} from "../../utils/graphScope";
+import type { DbDesignDocument, DbDesignNode } from "./types";
 
 /**
  * 按外键连通分量把表分组，返回的每个组内节点必然互相引用得到。
@@ -128,107 +132,42 @@ export function groupByPrefix(
   return [...byRoot.values()];
 }
 
-/** 高亮层级的合法范围：1 = 只直接上级/下级，5 = 五跳以内 */
-export const HIGHLIGHT_DEPTHS = [1, 2, 3, 4, 5] as const;
-export type HighlightDepth = (typeof HIGHLIGHT_DEPTHS)[number];
-export const DEFAULT_HIGHLIGHT_DEPTH: HighlightDepth = 1;
+/**
+ * 高亮层级的合法范围：1 = 只直接上级/下级，5 = 五跳以内。
+ *
+ * 定义只留一份（`utils/graphScope`）：三个画布共用同一个滑块，语义不许分叉。
+ * 这里 re-export，设计器侧已有的 import 不用改。
+ */
+export const HIGHLIGHT_DEPTHS = GRAPH_DEPTHS;
+export type HighlightDepth = GraphDepth;
+export const DEFAULT_HIGHLIGHT_DEPTH: HighlightDepth = DEFAULT_GRAPH_DEPTH;
 
 /** 把任意输入（localStorage 字符串等）收敛成合法层级，非法值回落默认 */
-export function clampHighlightDepth(v: unknown): HighlightDepth {
-  const n = typeof v === "number" ? v : Number(v);
-  return (HIGHLIGHT_DEPTHS as readonly number[]).includes(n)
-    ? (n as HighlightDepth)
-    : DEFAULT_HIGHLIGHT_DEPTH;
-}
+export const clampHighlightDepth = clampGraphDepth;
 
 /**
  * 选中表 + 与它有外键关系的表（**无向**，默认一跳；`depth` 可调到五跳）。
  *
- * 这就是界面上高亮的那批表，也就是「整理选中」要整理的那批表 —— 两者必须
- * **同一个定义**：曾经高亮用一份内联写法、整理用 `groupByForeignKey` 的整个连通
- * 分量，两边各写各的，于是一份「所有表外键连通」的业务设计里，
- * 高亮看着 6 张、实际整理了 22 张，提示条如实报「已整理 22 张表」——
- * 标签、提示与实现说的不是同一件事。
- *
- * 层级调大后「整理选中」的范围跟着变（用户确认）：高亮什么就整理什么，两边
- * 永远不会对不上。代价是层级=5 时可能一次重排整份设计 —— 这正是「整理选中」
- * 不弹确认的前提（它只改坐标、点一次自动布局就能回来）。
+ * 实现只有一份（`utils/graphScope`）：设计器、思维导图、JSON 画布共用同一套 BFS
+ * 与层级收敛。这里只把「表 + 关系」翻译成通用图（关系 id 直接当边 id），
+ * 所以三个画布的「高亮什么 / 点亮哪些线」不会各算一遍再分叉。
  *
  * 刻意**不是**连通分量：连通分量会把「同系列但你没选中的表」一起卷进来，
  * 而用户要的是「忽略其他所有节点，只对齐选中的」。
- *
- * 用 BFS 而不是递归：外键关系可能成环，递归会无限深；BFS 天然按跳数分层。
  */
-/**
- * 高亮层级的**唯一口径**：一次 BFS 同时得出「亮哪些表」与「亮哪些连线」。
- *
- * 层级 = **从选中表出发能走多远**。所以亮的是 d 步以内**实际走过**的那些连线，
- * 而不是「两端只要有一端落在 d 跳集合里就算」。两者差在**同层内部的横向边**：
- * 选中 x，一跳邻居 a，a 下面挂着 c、d（都是 2 跳），而 c 与 d 之间也有一条线 ——
- * 集合口径会点亮 c–d，可从 x 出发要走 x→a→c→d 第三步才到，层级=2 时它不该亮。
- * 多出来的这类线，两端都只是远房亲戚，屏幕上就是**线亮着、表却暗着**（用户实测）。
- *
- * 三个口径都从这里派生（`relatedTableIds` / `relatedTableHops` / `relatedEdgeIds`），
- * 「高亮什么」与「点亮哪些线」必须是同一次遍历的产物 —— 分头各算一遍，
- * 迟早会在某张图上分叉，而分叉的表现是纯观感问题，不会报错、只会让人以为哪里坏了。
- *
- * 用 BFS 而不是递归：外键关系可能成环，递归会无限深；BFS 天然按跳数分层。
- */
-export interface HighlightScope {
-  /** 每张表相差多少跳（选中表自己 = 0）。不在表里的 id 查不到。 */
-  hops: Map<string, number>;
-  /** d 步以内 BFS 实际走过的关系 id —— 连线高亮的唯一来源。 */
-  edgeIds: Set<string>;
-}
+export type HighlightScope = GraphScope;
 
 export function highlightScope(
   doc: DbDesignDocument,
   selectedId: string | null,
   depth: number = DEFAULT_HIGHLIGHT_DEPTH,
 ): HighlightScope {
-  const hops = new Map<string, number>();
-  const edgeIds = new Set<string>();
-  if (!selectedId) return { hops, edgeIds };
-  // 只在**真实存在的表**之间连边：指向已删除节点的悬空关系若不滤掉，
-  // 悬空 id 会被当成表加进高亮集 —— 画布上没有这张表，于是它既点亮不了、
-  // 又让「高亮 N 张」的数字对不上实际（实测：加进 zz / yy 两个不存在的节点）。
-  const exists = new Set(doc.nodes.map((n) => n.id));
-  if (!exists.has(selectedId)) return { hops, edgeIds };
-  hops.set(selectedId, 0);
-  // 层数交给 clampHighlightDepth 收敛：非法值（0 / 负数 / 99 / 字符串）一律**回落默认 1 跳**，
-  // 而不是当「最深」—— 理由是回落 1 最安全：传 0 不该让高亮整个消失，而传 99 时
-  // 用户想要的多半是「全都要」，但那份结果不该由一个非法输入默默决定。
-  const maxHops = clampHighlightDepth(depth);
-  /** 节点 id → 从它连出去的关系（无向：关系两端各存一次） */
-  const adj = new Map<string, DbDesignRelation[]>();
-  const link = (r: DbDesignRelation, at: string) => {
-    const list = adj.get(at);
-    if (list) list.push(r);
-    else adj.set(at, [r]);
-  };
-  for (const r of doc.relations) {
-    if (!exists.has(r.from.node) || !exists.has(r.to.node)) continue;
-    link(r, r.from.node);
-    link(r, r.to.node);
-  }
-  let frontier = [selectedId];
-  for (let hop = 1; hop <= maxHops && frontier.length > 0; hop++) {
-    const next: string[] = [];
-    for (const id of frontier) {
-      for (const r of adj.get(id) ?? []) {
-        // 关系存了两遍（from 侧、to 侧），对端就是「不是 id 的那一头」
-        const nb = r.from.node === id ? r.to.node : r.from.node;
-        // 先记边再判已访问：走到已访问的邻居那条线**也是**从选中表走得到的路，
-        // 仍属于本层级范围（x-a-c-d 里 x-a 那条会被 a 再走一次，不该漏）。
-        edgeIds.add(r.id);
-        if (hops.has(nb)) continue;
-        hops.set(nb, hop);
-        next.push(nb);
-      }
-    }
-    frontier = next;
-  }
-  return { hops, edgeIds };
+  return graphScope(
+    doc.nodes.map((n) => n.id),
+    doc.relations.map((r) => ({ id: r.id, source: r.from.node, target: r.to.node })),
+    selectedId,
+    depth,
+  );
 }
 
 /**
