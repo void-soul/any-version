@@ -609,6 +609,7 @@ pub fn run() {
             commands::port::get_reserved_ports,
             commands::port::add_reserved_ports,
             commands::port::delete_reserved_ports,
+            commands::port::protect_port_from_reservation,
             commands::network::net_connections,
             commands::network::ping_host,
             commands::pkg::get_global_packages,

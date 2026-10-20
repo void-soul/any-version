@@ -359,6 +359,148 @@ pub fn delete_reserved_ports(start: i32, count: i32, protocol: Option<String>) -
     run_netsh_range("delete", protocol.as_deref(), start, count)
 }
 
+/// 执行 `net stop|start <service>`，返回 (是否成功, stdout + stderr)。
+fn run_net_service(verb: &str, service: &str) -> (bool, String) {
+    let cmdline = format!("chcp 65001 >nul & net {} {}", verb, service);
+    match super::hidden_cmd::hidden_cmd("cmd")
+        .args(&["/c", &cmdline])
+        .output()
+    {
+        Ok(out) => {
+            let text = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            (out.status.success(), text.trim().to_string())
+        }
+        Err(e) => (false, format!("执行 net {} {} 失败: {}", verb, service, e)),
+    }
+}
+
+/// `net stop winnat` 报这些时说明服务本来就没在跑，可以继续（不算失败）。
+fn is_winnat_already_stopped(msg: &str) -> bool {
+    let lower = msg.to_lowercase();
+    lower.contains("未启动")
+        || lower.contains("没有启动")
+        || lower.contains("尚未启动")
+        || lower.contains("服务名无效")
+        || lower.contains("not been started")
+        || lower.contains("not started")
+        || lower.contains("service name is invalid")
+}
+
+/// `net start winnat` 报这些时说明服务已经在跑（错误码 1056），视为已恢复。
+fn is_winnat_already_running(msg: &str) -> bool {
+    let lower = msg.to_lowercase();
+    lower.contains("已经启动")
+        || lower.contains("已在运行")
+        || lower.contains("already been started")
+        || lower.contains("already running")
+}
+
+/// WinNAT 服务当前是否处于 RUNNING 状态（`sc query winnat`）。
+fn winnat_is_running() -> bool {
+    match super::hidden_cmd::hidden_cmd("cmd")
+        .args(&["/c", "chcp 65001 >nul & sc query winnat"])
+        .output()
+    {
+        Ok(out) => {
+            let text = String::from_utf8_lossy(&out.stdout).to_uppercase();
+            text.contains("RUNNING")
+        }
+        Err(_) => false,
+    }
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct PortProtectResult {
+    pub port: i32,
+    pub protocol: String,
+    /// WinNAT 是否真的被停掉了（原本就没运行时为 false）
+    pub winnat_stopped: bool,
+    /// WinNAT 是否已恢复运行
+    pub winnat_started: bool,
+    /// 各步骤的原始输出，便于排查
+    pub detail: String,
+}
+
+/// 禁止某个端口被系统 / WinNAT 预留占用：把端口写进 Windows 排除端口范围
+/// （`netsh ... add excludedportrange`），这样动态预留（Hyper-V / WSL / Docker）就再也抢不走它。
+///
+/// WinNAT 运行时会把已占用的段算进动态排除列表，此时直接 add 会被拒绝，
+/// 所以顺序与手工排障一致：`net stop winnat` → `netsh add excludedportrange` → `net start winnat`。
+/// 若 WinNAT 原本没在跑则跳过停/启（不去启动用户本来没开的服务），并在 detail 里说明。
+/// **需要管理员权限。**
+#[tauri::command]
+pub fn protect_port_from_reservation(
+    port: i32,
+    protocol: Option<String>,
+) -> Result<PortProtectResult, String> {
+    let proto = normalize_protocol(protocol.as_deref())?;
+    validate_range(port, 1)?;
+
+    if !super::env::is_admin() {
+        return Err(
+            "需要管理员权限：请以管理员身份运行 AnyVersion 后再禁止端口被预留".to_string(),
+        );
+    }
+
+    let mut detail = String::new();
+    let was_running = winnat_is_running();
+    let mut stopped = false;
+
+    if was_running {
+        let (ok, msg) = run_net_service("stop", "winnat");
+        detail.push_str(&format!(
+            "net stop winnat -> {}\n",
+            if msg.is_empty() { "(无输出)" } else { msg.as_str() }
+        ));
+        if !ok && !is_winnat_already_stopped(&msg) {
+            return Err(format!(
+                "停止 WinNAT 服务失败，已中止（未修改端口排除范围）：{}",
+                msg
+            ));
+        }
+        stopped = ok;
+    } else {
+        detail.push_str("WinNAT 服务未运行，跳过 net stop winnat\n");
+    }
+
+    // WinNAT 已停 → 它的动态预留段已释放，此时 add 才不会被"与现有排除范围重叠"挡住
+    let add_result = run_netsh_range("add", Some(proto), port, 1);
+
+    let mut started = false;
+    if was_running {
+        let (ok, msg) = run_net_service("start", "winnat");
+        detail.push_str(&format!(
+            "net start winnat -> {}\n",
+            if msg.is_empty() { "(无输出)" } else { msg.as_str() }
+        ));
+        started = ok || is_winnat_already_running(&msg);
+    }
+
+    if let Err(e) = add_result {
+        return Err(format!(
+            "{}{}",
+            e,
+            if was_running && !started {
+                "（WinNAT 未能恢复运行，请手动执行 `net start winnat`）"
+            } else {
+                ""
+            }
+        ));
+    }
+
+    Ok(PortProtectResult {
+        port,
+        protocol: proto.to_string(),
+        winnat_stopped: stopped,
+        winnat_started: started || !was_running,
+        detail: detail.trim_end().to_string(),
+    })
+}
+
 #[tauri::command]
 pub fn check_port_status(port_str: String) -> Result<PortStatus, String> {
     let port = port_str.parse::<i32>().map_err(|_| "端口号无效".to_string())?;

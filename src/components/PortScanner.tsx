@@ -28,6 +28,14 @@ interface ReservedRange {
   managed?: boolean;
 }
 
+interface ProtectResult {
+  port: number;
+  protocol: string;
+  winnat_stopped: boolean;
+  winnat_started: boolean;
+  detail: string;
+}
+
 export default function PortScanner() {
   const { t } = useTranslation();
   const [portInput, setPortInput] = useState("");
@@ -42,6 +50,39 @@ export default function PortScanner() {
   const [rangeStart, setRangeStart] = useState("");
   const [rangeCount, setRangeCount] = useState("");
   const [rangeBusy, setRangeBusy] = useState(false);
+  // 禁止端口被预留：单个端口 → 停 WinNAT → netsh 排除 → 启 WinNAT
+  const [protectPort, setProtectPort] = useState("");
+  const [protecting, setProtecting] = useState(false);
+  const [protectDetail, setProtectDetail] = useState<string | null>(null);
+  const [protectMsg, setProtectMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const handleProtect = async () => {
+    const port = Number(protectPort.trim());
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      setProtectMsg({ ok: false, text: t("portscan.rangeInvalid") });
+      return;
+    }
+    if (!confirm(t("portscan.protectConfirm", { port }))) return;
+    setProtecting(true);
+    setProtectMsg(null);
+    setProtectDetail(null);
+    try {
+      const res = await invoke<ProtectResult>("protect_port_from_reservation", {
+        port,
+        protocol: "tcp",
+      });
+      setProtectMsg({
+        ok: true,
+        text: t(res.winnat_started ? "portscan.protectDone" : "portscan.protectDoneNoNat", { port }),
+      });
+      setProtectDetail(res.detail || null);
+      setReservedRanges(await invoke<ReservedRange[]>("get_reserved_ports"));
+    } catch (e: any) {
+      setProtectMsg({ ok: false, text: String(e) });
+    } finally {
+      setProtecting(false);
+    }
+  };
 
   const runRange = async (action: "add" | "delete") => {
     const start = Number(rangeStart.trim());
@@ -244,6 +285,36 @@ export default function PortScanner() {
           </button>
         </div>
 
+        {/* 禁止被预留：单个端口 → net stop winnat → netsh 排除 → net start winnat */}
+        <div className="mt-3 shrink-0 rounded-card border border-amber-500/15 bg-amber-500/5 p-2.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="number"
+              value={protectPort}
+              onChange={(e) => setProtectPort(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void handleProtect()}
+              placeholder={t("portscan.protectPh")}
+              className="w-28 glass-input px-2 py-1 text-tiny"
+            />
+            <button
+              onClick={() => void handleProtect()}
+              disabled={protecting || !protectPort.trim()}
+              className="px-2.5 py-1 rounded-md text-tiny font-semibold bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 cursor-pointer disabled:opacity-50"
+            >
+              {protecting ? t("portscan.protecting") : t("portscan.protect")}
+            </button>
+            <span className="flex-1 min-w-[8rem] text-micro text-slate-500">{t("portscan.protectHint")}</span>
+          </div>
+          {protectMsg && (
+            <p className={`mt-1.5 text-micro ${protectMsg.ok ? "text-emerald-400" : "text-red-400"}`}>
+              {protectMsg.text}
+            </p>
+          )}
+          {protectDetail && (
+            <pre className="mt-1.5 max-h-24 overflow-y-auto text-micro font-mono text-slate-500 whitespace-pre-wrap">{protectDetail}</pre>
+          )}
+        </div>
+
         {/* 管理：添加 / 删除一段保留端口（netsh excludedportrange，需要管理员权限） */}
         {reservedRanges && (
           <div className="mt-3 shrink-0 flex flex-wrap items-center gap-2">
@@ -289,6 +360,7 @@ export default function PortScanner() {
                     <td className="py-1.5 pr-3">{t("portscan.endPort")}</td>
                     <td className="py-1.5 pr-3">{t("portscan.portCount")}</td>
                     <td className="py-1.5 pr-3">{t("portscan.relatedProc")}</td>
+                    <td className="py-1.5 pr-3">{t("portscan.source")}</td>
                     <td className="py-1.5">{t("portscan.op")}</td>
                   </tr>
                 </thead>
@@ -302,6 +374,11 @@ export default function PortScanner() {
                       <td className="py-1 font-mono">{r.end}</td>
                       <td className="py-1 font-mono text-slate-500">{r.end - r.start + 1}</td>
                       <td className="py-1 text-slate-400">{r.process || "-"}</td>
+                      <td className="py-1">
+                        <span className={r.managed ? "text-slate-500" : "text-amber-300"}>
+                          {r.managed ? t("portscan.srcDynamic") : t("portscan.srcManual")}
+                        </span>
+                      </td>
                       <td className="py-1">
                         <button
                           onClick={() => void deleteRow(r)}
