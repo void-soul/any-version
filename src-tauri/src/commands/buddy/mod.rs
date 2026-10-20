@@ -658,9 +658,6 @@ pub async fn buddy_switch_account(
             }
             BuddyPlatform::CodebuddyCn => codebuddy_cn::switch_account(&account_id)?,
         };
-        // 切换成功后持久化当前账号（复刻 provider_current_state，供前端稳定标识）
-        let _ = store::set_current_account_id(platform, Some(&account_id));
-
         // 3.5) **延时复查**：等客户端落定后再确认登录态确实是我们写的。
         //     客户端处在退出/启动窗口时会用缓存会话回写覆盖（真机 2026-10-17 踩过），
         //     那种情况必须报错而不是返回成功 —— 静默成功比失败更糟。
@@ -668,6 +665,11 @@ pub async fn buddy_switch_account(
             eprintln!("[Buddy Switch] 切号未生效：{problem}");
             return Err(problem);
         }
+
+        // 复查通过才算切号成功，此时才持久化当前账号（复刻 provider_current_state）。
+        // 先写的话，复查失败返回 Err 时「当前账号」已经是新账号了 ——
+        // 刷新后面板会显示一个并未生效的当前账号。
+        let _ = store::set_current_account_id(platform, Some(&account_id));
 
         // 4) 切换后**不自动启动客户端**（两个平台一致）。
         //    切换时客户端本来就必须是「已退出」状态（见上面 ensure_not_running），

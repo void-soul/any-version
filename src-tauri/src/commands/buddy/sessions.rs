@@ -570,7 +570,14 @@ fn delete_codebuddy_sessions_at(
 ) {
     let files_ok = match extension_data_dir {
         Some(dir) => delete_session_files_in_extension(dir, ids, report),
-        None => true,
+        None => {
+            // 定位不到扩展数据目录时，一行正文都没删 —— 不能当成删干净了
+            report.errors.push(
+                "未能定位 CodeBuddy 扩展数据目录，会话正文未删除，已保留数据库记录以便重试"
+                    .to_string(),
+            );
+            false
+        }
     };
     if !files_ok {
         report
@@ -951,6 +958,16 @@ fn delete_workbuddy_session_files(data_root: &Path, id: &str) -> Result<usize, S
     }
 }
 
+/// 会话缓存条目里标识会话的字段名：客户端不同版本用过不同名字。
+/// 只认 `conversationId` 时，字段名一换就「一条都匹配不上」→ 静默返回 0。
+const CACHE_ID_FIELDS: [&str; 3] = ["conversationId", "sessionId", "id"];
+
+fn cache_entry_id(entry: &Value) -> Option<&str> {
+    CACHE_ID_FIELDS
+        .iter()
+        .find_map(|key| entry.get(*key).and_then(Value::as_str))
+}
+
 /// 从 `<data_root>/app/sessions.json` 移除被删会话的缓存条目，返回移除条数。
 ///
 /// 客户端把会话清单缓存在这里；只删库行不清缓存时，列表会被缓存"复活"。
@@ -980,17 +997,26 @@ fn remove_workbuddy_session_cache(data_root: &Path, ids: &[String]) -> Result<us
     } else {
         return Err("会话缓存格式不受支持，未改写缓存".to_string());
     };
+    let mut unrecognized = 0usize;
     let kept: Vec<Value> = entries
         .iter()
         .filter(|entry| {
-            let cid = entry
-                .get("conversationId")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
+            let Some(cid) = cache_entry_id(entry) else {
+                unrecognized += 1;
+                return true;
+            };
             !ids.iter().any(|id| id == cid)
         })
         .cloned()
         .collect();
+    // 所有条目都没有可识别的 id 字段 → 缓存格式与预期不符。此时返回 Ok(0) 等于
+    // 「缓存里没有这条会话」，上层照常删数据库行，会话下次又会被缓存带回来。
+    if !entries.is_empty() && unrecognized == entries.len() {
+        return Err(format!(
+            "会话缓存格式与预期不符（条目里找不到 {} 任一字段），未改写缓存",
+            CACHE_ID_FIELDS.join(" / ")
+        ));
+    }
     let removed = entries.len() - kept.len();
     if removed == 0 {
         return Ok(0);
@@ -1140,8 +1166,17 @@ fn delete_session_files_in_extension(
 ) -> bool {
     use super::session_transfer::codebuddy as transfer;
     let mut ok = true;
-    let Ok(outer_entries) = std::fs::read_dir(extension_data_dir) else {
-        return true;
+    let outer_entries = match std::fs::read_dir(extension_data_dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            // 读不到目录 ≠ 删干净了：返回 false 让上层保留数据库记录。
+            // 反过来说「成功」会留下「列表里没了、磁盘上还在」的孤儿正文。
+            report.errors.push(format!(
+                "读取 CodeBuddy 扩展数据目录失败（{}），已保留数据库记录以便重试",
+                e
+            ));
+            return false;
+        }
     };
     for outer in outer_entries.flatten() {
         let outer_path = outer.path();
@@ -1156,8 +1191,14 @@ fn delete_session_files_in_extension(
             // 非账号目录（log / tmp / 自定义目录）—— 不是我们的数据，跳过
             continue;
         }
-        let Ok(ide_entries) = std::fs::read_dir(&outer_path) else {
-            continue;
+        let ide_entries = match std::fs::read_dir(&outer_path) {
+            Ok(entries) => entries,
+            Err(e) => {
+                report
+                    .errors
+                    .push(format!("读取账号目录 {} 失败: {}", outer_path.display(), e));
+                continue;
+            }
         };
         for ide_entry in ide_entries.flatten() {
             let ide_path = ide_entry.path();
@@ -1169,8 +1210,16 @@ fn delete_session_files_in_extension(
             if !is_managed_dir(&history_root) {
                 continue;
             }
-        let Ok(workspace_entries) = std::fs::read_dir(&history_root) else {
-            continue;
+        let workspace_entries = match std::fs::read_dir(&history_root) {
+            Ok(entries) => entries,
+            Err(e) => {
+                report.errors.push(format!(
+                    "读取会话目录 {} 失败: {}",
+                    history_root.display(),
+                    e
+                ));
+                continue;
+            }
         };
         for workspace_entry in workspace_entries.flatten() {
             let Ok(metadata) = std::fs::symlink_metadata(workspace_entry.path()) else {
