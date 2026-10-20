@@ -125,6 +125,7 @@
     "lookTitle": "Canvas adjust",
     "lookHighlight": "Highlight strength",
     "lookDepth": "Highlight depth",
+    "lookDepthUnit": "{{count}} hop",
     "lookDim": "Dim strength",
     "lookReset": "Reset",
     "lookCollapse": "Collapse",
@@ -2562,7 +2563,17 @@
     "endPort": "End Port",
     "portCount": "Port Count",
     "relatedProc": "Related Process",
-    "releaseConfirm": "Terminate process {{proc}} (PID: {{pid}}) to release port {{port}}?"
+    "releaseConfirm": "Terminate process {{proc}} (PID: {{pid}}) to release port {{port}}?",
+    "protectPh": "Port",
+    "protect": "Protect from reservation",
+    "protecting": "Working...",
+    "protectHint": "Stop WinNAT → add TCP exclusion range → start WinNAT (WSL / Docker networking briefly drops)",
+    "protectConfirm": "Add port {{port}} to the exclusion range? WinNAT will be restarted, so WSL / Docker networking will briefly drop.",
+    "protectDone": "Port {{port}} is now protected from reservation; WinNAT is running again",
+    "protectDoneNoNat": "Port {{port}} was added to the exclusion range, but WinNAT did not restart - run `net start winnat` manually",
+    "source": "Source",
+    "srcManual": "Exclusion (protected)",
+    "srcDynamic": "Dynamic system"
   },
   "vex": {
     "defaultTitle": "Nothing here yet",
@@ -2812,7 +2823,11 @@
     "expand": "Expand",
     "collapse": "Collapse",
     "copyNode": "Copy node content",
-    "graphTruncated": "Graph tree shows only the first {{count}} nodes"
+    "graphTruncated": "Graph tree shows only the first {{count}} nodes",
+    "autoLayout": "Auto layout",
+    "autoLayoutHint": "Re-lay out the whole graph by hierarchy (parents centred on their children)",
+    "arrangeSelected": "Tidy selected",
+    "arrangeHint": "Align only the highlighted nodes by their parent-child relations; every other node stays put"
   },
   "modelcfg": {
     "nameRequired": "Name cannot be empty",
@@ -3704,6 +3719,15 @@
     "pickImageSticker": "Choose image sticker",
     "readImageFail": "Read image failed: {{err}}",
     "autoLayout": "Auto layout (Ctrl+L)",
+    "arrangeSelected": "Tidy selected",
+    "arrangeHint": "Align only the highlighted nodes by their parent-child relations; every other node stays put",
+    "arrangeDone": "Tidied {{count}} nodes (the highlighted ones)",
+    "aiTurnAdded": "Added {{count}} node(s)",
+    "aiTurnUpdated": "Updated {{count}} node(s)",
+    "aiTurnRemoved": "Removed {{count}} node(s)",
+    "aiTurnMoved": "Moved {{count}} node(s)",
+    "aiTurnNoop": "No node changes this round",
+    "aiTurnTruncated": "Model output was truncated; applied after auto-repair",
     "settingsTitle": "Mindmap settings",
     "settingsHotkeys": "Popup hotkeys",
     "layout": "Layout",
@@ -5187,6 +5211,7 @@
     "textUntitled": "(untitled requirement)",
     "runDone": "Round done: {{count}} view(s) ({{names}}){{failures}}",
     "runFailed": "Run failed",
+    "writing": "Writing…",
     "resultTitle": "Generated {{count}} view(s)",
     "viewReport": "View validation report",
     "askTitle": "AI has a question",
@@ -5660,7 +5685,9 @@
       "clear": "Reset to auto",
       "saved": "Path saved",
       "cleared": "Auto-detection restored"
-    }
+    },
+    "authOriginMatchTip": "Token issuer {origin} matches {client}.",
+    "authOriginMismatchTip": "Cross-issuer account (token issuer {origin}). Switching to {client} aligns the client domain automatically — verified working."
   },
   "thinking": {
     "inProgress": "Thinking… {{count}} chars",

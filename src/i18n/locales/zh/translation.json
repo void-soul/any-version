@@ -125,6 +125,7 @@
     "lookTitle": "画布调整",
     "lookHighlight": "高亮强度",
     "lookDepth": "高亮层级",
+    "lookDepthUnit": "{{count}} 跳",
     "lookDim": "淡化强度",
     "lookReset": "恢复默认",
     "lookCollapse": "收起",
@@ -2568,7 +2569,17 @@
     "endPort": "结束端口",
     "portCount": "端口数",
     "relatedProc": "关联进程",
-    "releaseConfirm": "确定要结束进程 {{proc}} (PID: {{pid}}) 以释放端口 {{port}} 吗？"
+    "releaseConfirm": "确定要结束进程 {{proc}} (PID: {{pid}}) 以释放端口 {{port}} 吗？",
+    "protectPh": "端口号",
+    "protect": "禁止被预留",
+    "protecting": "处理中...",
+    "protectHint": "停 WinNAT → 加入 TCP 排除范围 → 启 WinNAT（WSL / Docker 网络会短暂断开）",
+    "protectConfirm": "确定要把端口 {{port}} 加入排除范围吗？执行期间会重启 WinNAT 服务，WSL / Docker 网络会短暂断开。",
+    "protectDone": "端口 {{port}} 已禁止被预留，WinNAT 已恢复运行",
+    "protectDoneNoNat": "端口 {{port}} 已加入排除范围，但 WinNAT 未能恢复运行，请手动执行 net start winnat",
+    "source": "来源",
+    "srcManual": "排除段（禁止占用）",
+    "srcDynamic": "系统动态保留"
   },
   "vex": {
     "defaultTitle": "这里暂时还空着",
@@ -2818,7 +2829,11 @@
     "expand": "展开",
     "collapse": "折叠",
     "copyNode": "复制节点内容",
-    "graphTruncated": "图形树仅显示前 {{count}} 个节点"
+    "graphTruncated": "图形树仅显示前 {{count}} 个节点",
+    "autoLayout": "自动布局",
+    "autoLayoutHint": "按层级重排整张图（父节点居中于自己的子节点）",
+    "arrangeSelected": "整理选中",
+    "arrangeHint": "只把高亮中的这几个节点按父子关系排齐，其余节点一概不动"
   },
   "modelcfg": {
     "nameRequired": "名称不能为空",
@@ -3704,6 +3719,15 @@
     "pickImageSticker": "选择图片贴纸",
     "readImageFail": "读取图片失败：{{err}}",
     "autoLayout": "自动布局 (Ctrl+L)",
+    "arrangeSelected": "整理选中",
+    "arrangeHint": "只把高亮中的这几个节点按父子关系排齐，其余节点一概不动",
+    "arrangeDone": "已整理 {{count}} 个节点（高亮中的那些）",
+    "aiTurnAdded": "新增 {{count}} 个节点",
+    "aiTurnUpdated": "更新 {{count}} 个节点",
+    "aiTurnRemoved": "删除 {{count}} 个节点",
+    "aiTurnMoved": "移动 {{count}} 个节点",
+    "aiTurnNoop": "本轮没有改动节点",
+    "aiTurnTruncated": "模型输出被截断，已自动修复后落下",
     "settingsTitle": "导图设置",
     "settingsHotkeys": "悬浮窗热键",
     "layout": "布局",
@@ -5115,6 +5139,7 @@
     "textUntitled": "（未命名需求）",
     "runDone": "本轮完成：{{count}} 个视图（{{names}}）{{failures}}",
     "runFailed": "执行失败",
+    "writing": "正在写…",
     "resultTitle": "已生成 {{count}} 个视图",
     "viewReport": "查看校验报告",
     "askTitle": "AI 有个问题",
@@ -5588,7 +5613,9 @@
       "clear": "恢复自动",
       "saved": "路径已保存",
       "cleared": "已恢复自动检测"
-    }
+    },
+    "authOriginMatchTip": "令牌签发域 {origin}，与 {client} 一致。",
+    "authOriginMismatchTip": "跨域账号（令牌签发域 {origin}）。切换到 {client} 时会自动把客户端域对齐，实测可用。"
   },
   "thinking": {
     "inProgress": "思考中… {{count}} 字",
