@@ -214,6 +214,14 @@ export const toolLabel = (t: (k: string, o?: any) => string, tool: string) =>
 
 // ════════════ 会话存储（模块级：最小化/关闭重开不丢对话） ════════════
 
+/**
+ * 会话消息：**按轮次组织，而不是按状态字段**。
+ *
+ * 与数据库设计器的 `chatState.ts` 同一套模型。早先这里只有 `{role, text}`，
+ * 于是「这一轮改了什么」只能拼成一句话塞进正文：用户问「它到底动了几个节点」，
+ * 答案是散在进度流里的，跑完就看不见了。现在一轮 = 一条用户气泡 + 一条助手气泡，
+ * 助手那条的 status / summary / patch / truncated / error 就是这一轮的回执。
+ */
 export interface AgentMessage {
   id: number;
   role: "user" | "agent";
@@ -221,15 +229,75 @@ export interface AgentMessage {
   ts: number;
   /** 落库消息 id：回放历史时带上，用于「从这条分叉」定位分叉点 */
   dbId?: string;
+  /** 助手这一轮的状态（用户气泡没有） */
+  status?: TurnStatus;
+  /** 完成摘要，例如「已生成 3 个视图」 */
+  summary?: string;
+  /** 本轮改动的节点计数（由 Agent 提交的 ops 统计） */
+  patch?: { added: number; updated: number; removed: number; moved: number };
+  /** 模型输出被截断 / 写崩过（后端修复后才落下） */
+  truncated?: boolean;
+  /** 本轮失败原因 */
+  error?: string;
 }
+
+export type TurnStatus = "thinking" | "writing" | "done" | "error";
 
 let agentMsgs: readonly AgentMessage[] = [];
 let agentMsgSeq = 0;
 const agentMsgSubs = new Set<() => void>();
 
+function emitAgentMsgs() {
+  agentMsgSubs.forEach((fn) => fn());
+}
+
 export function pushAgentMessage(role: AgentMessage["role"], text: string, dbId?: string) {
   agentMsgs = [...agentMsgs, { id: ++agentMsgSeq, role, text, ts: Date.now(), dbId }];
-  agentMsgSubs.forEach((fn) => fn());
+  emitAgentMsgs();
+}
+
+/**
+ * 开一轮：用户气泡 + 助手占位气泡。
+ *
+ * 助手气泡先占位而不是等有结果再建：这样进度（思考中 / 正在写）才有地方显示，
+ * 也不会出现「用户说完、AI 那半边空白闪一下」的跳动。
+ */
+export function startAgentTurn(userText: string) {
+  agentMsgs = [
+    ...agentMsgs,
+    { id: ++agentMsgSeq, role: "user", text: userText, ts: Date.now() },
+    { id: ++agentMsgSeq, role: "agent", text: "", ts: Date.now(), status: "thinking" },
+  ];
+  emitAgentMsgs();
+}
+
+/**
+ * 更新**最后一轮**助手气泡。前面几轮是历史，不该被后来的进度覆盖。
+ *
+ * 还没有助手气泡时（例如发请求就失败了）退化成新推一条 —— 调用方不必先判空。
+ */
+export function patchAgentTurn(patch: Partial<Pick<AgentMessage, "text" | "status" | "summary" | "patch" | "truncated" | "error">>) {
+  for (let i = agentMsgs.length - 1; i >= 0; i--) {
+    if (agentMsgs[i].role !== "agent") continue;
+    const out = agentMsgs.slice();
+    out[i] = { ...out[i], ...patch };
+    agentMsgs = out;
+    emitAgentMsgs();
+    return;
+  }
+  pushAgentMessage("agent", patch.text ?? patch.summary ?? patch.error ?? "");
+}
+
+/** 本轮 ops → 计数摘要（渲染只需要「几个节点」，不必把整份 ops 塞进气泡） */
+export function opCounts(ops: readonly { action?: string }[]): NonNullable<AgentMessage["patch"]> {
+  const c = { added: 0, updated: 0, removed: 0, moved: 0 };
+  for (const op of ops) {
+    if (op.action === "add") c.added += 1;
+    else if (op.action === "update") c.updated += 1;
+    else if (op.action === "delete") c.removed += 1;
+    else if (op.action === "move") c.moved += 1;
+  }
+  return c;
 }
 
 export function clearAgentMessages() {
@@ -699,23 +767,46 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
   // 首轮开始运行后自动收起配置区（用户可随时展开修改，供追问轮使用）
   useEffect(() => { if (loading) setCfgOpen(false); }, [loading]);
 
-  // 运行结束（loading true→false）：向会话写入 agent 回执（成功摘要 / 失败原因 / 已取消）
+  // 正文开始流出 → 本轮状态从「思考中」切到「正在写」（每轮只切一次，避免每帧写气泡）
+  const wroteRef = useRef(false);
+  useEffect(() => {
+    if (!loading) { wroteRef.current = false; return; }
+    if (wroteRef.current) return;
+    if (!entries.some((e) => e.step === "stream" && !e.done)) return;
+    wroteRef.current = true;
+    patchAgentTurn({ status: "writing" });
+  }, [loading, entries]);
+
+  // 运行结束（loading true→false）：把回执写进**本轮**那条助手气泡
+  // （摘要 / 改动计数 / 截断 / 失败原因），而不是再推一条新气泡 ——
+  // 一轮一轮看得见，才对得上聊天窗口的预期。
   const prevLoading = useRef(loading);
   useEffect(() => {
     const was = prevLoading.current;
     prevLoading.current = loading;
     if (was === loading || !was) return;
-    const cancelled = mmAiProgressBuffer.snapshot().some((e) => e.step === "cancel");
+    // 本轮改了什么：ops 是后端提交给前端落图的写操作，进度缓冲每轮开始会清空，
+    // 所以这里看到的就是这一轮的全部改动。
+    const ops = entries.filter((e) => e.step === "agentOps").flatMap((e) => e.ops ?? []);
+    const patch = ops.length ? opCounts(ops) : undefined;
+    // 截断：模型输出写崩过、后端修复后才落下 —— 用户得知道这一轮的结果打过补丁
+    const truncated = entries.some((e) => e.step === "repair");
+    const cancelled = entries.some((e) => e.step === "cancel");
     // 取消优先：result 可能仍是上一轮的旧结果，不能落入成功分支
-    if (cancelled) { pushAgentMessage("agent", t("mindmap.aiCancelled")); return; }
-    if (runError) { pushAgentMessage("agent", `${t("agent.runFailed")}：${runError}`); return; }
+    if (cancelled) { patchAgentTurn({ status: "error", text: t("mindmap.aiCancelled"), patch, truncated }); return; }
+    if (runError) { patchAgentTurn({ status: "error", error: `${t("agent.runFailed")}：${runError}`, patch, truncated }); return; }
     if (result) {
       const fails = result.failures.length
         ? t("mindmap.viewFailures", { count: result.failures.length, names: result.failures.map((f) => f.view).join("、") })
         : "";
-      pushAgentMessage("agent", t("agent.runDone", { count: result.documents.length, names: result.documents.map((d) => d.document.name).join("、"), failures: fails }));
+      patchAgentTurn({
+        status: "done",
+        summary: t("agent.runDone", { count: result.documents.length, names: result.documents.map((d) => d.document.name).join("、"), failures: fails }),
+        patch,
+        truncated,
+      });
     }
-  }, [loading, result, runError]);
+  }, [loading, result, runError, entries]);
 
   // 会话/进度变化 → 滚动到底部
   useEffect(() => {
@@ -846,7 +937,7 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
         : mode === "project"
           ? t("agent.userRunProject", { path: projectPath.split(/[\\/]/).pop() ?? projectPath, depth: aiDepth, views: aiViews.length ? aiViews.map((v) => viewLabel(t, v)).join("、") : t("agent.viewsAuto") })
           : textTitle || t("agent.userRunText"));
-    pushAgentMessage("user", bubble);
+    startAgentTurn(bubble);
     setDraft("");
     onRun(txt);
   };
@@ -907,11 +998,38 @@ export function AgentWorkbench(props: AgentWorkbenchProps) {
             </p>
           </div>
         )}
-        {messages.map((m) => (
+        {messages.map((m, i) => (
           <div key={m.id} className={`group flex items-end gap-1 ${m.role === "user" ? "justify-end" : "justify-start"}`}>
             <div className={`max-w-[85%] rounded-ctl px-2.5 py-1.5 text-tiny leading-4 ${m.role === "user" ? "border border-cyan-400/25 bg-cyan-400/10 text-cyan-100" : "border border-white/10 bg-white/[0.04] text-slate-300"}`}>
               {m.text}
-            </div>
+              {/* 本轮回执：**收在这条气泡里**（与数据库设计器同一处理）——
+                  早先成功/失败都再推一条新消息，几轮下来「哪条是哪轮的」全靠猜。
+                  进行中的那条（最后一条且仍在跑）显示思考中，其余按终态显示。 */}
+              {m.role === "agent" && (m.status || m.summary || m.patch || m.error) && (
+                <div className="mt-1 space-y-0.5 border-t border-white/10 pt-1">
+                  {m.status && m.status !== "done" && (
+                    <div className={`flex items-center gap-1 text-micro ${m.status === "error" ? "text-red-300" : "text-slate-400"}`}>
+                      {m.status === "thinking" || (m.status === "writing" && loading && i === messages.length - 1)
+                        ? <><Loader2 className="h-2.5 w-2.5 animate-spin" />{t(m.status === "writing" ? "agent.writing" : "agent.thinking")}</>
+                        : null}
+                    </div>
+                  )}
+                  {m.summary && <div className="text-slate-300">{m.summary}</div>}
+                  {m.patch && (
+                    <div className="text-micro text-slate-400">
+                      {([
+                        m.patch.added > 0 ? t("mindmap.aiTurnAdded", { count: m.patch.added }) : null,
+                        m.patch.updated > 0 ? t("mindmap.aiTurnUpdated", { count: m.patch.updated }) : null,
+                        m.patch.removed > 0 ? t("mindmap.aiTurnRemoved", { count: m.patch.removed }) : null,
+                        m.patch.moved > 0 ? t("mindmap.aiTurnMoved", { count: m.patch.moved }) : null,
+                      ].filter(Boolean).join("，") || t("mindmap.aiTurnNoop"))}
+                    </div>
+                  )}
+                  {m.truncated && <div className="text-micro text-amber-400">{t("mindmap.aiTurnTruncated")}</div>}
+                  {m.error && <div className="text-micro text-red-300">{m.error}</div>}
+                </div>
+              )}
+              </div>
             {/* 从这条分叉：复制该条及之前的历史到新会话（原会话不动） */}
             {onForkSession && m.dbId && !loading && (
               <button type="button" onClick={() => onForkSession(m.dbId as string)}

@@ -11,9 +11,13 @@ import "@xyflow/react/dist/style.css";
 import { CONNECTION_LINE_BY_STYLE, EDGE_STYLES, edgePath, useEdgeStyle, type EdgeStyle } from "../../utils/graphEdgeStyle";
 import EdgeStyleSelect from "../shared/EdgeStyleSelect";
 import {
-  EDGE_FLOW_CLASS, EDGE_GLOW_CLASS, GRAPH_DIMMED_CLASS,
-  edgeGlow, headerTint, highlightColor, neonRing, neonTextGlow,
+  DIM_MAX, EDGE_FLOW_CLASS, EDGE_GLOW_CLASS, HL_BOOST_MAX,
+  dimmedEdgeStroke, dimmedEdgeWidth, dimmedOpacity, edgeGlow, hasVisibleHighlight,
+  headerTint, highlightColor, neonRing, neonTextGlow, relatedEdgeWidth,
+  useGraphDepthPref, useGraphHighlightPrefs,
 } from "../../utils/graphHighlight";
+import { graphScope, hopFade } from "../../utils/graphScope";
+import GraphLookPrefs from "../shared/GraphLookPrefs";
 import { MindmapMarkdown } from "./MindmapMarkdown";
 import { HoverPreview, useHoverPreview } from "../shared/HoverPreview";
 import { MarkdownFieldEditor } from "./MarkdownFieldEditor";
@@ -22,7 +26,7 @@ import VexEmptyState from "../VexEmptyState";
 import {
   AlertTriangle, BarChart3, Brain, File, Folder, FolderOpen, LayoutGrid,
   ScrollText, Sparkles, StickyNote, Image, Trash2, X, Plus, Pencil, Eye,
-  ChevronDown, ChevronRight, ChevronsRight, ChevronLeft, FolderPlus, Search, Maximize2, Minimize2, Code2, FileText, ListTree, RotateCcw, RotateCw, Link2, Square, MessageCircle, LocateFixed,
+  ChevronDown, ChevronRight, ChevronsRight, ChevronLeft, FolderPlus, Search, Maximize2, Minimize2, Code2, FileText, ListTree, RotateCcw, RotateCw, Rows3, Link2, Square, MessageCircle, LocateFixed,
   ArrowLeft, ArrowRight, ArrowUp, ArrowDown, FileDown,
 } from "lucide-react";
 import type { AiConfig } from "../ai/types";
@@ -41,6 +45,7 @@ import {
   clearAgentMessages,
   mmAiProgressBuffer,
   openSourceFile,
+  patchAgentTurn,
   progressText,
   pushAgentMessage,
   fmtNum,
@@ -122,29 +127,34 @@ const ZOOM_HIDE_TEXT = 0.45;
 
 /** 节点卡片数据：标题 + 描述区（文件列表可点击跳转）。
  *  连线不再带文字标签（旧 PortChip 类别胶囊已移除，仅保留连接点色块）。 */
-type FlowNodeData = { node: MindmapNode; selected: boolean; /** 与选中节点直接相连（父 / 子 / 关系边两端）：点亮但比选中弱一档 */ related?: boolean; /** 选中了别人而自己不在其关联范围：压暗，把注意力收到选中项上 */ dimmed?: boolean; hasChildren: boolean; collapsed: boolean; hiddenCount: number; hideText: boolean; parentColor: string | null; targetPosition: Position; sourcePosition: Position; projectRoot: string | null; onSelect: () => void; onOpenDetail: () => void; onToggle: () => void; onAddChild: () => void; onPreview: (e: React.MouseEvent) => void; onPreviewEnd: () => void; onDelete: () => void; onContextMenu: (e: React.MouseEvent) => void; };
+type FlowNodeData = { node: MindmapNode; selected: boolean; /** 与选中节点相连（层级由「高亮层级」偏好决定，默认直接父 / 子）：点亮但比选中弱一档 */ related?: boolean; /** 选中了别人而自己不在其关联范围：压暗，把注意力收到选中项上 */ dimmed?: boolean; /** 高亮强度倍率（画布外观浮层）：环 / 辉光 / 表头底色按它缩放 */ hlBoost?: number; /** 无关项的透明度（按「淡化强度」算出来，不再写死 opacity-35） */ dimOpacity?: number; hasChildren: boolean; collapsed: boolean; hiddenCount: number; hideText: boolean; parentColor: string | null; targetPosition: Position; sourcePosition: Position; projectRoot: string | null; onSelect: () => void; onOpenDetail: () => void; onToggle: () => void; onAddChild: () => void; onPreview: (e: React.MouseEvent) => void; onPreviewEnd: () => void; onDelete: () => void; onContextMenu: (e: React.MouseEvent) => void; };
 
 const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<FlowNodeData>>) {
   const { t } = useTranslation();
-  const { node, selected, related, dimmed, hasChildren, collapsed, hiddenCount, hideText, parentColor, targetPosition, sourcePosition, projectRoot, onSelect, onOpenDetail, onToggle, onAddChild, onPreview, onPreviewEnd, onDelete, onContextMenu } = data;
+  const { node, selected, related, dimmed, hlBoost, dimOpacity, hasChildren, collapsed, hiddenCount, hideText, parentColor, targetPosition, sourcePosition, projectRoot, onSelect, onOpenDetail, onToggle, onAddChild, onPreview, onPreviewEnd, onDelete, onContextMenu } = data;
   const c = effectiveNodeColor(node);
   /**
    * 高亮：跟随节点自己的颜色（思维导图节点天生有色，不像 ER 图还有「没设色」的情况），
    * 档位与三个画布共用 utils/graphHighlight —— 选中更亮、关联稍弱、其余压暗。
+   *
+   * `hlBoost` / `dimOpacity` 来自画布外观浮层：两个滑块一动，这里的环、辉光、
+   * 表头底色与透明度要立刻跟着变，所以它们必须进 data（memo 靠引用比较）。
    */
   const hlLevel = selected ? "select" : related ? "related" : null;
   const hlColor = hlLevel ? highlightColor(c, hlLevel) : "";
-  const hlRing = hlLevel ? neonRing(hlColor, hlLevel) : "";
-  const hlGlow = hlLevel ? neonTextGlow(hlColor, hlLevel) : "";
-  const hlHeader = hlLevel ? headerTint(hlColor, hlLevel) : "";
+  const hlRing = hlLevel ? neonRing(hlColor, hlLevel, hlBoost) : "";
+  const hlGlow = hlLevel ? neonTextGlow(hlColor, hlLevel, hlBoost) : "";
+  const hlHeader = hlLevel ? headerTint(hlColor, hlLevel, hlBoost) : "";
+  /** 无关项压暗：强度 0 时完全不让步（等同不淡化），拉到 200% 才彻底看不见 */
+  const dimStyle = dimmed && (dimOpacity ?? 1) < 0.999 ? { opacity: dimOpacity } : undefined;
   // 折叠态视觉：折叠了子节点的节点要「看起来特殊」——更醒目的边框/辉光 + 琥珀色「折叠徽标」。
   const isFolded = collapsed && hiddenCount > 0;
   // 大幅缩小 → 隐藏全部文字，只留色条与连接点（ComfyUI 式缩略）。
   if (hideText) {
     return (
       // 缩略态也要有高亮/压暗：大幅缩小后一屏几十个节点，不压暗根本看不出选中的是谁
-      <article className={`group relative h-[26px] w-[96px] cursor-pointer rounded-md border shadow-lg transition-shadow ${dimmed ? GRAPH_DIMMED_CLASS : ""}`}
-        style={{ borderColor: hlLevel ? hlColor : `${c}99`, backgroundColor: "var(--color-surface-panel)", boxShadow: hlRing || undefined }} onClick={onSelect} onDoubleClick={(e) => { e.stopPropagation(); onOpenDetail(); }}
+      <article className="group relative h-[26px] w-[96px] cursor-pointer rounded-md border shadow-lg transition-shadow"
+        style={{ ...dimStyle, borderColor: hlLevel ? hlColor : `${c}99`, backgroundColor: "var(--color-surface-panel)", boxShadow: hlRing || undefined }} onClick={onSelect} onDoubleClick={(e) => { e.stopPropagation(); onOpenDetail(); }}
         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu(e); }}>
         <Handle id="in" type="target" position={targetPosition} isConnectable className="!h-3 !w-3 !border-2 !border-surface-panel" style={{ background: parentColor ?? "#64748b" }} />
         <div className="absolute inset-x-1 bottom-0.5 top-0.5 rounded-sm" style={{ background: `linear-gradient(100deg, ${c}66, ${c}14)` }} />
@@ -155,8 +165,9 @@ const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<FlowNodeData>>)
 
   return (
     <article
-      className={`group relative w-[200px] rounded-card border shadow-lg transition-all cursor-pointer ${dimmed ? GRAPH_DIMMED_CLASS : ""} ${hlLevel ? "" : isFolded ? "" : "hover:shadow-xl"}`}
+      className={`group relative w-[200px] rounded-card border shadow-lg transition-all cursor-pointer ${hlLevel ? "" : isFolded ? "" : "hover:shadow-xl"}`}
       style={{
+        ...dimStyle,
         borderColor: hlLevel ? hlColor : isFolded ? c : `${c}55`,
         borderWidth: hlLevel === "select" || isFolded ? 2 : 1,
         backgroundColor: "var(--color-surface-panel)",
@@ -237,20 +248,34 @@ function edgeStyleOf(data: Record<string, unknown> | undefined): EdgeStyle {
   return style && EDGE_STYLES.includes(style) ? style : "bezier";
 }
 
+/** 连线的高亮外观（由 `edges` 那处统一算好后经 data 传进来）：
+ *  `rel` 关联 · `dim` 无关 · `stroke` 无关时的线色（按淡化强度算）·
+ *  `width` 线宽（关联时已按跳数退过亮度）· `glow` 关联时的同色辉光 ·
+ *  `arrow` 强度为 0 时为 false，箭头与线宽一起收掉。 */
+function edgeLook(data: Record<string, unknown> | undefined) {
+  return {
+    rel: !!(data?.rel as boolean | undefined),
+    dim: !!(data?.dim as boolean | undefined),
+    stroke: data?.stroke as string | undefined,
+    width: data?.width as number | undefined,
+    glow: data?.glow as string | undefined,
+    arrow: data?.arrow !== false,
+  };
+}
+
 const ColorEdge = memo(function ColorEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps) {
   const [path] = edgePath(edgeStyleOf(data), { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
   const color = (data?.color as string | undefined) ?? VEX_CYBER_CYAN;
   /** 关联边：加粗 + 同色辉光；无关边：整条压暗（连光晕一起淡，否则线淡了光晕还在，像有鬼影） */
-  const rel = !!(data?.rel as boolean | undefined);
-  const dim = !!(data?.dim as boolean | undefined);
+  const { rel, dim, stroke, width, glow, arrow } = edgeLook(data);
   const gid = `mm-edge-${id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
   return (<>
     <defs><linearGradient id={gid} x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor={color} /><stop offset="100%" stopColor="#f8fafc" /></linearGradient></defs>
     {/* 光晕层：必须显式关掉 dasharray —— React Flow 的 `.animated path` 是「所有 path」，
         不关的话这道光晕会被一起打成流动虚线，观感变脏 */}
-    <path d={path} fill="none" stroke={color} strokeWidth={rel ? 5 : 3} opacity={dim ? 0.03 : rel ? 0.22 : 0.12} className={EDGE_GLOW_CLASS} />
+    <path d={path} fill="none" stroke={color} strokeWidth={rel ? (width ?? 2.2) * 2.2 : 3} opacity={dim ? 0.03 : rel ? 0.22 : 0.12} className={EDGE_GLOW_CLASS} style={glow ? { filter: glow } : undefined} />
     {/* 内层实线：流转动画挂在这条上（仅当这条边被标记 animated 时才真的动） */}
-    <path d={path} fill="none" stroke={`url(#${gid})`} strokeWidth={rel ? 2.2 : 1.5} strokeLinecap="round" markerEnd={`url(#arrow-${gid})`} opacity={dim ? 0.4 : 1} className={EDGE_FLOW_CLASS} />
+    <path d={path} fill="none" stroke={dim && stroke ? stroke : `url(#${gid})`} strokeWidth={width ?? 1.5} strokeLinecap="round" markerEnd={arrow ? `url(#arrow-${gid})` : undefined} opacity={dim ? 0.4 : 1} className={EDGE_FLOW_CLASS} />
     <marker id={`arrow-${gid}`} markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#f8fafc" /></marker>
   </>);
 });
@@ -268,14 +293,14 @@ const RelationEdge = memo(function RelationEdge({ id, sourceX, sourceY, targetX,
   /** 关联边：加粗 + 走流转动画（平时是静态虚线；style 里不写 dasharray，交给 CSS） */
   const flow = !!(data?.flow as boolean | undefined);
   /** 无关的关系线连标签一起压暗 —— 只淡线不淡标签，会留下一排浮着的孤零零文字 */
-  const dim = !!(data?.dim as boolean | undefined);
+  const { dim, stroke, width, glow, arrow } = edgeLook(data);
   return (<>
     <defs><marker id={`arrow-${gid}`} markerWidth="8" markerHeight="8" refX="7" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill={color} /></marker></defs>
-    <BaseEdge id={id} path={path} interactionWidth={22} markerEnd={`url(#arrow-${gid})`}
+    <BaseEdge id={id} path={path} interactionWidth={22} markerEnd={arrow ? `url(#arrow-${gid})` : undefined}
       className={flow ? EDGE_FLOW_CLASS : undefined}
-      style={{ stroke: color, strokeWidth: flow ? 2.2 : 1.6, strokeDasharray: flow ? undefined : "6 4", opacity: dim ? 0.35 : 1 }} />
+      style={{ stroke: dim && stroke ? stroke : color, strokeWidth: width ?? (flow ? 2.2 : 1.6), strokeDasharray: flow ? undefined : "6 4", opacity: dim ? 0.4 : 1, filter: flow ? glow : undefined }} />
     <EdgeLabelRenderer>
-      <div className="nodrag nopan" style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`, pointerEvents: "all", opacity: dim ? 0.35 : 1 }}>
+      <div className="nodrag nopan" style={{ position: "absolute", transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`, pointerEvents: "all", opacity: dim ? 0.4 : 1 }}>
         <div className="group/link flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-micro shadow backdrop-blur"
           style={{ borderColor: `${color}77`, backgroundColor: "color-mix(in srgb, var(--color-surface-panel) 92%, transparent)", color }}>
           <button type="button" className="max-w-[140px] cursor-pointer truncate hover:underline" title={t("mindmap.linkEditHint")}
@@ -287,6 +312,32 @@ const RelationEdge = memo(function RelationEdge({ id, sourceX, sourceY, targetX,
     </EdgeLabelRenderer>
   </>);
 });
+
+// ════════════ 画布外观浮层里的「整理选中」 ════════════
+
+/**
+ * 只排布高亮范围（与数据库设计器「整理选中」同一套交互与同一份集合定义）。
+ *
+ * 它排在共享面板的滑块下面而不是左侧设置区：它和滑块是同一类需求（把这一块画面
+ * 收拾一下），放一起少一个入口、少一层点击。
+ */
+function ArrangeHighlightedButton({ onArrange, disabled }: { onArrange: () => void; disabled: boolean }) {
+  const { t } = useTranslation();
+  return (
+    <div className="mt-1.5">
+      <button
+        type="button"
+        onClick={onArrange}
+        disabled={disabled}
+        title={t("mindmap.arrangeHint")}
+        className="flex w-full cursor-pointer items-center justify-center gap-1 rounded-ctl bg-white/5 py-1.5 text-micro text-slate-300 transition hover:bg-white/10 hover:text-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <Rows3 className="h-3.5 w-3.5" />
+        {t("mindmap.arrangeSelected")}
+      </button>
+    </div>
+  );
+}
 
 // ════════════ 贴纸节点 ════════════
 
@@ -806,6 +857,9 @@ type NodeCacheEntry = {
   /** 高亮三态必须进缓存键：漏了就会「点了不亮/亮的是上一次的那个」 */
   related: boolean;
   dimmed: boolean;
+  /** 外观滑块也要进缓存键：漏了就是「拖滑块、节点没反应」（与三态同级） */
+  hlBoost: number;
+  dimOpacity: number;
   hasChildren: boolean;
   collapsed: boolean;
   hiddenCount: number;
@@ -819,6 +873,12 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   const { fitView, flowToScreenPosition } = useReactFlow();
   // 连线样式（曲线 / 直角折线 / 直线）：与 ER 设计、JSON 图共用一份偏好，存在 localStorage
   const [edgeStyle, setEdgeStyle] = useEdgeStyle();
+  // 画布外观三滑块（高亮强度 / 淡化强度 / 高亮层级）：与数据库设计器、JSON 浏览
+  // 共用同一套算法与面板，但偏好**按模块隔离**（`mindmap` 前缀）——
+  // 导图几十个节点、设计图几百张表，能压多淡并不一样，共用一个滑块
+  // 等于逼用户「在 A 里调顺手，到 B 全都不对」。
+  const { prefs: lookPrefs, setHighlight: setHlBoost, setDim: setDimStrength, reset: resetLook } = useGraphHighlightPrefs("mindmap");
+  const { depth: hlDepth, setDepth: setHlDepth } = useGraphDepthPref("mindmap");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // 节点树导航面板：点击树节点 = 选中 + 展开祖先 + 视口聚焦（与悬浮窗树形选择同一交互直觉）。
@@ -938,26 +998,40 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
   }, [graphNodes]);
 
   /**
-   * 关联节点集合：与选中项**直接**相连 —— 直接父、直接子、以及所有自由关系线的两端。
+   * 关联节点集合 + 关联连线集合：**一次 BFS 同时得出**（共享层 `utils/graphScope`），
+   * 与数据库设计器同一口径。
+   *
+   * 层级 = 从选中项出发能走多远，默认 1 跳（直接父 / 子 / 关系线两端），可调到 5 跳。
+   * 早先这里是手写的一跳集合，用户没有「看远一点」的开关 —— 而大导图上
+   * 「选中一个模块、看它两跳内的邻居」是常见需求。
    *
    * 为什么不用祖先链当「关联」：祖先链会把「亮一条到根的路」当成高亮，选中一个深处
-   * 的节点时亮起一大片，注意力反而收不回来。现在与数据库设计器口径一致：只亮直接相连。
-   * `highlightChain` 仍然保留 —— 它服务于滚动同步与视口聚焦，只是不再参与高亮。
+   * 的节点时亮起一大片，注意力反而收不回来。`highlightChain` 仍然保留 ——
+   * 它服务于滚动同步与视口聚焦，只是不再参与高亮。
+   *
+   * 边也必须是同一次遍历的产物：早先连线用「两端有一端在集合内」判定，会点亮同跳层
+   * 内部的横向连线，产出「线亮着、两端的节点却暗着」。
    */
-  const relatedIds = useMemo(() => {
-    const set = new Set<string>();
-    if (!selectedId) return set;
-    set.add(selectedId);
+  const scope = useMemo(() => {
+    // 边 id 必须与下面 `edges` 里用的一致，否则连线查不到自己那条的高亮状态
+    const scopeEdges: { id: string; source: string; target: string }[] = [];
     for (const n of graphNodes) {
-      if (n.parentId === selectedId) set.add(n.id);
-      else if (n.id === selectedId && n.parentId) set.add(n.parentId);
+      if (n.parentId && n.parentId !== n.id) scopeEdges.push({ id: `mm-e-${n.id}`, source: n.parentId, target: n.id });
     }
-    for (const l of links) {
-      if (l.sourceId === selectedId) set.add(l.targetId);
-      else if (l.targetId === selectedId) set.add(l.sourceId);
-    }
-    return set;
-  }, [selectedId, graphNodes, links]);
+    for (const l of links) scopeEdges.push({ id: `mm-l-${l.id}`, source: l.sourceId, target: l.targetId });
+    return graphScope(graphNodes.map((n) => n.id), scopeEdges, selectedId, hlDepth);
+  }, [graphNodes, links, selectedId, hlDepth]);
+  const relatedIds = useMemo(() => new Set(scope.hops.keys()), [scope]);
+  /** 连线离选中项几跳：远的那端画得更暗，否则层级调到 3 跳与 1 跳画出来一样 */
+  const hopOfEdge = useCallback(
+    (a: string, b: string) => {
+      if (selectedId === null) return undefined;
+      const hopA = scope.hops.get(a);
+      const hopB = scope.hops.get(b);
+      return hopA === undefined ? hopB : hopB === undefined ? hopA : Math.min(hopA, hopB);
+    },
+    [scope, selectedId],
+  );
 
   const visibleNodes = useMemo(() => {
     // 一个节点可见 ⟺ 它的所有祖先都未被折叠（节点自身的折叠状态只隐藏其后代，不隐藏自己）。
@@ -1261,6 +1335,9 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       const selected = selectedId === n.id;
       const related = relatedIds.has(n.id);
       const dimmed = selectedId !== null && !selected && !related;
+      // 「淡化强度」只在真的选中了别人时才算：没选中时整图都该是常态亮度
+      const dimOpacity = dimmed ? dimmedOpacity(lookPrefs.dim) : 1;
+      const hlBoost = lookPrefs.highlight;
       const hasChildren = (childrenCount.get(n.id) ?? 0) > 0;
       const isCollapsed = collapsed.has(n.id);
       const hiddenCount = descendantCount.get(n.id) ?? 0;
@@ -1269,7 +1346,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       const parentColor = parent ? effectiveNodeColor(parent) : null;
       const projectRoot = full.document.sourceDesc || null;
       const prev = cache.get(n.id);
-      if (prev && prev.full === full && prev.node === n && prev.px === p.x && prev.py === p.y && prev.selected === selected && prev.related === related && prev.dimmed === dimmed && prev.hasChildren === hasChildren && prev.collapsed === isCollapsed && prev.hiddenCount === hiddenCount && prev.hideText === zoomHide && prev.parentColor === parentColor) {
+      if (prev && prev.full === full && prev.node === n && prev.px === p.x && prev.py === p.y && prev.selected === selected && prev.related === related && prev.dimmed === dimmed && prev.hlBoost === hlBoost && prev.dimOpacity === dimOpacity && prev.hasChildren === hasChildren && prev.collapsed === isCollapsed && prev.hiddenCount === hiddenCount && prev.hideText === zoomHide && prev.parentColor === parentColor) {
         main.push(prev.obj as Node<FlowNodeData>);
         continue;
       }
@@ -1279,8 +1356,8 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       // 因此 full 一旦变化就必须重建 data，否则复用旧 data 会让回调闭包停留在旧状态——
       // 例如连续点「+」加子节点时，第 3 次会用第 1 次渲染时的旧 full，把第 2 个子节点覆盖掉。
       const prevData = prev ? (prev.obj as Node<FlowNodeData>).data : null;
-      const dataChanged = !prevData || prev!.full !== full || prev!.node !== n || prev!.selected !== selected || prev!.hasChildren !== hasChildren || prev!.collapsed !== isCollapsed || prev!.hiddenCount !== hiddenCount || prevData.targetPosition !== endpointPositions.target || prevData.sourcePosition !== endpointPositions.source || prevData.hideText !== zoomHide || prevData.parentColor !== parentColor;
-      const data: FlowNodeData = dataChanged ? { node: n, selected, hasChildren, collapsed: isCollapsed, hiddenCount, hideText: zoomHide, parentColor, projectRoot, targetPosition: endpointPositions.target, sourcePosition: endpointPositions.source,
+      const dataChanged = !prevData || prev!.full !== full || prev!.node !== n || prev!.selected !== selected || prev!.related !== related || prev!.dimmed !== dimmed || prev!.hlBoost !== hlBoost || prev!.dimOpacity !== dimOpacity || prev!.hasChildren !== hasChildren || prev!.collapsed !== isCollapsed || prev!.hiddenCount !== hiddenCount || prevData.targetPosition !== endpointPositions.target || prevData.sourcePosition !== endpointPositions.source || prevData.hideText !== zoomHide || prevData.parentColor !== parentColor;
+      const data: FlowNodeData = dataChanged ? { node: n, selected, related, dimmed, hlBoost, dimOpacity, hasChildren, collapsed: isCollapsed, hiddenCount, hideText: zoomHide, parentColor, projectRoot, targetPosition: endpointPositions.target, sourcePosition: endpointPositions.source,
             onSelect: () => selectNode(n.id), onOpenDetail: () => openDetail(n),
             onToggle: () => setCollapsed(cur => { const nx = new Set(cur); nx.has(n.id) ? nx.delete(n.id) : nx.add(n.id); return nx; }),
             onAddChild: () => addChildNode(n.id),
@@ -1294,7 +1371,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       const obj: Node<FlowNodeData> = prevObj
         ? { ...prevObj, position: p, data, measured, sourcePosition: endpointPositions.source, targetPosition: endpointPositions.target }
         : { id: n.id, type: "mmNode", position: p, data, measured, sourcePosition: endpointPositions.source, targetPosition: endpointPositions.target };
-      cache.set(n.id, { node: n, full, px: p.x, py: p.y, selected, related, dimmed, hasChildren, collapsed: isCollapsed, hiddenCount, hideText: zoomHide, parentColor, obj });
+      cache.set(n.id, { node: n, full, px: p.x, py: p.y, selected, related, dimmed, hlBoost, dimOpacity, hasChildren, collapsed: isCollapsed, hiddenCount, hideText: zoomHide, parentColor, obj });
       main.push(obj);
     }
     const stickerNodes: Node<StickerNodeData>[] = [];
@@ -1342,54 +1419,74 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       const obj: Node<StickerNodeData> = prevObj
         ? { ...prevObj, position: p, data, measured }
         : { id: sid, type: "stickerNode", position: p, data, measured };
-      cache.set(sid, { node: s, full, px: p.x, py: p.y, selected: false, related: false, dimmed: false, hasChildren: false, collapsed: false, hiddenCount: 0, hideText: false, parentColor: null, obj });
+      cache.set(sid, { node: s, full, px: p.x, py: p.y, selected: false, related: false, dimmed: false, hlBoost: lookPrefs.highlight, dimOpacity: 1, hasChildren: false, collapsed: false, hiddenCount: 0, hideText: false, parentColor: null, obj });
       stickerNodes.push(obj);
     }
     // 清理不再显示的缓存项
     for (const k of cache.keys()) if (!alive.has(k)) cache.delete(k);
     return [...main, ...stickerNodes];
-  }, [visibleNodes, layout, selectedId, collapsed, childrenCount, stickers, full, onDocumentUpdate, relatedIds, posOverrides, measuredMap, addChildNode, deleteNode, openDetail, endpointPositions, zoomHide, byId, selectNode]);
+  }, [visibleNodes, layout, selectedId, collapsed, childrenCount, stickers, full, onDocumentUpdate, relatedIds, posOverrides, measuredMap, addChildNode, deleteNode, openDetail, endpointPositions, zoomHide, byId, selectNode, lookPrefs.dim, lookPrefs.highlight]);
 
   const edges = useMemo<Edge[]>(() => {
     const visible = new Set(visibleNodes.map(n => n.id));
     const out: Edge[] = [];
     /* ── 高亮口径：整块连线**只在这里定义一次**，下面两个循环共用 ──
      *
-     * 判据是 `relatedIds`（= 自己 + 父 + 子 + 关系边两端），不是写死 `=== selectedId`：
-     * 节点那边的三态（selected / related / dimmed）用的就是 relatedIds，两边口径一旦
-     * 分家就会出现「节点亮了、连着它的线还暗着」。
+     * 判据是 `scope.edgeIds`（BFS 实际走过的边），不是「两端有一端在节点集合内」：
+     * 后者会点亮同跳层内部的横向连线，产出「线亮着、两端的节点却暗着」。
+     * 节点那边的三态用的是同一次遍历的 hops，两边口径一旦分家就会出现
+     * 「节点亮了、连着它的线还暗着」。
      *
-     * `hasSel` 那层判断不能省：relatedIds 在未选中时是**空集**，只看它的话
+     * `hasSel` 那层判断不能省：作用域在未选中时是**空的**，只看它的话
      * 「什么都没选」会被算成「全都不相关」，整图连线一起压暗。 */
     const hasSel = selectedId !== null;
-    const relOf = (a: string, b: string) => hasSel && (relatedIds.has(a) || relatedIds.has(b));
+    const hl = lookPrefs.highlight;
+    const dim = lookPrefs.dim;
+    /** 一条连线的完整外观：亮度随跳数退、压暗随「淡化强度」退、箭头随强度一起收掉 */
+    const look = (edgeId: string, a: string, b: string, color: string) => {
+      const rel = hasSel && scope.edgeIds.has(edgeId);
+      const fade = rel ? hopFade(hopOfEdge(a, b)) : 1;
+      return {
+        rel,
+        dim: hasSel && !rel,
+        // 线宽与辉光按跳数退亮度（否则层级调到 3 跳与 1 跳画出来一样）
+        glow: edgeGlow(color, hl * fade),
+        width: relatedEdgeWidth(hl) * fade,
+        // 箭头与线宽走同一判据：强度 0 时线已看不见，满屏实心三角反而成了「只亮线」
+        arrow: !(rel && !hasVisibleHighlight(hl)),
+        stroke: dimmedEdgeStroke(dim),
+        dimWidth: dimmedEdgeWidth(dim),
+      };
+    };
     // 树形主连线（实线，走主输入/输出口）
     for (const n of visibleNodes) {
       if (!n.parentId || !visible.has(n.parentId)) continue;
       // 样式经 `data` 传给自定义 edge（ColorEdge 不吃 edge.style —— 它自己画 path）。
-      const rel = relOf(n.parentId, n.id);
-      const dim = hasSel && !rel;
+      const lk = look(`mm-e-${n.id}`, n.parentId, n.id, effectiveNodeColor(n));
       out.push({ id: `mm-e-${n.id}`, source: n.parentId, target: n.id, sourceHandle: "out", targetHandle: "in", type: "colorE",
-        animated: rel, zIndex: rel ? 10 : 0,
-        style: rel ? { filter: edgeGlow(effectiveNodeColor(n)) } : undefined,
-        data: { color: effectiveNodeColor(n), style: edgeStyle, rel, dim }, markerEnd: { type: MarkerType.ArrowClosed, color: "#f8fafc" } } as Edge);
+        animated: lk.rel, zIndex: lk.rel ? 10 : 0,
+        data: { color: effectiveNodeColor(n), style: edgeStyle, rel: lk.rel, dim: lk.dim, stroke: lk.dim ? lk.stroke : undefined, width: lk.rel ? lk.width : lk.dimWidth, glow: lk.rel ? lk.glow : undefined, arrow: lk.arrow },
+        markerEnd: lk.arrow ? { type: MarkerType.ArrowClosed, color: "#f8fafc" } : undefined } as Edge);
     }
     // 自由关系线（虚线 + 文字标签）：两端节点都可见时才画（折叠隐藏的子树不画）
     for (const l of links) {
       if (!visible.has(l.sourceId) || !visible.has(l.targetId)) continue;
       const src = byId.get(l.sourceId);
-      const rel = relOf(l.sourceId, l.targetId);
-      const dim = hasSel && !rel;
+      const lk = look(`mm-l-${l.id}`, l.sourceId, l.targetId, src ? effectiveNodeColor(src) : VEX_CYBER_CYAN);
       out.push({
         id: `mm-l-${l.id}`, source: l.sourceId, target: l.targetId, sourceHandle: "out", targetHandle: "in",
         type: "relationE",
         // 关联的关系线也走流转动画：它本来就是「非树形的额外关联」，与高亮语义一致
-        animated: rel, zIndex: rel ? 10 : 0,
+        animated: lk.rel, zIndex: lk.rel ? 10 : 0,
         data: {
           color: src ? effectiveNodeColor(src) : VEX_CYBER_CYAN,
           style: edgeStyle,
-          flow: rel,
-          dim,
+          flow: lk.rel,
+          dim: lk.dim,
+          stroke: lk.dim ? lk.stroke : undefined,
+          width: lk.rel ? lk.width : lk.dimWidth,
+          glow: lk.rel ? lk.glow : undefined,
+          arrow: lk.arrow,
           label: l.label,
           onEdit: (e: React.MouseEvent) => openLinkEditor(l, e),
           onDelete: () => removeLink(l.id),
@@ -1397,7 +1494,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       } as Edge);
     }
     return out;
-  }, [visibleNodes, byId, selectedId, relatedIds, links, openLinkEditor, removeLink, edgeStyle]);
+  }, [visibleNodes, byId, selectedId, scope, hopOfEdge, links, openLinkEditor, removeLink, edgeStyle, lookPrefs]);
 
   // 受控节点：React Flow 拖放时把位置写入 posOverrides。仅处理 position 变更，
   // 选择由 selectedId 管理。一次 setState → 一次渲染 → 收敛，无反馈循环。
@@ -1584,6 +1681,47 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
     if (nextId) navToNode(nextId);
   }, [selectedId, byId, graphNodes, navToNode]);
 
+  /**
+   * 「整理选中」：**只**排布高亮范围里的节点，其余一律不动（与数据库设计器同一语义）。
+   *
+   * 集合必须复用高亮作用域（`relatedIds`），不能另写一份：设计器那边曾经高亮用一份
+   * 内联写法、整理用整个连通分量，两边对不上 —— 提示条如实报「已整理 22 张」，
+   * 高亮却只有 6 张。标签、提示与实现说的必须是同一件事。
+   *
+   * 排完**整体平移回原高亮区域左上角**：否则这批卡片会跳到画布原点，用户以为整张图被重排了。
+   *
+   * 不弹确认：它只改坐标，Ctrl+Z 可回退，点一次「自动布局」也能回来。
+   */
+  const arrangeHighlighted = useCallback(() => {
+    const ids = new Set(relatedIds);
+    const subset = full.nodes.filter((n) => ids.has(n.id));
+    if (subset.length < 2) return;
+    const laid = layoutTree(subset, dir);
+    // 平移量 = 旧包围盒左上 − 新包围盒左上（用当前画布坐标，保住用户手拖过的位置）
+    const cur = new Map(flowNodes.map((n) => [n.id, n.position]));
+    let oldX = Infinity; let oldY = Infinity; let newX = Infinity; let newY = Infinity;
+    for (const n of subset) {
+      const now = cur.get(n.id); const next = laid.get(n.id);
+      if (!now || !next) continue;
+      oldX = Math.min(oldX, now.x); oldY = Math.min(oldY, now.y);
+      newX = Math.min(newX, next.x); newY = Math.min(newY, next.y);
+    }
+    if (!Number.isFinite(oldX) || !Number.isFinite(newX)) return;
+    const dx = oldX - newX;
+    const dy = oldY - newY;
+    const n2 = subset.map((n) => ({ nodeId: n.id, x: (laid.get(n.id)?.x ?? 0) + dx, y: (laid.get(n.id)?.y ?? 0) + dy }));
+    void mmApi.updatePositions(full.document.id, n2);
+    setPosOverrides(prev => {
+      const next = { ...prev };
+      for (const p of n2) next[p.nodeId] = { x: p.x, y: p.y };
+      return next;
+    });
+    flashCanvas(t("mindmap.arrangeDone", { count: n2.length }));
+    window.setTimeout(() => fitView({ nodes: n2.map((p) => ({ id: p.nodeId })), padding: 0.25, duration: 260 }), 30);
+  }, [relatedIds, full, dir, flowNodes, fitView, flashCanvas, t]);
+
+  const arrangeDisabled = selectedId === null || relatedIds.size < 2;
+
   const relayout = useCallback(() => {
     const lp = layoutTree(full.nodes, dir);
     const n2 = flowNodes.filter(n => !n.id.startsWith("sticker-")).map(n => ({ nodeId: n.id, x: lp.get(n.id)?.x ?? 0, y: lp.get(n.id)?.y ?? 0 }));
@@ -1657,6 +1795,25 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
       </ReactFlow>
 
       {/* 连线样式原先是这里的右下角浮层，已挪到左侧设置区（与「布局」并排一行）*/}
+
+      {/* 画布外观浮层（高亮强度 / 淡化强度 / 高亮层级 + 整理选中）：
+          与数据库设计器、JSON 浏览同一块面板（shared/GraphLookPrefs），只是偏好各自隔离。
+          位置量着左下角 Controls 算：Controls 三颗钮 30px + 上下边框 ≈ 92px，
+          bottom-[104px] 留 12px 间隙不压住它（与 JSON 画布同一套定位法）。 */}
+      <div className="absolute bottom-[104px] left-0 z-10 flex w-[30px] justify-center">
+        <GraphLookPrefs
+          highlight={lookPrefs.highlight}
+          dim={lookPrefs.dim}
+          onHighlight={setHlBoost}
+          onDim={setDimStrength}
+          depth={hlDepth}
+          onDepth={setHlDepth}
+          onReset={resetLook}
+          maxHighlight={HL_BOOST_MAX}
+          maxDim={DIM_MAX}
+          extra={<ArrangeHighlightedButton onArrange={arrangeHighlighted} disabled={arrangeDisabled} />}
+        />
+      </div>
 
       {/* 连线规则提示：拖线＝改上级（拖到节点卡片上松手同样改上级）；关系线模式下拖线＝加一条带文字的关系线 */}
       <div className="pointer-events-none absolute bottom-2 left-1/2 z-10 -translate-x-1/2">
@@ -2646,7 +2803,9 @@ export default function MindmapPanel() {
       await replaySession(r.sessionId);
       void refreshSessions(docId).catch(() => undefined);
     } catch (e) {
-      pushAgentMessage("agent", `${t("agent.runFailed")}：${String(e)}`);
+      // 写进**本轮**那条助手气泡（而不是再推一条）：一轮一轮看得见，
+      // 失败原因才不会跟「它到底改了什么」分成两条、对不上号。
+      patchAgentTurn({ status: "error", error: `${t("agent.runFailed")}：${String(e)}` });
     } finally { aiRunIdRef.current = null; setAiLoading(false); }
   }, [full?.document.id, providerId, modelId, t, useAgentSession, replaySession, refreshSessions]);
 
