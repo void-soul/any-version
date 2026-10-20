@@ -207,19 +207,34 @@ fn shared_root_ready(shared_root: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// 该账号的 history 是否已经是指向共享根的链接。
-fn history_links_to(account_root: &Path, shared_root: &Path) -> bool {
-    let history = account_root.join("history");
-    if !is_reparse_point(&history) {
+/// 该账号的 `kind` 目录是否已经是指向共享根的链接。
+fn kind_links_to(account_root: &Path, shared_root: &Path, kind: &str) -> bool {
+    let path = account_root.join(kind);
+    if !is_reparse_point(&path) {
         return false;
     }
     match (
-        std::fs::canonicalize(&history),
-        std::fs::canonicalize(shared_root.join("history")),
+        std::fs::canonicalize(&path),
+        std::fs::canonicalize(shared_root.join(kind)),
     ) {
         (Ok(actual), Ok(expected)) => actual == expected,
         _ => false,
     }
+}
+
+/// 该账号的 history 是否已经是指向共享根的链接。
+fn history_links_to(account_root: &Path, shared_root: &Path) -> bool {
+    kind_links_to(account_root, shared_root, "history")
+}
+
+/// 4 类目录是否**全部**已接入共享根。
+///
+/// 只看 history 会把「只链了 history、其余 3 类是真实目录」的半接管账号判为已就绪：
+/// 切号短路随即跳过合并，那 3 类就永久留在账号目录里各存一份（客户端会照常写入）。
+fn all_shared_kinds_linked(account_root: &Path, shared_root: &Path) -> bool {
+    SHARED_KINDS
+        .iter()
+        .all(|kind| kind_links_to(account_root, shared_root, kind))
 }
 
 /// 从现有账号目录里探测 IDE 层目录名（客户端固定叫 `CodeBuddyIDE`，探测优先）。
@@ -413,7 +428,7 @@ fn ensure_shared_target_at(
             // 账号还没被客户端建目录：直接铺一套 junction，一条会话都不用复制
             std::fs::create_dir_all(&account_root)
                 .map_err(|e| format!("创建账号会话根目录失败: {}", e))?;
-        } else if history_links_to(&account_root, shared_root) {
+        } else if all_shared_kinds_linked(&account_root, shared_root) {
             ready = true;
             continue;
         } else if !is_reparse_point(&account_root.join("history"))
@@ -3319,6 +3334,58 @@ mod tests {
         assert!(
             shared_root.join("history/ws1/s1/msg.json").is_file(),
             "账号独有会话应并入共享根"
+        );
+
+        for kind in SHARED_KINDS {
+            let _ = std::fs::remove_dir(account_root.join(kind));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 半接管账号（history 已链接、check-point 是真实目录）不能被判为「已就绪」：
+    /// 否则切号短路会跳过合并，其余 3 类就永久留在账号目录里各存一份。
+    #[test]
+    fn ensure_shared_target_repairs_partially_linked_account() {
+        let root = make_temp();
+        if !mklink_supported(&root) {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+
+        let extension = root.join("extension");
+        let shared_root = root.join("shared");
+        std::fs::create_dir_all(shared_root.join("history").join("ws0").join("dummy")).unwrap();
+        let uid = "uid-partial";
+        let account_root = extension.join(uid).join("CodeBuddyIDE").join(uid);
+
+        // 先完整接管一次，拿到 4 条链接
+        assert!(ensure_shared_target_at(&extension, uid, &shared_root).unwrap());
+
+        // 再把 check-point 换回真实目录，模拟「只链了 history」的半接管状态
+        let check_point = account_root.join("check-point");
+        std::fs::remove_dir(&check_point).unwrap();
+        let own = check_point.join("ws1").join("cp-1");
+        std::fs::create_dir_all(&own).unwrap();
+        std::fs::write(own.join("state.json"), "partial").unwrap();
+        assert!(!all_shared_kinds_linked(&account_root, &shared_root));
+
+        // 再次接管：4 类必须全变成链接，独有 check-point 内容并入共享根
+        assert!(ensure_shared_target_at(&extension, uid, &shared_root).unwrap());
+        for kind in SHARED_KINDS {
+            assert!(
+                kind_links_to(&account_root, &shared_root, kind),
+                "{} 应重新接入共享根",
+                kind
+            );
+        }
+        assert!(shared_root
+            .join("check-point/ws1/cp-1/state.json")
+            .is_file());
+        assert!(
+            !account_root
+                .join(format!("check-point{}", TAKEOVER_BAK_SUFFIX))
+                .exists(),
+            "接管后不能保留真实目录副本"
         );
 
         for kind in SHARED_KINDS {
