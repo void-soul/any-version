@@ -795,6 +795,11 @@ pub fn run() {
             commands::ai::mcp::get_mcp_presets,
             commands::ai::mcp::save_mcp_server,
             commands::ai::mcp::delete_mcp_server,
+            // 托管安装：GitHub Release → 下载 → 解压 → command 指向可执行文件
+            commands::ai::mcp::mcp_managed_status,
+            commands::ai::mcp::mcp_list_managed_versions,
+            commands::ai::mcp::mcp_install_managed,
+            commands::ai::mcp::mcp_uninstall_managed,
             // 项目级安装：写<项目>/.mcp.json，不再全局部署
             commands::ai::mcp::list_project_mcps,
             commands::ai::mcp::install_mcp_to_project,

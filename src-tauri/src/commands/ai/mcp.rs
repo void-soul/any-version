@@ -29,6 +29,35 @@ pub struct McpServer {
     pub enabled_tools: Vec<String>,
   pub description: Option<String>,
   pub install_method: String,
+    /// 托管安装来源：有值时这台服务器由本应用从 GitHub Release 下载安装，
+    /// `command` 自动指向解压出来的可执行文件（`None` = 用户自己填命令）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed: Option<McpManagedSource>,
+}
+
+/// 托管安装来源（GitHub Release）。
+///
+/// 为什么要单独存这组字段：MCP 服务器里有相当一部分不是 npm 包，而是「下载发行包 →
+/// 解压 → 跑里面的 bin」，这套动作原来只在 SDK 工具注册表（`projects/*/config.json`）里有。
+/// 但 MCP 服务器不是 SDK：它不该出现在语言/CLI 的工具列表里，也不该为了能被装而伪装成
+/// 一个 SDK 条目。所以下载、解压、版本目录都放在 MCP 这一侧，与 SDK 完全解耦。
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct McpManagedSource {
+    /// GitHub 仓库 `owner/repo`
+    pub repo: String,
+    /// release tag 模板，如 `v{version}`
+    pub tag_template: String,
+    /// 资产名前缀模板，如 `jadx-headless-mcp-{version}`
+    pub asset_prefix: String,
+    /// 资产名后缀，如 `.zip`
+    pub asset_suffix: String,
+    /// 解压后要进入的子目录模板（Gradle 发行包的 `<name>-<version>/`）；
+    /// 留空表示自动剥掉唯一的顶层目录
+    #[serde(default)]
+    pub extract_subdir: String,
+    /// 可执行文件相对安装根的路径，如 `bin/jadx-headless-mcp.bat`
+    pub executable: String,
 }
 
 /// 从工具配置中发现、但尚未由 vex 托管的 MCP 服务器
@@ -110,6 +139,9 @@ pub struct McpPreset {
     /// 前端可用它提示「先在服务页启动该服务」。
     #[serde(default)]
     pub service_id: String,
+    /// 托管安装来源：有值时添加后可直接点「安装」（从 GitHub Release 下载并解压）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed: Option<McpManagedSource>,
 }
 
 /// 内置预设清单。
@@ -127,6 +159,7 @@ pub fn mcp_presets() -> Vec<McpPreset> {
             args: vec!["-y".to_string(), "wigolo".to_string()],
             url: String::new(),
             service_id: "wigolo".to_string(),
+            managed: None,
         },
         McpPreset {
             id: "wigolo-http".to_string(),
@@ -137,6 +170,25 @@ pub fn mcp_presets() -> Vec<McpPreset> {
             args: Vec::new(),
             url: "http://127.0.0.1:3333/mcp".to_string(),
             service_id: "wigolo".to_string(),
+            managed: None,
+        },
+        McpPreset {
+            id: "jadx-headless-mcp".to_string(),
+            name: "jadx-headless-mcp".to_string(),
+            description: "Android APK 静态分析（内嵌 jadx-core，不需要另装 jadx）。点「安装」会从 GitHub Release 下载发行包并解压到本应用数据目录，命令自动指向 bin/jadx-headless-mcp.bat；运行时需要 JDK 17+ 可用（装了 SDK 里的 Java 即可）。".to_string(),
+            transport: "stdio".to_string(),
+            command: String::new(),
+            args: Vec::new(),
+            url: String::new(),
+            service_id: String::new(),
+            managed: Some(McpManagedSource {
+                repo: "1013503897/jadx-headless-mcp".to_string(),
+                tag_template: "v{version}".to_string(),
+                asset_prefix: "jadx-headless-mcp-{version}".to_string(),
+                asset_suffix: ".zip".to_string(),
+                extract_subdir: "jadx-headless-mcp-{version}".to_string(),
+                executable: "bin/jadx-headless-mcp.bat".to_string(),
+            }),
         },
     ]
 }
@@ -365,6 +417,22 @@ mod tests {
         assert_eq!(args, vec!["plain".to_string(), "run".to_string()]);
     }
 
+    /// 版本号按数值段比较：字符串比较会把 `0.10.0` 排到 `0.8.0` 后面。
+    #[test]
+    fn version_key_compares_numerically() {
+        let mut v = vec!["0.8.0", "0.10.1", "0.9.9"];
+        v.sort_by(|a, b| super::version_key(b).cmp(&super::version_key(a)));
+        assert_eq!(v, vec!["0.10.1", "0.9.9", "0.8.0"]);
+    }
+
+    /// tag 模板按 `{version}` 切成前缀/后缀（`v{version}` → `v` + 空）。
+    #[test]
+    fn split_template_returns_prefix_and_suffix() {
+        assert_eq!(super::split_template("v{version}"), ("v", ""));
+        assert_eq!(super::split_template("name-{version}-win"), ("name-", "-win"));
+        assert_eq!(super::split_template("plain"), ("plain", ""));
+    }
+
     fn server(name: &str) -> McpServer {
         McpServer {
             id: name.to_string(),
@@ -380,6 +448,7 @@ mod tests {
             enabled_tools: Vec::new(),
             description: None,
             install_method: "manual".to_string(),
+            managed: None,
         }
     }
 
@@ -559,8 +628,9 @@ mod tests {
             assert!(!preset.description.trim().is_empty(), "{} 缺少描述", preset.id);
             match preset.transport.as_str() {
                 "stdio" => assert!(
-                    !preset.command.trim().is_empty(),
-                    "{} 是 stdio 预设，必须给 command",
+                    // 托管预设的 command 由安装命令写入，预设本身可以是空的
+                    !preset.command.trim().is_empty() || preset.managed.is_some(),
+                    "{} 是 stdio 预设，必须给 command 或托管来源",
                     preset.id
                 ),
                 "http" | "sse" => assert!(
@@ -612,7 +682,10 @@ pub fn save_mcp_server(server: McpServer) -> Result<(), String> {
     }
     let id = normalize_id(name);
     if server.transport == "stdio" {
-        if server.command.trim().is_empty() {
+        // 托管条目允许「已登记但还没安装」：command 由安装命令写入，
+        // 这里拦下来用户就没法先把条目存下来再点安装。
+        let pending_managed = server.managed.is_some() && server.command.trim().is_empty();
+        if server.command.trim().is_empty() && !pending_managed {
             return Err("stdio 类型必须填写启动命令".to_string());
         }
     } else if server.transport == "http" || server.transport == "sse" {
@@ -640,6 +713,7 @@ pub fn save_mcp_server(server: McpServer) -> Result<(), String> {
         enabled_tools: server.enabled_tools.clone(),
         description: server.description.clone(),
         install_method: server.install_method.clone(),
+        managed: server.managed.clone(),
     });
     save_store(&store)
 }
@@ -649,6 +723,287 @@ pub fn delete_mcp_server(id: String) -> Result<(), String> {
     let mut store = load_store();
     store.servers.retain(|s| s.id != id);
     save_store(&store)
+}
+
+// ─── 托管安装（GitHub Release → 下载 → 解压 → command 指向可执行文件） ───
+
+/// 托管安装根：`<data_dir>/mcp-servers/<server_id>/<version>/`。
+///
+/// 与 SDK 的 `sdk/_versions` 分开：MCP 服务器不是语言/CLI，混进 SDK 目录会让
+/// 「卸载 SDK 工具」的清理逻辑误伤它，用户的 SDK 列表也会多出看不懂的条目。
+fn managed_root() -> PathBuf {
+    get_data_dir().join("mcp-servers")
+}
+
+fn managed_version_dir(id: &str, version: &str) -> PathBuf {
+    managed_root().join(id).join(version)
+}
+
+/// 版本号排序键：把 `0.10.2` 拆成 `[0, 10, 2]`。
+/// 直接按字符串比较会把 `0.10.0` 排到 `0.8.0` 后面（"1" < "8"）。
+fn version_key(v: &str) -> Vec<u64> {
+    v.split(|c: char| !c.is_ascii_digit())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse::<u64>().unwrap_or(0))
+        .collect()
+}
+
+fn installed_versions(id: &str) -> Vec<String> {
+    let dir = managed_root().join(id);
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
+        .collect();
+    out.sort_by(|a, b| version_key(b).cmp(&version_key(a)));
+    out
+}
+
+fn find_server(id: &str) -> Result<McpServer, String> {
+    load_store()
+        .servers
+        .into_iter()
+        .find(|s| s.id == id)
+        .ok_or_else(|| format!("MCP 服务器不存在: {}", id))
+}
+
+fn managed_executable(id: &str, managed: &McpManagedSource, version: &str) -> PathBuf {
+    let rel = managed
+        .executable
+        .trim()
+        .replace(['/', '\\'], std::path::MAIN_SEPARATOR_STR);
+    managed_version_dir(id, version).join(rel)
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct McpManagedStatus {
+    /// 已安装版本（新 → 旧）
+    pub installed_versions: Vec<String>,
+    /// 当前 `command` 指向的文件是否真的存在（决定前端是否允许「装到项目」）
+    pub executable_exists: bool,
+    pub command: String,
+}
+
+fn status_of(server: &McpServer) -> McpManagedStatus {
+    let command = server.command.trim().to_string();
+    McpManagedStatus {
+        installed_versions: installed_versions(&server.id),
+        executable_exists: !command.is_empty() && Path::new(&command).is_file(),
+        command,
+    }
+}
+
+#[tauri::command]
+pub fn mcp_managed_status(id: String) -> Result<McpManagedStatus, String> {
+    Ok(status_of(&find_server(&id)?))
+}
+
+/// `v{version}` → (`v`, ``)；`jadx-{version}-win` → (`jadx-`, `-win`)
+fn split_template(tpl: &str) -> (&str, &str) {
+    match tpl.split_once("{version}") {
+        Some((prefix, suffix)) => (prefix, suffix),
+        None => (tpl, ""),
+    }
+}
+
+/// 列出该托管来源可安装的版本（GitHub Releases，新 → 旧）。
+#[tauri::command]
+pub async fn mcp_list_managed_versions(id: String) -> Result<Vec<String>, String> {
+    let server = find_server(&id)?;
+    let managed = server
+        .managed
+        .as_ref()
+        .ok_or_else(|| "该服务器没有配置托管安装来源".to_string())?;
+    if managed.repo.trim().is_empty() {
+        return Err("托管来源缺少仓库（owner/repo）".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .user_agent("Any-Version-Manager")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let url = format!(
+        "https://api.github.com/repos/{}/releases",
+        managed.repo.trim()
+    );
+    let data = crate::commands::project::versions::get_github_json(&client, &url).await?;
+    let arr = data
+        .as_array()
+        .ok_or_else(|| "GitHub 返回的不是 release 列表".to_string())?;
+    let (prefix, suffix) = split_template(&managed.tag_template);
+    let mut out: Vec<String> = arr
+        .iter()
+        .filter_map(|release| {
+            let tag = release.get("tag_name")?.as_str()?;
+            let rest = tag.strip_prefix(prefix)?;
+            let ver = if suffix.is_empty() {
+                rest
+            } else {
+                rest.strip_suffix(suffix)?
+            };
+            if ver.trim().is_empty() {
+                None
+            } else {
+                Some(ver.to_string())
+            }
+        })
+        .collect();
+    out.sort_by(|a, b| version_key(b).cmp(&version_key(a)));
+    out.dedup();
+    Ok(out)
+}
+
+/// 安装指定版本：解析 release → 挑资产 → 下载 → 解压 → 落盘 → 改写 `command`。
+///
+/// 进度通过 `mcp-managed-progress` 事件推送（`{ id, version, downloaded, total, speed }`）。
+#[tauri::command]
+pub async fn mcp_install_managed(
+    app: tauri::AppHandle,
+    id: String,
+    version: String,
+) -> Result<McpManagedStatus, String> {
+    use tauri::Emitter;
+
+    let mut store = load_store();
+    let idx = store
+        .servers
+        .iter()
+        .position(|s| s.id == id)
+        .ok_or_else(|| format!("MCP 服务器不存在: {}", id))?;
+    let managed = store.servers[idx]
+        .managed
+        .clone()
+        .ok_or_else(|| "该服务器没有配置托管安装来源".to_string())?;
+    if managed.executable.trim().is_empty() {
+        return Err("托管来源缺少可执行文件路径".to_string());
+    }
+
+    let version = version.trim().to_string();
+    if version.is_empty() {
+        return Err("版本号为空".to_string());
+    }
+    // 版本号会进目录名：挡掉路径穿越（`..`、分隔符）
+    if version.contains("..") || version.contains('/') || version.contains('\\') {
+        return Err(format!("版本号非法: {}", version));
+    }
+
+    let client = reqwest::Client::builder()
+        .user_agent("Any-Version-Manager")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let releases = crate::commands::project::versions::get_github_json(
+        &client,
+        &format!(
+            "https://api.github.com/repos/{}/releases",
+            managed.repo.trim()
+        ),
+    )
+    .await?;
+    let tag = managed.tag_template.replace("{version}", &version);
+    let release = releases
+        .as_array()
+        .and_then(|list| {
+            list.iter()
+                .find(|r| r.get("tag_name").and_then(|t| t.as_str()) == Some(tag.as_str()))
+        })
+        .ok_or_else(|| format!("未找到 release: {}（{}）", tag, managed.repo))?;
+    let assets = release
+        .get("assets")
+        .and_then(|a| a.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let (asset_name, asset_url) = crate::commands::project::versions::pick_asset(
+        &assets,
+        &managed.asset_prefix.replace("{version}", &version),
+        &managed.asset_suffix,
+    )?;
+    if !asset_name.to_ascii_lowercase().ends_with(".zip") {
+        return Err(format!(
+            "目前只支持 zip 发行包，该版本提供的是: {}",
+            asset_name
+        ));
+    }
+
+    let tmp_root = managed_root().join(".tmp");
+    fs::create_dir_all(&tmp_root).map_err(|e| format!("创建临时目录失败: {}", e))?;
+    let archive = tmp_root.join(&asset_name);
+    let emit_id = id.clone();
+    let emit_version = version.clone();
+    crate::commands::project::versions::download_with_progress(
+        &asset_url,
+        &archive,
+        move |downloaded, total, speed| {
+            let _ = app.emit(
+                "mcp-managed-progress",
+                serde_json::json!({
+                    "id": emit_id,
+                    "version": emit_version,
+                    "downloaded": downloaded,
+                    "total": total,
+                    "speed": speed,
+                }),
+            );
+        },
+    )
+    .await?;
+
+    let extract_dir = tmp_root.join(format!("{}-{}", id, version));
+    if extract_dir.exists() {
+        fs::remove_dir_all(&extract_dir).map_err(|e| format!("清理旧解压目录失败: {}", e))?;
+    }
+    crate::commands::project::versions::unzip_file(&archive, &extract_dir)?;
+
+    let src = if managed.extract_subdir.trim().is_empty() {
+        extract_dir.clone()
+    } else {
+        let sub = managed.extract_subdir.replace("{version}", &version);
+        let p = extract_dir.join(&sub);
+        if !p.is_dir() {
+            return Err(format!("解压后未找到目录: {}", sub));
+        }
+        p
+    };
+    let dest = managed_version_dir(&id, &version);
+    crate::commands::project::versions::move_extract_to_dest(&src, &dest, false)?;
+
+    let exe = managed_executable(&id, &managed, &version);
+    if !exe.is_file() {
+        return Err(format!("安装后未找到可执行文件: {}", exe.display()));
+    }
+
+    let _ = fs::remove_file(&archive);
+    let _ = fs::remove_dir_all(&extract_dir);
+
+    store.servers[idx].command = exe.to_string_lossy().to_string();
+    save_store(&store)?;
+    Ok(status_of(&store.servers[idx]))
+}
+
+/// 卸载托管安装：删掉该服务器的整个安装目录，并清空 `command`。
+///
+/// 清空 command 是刻意的：留着旧路径会让「装到项目」写出一个指向已删文件的配置，
+/// 客户端启动时只会报 ENOENT，看不出是这里的锅。
+#[tauri::command]
+pub fn mcp_uninstall_managed(id: String) -> Result<McpManagedStatus, String> {
+    let mut store = load_store();
+    let idx = store
+        .servers
+        .iter()
+        .position(|s| s.id == id)
+        .ok_or_else(|| format!("MCP 服务器不存在: {}", id))?;
+    if store.servers[idx].managed.is_none() {
+        return Err("该服务器不是托管安装，无法卸载".to_string());
+    }
+    let dir = managed_root().join(&id);
+    if dir.exists() {
+        fs::remove_dir_all(&dir).map_err(|e| format!("删除安装目录失败: {}", e))?;
+    }
+    store.servers[idx].command = String::new();
+    save_store(&store)?;
+    Ok(status_of(&store.servers[idx]))
 }
 
 // 注：原先的 `adopt_mcp_server`（把发现的服务器纳入托管并立刻部署回全局）已删除——
@@ -1405,6 +1760,7 @@ fn read_definition_from_globals(name: &str) -> Option<McpServer> {
             enabled_tools: Vec::new(),
             description: None,
             install_method: "migrated".to_string(),
+            managed: None,
         };
         return Some(server);
     }

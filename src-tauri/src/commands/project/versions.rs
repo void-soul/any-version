@@ -518,7 +518,7 @@ mod tests {
 ///
 /// Token 来源：SDK 模块设置优先，其次 `GITHUB_TOKEN` / `GH_TOKEN`。
 /// 未认证的 GitHub API 只有 60 次/小时，多工具一起刷新很容易撞 403。
-async fn get_github_json(
+pub(crate) async fn get_github_json(
     client: &reqwest::Client,
     url: &str,
 ) -> Result<serde_json::Value, String> {
@@ -1564,7 +1564,7 @@ fn extract_7z(src: &Path, dest: &Path) -> Result<(), String> {
 }
 
 /// 解压 zip 文件
-fn unzip_file(src: &Path, dest: &Path) -> Result<(), String> {
+pub(crate) fn unzip_file(src: &Path, dest: &Path) -> Result<(), String> {
     let file = fs::File::open(src).map_err(|e| e.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
 
@@ -1675,7 +1675,7 @@ fn merge_dir_all(src: &Path, dest: &Path) -> Result<(), String> {
 /// 将解压后的内容移动到目标目录。
 /// 当 merge_subdirs=true 时，所有子目录内容递归合并到 dest_dir 根下，
 /// 使 rustc/cargo/rust-std-* 等分散的组件融合为同一个目录结构。
-fn move_extract_to_dest(extracted_dir: &Path, dest_dir: &Path, merge_subdirs: bool) -> Result<(), String> {
+pub(crate) fn move_extract_to_dest(extracted_dir: &Path, dest_dir: &Path, merge_subdirs: bool) -> Result<(), String> {
     let entries = fs::read_dir(extracted_dir).map_err(|e| e.to_string())?
         .filter_map(|e| e.ok())
         .collect::<Vec<_>>();
@@ -1720,7 +1720,7 @@ fn move_extract_to_dest(extracted_dir: &Path, dest_dir: &Path, merge_subdirs: bo
 }
 
 /// 带进度回调的下载
-async fn download_with_progress<F>(url: &str, dest: &Path, on_progress: F) -> Result<(), String>
+pub(crate) async fn download_with_progress<F>(url: &str, dest: &Path, on_progress: F) -> Result<(), String>
 where
     F: Fn(u64, u64, f64),
 {
@@ -1774,7 +1774,7 @@ struct DownloadInfo {
 ///
 /// 挑不出来就报错，**绝不随便挑一个**：猜错的后果是下载到一个同名但不对的东西
 /// （或者 404），而用户完全看不出哪里错了 —— 这正是本模块 URL 模板那条老路的教训。
-fn pick_asset<'a>(
+pub(crate) fn pick_asset<'a>(
     assets: &'a [serde_json::Value],
     prefix: &str,
     suffix: &str,

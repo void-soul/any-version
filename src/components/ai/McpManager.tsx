@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { useProjects, type SkillProject } from "./useProjects";
 import { useTranslation } from "react-i18next";
@@ -35,6 +36,29 @@ interface McpSourceDraft {
   note: string;
 }
 
+/** 托管安装来源：从 GitHub Release 下载发行包并解压到本应用数据目录 */
+interface McpManagedSource {
+  /** owner/repo */
+  repo: string;
+  /** tag 模板，如 v{version} */
+  tagTemplate: string;
+  /** 资产名前缀模板，如 name-{version} */
+  assetPrefix: string;
+  /** 资产名后缀，如 .zip */
+  assetSuffix: string;
+  /** 解压后要进入的子目录模板（空 = 自动剥掉唯一顶层目录） */
+  extractSubdir: string;
+  /** 可执行文件相对安装根的路径，如 bin/xxx.bat */
+  executable: string;
+}
+
+interface McpManagedStatus {
+  installedVersions: string[];
+  /** 当前 command 指向的文件是否存在（决定能否装到项目） */
+  executableExists: boolean;
+  command: string;
+}
+
 interface McpServer {
   id: string;
   name: string;
@@ -49,6 +73,8 @@ interface McpServer {
   enabledTools: string[];
   description: string | null;
   installMethod: string;
+  /** 有值时由本应用下载安装（command 指向解压出来的可执行文件） */
+  managed?: McpManagedSource | null;
 }
 
 /** 项目里已装的 MCP（后端 list_project_mcps） */
@@ -87,6 +113,8 @@ interface McpPreset {
   url: string;
   /** 依赖的本地服务 id（如 wigolo）；空表示无依赖 */
   serviceId: string;
+  /** 预设自带托管来源：添加后可直接点「安装」 */
+  managed?: McpManagedSource | null;
 }
 
 // 将 "KEY=VALUE" 多行文本解析为对象
@@ -118,6 +146,12 @@ const TRANSPORT_KEY: Record<string, string> = {
 export default function McpManager() {
   const { t } = useTranslation();
   const [servers, setServers] = useState<McpServer[]>([]);
+  /** 托管安装状态（按 server id）：已装版本 / command 指向的文件是否存在 */
+  const [managedStatus, setManagedStatus] = useState<Record<string, McpManagedStatus>>({});
+  /** 正在安装/卸载的 server id */
+  const [managedBusy, setManagedBusy] = useState<string>("");
+  /** 安装进度百分比（后端 mcp-managed-progress；没有进度时用户只会看到按钮一直转） */
+  const [managedProgress, setManagedProgress] = useState<Record<string, number>>({});
   /** 全局配置里现存的 MCP（一次性清理用；只读列举） */
   const [globalList, setGlobalList] = useState<DiscoveredMcp[]>([]);
   /** 读取全局配置失败的原因。刻意**不吞**：之前 `.catch(() => [])` 让整块 UI 静默消失，
@@ -187,6 +221,8 @@ export default function McpManager() {
   const [resolving, setResolving] = useState(false);
   const [sourceMsg, setSourceMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
+  /** 表单里的托管安装来源（null = 用手填命令，不走下载安装） */
+  const [fManaged, setFManaged] = useState<McpManagedSource | null>(null);
   // MCP 服务器预设（后端静态清单，只在挂载时取一次）
   const [presets, setPresets] = useState<McpPreset[]>([]);
   useEffect(() => {
@@ -203,6 +239,24 @@ export default function McpManager() {
         invoke<DiscoveredMcp[]>("list_global_mcp").catch((e) => { setGlobalErr(String(e)); return [] as DiscoveredMcp[]; }),
       ]);
       setServers(srv);
+      // 托管条目顺手拉一次安装状态（本地目录扫描，不联网）
+      const managedServers = srv.filter((s) => s.managed);
+      if (managedServers.length) {
+        const pairs = await Promise.all(
+          managedServers.map(async (s) => {
+            try {
+              return [s.id, await invoke<McpManagedStatus>("mcp_managed_status", { id: s.id })] as const;
+            } catch {
+              return null;
+            }
+          }),
+        );
+        setManagedStatus(
+          Object.fromEntries(pairs.filter((p): p is readonly [string, McpManagedStatus] => !!p)),
+        );
+      } else {
+        setManagedStatus({});
+      }
       // 已经收进仓库的条目不再重复提示迁移
       setGlobalList(glob.filter((d) => !d.alreadyManaged));
     } catch (e) {
@@ -271,7 +325,12 @@ export default function McpManager() {
     setFDescription("");
     setFSource("");
     setSourceMsg(null);
+    setFManaged(null);
   };
+
+  /** 托管来源的局部更新（保持 null 时不创建对象） */
+  const patchManaged = (patch: Partial<McpManagedSource>) =>
+    setFManaged((m) => (m ? { ...m, ...patch } : m));
 
   const closeForm = () => {
     setShowForm(false);
@@ -325,6 +384,7 @@ export default function McpManager() {
     setFCwd("");
     setFHeaders("");
     setFEnabled(true);
+    setFManaged(p.managed ?? null);
     setShowForm(true);
   };
 
@@ -340,13 +400,18 @@ export default function McpManager() {
     setFHeaders(serializeKV(s.headers));
     setFEnabled(s.enabled);
     setFDescription(s.description ?? "");
+    setFManaged(s.managed ?? null);
     setShowForm(true);
   };
 
   const handleSave = async () => {
     if (!fName.trim()) { theamedAlert(t("mcp.needName")); return; }
+    if (fManaged && (!fManaged.repo.trim() || !fManaged.executable.trim())) {
+      theamedAlert(t("mcp.managedNeedFields")); return;
+    }
     if (fTransport === "stdio") {
-      if (!fCommand.trim()) { theamedAlert(t("mcp.needCommand")); return; }
+      // 托管条目允许先登记、再点安装：此时启动命令由安装命令写入
+      if (!fCommand.trim() && !fManaged) { theamedAlert(t("mcp.needCommand")); return; }
     } else if (!fUrl.trim()) {
       theamedAlert(t("mcp.needUrl")); return;
     }
@@ -366,6 +431,7 @@ export default function McpManager() {
         : [],
       description: fDescription.trim() || null,
       installMethod: "managed",
+      managed: fManaged,
     };
     setSaving(true);
     try {
@@ -377,6 +443,55 @@ export default function McpManager() {
       alertError(t("mcp.saveFail", { err: String(e) }));
     } finally {
       setSaving(false);
+    }
+  };
+
+  /** 托管安装进度：后端按块推送，这里换成一个 0-99 的百分比（100 由刷新后的状态体现） */
+  useEffect(() => {
+    const un = listen<{ id: string; version: string; downloaded: number; total: number }>(
+      "mcp-managed-progress",
+      (e) => {
+        const { id, downloaded, total } = e.payload;
+        setManagedProgress((m) => ({
+          ...m,
+          [id]: total > 0 ? Math.min(99, Math.round((downloaded / total) * 100)) : 0,
+        }));
+      },
+    );
+    return () => { void un.then((fn) => fn()); };
+  }, []);
+
+  /** 安装最新版：解析 release 列表取第一个（新 → 旧）→ 下载解压 → 命令指向可执行文件 */
+  const installManaged = async (s: McpServer) => {
+    setManagedBusy(s.id);
+    setManagedProgress((m) => ({ ...m, [s.id]: 0 }));
+    try {
+      const versions = await invoke<string[]>("mcp_list_managed_versions", { id: s.id });
+      if (!versions.length) throw new Error(t("mcp.managedNoVersions"));
+      await invoke<McpManagedStatus>("mcp_install_managed", { id: s.id, version: versions[0] });
+      await load();
+    } catch (e: any) {
+      alertError(t("mcp.managedInstallFail", { err: String(e) }));
+    } finally {
+      setManagedBusy("");
+      setManagedProgress((m) => {
+        const next = { ...m };
+        delete next[s.id];
+        return next;
+      });
+    }
+  };
+
+  const uninstallManaged = async (s: McpServer) => {
+    if (!confirm(t("mcp.managedUninstallConfirm", { name: s.name }))) return;
+    setManagedBusy(s.id);
+    try {
+      await invoke<McpManagedStatus>("mcp_uninstall_managed", { id: s.id });
+      await load();
+    } catch (e: any) {
+      alertError(String(e));
+    } finally {
+      setManagedBusy("");
     }
   };
 
@@ -654,6 +769,81 @@ export default function McpManager() {
             </>
           )}
 
+          {/* 托管安装：不是 npm 包的 MCP 服务器（发行包 + bin）在这登记一次，
+              由本应用下载解压，命令自动指向解压出来的可执行文件。 */}
+          {fTransport === "stdio" && (
+            <div className="rounded-ctl border border-white/10 bg-black/20 p-2.5 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-micro text-slate-500">{t("mcp.managedTitle")}</label>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setFManaged(
+                      fManaged
+                        ? null
+                        : {
+                            repo: "",
+                            tagTemplate: "v{version}",
+                            assetPrefix: "",
+                            assetSuffix: ".zip",
+                            extractSubdir: "",
+                            executable: "",
+                          },
+                    )
+                  }
+                  className="px-2 py-0.5 rounded text-micro bg-white/5 border border-white/10 text-slate-300 hover:text-white cursor-pointer"
+                >
+                  {fManaged ? t("mcp.managedDisable") : t("mcp.managedEnable")}
+                </button>
+              </div>
+              {fManaged ? (
+                <>
+                  <input
+                    value={fManaged.repo}
+                    onChange={(e) => patchManaged({ repo: e.target.value })}
+                    placeholder="owner/repo"
+                    className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
+                  />
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <input
+                      value={fManaged.tagTemplate}
+                      onChange={(e) => patchManaged({ tagTemplate: e.target.value })}
+                      placeholder="v{version}"
+                      className="ui-input rounded-ctl px-2.5 py-1.5 text-tiny text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
+                    />
+                    <input
+                      value={fManaged.assetSuffix}
+                      onChange={(e) => patchManaged({ assetSuffix: e.target.value })}
+                      placeholder=".zip"
+                      className="ui-input rounded-ctl px-2.5 py-1.5 text-tiny text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
+                    />
+                    <input
+                      value={fManaged.assetPrefix}
+                      onChange={(e) => patchManaged({ assetPrefix: e.target.value })}
+                      placeholder="name-{version}"
+                      className="ui-input rounded-ctl px-2.5 py-1.5 text-tiny text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
+                    />
+                    <input
+                      value={fManaged.extractSubdir}
+                      onChange={(e) => patchManaged({ extractSubdir: e.target.value })}
+                      placeholder={t("mcp.managedExtractPh")}
+                      className="ui-input rounded-ctl px-2.5 py-1.5 text-tiny text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
+                    />
+                  </div>
+                  <input
+                    value={fManaged.executable}
+                    onChange={(e) => patchManaged({ executable: e.target.value })}
+                    placeholder="bin/xxx.bat"
+                    className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
+                  />
+                  <p className="text-micro text-slate-500 leading-relaxed">{t("mcp.managedHint")}</p>
+                </>
+              ) : (
+                <p className="text-micro text-slate-500 leading-relaxed">{t("mcp.managedOffHint")}</p>
+              )}
+            </div>
+          )}
+
           <div>
             <label className="text-micro text-slate-500 block mb-1">{t("mcp.descLabel")}</label>
             <input
@@ -706,6 +896,9 @@ export default function McpManager() {
           {servers.map((s) => {
             const installed = projMcps.find((p) => p.managed && p.name === s.name);
             const busy = projBusy === s.id;
+            const mStatus = managedStatus[s.id];
+            // 托管条目还没装（或可执行文件被手工删了）：不能装到项目，否则写出去的是空/失效命令
+            const notInstalled = !!s.managed && !mStatus?.executableExists;
             return (
               /* 单行紧凑：与技能库列表同一套节奏。原先每条一张p-4 卡片 + 三行，
                  六个 MCP 就要占满整屏，真正的信息（名字 / 传输方式 / 装没装）反而被摊薄。 */
@@ -716,11 +909,13 @@ export default function McpManager() {
                 <input
                   type="checkbox"
                   checked={!!installed}
-                  disabled={busy || (!selProject && pickedProjects.size === 0)}
+                  disabled={busy || notInstalled || (!selProject && pickedProjects.size === 0)}
                   onChange={() => (installed ? removeFromProject(s.name, true) : installToProject(s.id))}
-                  title={installed
-                    ? t("mcp.installedIn", { name: projects.find((p) => p.id === selProject)?.name ?? "" })
-                    : t("mcp.installToProject")}
+                  title={notInstalled
+                    ? t("mcp.managedNotInstalled")
+                    : installed
+                      ? t("mcp.installedIn", { name: projects.find((p) => p.id === selProject)?.name ?? "" })
+                      : t("mcp.installToProject")}
                   className="w-3 h-3 accent-[var(--module-accent)] flex-shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                 />
                 <Plug className="w-3 h-3 text-[var(--module-accent)] flex-shrink-0" />
@@ -733,6 +928,32 @@ export default function McpManager() {
                 <span className="text-micro text-slate-500 truncate flex-1 font-mono" title={s.transport === "stdio" ? `${s.command} ${s.args.join(" ")}`.trim() : s.url}>
                   {s.transport === "stdio" ? `${s.command} ${s.args.join(" ")}`.trim() : s.url}
                 </span>
+                {s.managed && (() => {
+                  const ver = mStatus?.installedVersions[0];
+                  const mBusy = managedBusy === s.id;
+                  const pct = managedProgress[s.id];
+                  return ver ? (
+                    <button
+                      onClick={() => void uninstallManaged(s)}
+                      disabled={mBusy}
+                      title={`${t("mcp.managedInstalled", { version: ver })}${mStatus?.command ? `\n${mStatus.command}` : ""}`}
+                      className="px-1.5 py-0.5 rounded text-micro bg-emerald-500/15 text-emerald-300 border border-emerald-500/25 hover:bg-emerald-500/25 cursor-pointer disabled:opacity-40 flex-shrink-0"
+                    >
+                      {mBusy ? <RefreshCw className="w-3 h-3 animate-spin" /> : `v${ver} · ${t("mcp.managedUninstall")}`}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => void installManaged(s)}
+                      disabled={mBusy}
+                      title={t("mcp.managedInstallHint")}
+                      className="px-1.5 py-0.5 rounded text-micro bg-amber-500/15 text-amber-300 border border-amber-500/25 hover:bg-amber-500/25 cursor-pointer disabled:opacity-40 flex-shrink-0"
+                    >
+                      {mBusy
+                        ? `${t("mcp.managedInstalling")}${pct !== undefined ? ` ${pct}%` : ""}`
+                        : t("mcp.managedInstall")}
+                    </button>
+                  );
+                })()}
                 <button
                   onClick={() => openEdit(s)}
                   className="text-slate-600 hover:text-[var(--module-accent)] cursor-pointer flex-shrink-0"
