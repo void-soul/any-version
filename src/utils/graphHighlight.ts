@@ -6,6 +6,7 @@
  * 而且很容易漏掉某一处 —— 高亮是纯观感，漏了不会报错、只会显得某处没跟上。
  */
 import { useCallback, useState } from "react";
+import { clampGraphDepth, type GraphDepth } from "./graphScope";
 
 /** 高亮档位：`select` 选中本身，`related` 与它直接相连 */
 export type HighlightLevel = "select" | "related";
@@ -39,8 +40,16 @@ export const HL_BOOST_MAX = 1.5;
  */
 export const DIM_MAX = 2;
 
-const HL_KEY = "kira.graph.dbd.highlight";
-const DIM_KEY = "kira.graph.dbd.dim";
+/**
+ * 偏好键按**模块**隔离：`dbd` / `mindmap` / `jsonflow`。
+ *
+ * 为什么不是三处共用一个键：三个画布的图长得完全不一样 —— 设计图几百张表密排、
+ * 导图几十个节点、JSON 是深而窄的树。「能压多淡」在这三种密度下的合适值并不一样，
+ * 共用一个滑块等于逼用户「在 A 里调顺手，到 B 全都不对」。
+ *
+ * 缺省 `dbd` 与改动前的键名一字不差，所以老用户的偏好不会丢。
+ */
+const prefKey = (scope: string, what: string) => `kira.graph.${scope}.${what}`;
 
 export interface GraphHighlightPrefs {
   /** 高亮强度倍率：1 = 改动前的观感 */
@@ -130,28 +139,51 @@ function round2(v: number): number {
   return Math.round(v * 100) / 100;
 }
 
-/** 读偏好 + 改即持久化。与 `useEdgeStyle` 同一形态。 */
-export function useGraphHighlightPrefs() {
+/** 读偏好 + 改即持久化。与 `useEdgeStyle` 同一形态。
+ *  `scope` 见上方 `prefKey`：三个画布各存一份，缺省 `dbd` 保持老键名。 */
+export function useGraphHighlightPrefs(scope = "dbd") {
+  const hlKey = prefKey(scope, "highlight");
+  const dimKey = prefKey(scope, "dim");
   const [prefs, setPrefs] = useState<GraphHighlightPrefs>(() => ({
-    highlight: readPref(localStorage.getItem(HL_KEY), HL_BOOST_MAX),
-    dim: readPref(localStorage.getItem(DIM_KEY), DIM_MAX),
+    highlight: readPref(localStorage.getItem(hlKey), HL_BOOST_MAX),
+    dim: readPref(localStorage.getItem(dimKey), DIM_MAX),
   }));
   const setHighlight = useCallback((v: number) => {
     const next = clampPref(v, HL_BOOST_MAX);
     setPrefs((p) => ({ ...p, highlight: next }));
-    localStorage.setItem(HL_KEY, String(next));
-  }, []);
+    localStorage.setItem(hlKey, String(next));
+  }, [hlKey]);
   const setDim = useCallback((v: number) => {
     const next = clampPref(v, DIM_MAX);
     setPrefs((p) => ({ ...p, dim: next }));
-    localStorage.setItem(DIM_KEY, String(next));
-  }, []);
+    localStorage.setItem(dimKey, String(next));
+  }, [dimKey]);
   const reset = useCallback(() => {
     setPrefs(DEFAULT_HL_PREFS);
-    localStorage.setItem(HL_KEY, String(DEFAULT_HL_PREFS.highlight));
-    localStorage.setItem(DIM_KEY, String(DEFAULT_HL_PREFS.dim));
-  }, []);
+    localStorage.setItem(hlKey, String(DEFAULT_HL_PREFS.highlight));
+    localStorage.setItem(dimKey, String(DEFAULT_HL_PREFS.dim));
+  }, [hlKey, dimKey]);
   return { prefs, setHighlight, setDim, reset };
+}
+
+/**
+ * 「高亮层级」偏好：几跳以内的节点算关联（1-5）。
+ *
+ * 放在这里而不是 `graphScope.ts`：那一个是纯函数模块（要能脱离 React 测），
+ * 这里已经是偏好层（`useGraphHighlightPrefs` 的邻居），两个滑块与它共用同一套
+ * 「读 localStorage + 改即持久化」的形态。
+ */
+export function useGraphDepthPref(scope: string): { depth: GraphDepth; setDepth: (d: GraphDepth) => void } {
+  const key = prefKey(scope, "depth");
+  const [depth, setDepthState] = useState<GraphDepth>(() =>
+    clampGraphDepth(localStorage.getItem(key)),
+  );
+  const setDepth = useCallback((d: GraphDepth) => {
+    const next = clampGraphDepth(d);
+    setDepthState(next);
+    localStorage.setItem(key, String(next));
+  }, [key]);
+  return { depth, setDepth };
 }
 
 /**
