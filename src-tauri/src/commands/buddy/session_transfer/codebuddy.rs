@@ -136,6 +136,305 @@ fn codebuddy_cn_user_data_dir() -> Result<std::path::PathBuf, String> {
         .ok_or_else(|| "无法定位 CodeBuddy CN 数据目录".to_string())
 }
 
+/// 路径是否为重解析点（junction / 符号链接 / 挂载点）。
+///
+/// 不能只看 `file_type().is_symlink()`：Windows junction 的 `is_symlink()` 不可靠，
+/// 必须读 `FILE_ATTRIBUTE_REPARSE_POINT` 属性位（2026-10-20 实测 Python/Rust 两边都踩过）。
+pub(crate) fn is_reparse_point(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return true;
+        }
+    }
+    metadata.file_type().is_symlink()
+}
+
+/// 目标账号的会话目录是不是指向共享目录的链接。
+///
+/// 共享模式下所有账号读写同一份会话数据，切号**不需要复制**（复制只会把链接物化成真实目录）。
+/// 目录名不硬编码：`<Data>/<uid>/<IDE>/<uid>/history` 的 IDE 层靠扫描发现。
+fn target_sessions_shared(extension_data_dir: &Path, target_uid: &str) -> bool {
+    let account_outer = extension_data_dir.join(target_uid);
+    let Ok(entries) = std::fs::read_dir(&account_outer) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let history = entry.path().join(target_uid).join("history");
+        if is_reparse_point(&history) {
+            return true;
+        }
+    }
+    false
+}
+
+/// 共享模式下的会话分类目录（与 `scripts/migrate-shared-sessions.py` 的 KINDS 一致）。
+///
+/// 口径与复制链路的 [`AUXILIARY_KINDS`] 对齐：`history` + 5 类辅助目录，
+/// 否则 `genie-cache` / `connectors` 会在每个账号各留一份真实副本。
+const SHARED_KINDS: [&str; 6] = [
+    "history",
+    "check-point",
+    "file-tree",
+    "plan-task",
+    "genie-cache",
+    "connectors",
+];
+
+/// 接管时原目录的改名后缀（`history.kira-shared-bak`）。
+const TAKEOVER_BAK_SUFFIX: &str = ".kira-shared-bak";
+
+/// 共享根：所有账号共用同一份会话数据，放在本软件数据目录下。
+///
+/// 布局与 `scripts/migrate-shared-sessions.py` 完全一致：
+/// `<data_dir>/buddy/shared-sessions/codebuddy-cn/<kind>`，每个账号的
+/// `<...>/<uid>/CodeBuddyIDE/<uid>/<kind>` 是指向它的 junction。
+fn shared_sessions_root() -> std::path::PathBuf {
+    crate::commands::config::get_data_dir()
+        .join("buddy")
+        .join("shared-sessions")
+        .join(BACKUP_PLATFORM_LABEL)
+}
+
+/// 共享根里是否已经有会话数据（空目录 = 用户还没迁移，绝不能接管）。
+fn shared_root_ready(shared_root: &Path) -> bool {
+    std::fs::read_dir(shared_root.join("history"))
+        .map(|mut entries| entries.next().is_some())
+        .unwrap_or(false)
+}
+
+/// 该账号的 history 是否已经是指向共享根的链接。
+fn history_links_to(account_root: &Path, shared_root: &Path) -> bool {
+    let history = account_root.join("history");
+    if !is_reparse_point(&history) {
+        return false;
+    }
+    match (
+        std::fs::canonicalize(&history),
+        std::fs::canonicalize(shared_root.join("history")),
+    ) {
+        (Ok(actual), Ok(expected)) => actual == expected,
+        _ => false,
+    }
+}
+
+/// 从现有账号目录里探测 IDE 层目录名（客户端固定叫 `CodeBuddyIDE`，探测优先）。
+fn discover_ide_names(extension_data_dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    if let Ok(accounts) = std::fs::read_dir(extension_data_dir) {
+        for account in accounts.flatten() {
+            let Ok(ides) = std::fs::read_dir(account.path()) else {
+                continue;
+            };
+            for ide in ides.flatten() {
+                if !ide.path().is_dir() || is_reparse_point(&ide.path()) {
+                    continue;
+                }
+                let name = ide.file_name().to_string_lossy().to_string();
+                if !names.iter().any(|existing| existing.eq_ignore_ascii_case(&name)) {
+                    names.push(name);
+                }
+            }
+        }
+    }
+    if names.is_empty() {
+        names.push("CodeBuddyIDE".to_string());
+    }
+    names
+}
+
+/// 把来源工作区 index.json 里共享根缺少的会话条目并进去（共享根为准，不覆盖已有条目）。
+fn merge_index_into_shared(shared_workspace: &Path, source_workspace: &Path) -> Result<(), String> {
+    let source_index_path = source_workspace.join("index.json");
+    if !source_index_path.is_file() {
+        return Ok(());
+    }
+    let source_index = read_workspace_index(&source_index_path)?;
+    let shared_index_path = shared_workspace.join("index.json");
+    let mut shared_index = if shared_index_path.is_file() {
+        read_workspace_index(&shared_index_path)?
+    } else {
+        serde_json::json!({ "conversations": [], "current": "" })
+    };
+    let mut merged = conversations(&shared_index);
+    let mut known: std::collections::HashSet<String> = merged
+        .iter()
+        .filter_map(conversation_id)
+        .map(str::to_string)
+        .collect();
+    let mut added = 0usize;
+    for conversation in conversations(&source_index) {
+        let Some(id) = conversation_id(&conversation) else {
+            continue;
+        };
+        if known.insert(id.to_string()) {
+            merged.push(conversation);
+            added += 1;
+        }
+    }
+    if added == 0 {
+        return Ok(());
+    }
+    shared_index["conversations"] = Value::Array(merged);
+    write_workspace_index(&shared_index_path, &shared_index)
+}
+
+/// 把某个账号目录里**共享根没有的**会话并入共享根，然后整体换成 junction。
+///
+/// 只搬共享根缺少的会话：共享根是权威副本，已存在的同名会话一律以共享根为准，
+/// 因此这个操作是幂等的，重复执行不会产生任何复制。
+fn adopt_account_into_shared(account_root: &Path, shared_root: &Path) -> Result<usize, String> {
+    let mut adopted = 0usize;
+    for kind in SHARED_KINDS {
+        let source = account_root.join(kind);
+        if !source.is_dir() || is_reparse_point(&source) {
+            continue;
+        }
+        let destination = shared_root.join(kind);
+        std::fs::create_dir_all(&destination).map_err(|e| {
+            format!(
+                "创建共享会话目录失败: path={}, error={}",
+                destination.display(),
+                e
+            )
+        })?;
+        for workspace in std::fs::read_dir(&source)
+            .map_err(|e| format!("读取账号会话目录失败: path={}, error={}", source.display(), e))?
+        {
+            let workspace = workspace.map_err(|e| format!("读取账号会话子目录失败: {}", e))?;
+            let workspace_source = workspace.path();
+            if !workspace_source.is_dir() {
+                continue;
+            }
+            let workspace_destination = destination.join(workspace.file_name());
+            std::fs::create_dir_all(&workspace_destination)
+                .map_err(|e| format!("创建共享工作区目录失败: {}", e))?;
+            for conversation in std::fs::read_dir(&workspace_source)
+                .map_err(|e| format!("读取账号会话条目失败: {}", e))?
+            {
+                let conversation = conversation.map_err(|e| format!("读取账号会话条目失败: {}", e))?;
+                let conversation_path = conversation.path();
+                if !conversation_path.is_dir() {
+                    continue;
+                }
+                let target = workspace_destination.join(conversation.file_name());
+                if target.exists() {
+                    continue;
+                }
+                copy_dir_atomic(&conversation_path, &target)?;
+                adopted += 1;
+            }
+            merge_index_into_shared(&workspace_destination, &workspace_source)?;
+        }
+    }
+
+    // 数据已经并进共享根，再换链接：先改名（同盘瞬间），建好 junction 才删备份。
+    for kind in SHARED_KINDS {
+        let source = account_root.join(kind);
+        if is_reparse_point(&source) {
+            continue;
+        }
+        let target = shared_root.join(kind);
+        std::fs::create_dir_all(&target).map_err(|e| {
+            format!("创建共享会话目录失败: path={}, error={}", target.display(), e)
+        })?;
+        let mut backup = None;
+        if source.exists() {
+            let path = account_root.join(format!("{}{}", kind, TAKEOVER_BAK_SUFFIX));
+            if path.exists() {
+                std::fs::remove_dir_all(&path)
+                    .map_err(|e| format!("清理上次接管的备份失败: {}: {}", path.display(), e))?;
+            }
+            std::fs::rename(&source, &path).map_err(|e| {
+                format!(
+                    "暂存账号会话目录失败: from={}, to={}, error={}",
+                    source.display(),
+                    path.display(),
+                    e
+                )
+            })?;
+            backup = Some(path);
+        }
+        if let Err(error) = crate::commands::cache::create_junction(&source, &target) {
+            if let Some(backup) = &backup {
+                let _ = std::fs::rename(backup, &source);
+            }
+            return Err(format!(
+                "建立共享会话链接失败: link={}, target={}, error={}",
+                source.display(),
+                target.display(),
+                error
+            ));
+        }
+        if let Some(backup) = backup {
+            if let Err(error) = std::fs::remove_dir_all(&backup) {
+                // 删不掉不影响正确性（链接已就位，数据已在共享根）：留给下次接管清理
+                eprintln!(
+                    "[Buddy CN Transfer] 接管备份清理失败（下次切号重试）: {}: {}",
+                    backup.display(),
+                    error
+                );
+            }
+        }
+    }
+    Ok(adopted)
+}
+
+/// 确保目标账号读写的会话目录就是共享根，返回 `true` 表示「已处于共享模式」。
+///
+/// 客户端给新账号首次登录时会建一套真实目录；不接管的话，第一次切号就会把
+/// 整份共享会话复制给这个账号，机制当场退化。所以这里在切号前（客户端已退出）
+/// 把独有会话并进共享根、再把目录换成 junction。
+///
+/// 返回 `false` 只有一种情况：共享根还没建立/为空 —— 即用户没启用共享，
+/// 调用方按旧逻辑逐会话合并。
+fn ensure_shared_target(extension_data_dir: &Path, target_uid: &str) -> Result<bool, String> {
+    ensure_shared_target_at(extension_data_dir, target_uid, &shared_sessions_root())
+}
+
+fn ensure_shared_target_at(
+    extension_data_dir: &Path,
+    target_uid: &str,
+    shared_root: &Path,
+) -> Result<bool, String> {
+    if !shared_root_ready(shared_root) {
+        return Ok(false);
+    }
+    validate_uid(target_uid)?;
+    let account_outer = extension_data_dir.join(target_uid);
+    let mut ready = false;
+    for ide in discover_ide_names(extension_data_dir) {
+        let account_root = account_outer.join(&ide).join(target_uid);
+        if !account_root.is_dir() {
+            // 账号还没被客户端建目录：直接铺一套 junction，一条会话都不用复制
+            std::fs::create_dir_all(&account_root)
+                .map_err(|e| format!("创建账号会话根目录失败: {}", e))?;
+        } else if history_links_to(&account_root, shared_root) {
+            ready = true;
+            continue;
+        } else if !is_reparse_point(&account_root.join("history"))
+            && !account_root.join("history").exists()
+            && std::fs::read_dir(&account_root)
+                .map(|mut entries| entries.next().is_none())
+                .unwrap_or(false)
+        {
+            // 空账号目录：没什么可搬的，直接铺链接
+        }
+        let adopted = adopt_account_into_shared(&account_root, shared_root)?;
+        eprintln!(
+            "[Buddy CN Transfer] 账号 {} 接入共享会话目录: 并入独有会话 {} 条，其余只建链接（不复制）",
+            target_uid, adopted
+        );
+        ready = true;
+    }
+    Ok(ready)
+}
+
 fn transfer_local_sessions(
     user_data_dir: &Path,
     source_uid: &str,
@@ -160,6 +459,44 @@ fn transfer_local_sessions(
     let baseline = super::super::session_sync::load_baseline(BACKUP_PLATFORM_LABEL, target_uid);
     let mut tracker = SyncTracker::new(baseline);
     let mut pending_conflicts: Vec<PendingConflict> = Vec::new();
+
+    // ── 接管目标账号的会话目录（共享根已建立时）──
+    // 客户端给新账号首次登录时会建一套真实目录。不在这里先换成链接，下面的复制分支
+    // 就会把整份共享会话搬给这个账号，共享模式当场退化成「每个账号一份副本」。
+    // 接管只把共享根缺少的会话并进去，幂等；共享根为空（用户没启用共享）时返回 false，
+    // 走原来的逐会话合并逻辑。
+    if ensure_shared_target(&extension_data_dir, target_uid)? {
+        eprintln!(
+            "[Buddy CN Transfer] 账号 {} 接入共享会话目录（只并独有会话，其余只建链接）",
+            target_uid
+        );
+    }
+
+    // ── 共享目录模式（junction / symlink）──
+    // 所有账号读写同一份会话数据，切号不需要复制；而且 `replace_dir_atomic` 的
+    // 「临时目录 + rename」会把链接物化成真实目录（2026-10-20 真机实证）。
+    // 这里只改 vscdb 归属：客户端按 `userId` 过滤列表。
+    if target_sessions_shared(&extension_data_dir, target_uid) {
+        report.updated_session_rows = remap_session_vscdb_user_id(
+            &user_data_dir.join("codebuddy-sessions.vscdb"),
+            source_uid,
+            target_uid,
+            &backup_root,
+        )?;
+        let (summary, next_baseline) = tracker.finish();
+        super::super::session_sync::save_baseline(BACKUP_PLATFORM_LABEL, target_uid, &next_baseline);
+        super::super::session_sync::save_pending_conflicts(
+            BACKUP_PLATFORM_LABEL,
+            target_uid,
+            &pending_conflicts,
+        );
+        report.sync = summary;
+        eprintln!(
+            "[Buddy CN Transfer] 目标账号 {} 的会话目录是共享链接，跳过复制（只 remap userId={}）",
+            target_uid, report.updated_session_rows
+        );
+        return Ok(report);
+    }
 
     report.scanned_workspaces = sync_history_between_accounts(
         &extension_data_dir,
@@ -1890,6 +2227,15 @@ fn copy_dir_atomic(source: &Path, target: &Path) -> Result<(), String> {
 }
 
 fn replace_dir_atomic(source: &Path, target: &Path) -> Result<(), String> {
+    // 共享目录（junction/symlink）不能替换：rename 会先把链接改名、再用真实目录顶替，
+    // 等于把共享链接物化。共享模式下复制本来就该被跳过，这里只做兜底。
+    if is_reparse_point(target) {
+        eprintln!(
+            "[Buddy CN Transfer] 目标是共享链接，跳过覆盖: {}",
+            target.display()
+        );
+        return Ok(());
+    }
     let parent = target
         .parent()
         .ok_or_else(|| format!("无法定位目标目录: {}", target.display()))?;
@@ -2075,6 +2421,23 @@ mod tests {
             account_id: "",
             platform: BuddyPlatform::CodebuddyCn,
         }
+    }
+
+    /// 本机能否建 junction（非 Windows / 无 mklink 时，依赖链接的测试直接跳过）。
+    fn mklink_supported(root: &std::path::Path) -> bool {
+        let target = root.join("probe-target");
+        let link = root.join("probe-link");
+        std::fs::create_dir_all(&target).unwrap();
+        let ok = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&target)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        let _ = std::fs::remove_dir(&link);
+        let _ = std::fs::remove_dir(&target);
+        ok
     }
 
     #[test]
@@ -2804,5 +3167,164 @@ mod tests {
         .unwrap();
         let (summary2, _) = tracker2.finish();
         assert_eq!(summary2.conflict, 1, "CodeBuddy 侧必须照常记冲突");
+    }
+
+    /// 2026-10-20 真机：junction 的 `is_symlink()` 不可靠，必须读属性位。
+    /// 共享判定依赖它，判错就会把链接物化成真实目录（磁盘直接翻倍）。
+    #[test]
+    fn reparse_point_detects_junction_and_shared_target() {
+        let root = std::env::temp_dir().join(format!("buddy-cn-reparse-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let target = root.join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        let link = root.join("link");
+        let status = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&target)
+            .status();
+        let supported = status.map(|s| s.success()).unwrap_or(false);
+        if !supported {
+            // 非 Windows / 无 mklink：跳过（不影响其他平台）
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+
+        assert!(is_reparse_point(&link), "junction 必须被识别为 reparse point");
+        assert!(!is_reparse_point(&target), "普通目录不能误判");
+
+        let extension = root.join("extension");
+        let uid = "uid-shared";
+        let account_root = extension.join(uid).join("CodeBuddyIDE").join(uid);
+        std::fs::create_dir_all(&account_root).unwrap();
+        let history = account_root.join("history");
+        let ok = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&history)
+            .arg(&target)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(ok, "创建 history junction 失败");
+
+        assert!(target_sessions_shared(&extension, uid), "共享链接必须被识别");
+        assert!(!target_sessions_shared(&extension, "uid-plain"), "不存在的账号不能误判");
+
+        // 只删链接与临时根，确认目标目录本身没被删
+        let _ = std::fs::remove_dir(&history);
+        let _ = std::fs::remove_dir(&link);
+        assert!(target.is_dir());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 切号前的接管（`ensure_shared_target` → `adopt_account_into_shared`）：
+    /// 客户端给新账号建的真实目录应被并进共享根，并整体换成 6 条 junction。
+    /// 这条链路此前没有调用点，是「每个账号又留一份副本」的回归口。
+    #[test]
+    fn adopt_account_into_shared_replaces_real_dirs_with_junctions() {
+        let root = make_temp();
+
+        // 探针：无 mklink 的平台直接跳过（接管依赖 junction）
+        if !mklink_supported(&root) {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+
+        let extension = root.join("extension");
+        let shared_root = root.join("shared");
+        let uid = "uid-adopt";
+        let account_root = extension.join(uid).join("CodeBuddyIDE").join(uid);
+
+        // 账号侧：一条共享根没有的独有会话 + 一条共享根已有的会话
+        let own = account_root.join("history").join("ws1").join("own-id");
+        std::fs::create_dir_all(&own).unwrap();
+        std::fs::write(own.join("msg.json"), "account-copy").unwrap();
+        let account_dup = account_root.join("history").join("ws1").join("shared-id");
+        std::fs::create_dir_all(&account_dup).unwrap();
+        std::fs::write(account_dup.join("msg.json"), "account-copy").unwrap();
+        // 辅助目录同样要接管（check-point 里也是独有内容）
+        let checkpoint = account_root.join("check-point").join("ws1").join("own-id");
+        std::fs::create_dir_all(&checkpoint).unwrap();
+        std::fs::write(checkpoint.join("state.json"), "cp").unwrap();
+
+        // 共享侧：shared-id 是权威副本，内容不能被账号侧覆盖
+        let shared_dup = shared_root.join("history").join("ws1").join("shared-id");
+        std::fs::create_dir_all(&shared_dup).unwrap();
+        std::fs::write(shared_dup.join("msg.json"), "shared-authority").unwrap();
+
+        let adopted = adopt_account_into_shared(&account_root, &shared_root).unwrap();
+        assert_eq!(adopted, 2, "history 与 check-point 各并入 1 条独有会话");
+
+        for kind in SHARED_KINDS {
+            assert!(
+                is_reparse_point(&account_root.join(kind)),
+                "{} 应被换成 junction",
+                kind
+            );
+        }
+        // 通过链接读到的就是共享根：独有会话已并入，权威副本未被账号侧覆盖
+        assert!(shared_root.join("history/ws1/own-id/msg.json").is_file());
+        assert!(shared_root.join("check-point/ws1/own-id/state.json").is_file());
+        assert_eq!(
+            std::fs::read_to_string(account_root.join("history/ws1/shared-id/msg.json")).unwrap(),
+            "shared-authority"
+        );
+
+        // 幂等：再接管一次不复制任何东西（共享根是权威副本）
+        assert_eq!(
+            adopt_account_into_shared(&account_root, &shared_root).unwrap(),
+            0
+        );
+
+        // 收尾：先删链接本身，再删临时根（不让 remove_dir_all 碰到链接目标）
+        for kind in SHARED_KINDS {
+            let _ = std::fs::remove_dir(account_root.join(kind));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `ensure_shared_target_at`（切号时的接线点）：共享根为空时不得接管
+    /// （用户没启用共享 → 必须回落到原逐会话合并），就绪时才换成链接。
+    #[test]
+    fn ensure_shared_target_skips_empty_root_then_adopts_when_ready() {
+        let root = make_temp();
+        if !mklink_supported(&root) {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+
+        let extension = root.join("extension");
+        let uid = "uid-ensure";
+        let account_root = extension.join(uid).join("CodeBuddyIDE").join(uid);
+        let real_session = account_root.join("history").join("ws1").join("s1");
+        std::fs::create_dir_all(&real_session).unwrap();
+        std::fs::write(real_session.join("msg.json"), "only-copy").unwrap();
+
+        // 共享根为空（history 里一条都没有）：返回 false，账号目录原样保留
+        let empty_root = root.join("empty-shared");
+        std::fs::create_dir_all(empty_root.join("history")).unwrap();
+        assert!(
+            !ensure_shared_target_at(&extension, uid, &empty_root).unwrap(),
+            "共享根为空时必须回落，不得接管"
+        );
+        assert!(!is_reparse_point(&account_root.join("history")));
+        assert!(real_session.is_dir(), "未启用共享时绝不能动账号目录");
+
+        // 共享根就绪：接管，history 变成指向共享根的链接，独有会话并入
+        let shared_root = root.join("shared");
+        std::fs::create_dir_all(shared_root.join("history").join("ws0").join("dummy")).unwrap();
+        assert!(ensure_shared_target_at(&extension, uid, &shared_root).unwrap());
+        assert!(is_reparse_point(&account_root.join("history")));
+        assert!(history_links_to(&account_root, &shared_root));
+        assert!(
+            shared_root.join("history/ws1/s1/msg.json").is_file(),
+            "账号独有会话应并入共享根"
+        );
+
+        for kind in SHARED_KINDS {
+            let _ = std::fs::remove_dir(account_root.join(kind));
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
