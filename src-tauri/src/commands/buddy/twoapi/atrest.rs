@@ -398,6 +398,68 @@ fn resolve_mut<'a>(root: &'a mut serde_json::Value, path: &str) -> Result<&'a mu
     Ok(cur)
 }
 
+/// 登录态里官方会加密的字段（抄 cockpit-tools `workbuddy_auth_crypto::encode_session`）。
+///
+/// 这是实测出来的清单，别自创：多封一个或少封一个，5.6+ 客户端都可能读到后判为异常
+/// （表现为"切了号却仍提示登录"）。`accounts[]` / `allAccounts[]` 里每个元素同这套字段。
+const ACCOUNT_ENCRYPT_FIELDS: [&str; 3] = ["phoneNumber", "departmentFullName", "nickname"];
+const AUTH_ENCRYPT_FIELDS: [&str; 2] = ["accessToken", "refreshToken"];
+
+/// 把单个字段原地换成加密包装；字段缺失或不是字符串就跳过（宽容），
+/// 已经是加密态则拒绝（二次加密会让客户端解不开）。
+fn encrypt_slot(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    field: &str,
+    secret: &str,
+) -> Result<(), String> {
+    let Some(value) = obj.get_mut(field) else {
+        return Ok(());
+    };
+    if is_encrypted(value) {
+        return Err(format!("字段 {field} 已是官方加密态，拒绝二次加密"));
+    }
+    if !value.is_string() {
+        return Ok(());
+    }
+    let plain = value.as_str().unwrap_or_default().to_string();
+    *value = encrypt_field(&plain, secret)?;
+    Ok(())
+}
+
+/// 按官方字段清单把**明文**登录会话加密成客户端 5.6+ 认的结构。
+///
+/// 只在「登录文件不存在 / 原文件本身没加密」时用它 —— 这两种情况下若直接写明文，
+/// 客户端读出来就是未登录（真机故障：切号后打开客户端提示登录）。
+/// 原文件已加密的情况走 `decrypt_tree_with_paths` + `encrypt_tree` 保原路径。
+pub fn encrypt_session_fields(
+    session: &serde_json::Value,
+    secret: &str,
+) -> Result<serde_json::Value, String> {
+    let mut out = session.clone();
+    if let Some(auth) = out.get_mut("auth").and_then(|v| v.as_object_mut()) {
+        for field in AUTH_ENCRYPT_FIELDS {
+            encrypt_slot(auth, field, secret)?;
+        }
+    }
+    if let Some(account) = out.get_mut("account").and_then(|v| v.as_object_mut()) {
+        for field in ACCOUNT_ENCRYPT_FIELDS {
+            encrypt_slot(account, field, secret)?;
+        }
+    }
+    for key in ["accounts", "allAccounts"] {
+        if let Some(items) = out.get_mut(key).and_then(|v| v.as_array_mut()) {
+            for item in items.iter_mut() {
+                if let Some(obj) = item.as_object_mut() {
+                    for field in ACCOUNT_ENCRYPT_FIELDS {
+                        encrypt_slot(obj, field, secret)?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// 一步取到 at-rest 密钥（探测候选路径 → 调 loggerGet → 取出 secret）。
 ///
 /// 供 Buddy 切号复用：官方加密字段必须用同一把密钥解密、再原样加密写回。
@@ -408,6 +470,71 @@ pub fn fetch_secret() -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TEST_SECRET: &str = "Sik9U5aXhCdwTVEwsEySDOmDoB9r9ntFxHF1fst9LQI=";
+
+    fn sample_session() -> serde_json::Value {
+        serde_json::json!({
+            "account": {"uid": "u-1", "nickname": "Alice", "phoneNumber": "13800000000",
+                        "departmentFullName": "研发", "type": "personal"},
+            "auth": {"accessToken": "tok-1", "refreshToken": "ref-1",
+                     "tokenType": "Bearer", "domain": "www.workbuddy.cn"},
+            "accounts": [{"uid": "u-1", "nickname": "Alice", "phoneNumber": "13800000000"}],
+            "allAccounts": [{"uid": "u-2", "nickname": "Bob", "phoneNumber": "13900000000"}],
+        })
+    }
+
+    #[test]
+    fn session_fields_are_encrypted_per_official_list() {
+        // 抄 cockpit 的清单：auth 的 token 两个 + account/accounts/allAccounts 的三个 PII 字段
+        let out = encrypt_session_fields(&sample_session(), TEST_SECRET).expect("加密成功");
+
+        assert!(is_encrypted(&out["auth"]["accessToken"]), "accessToken 必须加密");
+        assert!(is_encrypted(&out["auth"]["refreshToken"]), "refreshToken 必须加密");
+        for key in ["account", "accounts", "allAccounts"] {
+            let items: Vec<&serde_json::Value> = if out[key].is_array() {
+                out[key].as_array().unwrap().iter().collect()
+            } else {
+                vec![&out[key]]
+            };
+            for item in items {
+                for field in ["nickname", "phoneNumber", "departmentFullName"] {
+                    if item.get(field).and_then(|v| v.as_str()).is_some() {
+                        assert!(is_encrypted(&item[field]), "{key}.{field} 必须加密");
+                    }
+                }
+            }
+        }
+        // 清单外的字段必须保持明文：多封一个客户端都可能不满意
+        assert_eq!(out["auth"]["tokenType"].as_str(), Some("Bearer"));
+        assert_eq!(out["account"]["uid"].as_str(), Some("u-1"));
+        assert_eq!(out["account"]["type"].as_str(), Some("personal"));
+    }
+
+    #[test]
+    fn session_fields_roundtrip() {
+        let out = encrypt_session_fields(&sample_session(), TEST_SECRET).expect("加密成功");
+        assert_eq!(
+            decrypt_field(&out["auth"]["accessToken"], TEST_SECRET).unwrap(),
+            "tok-1"
+        );
+        assert_eq!(
+            decrypt_field(&out["account"]["nickname"], TEST_SECRET).unwrap(),
+            "Alice"
+        );
+        assert_eq!(
+            decrypt_field(&out["allAccounts"][0]["phoneNumber"], TEST_SECRET).unwrap(),
+            "13900000000"
+        );
+    }
+
+    #[test]
+    fn session_fields_reject_double_encryption() {
+        // 已经是加密态再封一层 → 客户端解不开，必须报错而不是静默通过
+        let once = encrypt_session_fields(&sample_session(), TEST_SECRET).expect("加密成功");
+        let err = encrypt_session_fields(&once, TEST_SECRET).expect_err("二次加密必须失败");
+        assert!(err.contains("二次加密"), "错误信息要说明原因: {err}");
+    }
 
     #[test]
     fn candidates_are_absolute_paths() {

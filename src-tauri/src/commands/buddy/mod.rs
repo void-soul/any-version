@@ -31,6 +31,97 @@ mod third_party_import;
 mod workbuddy;
 
 use models::{BuddyAccount, BuddyPlatform};
+use std::collections::HashSet;
+use std::sync::{LazyLock, Mutex};
+
+// ─── 切号互斥闸 ───
+//
+// 抄 WorkDaddy `codebuddy-native.js::replaceNativeSession`（2026-09-29 `4ed7410`）的三个状态锁：
+// `refreshInFlight` / `loginInProgress` / `logoutInProgress` 都在**第一个 await 之前同步预留**，
+// 入口处若任一事务在进行就**直接拒绝**（不排队、不等待），并在 finally 里统一释放。
+//
+// 我们的对应：同一平台的切号事务互斥。连点两次、或切号与切号重叠时，第二次立刻拿到可操作错误，
+// 而不是两个事务同时写客户端登录态（那会写坏 auth 文件 / secret）。
+static SWITCH_IN_FLIGHT: LazyLock<Mutex<HashSet<&'static str>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// 进入即占用；离开作用域（含任何错误返回）自动释放。
+pub(crate) struct SwitchGuard {
+    platform: &'static str,
+    display: String,
+}
+
+impl SwitchGuard {
+    pub(crate) fn acquire(platform: BuddyPlatform) -> Result<Self, String> {
+        let key = platform.as_str();
+        let display = client_process::app_display_name(platform).to_string();
+        let mut set = SWITCH_IN_FLIGHT
+            .lock()
+            .map_err(|_| format!("切换 {} 账号失败：内部锁已损坏", display))?;
+        if !set.insert(key) {
+            return Err(format!("{} 正在切换账号中，请等当前切换结束后再试", display));
+        }
+        Ok(Self {
+            platform: key,
+            display,
+        })
+    }
+}
+
+impl Drop for SwitchGuard {
+    fn drop(&mut self) {
+        if let Ok(mut set) = SWITCH_IN_FLIGHT.lock() {
+            set.remove(self.platform);
+        }
+    }
+}
+
+/// 切号落地的**纯逻辑**判定：把延时复查的结果与目标账号比对。
+///
+/// 为什么要延时复查（2026-10-17 真机故障）：客户端正处在**退出/启动窗口**时切号，
+/// 它会用自己缓存的会话把我们写进去的登录态覆盖回去，而我们仍然返回"切换成功" ——
+/// 用户只看到"切了号，客户端还是原来那个"。WorkDaddy 靠 `refreshInFlight` 锁住自己的刷新，
+/// 但它**锁不住客户端进程**，所以它没法做这件事；我们是直接改客户端文件，只能靠事后确认。
+///
+/// `probe` 三态：
+/// - `Ok(Some(token))` = 登录态里读到的就是某个 token（与期望相同 → 切号生效）
+/// - `Ok(None)`       = 登录态已不存在（客户端登出 / 被删）
+/// - `Err(e)`         = **探测本身失败**（取不到官方密钥、库被占用…）→ 不判定切号失败，
+///   否则会把"环境问题"报成"切号没生效"，误导用户去排查错方向。
+pub(crate) fn diagnose_switch_landing(
+    probe: Result<Option<String>, String>,
+    expected: &str,
+    display: &str,
+) -> Option<String> {
+    match probe {
+        Ok(Some(token)) if token == expected => None,
+        Ok(Some(_)) => Some(format!(
+            "{display} 的登录态已被改回另一个账号（切号期间客户端仍在运行并回写），\
+             请完全退出客户端（含托盘）后重试"
+        )),
+        Ok(None) => Some(format!(
+            "{display} 的登录态已不存在（客户端在切号期间登出或覆盖了登录信息），\
+             请完全退出客户端（含托盘）后重试"
+        )),
+        Err(e) => {
+            eprintln!("[buddy] 切号落地复查无法执行（不影响切号结果）: {e}");
+            None
+        }
+    }
+}
+
+/// 切号写入后等客户端落定，再确认登录态确实是我们写的。
+///
+/// 只在 `spawn_blocking` 的切号线程里调用，所以这里阻塞式 sleep 是安全的。
+fn confirm_switch_landed(platform: BuddyPlatform, expected_token: &str) -> Option<String> {
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    let display = client_process::app_display_name(platform);
+    let probe = match platform {
+        BuddyPlatform::Workbuddy => workbuddy::read_session_access_token(),
+        BuddyPlatform::CodebuddyCn => codebuddy_cn::read_session_access_token(),
+    };
+    diagnose_switch_landing(probe, expected_token, display)
+}
 
 // ─── 切换进度事件（前端展示：关闭 → 合并 → 写入 → 启动 → 完成） ───
 
@@ -166,10 +257,42 @@ fn platform_from_str(s: &str) -> Result<BuddyPlatform, String> {
 
 // ─── 账号库命令 ───
 
+/// 账号列表项 = 账号 + **认证域信息**。
+///
+/// 官方把国内版认证域从 `www.codebuddy.cn` 迁到了 `www.workbuddy.cn`，两个域签发的 token
+/// 在**客户端侧不通用**（WorkBuddy 5.8.x 拿老域 token 鉴权直接 401，"服务器无法确认你的账号身份"），
+/// 但在**面板侧是通用的**（聚合网关通吃，签到/用量/成长照常跑）。
+/// 所以列表要把域摆出来：匹配 → 绿色可选；不匹配 → 红色不可选，省得白切一趟再撞 401。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountListItem {
+    #[serde(flatten)]
+    account: BuddyAccount,
+    /// 令牌签发域（JWT `iss` 的 origin）；老 token / 非 JWT 解不出时为 None
+    auth_origin: Option<String>,
+    /// 该平台客户端鉴权时使用的域
+    platform_auth_origin: String,
+    /// 是否与客户端域一致；`None` = 解不出签发域（**不拦**，交给用户判断）
+    auth_origin_matches: Option<bool>,
+}
+
 #[tauri::command]
-pub fn buddy_list_accounts(platform: String) -> Result<Vec<BuddyAccount>, String> {
+pub fn buddy_list_accounts(platform: String) -> Result<Vec<AccountListItem>, String> {
     let platform = platform_from_str(&platform)?;
-    Ok(store::list_accounts(platform))
+    let client_origin = api::client_auth_origin(platform);
+    Ok(store::list_accounts(platform)
+        .into_iter()
+        .map(|account| {
+            let auth_origin = api::token_issuer_origin(&account.access_token);
+            let auth_origin_matches = auth_origin.as_deref().map(|o| o == client_origin);
+            AccountListItem {
+                account,
+                auth_origin,
+                platform_auth_origin: client_origin.to_string(),
+                auth_origin_matches,
+            }
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -501,6 +624,8 @@ pub async fn buddy_switch_account(
     // 切换时序：检查客户端已退出 → 合并来源会话 → 写入登录态 → 重新启动。
     // 各阶段通过 buddy-switch-progress 事件上报前端；合并统计随报告一并返回（前端渲染为文本）。
     tauri::async_runtime::spawn_blocking(move || {
+        // 0) 占用切号互斥闸（连点两次 → 第二次立刻报错，不并行写登录态）
+        let _guard = SwitchGuard::acquire(platform)?;
         // 1) **只检查**客户端是否已退出：约定由用户自己关闭，程序不代关（更不会强杀），
         //    进程占用 db/会话目录，强关可能丢未落盘的会话。仍在运行 → 中止并提示手动退出。
         emit_switch_progress(Some(&app), platform, &account_id, "checking", 0, None);
@@ -536,15 +661,30 @@ pub async fn buddy_switch_account(
         // 切换成功后持久化当前账号（复刻 provider_current_state，供前端稳定标识）
         let _ = store::set_current_account_id(platform, Some(&account_id));
 
+        // 3.5) **延时复查**：等客户端落定后再确认登录态确实是我们写的。
+        //     客户端处在退出/启动窗口时会用缓存会话回写覆盖（真机 2026-10-17 踩过），
+        //     那种情况必须报错而不是返回成功 —— 静默成功比失败更糟。
+        if let Some(problem) = confirm_switch_landed(platform, &account.access_token) {
+            eprintln!("[Buddy Switch] 切号未生效：{problem}");
+            return Err(problem);
+        }
+
         // 4) 切换后**不自动启动客户端**（两个平台一致）。
         //    切换时客户端本来就必须是「已退出」状态（见上面 ensure_not_running），
         //    自动拉起会打断用户手头的事：他可能正准备自己开窗口、或者正在处理别的窗口。
         //    两个平台都需要手动启动，统一提示即可。
-        let message = format!(
+        // 认证域体检：官方迁过域（codebuddy.cn → workbuddy.cn），两个域的 token 不通用。
+        // 不阻断切换（老域账号的签到/用量仍能跑），但必须说清楚，否则用户看到的是
+        // "切成功了、客户端却提示登录失效"这种哑故障。
+        let mut message = format!(
             "{}，请手动启动 {}",
             message,
             client_process::app_display_name(platform)
         );
+        if let Some(warning) = api::auth_origin_warning(platform, &account.access_token) {
+            eprintln!("[Buddy Switch] 认证域不匹配：{warning}");
+            message = format!("{}\n注意：{}", message, warning);
+        }
         emit_switch_progress(Some(&app), platform, &account_id, "done", 0, None);
         Ok((message, transfer_report))
     })
@@ -858,13 +998,23 @@ pub async fn buddy_auto_checkin_run(
 
 // ─── 会话管理 ───
 
-/// 删除会话（数据库记录 + 本地会话文件，含辅助目录）。
+/// 删除会话（数据库记录 + 本地会话文件，含正文与辅助目录）。
+///
+/// 走 `spawn_blocking`：一次可能删几百 MB 正文，同步命令会把界面卡住。
+/// 进入时占**切号闸**（与 `buddy_switch_account` 同一把）—— 会话同步 worker 与切号并行时，
+/// 它可能已读到源行、在删除返回后又把会话写回来（WorkDaddy 1.2.64 的同类问题）。
 #[tauri::command]
-pub fn buddy_delete_sessions(
+pub async fn buddy_delete_sessions(
     platform: String,
     conversation_ids: Vec<String>,
 ) -> Result<sessions::BuddySessionDeleteReport, String> {
-    sessions::delete_sessions(&platform, &conversation_ids)
+    let platform_enum = platform_from_str(&platform)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = SwitchGuard::acquire(platform_enum)?;
+        sessions::delete_sessions(&platform, &conversation_ids)
+    })
+    .await
+    .map_err(|e| format!("删除会话后台任务失败: {}", e))?
 }
 
 #[tauri::command]
@@ -1066,4 +1216,50 @@ pub fn buddy_set_client_path(platform: String, path: String) -> Result<(), Strin
 /// 启动后台自动签到调度器（应用启动时调用）
 pub fn start_auto_checkin_scheduler(app: tauri::AppHandle) {
     auto_checkin::start_auto_checkin_scheduler(app);
+}
+
+#[cfg(test)]
+mod switch_guard_tests {
+    use super::*;
+
+    #[test]
+    fn landing_is_ok_only_when_token_matches() {
+        assert!(diagnose_switch_landing(Ok(Some("tok-a".into())), "tok-a", "WorkBuddy").is_none());
+    }
+
+    #[test]
+    fn landing_reports_missing_and_overwritten_states() {
+        let missing = diagnose_switch_landing(Ok(None), "tok-a", "WorkBuddy")
+            .expect("登录态消失必须报错，不能静默成功");
+        assert!(missing.contains("已不存在"), "{}", missing);
+        assert!(missing.contains("完全退出"), "要给可操作提示: {}", missing);
+
+        let overwritten = diagnose_switch_landing(Ok(Some("tok-b".into())), "tok-a", "WorkBuddy")
+            .expect("被回写成别人必须报错");
+        assert!(overwritten.contains("改回另一个账号"), "{}", overwritten);
+    }
+
+    #[test]
+    fn landing_probe_failure_does_not_fail_the_switch() {
+        // 探测本身失败（取不到官方密钥 / 库被占用）不能报成"切号没生效"
+        assert!(diagnose_switch_landing(Err("取密钥失败".into()), "tok-a", "WorkBuddy").is_none());
+    }
+
+    #[test]
+    fn switch_guard_is_exclusive_per_platform_and_released_on_drop() {
+        let first = SwitchGuard::acquire(BuddyPlatform::Workbuddy).expect("首次应拿到闸");
+        let err = SwitchGuard::acquire(BuddyPlatform::Workbuddy)
+            .err()
+            .expect("同平台第二次必须被拒（不排队）");
+        assert!(err.contains("正在切换账号"), "{}", err);
+        assert!(
+            SwitchGuard::acquire(BuddyPlatform::CodebuddyCn).is_ok(),
+            "不同平台不应互相阻塞"
+        );
+        drop(first);
+        assert!(
+            SwitchGuard::acquire(BuddyPlatform::Workbuddy).is_ok(),
+            "释放后必须能再次获取"
+        );
+    }
 }

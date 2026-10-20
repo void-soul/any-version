@@ -484,16 +484,23 @@ pub struct BuddySessionDeleteReport {
     pub history_dirs_removed: usize,
     /// 删除的辅助目录数（check-point 等 5 类）
     pub auxiliary_dirs_removed: usize,
+    /// WorkBuddy 5.x 删除的正文项数（`projects/<hash>/<id>.jsonl` 与 `<id>/`、工作区快照、
+    /// tasks、file-history、artifact-index）
+    pub files_removed: usize,
     /// 非致命错误（如文件被客户端占用），不中断整体删除
     pub errors: Vec<String>,
 }
 
-/// 删除指定会话：数据库记录 + 本地会话文件。
+/// 删除指定会话：数据库记录 + 本地会话文件（**正文一起删，不留孤儿**）。
 ///
-/// 文件部分按当前登录账号的 uid 定位（`<uid>/<IDE>/<uid>/history/<workspace>/`），
-/// 包括：工作区 index.json 中的会话条目（current 指向被删会话时一并清空）、
-/// 会话目录本体与 5 类辅助目录。客户端正在运行时也可删除
-/// （SQLite WAL 允许并发写）；被占用的文件记入 errors，不中断整体流程。
+/// 顺序对齐 WorkDaddy `/api/sessions/delete`：**先删可重试的文件，最后删数据库记录**。
+/// - WorkBuddy 5.x：`projects/<hash>/<id>.jsonl` 与 `<id>/`、`workspace/sessions/<id>`、
+///   `tasks/<id>`、`file-history/<id>`、`artifact-index/<id>.json`，外加 `app/sessions.json`
+///   里的列表缓存条目（不清缓存，客户端会把刚删的会话"复活"）；
+/// - CodeBuddy CN：`<uid>/<IDE>/<uid>/history/<workspace>/<id>/` 与 5 类辅助目录 + index.json 条目。
+///
+/// 文件删不掉时**保留该会话的数据库记录**（它是重试锚点），错误进 `errors` 由界面展示。
+/// 调用方（`buddy_delete_sessions`）会先占切号闸，避免会话同步 worker 把刚删的行写回。
 pub fn delete_sessions(
     platform: &str,
     conversation_ids: &[String],
@@ -538,29 +545,42 @@ fn current_platform_uid(platform: super::models::BuddyPlatform) -> Option<String
 fn delete_codebuddy_sessions(ids: &[String]) -> Result<BuddySessionDeleteReport, String> {
     let user_data_dir = super::codebuddy_cn::default_data_dir()
         .ok_or_else(|| "无法定位 CodeBuddy CN 数据目录".to_string())?;
-    let uid = current_platform_uid(super::models::BuddyPlatform::CodebuddyCn)
-        .ok_or_else(|| "无法确定当前登录的 CodeBuddy CN 账号 uid".to_string())?;
     let extension_data_dir =
         super::session_transfer::codebuddy::codebuddy_extension_data_dir().ok();
     let mut report = BuddySessionDeleteReport::default();
-    delete_codebuddy_sessions_at(&user_data_dir, extension_data_dir.as_deref(), &uid, ids, &mut report);
+    delete_codebuddy_sessions_at(&user_data_dir, extension_data_dir.as_deref(), ids, &mut report);
     Ok(report)
 }
 
 /// CN 删除核心（路径参数化以便测试）。
+///
+/// 顺序对齐 WorkDaddy `daemon.js` `/api/sessions/delete`：**先删可重试的正文文件，最后删数据库键**。
+/// 正文没删干净就保留记录 —— 记录是重试锚点，否则会留下"列表里没了、磁盘上还在"的孤儿正文。
+///
+/// **必须扫描所有账号目录，不能只删当前账号**（2026-10-19 真机实证）：会话合并会把同一条会话复制进
+/// 多个账号目录（实测一条 `e:/pro/my/life` 的会话在 14 个账号目录里都有 `history/<hash>/<id>/` 与
+/// index.json 条目）。只删当前账号，另外 13 份会在切到那些账号后"复活"。
+/// 这就是 WorkDaddy `collectLineageMembersForDelete` 的等价物 —— 我们的同源副本不是 `meta.autoCopy`
+/// 链，而是"同一 id 落在多个账号目录"。
 fn delete_codebuddy_sessions_at(
     user_data_dir: &Path,
     extension_data_dir: Option<&Path>,
-    uid: &str,
     ids: &[String],
     report: &mut BuddySessionDeleteReport,
 ) {
+    let files_ok = match extension_data_dir {
+        Some(dir) => delete_session_files_in_extension(dir, ids, report),
+        None => true,
+    };
+    if !files_ok {
+        report
+            .errors
+            .push("会话正文未能全部删除，已保留数据库记录以便重试".to_string());
+        return;
+    }
     let db_path = user_data_dir.join("codebuddy-sessions.vscdb");
     if db_path.is_file() {
         delete_vscdb_session_keys(&db_path, ids, report);
-    }
-    if let Some(extension_data_dir) = extension_data_dir {
-        delete_session_files_in_extension(extension_data_dir, uid, ids, report);
     }
 }
 
@@ -786,27 +806,235 @@ fn remap_sync_state(
 
 fn delete_workbuddy_sessions(ids: &[String]) -> Result<BuddySessionDeleteReport, String> {
     let home = dirs::home_dir().ok_or("无法获取用户主目录")?;
+    let data_root = home.join(".workbuddy");
     let uid = current_platform_uid(super::models::BuddyPlatform::Workbuddy);
+
     let mut report = BuddySessionDeleteReport::default();
-
-    // 1) WorkBuddy 5.x 主存储：workbuddy.db 的 sessions 行
-    let db_path = home.join(".workbuddy").join("workbuddy.db");
-    if db_path.is_file() {
-        delete_workbuddy_db_rows(&db_path, ids, &mut report);
-    }
-
-    // 2) 旧版 per-uid 扩展目录（5.x 通常不存在，仅兼容旧版落盘结构）
+    let mut extension_roots: Vec<PathBuf> = Vec::new();
     if let Some(uid) = uid.as_deref() {
         match super::session_transfer::workbuddy::select_extension_data_roots(uid) {
-            Ok(roots) => {
-                for (_, extension_data_dir) in roots {
-                    delete_session_files_in_extension(&extension_data_dir, uid, ids, &mut report);
-                }
-            }
+            Ok(roots) => extension_roots.extend(roots.into_iter().map(|(_, dir)| dir)),
             Err(e) => report.errors.push(e),
         }
     }
+    delete_workbuddy_sessions_at(&data_root, &extension_roots, ids, &mut report);
     Ok(report)
+}
+
+/// WorkBuddy 删除核心（路径参数化以便测试）。
+///
+/// 顺序对齐 WorkDaddy `daemon.js` `/api/sessions/delete`（1.2.64）：
+/// 1. **先删可重试的正文**（`projects/<hash>/<id>.jsonl` 与 `<id>/`、`workspace/sessions/<id>`、
+///    `tasks/<id>`、`file-history/<id>`、`artifact-index/<id>.json`）；
+/// 2. 清 `app/sessions.json` 里的会话缓存条目（不清的话客户端列表会从缓存"复活"刚删的会话）；
+/// 3. 旧版 per-uid 扩展目录（5.x 通常不存在）；
+/// 4. **最后**才删 `workbuddy.db` 的 sessions 行 —— 它是失败重试的锚点。
+///
+/// 正文删不掉时该会话的 DB 行**保留**：宁可让用户重试，也不要留下"列表里没了、磁盘上还在"的孤儿正文。
+fn delete_workbuddy_sessions_at(
+    data_root: &Path,
+    extension_roots: &[PathBuf],
+    ids: &[String],
+    report: &mut BuddySessionDeleteReport,
+) {
+    // 1) 5.x 正文（按 id 精确删）
+    let mut file_failed: HashSet<&str> = HashSet::new();
+    if data_root.is_dir() {
+        for id in ids {
+            match delete_workbuddy_session_files(data_root, id) {
+                Ok(n) => report.files_removed += n,
+                Err(e) => {
+                    report.errors.push(format!(
+                        "删除会话正文失败（已保留数据库记录以便重试） {}: {}",
+                        id, e
+                    ));
+                    file_failed.insert(id.as_str());
+                }
+            }
+        }
+    }
+    let deletable: Vec<String> = ids
+        .iter()
+        .filter(|id| !file_failed.contains(id.as_str()))
+        .cloned()
+        .collect();
+
+    // 2) 会话缓存条目
+    match remove_workbuddy_session_cache(data_root, &deletable) {
+        Ok(0) => {}
+        Ok(n) => eprintln!("[Buddy Sessions] 已清理会话缓存条目 {}", n),
+        Err(e) => {
+            report
+                .errors
+                .push(format!("清理会话缓存失败（已保留数据库记录以便重试）: {}", e));
+            return;
+        }
+    }
+
+    // 3) 旧版扩展目录（同样扫描该根下所有账号，不只看当前登录账号）
+    for root in extension_roots {
+        if !delete_session_files_in_extension(root, &deletable, report) {
+            report.errors.push(
+                "旧版扩展目录中的会话文件未能全部删除，已保留数据库记录以便重试".to_string(),
+            );
+            return;
+        }
+    }
+
+    // 4) 最后删 DB 行
+    let db_path = data_root.join("workbuddy.db");
+    if db_path.is_file() && !deletable.is_empty() {
+        delete_workbuddy_db_rows(&db_path, &deletable, report);
+    }
+}
+
+/// 删除 WorkBuddy 5.x 一个会话的全部正文，返回删除项数。
+///
+/// 路径集合与 `session_sync::workbuddy_session_fingerprint` 一致（正文指纹算得出来，就删得掉）。
+/// 安全边界：父目录必须是**真目录**（符号链接不进）；叶子是符号链接时**只删链接本身**，不跟随。
+/// 任一项删不掉返回 `Err`，调用方据此保留 DB 行作为重试锚点。
+fn delete_workbuddy_session_files(data_root: &Path, id: &str) -> Result<usize, String> {
+    if id.is_empty() || id.contains('/') || id.contains('\\') || id.contains("..") {
+        return Err(format!("会话 id 不安全: {}", id));
+    }
+    let mut removed = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+
+    // projects/<项目 hash>/<id>.jsonl 与 <id>/
+    let projects = data_root.join("projects");
+    if is_managed_dir(&projects) {
+        let entries =
+            std::fs::read_dir(&projects).map_err(|e| format!("读取 projects 目录失败: {}", e))?;
+        for entry in entries.flatten() {
+            let project_root = entry.path();
+            if !is_managed_dir(&project_root) {
+                continue;
+            }
+            for leaf in [format!("{}.jsonl", id), id.to_string()] {
+                match remove_managed_path(&project_root, &leaf) {
+                    Ok(true) => removed += 1,
+                    Ok(false) => {}
+                    Err(e) => failures.push(e),
+                }
+            }
+        }
+    }
+
+    for parent in [
+        data_root.join("workspace").join("sessions"),
+        data_root.join("tasks"),
+        data_root.join("file-history"),
+    ] {
+        if !is_managed_dir(&parent) {
+            continue;
+        }
+        match remove_managed_path(&parent, id) {
+            Ok(true) => removed += 1,
+            Ok(false) => {}
+            Err(e) => failures.push(e),
+        }
+    }
+
+    let artifact = data_root.join("artifact-index");
+    if is_managed_dir(&artifact) {
+        match remove_managed_path(&artifact, &format!("{}.json", id)) {
+            Ok(true) => removed += 1,
+            Ok(false) => {}
+            Err(e) => failures.push(e),
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(removed)
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
+/// 从 `<data_root>/app/sessions.json` 移除被删会话的缓存条目，返回移除条数。
+///
+/// 客户端把会话清单缓存在这里；只删库行不清缓存时，列表会被缓存"复活"。
+/// 写回前再读一次原文比对（TOCTOU）—— 客户端可能在这两步之间又写了新缓存，
+/// 那就必须报错让用户重试，不能覆盖它刚写的内容。
+fn remove_workbuddy_session_cache(data_root: &Path, ids: &[String]) -> Result<usize, String> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let cache_path = data_root.join("app").join("sessions.json");
+    let metadata = match std::fs::symlink_metadata(&cache_path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(format!("读取会话缓存失败: {}", e)),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("会话缓存必须是普通文件".to_string());
+    }
+    let original =
+        std::fs::read_to_string(&cache_path).map_err(|e| format!("读取会话缓存失败: {}", e))?;
+    let mut data: Value = serde_json::from_str(&original)
+        .map_err(|_| "会话缓存无法解析，请稍后重试".to_string())?;
+    let entries: Vec<Value> = if let Some(array) = data.as_array() {
+        array.clone()
+    } else if let Some(array) = data.get("sessions").and_then(Value::as_array) {
+        array.clone()
+    } else {
+        return Err("会话缓存格式不受支持，未改写缓存".to_string());
+    };
+    let kept: Vec<Value> = entries
+        .iter()
+        .filter(|entry| {
+            let cid = entry
+                .get("conversationId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            !ids.iter().any(|id| id == cid)
+        })
+        .cloned()
+        .collect();
+    let removed = entries.len() - kept.len();
+    if removed == 0 {
+        return Ok(0);
+    }
+    if let Some(array) = data.as_array_mut() {
+        *array = kept;
+    } else if let Some(object) = data.as_object_mut() {
+        object.insert("sessions".to_string(), Value::Array(kept));
+    }
+    let serialized = serde_json::to_string_pretty(&data)
+        .map_err(|e| format!("序列化会话缓存失败: {}", e))?;
+    let current =
+        std::fs::read_to_string(&cache_path).map_err(|e| format!("读取会话缓存失败: {}", e))?;
+    if current != original {
+        return Err("会话缓存已变化，请重试删除".to_string());
+    }
+    super::store::write_atomic(&cache_path, &serialized)?;
+    Ok(removed)
+}
+
+/// 目录必须是真目录：存在、是目录、且不是符号链接。
+fn is_managed_dir(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .map(|m| m.is_dir() && !m.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
+/// 删除 `parent/leaf`：不跟随符号链接（是链接就只删链接）。
+/// `Ok(true)` = 删掉了，`Ok(false)` = 本就不存在。
+fn remove_managed_path(parent: &Path, leaf: &str) -> Result<bool, String> {
+    let target = parent.join(leaf);
+    let metadata = match std::fs::symlink_metadata(&target) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(format!("读取 {} 失败: {}", target.display(), e)),
+    };
+    let result = if metadata.file_type().is_symlink() || metadata.is_file() {
+        std::fs::remove_file(&target)
+    } else {
+        std::fs::remove_dir_all(&target)
+    };
+    result
+        .map(|_| true)
+        .map_err(|e| format!("删除 {} 失败: {}", target.display(), e))
 }
 
 /// vscdb：删除 `session:<id>` 键（可写事务 + busy_timeout，客户端运行时可并发）。
@@ -899,36 +1127,48 @@ fn delete_workbuddy_db_rows(db_path: &Path, ids: &[String], report: &mut BuddySe
 
 /// 在扩展数据目录 `<uid>/<IDE>/<uid>/` 中查找并删除会话文件：
 /// 命中工作区的 index.json 会话条目、会话目录本体与 5 类辅助目录。
+///
+/// **遍历该目录下所有账号 uid**（不是只删当前登录账号）：会话合并会把同一 id 复制进多个账号目录，
+/// 只删一份的话切到别的账号会"复活"（2026-10-19 真机：一条会话在 14 个账号目录里都有副本）。
+///
+/// 返回 `false` 表示**有文件没能删掉**（被占用、索引写不进去…）——
+/// 调用方据此保留数据库记录作为重试锚点，别让会话变成"列表里没了、磁盘上还在"的孤儿。
 fn delete_session_files_in_extension(
     extension_data_dir: &Path,
-    uid: &str,
     ids: &[String],
     report: &mut BuddySessionDeleteReport,
-) {
+) -> bool {
     use super::session_transfer::codebuddy as transfer;
-    if transfer::validate_uid(uid).is_err() {
-        report.errors.push(format!("uid 不安全，跳过文件删除: {}", uid));
-        return;
-    }
-    let account_outer = extension_data_dir.join(uid);
-    if !account_outer.is_dir() {
-        return;
-    }
-    let Ok(ide_entries) = std::fs::read_dir(&account_outer) else {
-        return;
+    let mut ok = true;
+    let Ok(outer_entries) = std::fs::read_dir(extension_data_dir) else {
+        return true;
     };
-    for ide_entry in ide_entries.flatten() {
-        let Ok(metadata) = std::fs::symlink_metadata(ide_entry.path()) else {
+    for outer in outer_entries.flatten() {
+        let outer_path = outer.path();
+        if !is_managed_dir(&outer_path) {
+            continue;
+        }
+        let Some(uid_os) = outer_path.file_name() else {
             continue;
         };
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        let uid = uid_os.to_string_lossy().to_string();
+        if transfer::validate_uid(&uid).is_err() {
+            // 非账号目录（log / tmp / 自定义目录）—— 不是我们的数据，跳过
             continue;
         }
-        let account_root = ide_entry.path().join(uid);
-        let history_root = account_root.join("history");
-        if !history_root.is_dir() {
+        let Ok(ide_entries) = std::fs::read_dir(&outer_path) else {
             continue;
-        }
+        };
+        for ide_entry in ide_entries.flatten() {
+            let ide_path = ide_entry.path();
+            if !is_managed_dir(&ide_path) {
+                continue;
+            }
+            let account_root = ide_path.join(&uid);
+            let history_root = account_root.join("history");
+            if !is_managed_dir(&history_root) {
+                continue;
+            }
         let Ok(workspace_entries) = std::fs::read_dir(&history_root) else {
             continue;
         };
@@ -983,11 +1223,13 @@ fn delete_session_files_in_extension(
                 Ok(s) => s,
                 Err(e) => {
                     report.errors.push(e);
+                    ok = false;
                     continue;
                 }
             };
             if let Err(e) = super::store::write_atomic(&index_path, &serialized) {
                 report.errors.push(e);
+                ok = false;
                 continue;
             }
 
@@ -997,9 +1239,12 @@ fn delete_session_files_in_extension(
                 if conv_dir.is_dir() {
                     match std::fs::remove_dir_all(&conv_dir) {
                         Ok(()) => report.history_dirs_removed += 1,
-                        Err(e) => report
-                            .errors
-                            .push(format!("删除会话目录失败 {}: {}", conv_dir.display(), e)),
+                        Err(e) => {
+                            ok = false;
+                            report
+                                .errors
+                                .push(format!("删除会话目录失败 {}: {}", conv_dir.display(), e));
+                        }
                     }
                 }
                 for kind in transfer::AUXILIARY_KINDS {
@@ -1010,17 +1255,22 @@ fn delete_session_files_in_extension(
                     if aux_dir.is_dir() {
                         match std::fs::remove_dir_all(&aux_dir) {
                             Ok(()) => report.auxiliary_dirs_removed += 1,
-                            Err(e) => report.errors.push(format!(
-                                "删除辅助目录失败 {}: {}",
-                                aux_dir.display(),
-                                e
-                            )),
+                            Err(e) => {
+                                ok = false;
+                                report.errors.push(format!(
+                                    "删除辅助目录失败 {}: {}",
+                                    aux_dir.display(),
+                                    e
+                                ));
+                            }
                         }
                     }
                 }
             }
         }
+        }
     }
+    ok
 }
 
 // ─── 会话分叉 ───
@@ -1759,7 +2009,6 @@ mod tests {
         delete_codebuddy_sessions_at(
             &dest,
             Some(&extension),
-            uid,
             &["conv1".to_string()],
             &mut report,
         );
@@ -1908,5 +2157,210 @@ mod tests {
         apply_content_probe(&mut records, Some(&local));
         assert!(!records[0].content_missing);
         assert!(records[1].content_missing);
+    }
+
+    #[test]
+    fn delete_workbuddy_session_files_removes_all_content_paths() {
+        let root = temp_dir("del-files");
+        let id = "conv-del";
+        let project = root.join("projects").join("ws-a");
+        std::fs::create_dir_all(project.join(id)).unwrap();
+        std::fs::write(project.join(format!("{}.jsonl", id)), "{}").unwrap();
+        let project2 = root.join("projects").join("ws-b");
+        std::fs::create_dir_all(project2.join(id)).unwrap();
+        for dir in [
+            root.join("workspace").join("sessions").join(id),
+            root.join("tasks").join(id),
+            root.join("file-history").join(id),
+        ] {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("x.txt"), "x").unwrap();
+        }
+        let artifact = root.join("artifact-index");
+        std::fs::create_dir_all(&artifact).unwrap();
+        std::fs::write(artifact.join(format!("{}.json", id)), "{}").unwrap();
+
+        // 干扰项：别的会话必须原样保留
+        std::fs::write(project.join("conv-keep.jsonl"), "{}").unwrap();
+        std::fs::create_dir_all(root.join("tasks").join("conv-keep")).unwrap();
+
+        let removed = delete_workbuddy_session_files(&root, id).unwrap();
+        // projects/ws-a 的 jsonl + 目录、projects/ws-b 的目录、workspace、tasks、file-history、artifact
+        assert_eq!(removed, 7);
+        assert!(!project.join(format!("{}.jsonl", id)).exists());
+        assert!(!project.join(id).exists());
+        assert!(!project2.join(id).exists());
+        assert!(!root.join("workspace").join("sessions").join(id).exists());
+        assert!(!root.join("tasks").join(id).exists());
+        assert!(!root.join("file-history").join(id).exists());
+        assert!(!artifact.join(format!("{}.json", id)).exists());
+        assert!(project.join("conv-keep.jsonl").exists());
+        assert!(root.join("tasks").join("conv-keep").exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn delete_workbuddy_session_files_rejects_unsafe_id() {
+        let root = temp_dir("del-unsafe");
+        assert!(delete_workbuddy_session_files(&root, "../escape").is_err());
+        assert!(delete_workbuddy_session_files(&root, "a/b").is_err());
+        assert!(delete_workbuddy_session_files(&root, "").is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn delete_workbuddy_session_cache_drops_only_target_entries() {
+        let root = temp_dir("del-cache");
+        let app = root.join("app");
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::write(
+            app.join("sessions.json"),
+            r#"{"sessions":[{"conversationId":"gone"},{"conversationId":"keep"}]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            remove_workbuddy_session_cache(&root, &["gone".to_string()]).unwrap(),
+            1
+        );
+        let after: Value =
+            serde_json::from_slice(&std::fs::read(app.join("sessions.json")).unwrap()).unwrap();
+        let ids: Vec<&str> = after["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v["conversationId"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["keep"]);
+        // 幂等：再调一次没有可删项
+        assert_eq!(
+            remove_workbuddy_session_cache(&root, &["gone".to_string()]).unwrap(),
+            0
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn delete_workbuddy_sessions_at_deletes_files_cache_then_row() {
+        let root = temp_dir("del-e2e");
+        let id = "conv-e2e";
+        make_workbuddy_db(&root, id, "待删");
+        let project = root.join("projects").join("ws");
+        std::fs::create_dir_all(project.join(id)).unwrap();
+        std::fs::write(project.join(format!("{}.jsonl", id)), "{}").unwrap();
+        let app = root.join("app");
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::write(
+            app.join("sessions.json"),
+            format!(r#"[{{"conversationId":"{}"}}]"#, id),
+        )
+        .unwrap();
+
+        let mut report = BuddySessionDeleteReport::default();
+        delete_workbuddy_sessions_at(&root, &[], &[id.to_string()], &mut report);
+
+        assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
+        assert_eq!(report.db_deleted, 1);
+        assert_eq!(report.files_removed, 2);
+        assert!(!project.join(id).exists());
+        let rows: i64 = Connection::open(root.join("workbuddy.db"))
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 0);
+        // 缓存条目也清了（否则客户端会从缓存把会话"复活"）
+        let cache = std::fs::read_to_string(app.join("sessions.json")).unwrap();
+        assert!(!cache.contains(id));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn delete_workbuddy_sessions_at_keeps_row_when_cache_broken() {
+        let root = temp_dir("del-bad-cache");
+        let id = "conv-bad-cache";
+        make_workbuddy_db(&root, id, "缓存坏了");
+        let app = root.join("app");
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::write(app.join("sessions.json"), "not-json").unwrap();
+
+        let mut report = BuddySessionDeleteReport::default();
+        delete_workbuddy_sessions_at(&root, &[], &[id.to_string()], &mut report);
+
+        // 缓存清不掉 → 保留 DB 行作为重试锚点，绝不报"删完了"
+        assert_eq!(report.db_deleted, 0);
+        assert!(!report.errors.is_empty());
+        let rows: i64 = Connection::open(root.join("workbuddy.db"))
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 1);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 真机 2026-10-19：一条会话在 14 个账号目录下都有副本。只删当前账号会留下 13 份，
+    /// 切号后"复活" —— 所以删除必须扫描扩展目录下的**所有**账号。
+    #[test]
+    fn delete_codebuddy_sessions_cleans_every_account_copy() {
+        let root = temp_dir("del-cn-multi");
+        let user_data = root.join("user-data");
+        std::fs::create_dir_all(&user_data).unwrap();
+        let db_path = user_data.join("codebuddy-sessions.vscdb");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch("CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value BLOB);")
+            .unwrap();
+        conn.execute(
+            "INSERT INTO ItemTable (key, value) VALUES ('session:conv-x', '{}')",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let extension = root.join("extension");
+        let uids = ["uid-a", "uid-b"];
+        for uid in uids {
+            let account_root = extension.join(uid).join("CodeBuddyIDE").join(uid);
+            let ws = account_root.join("history").join("ws1");
+            std::fs::create_dir_all(ws.join("conv-x")).unwrap();
+            std::fs::write(
+                ws.join("index.json"),
+                r#"{"conversations":[{"id":"conv-x"}],"current":"conv-x"}"#,
+            )
+            .unwrap();
+            std::fs::create_dir_all(
+                account_root.join("check-point").join("ws1").join("conv-x"),
+            )
+            .unwrap();
+        }
+
+        let mut report = BuddySessionDeleteReport::default();
+        delete_codebuddy_sessions_at(
+            &user_data,
+            Some(&extension),
+            &["conv-x".to_string()],
+            &mut report,
+        );
+
+        assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
+        assert_eq!(report.db_deleted, 1);
+        for uid in uids {
+            let account_root = extension.join(uid).join("CodeBuddyIDE").join(uid);
+            let ws = account_root.join("history").join("ws1");
+            assert!(!ws.join("conv-x").exists(), "{} 的 history 副本没删", uid);
+            assert!(
+                !account_root.join("check-point").join("ws1").join("conv-x").exists(),
+                "{} 的 check-point 副本没删",
+                uid
+            );
+            let index: Value =
+                serde_json::from_slice(&std::fs::read(ws.join("index.json")).unwrap()).unwrap();
+            assert!(index["conversations"].as_array().unwrap().is_empty());
+            assert_eq!(index["current"].as_str(), Some(""));
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

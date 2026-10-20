@@ -99,6 +99,12 @@ export interface BuddyAccount {
   expiryTimes?: Record<string, number>;
   createdAt: number;
   lastUsed: number;
+  /** 令牌签发域（JWT `iss` 的 origin，如 `https://www.codebuddy.cn`）；解不出时为 null */
+  authOrigin?: string | null;
+  /** 该平台客户端鉴权时使用的域 */
+  platformAuthOrigin?: string | null;
+  /** 签发域是否与客户端域一致；null = 解不出（不拦，交给用户判断） */
+  authOriginMatches?: boolean | null;
 }
 
 export interface ExpiryColumn {
@@ -332,6 +338,8 @@ export interface BuddySessionDeleteReport {
   dbDeleted: number;
   historyDirsRemoved: number;
   auxiliaryDirsRemoved: number;
+  /** WorkBuddy 5.x 删除的正文项数（jsonl / 会话目录 / 快照 / 文件历史 / artifact 索引） */
+  filesRemoved: number;
   errors: string[];
 }
 
@@ -1422,6 +1430,13 @@ export default function BuddyPanel() {
       acc.nickname?.trim() || acc.email || acc.uid || "unknown",
     []
   );
+
+  /** `https://www.codebuddy.cn` → `www.codebuddy.cn`（徽标只显示 host，scheme 太占地方） */
+  const shortOrigin = (origin?: string | null) => {
+    const v = (origin || "").trim();
+    if (!v) return "?";
+    return v.replace(/^https?:\/\//i, "").replace(/\/+$/, "") || v;
+  };
 
   const showMsg = (ok: boolean, text: string) => setMessage({ ok, text });
 
@@ -2658,6 +2673,29 @@ export default function BuddyPanel() {
                         </span>
                         {/* 「当前」不再占账号列的位置：整行有绿色描边（见行的 className） */}
                         <span className="font-semibold text-white truncate max-w-[150px]" title={acc.email}>{displayName(acc)}</span>
+                        {/* 认证域徽标：绿=与客户端同域；琥珀=跨域（切号时会把 auth.domain 对齐到客户端域，实测可用） */}
+                        {acc.authOrigin && (
+                          <span
+                            title={
+                              acc.authOriginMatches === false
+                                ? t("buddy.authOriginMismatchTip", {
+                                    origin: shortOrigin(acc.authOrigin),
+                                    client: shortOrigin(acc.platformAuthOrigin),
+                                  })
+                                : t("buddy.authOriginMatchTip", {
+                                    origin: shortOrigin(acc.authOrigin),
+                                    client: shortOrigin(acc.platformAuthOrigin),
+                                  })
+                            }
+                            className={`inline-flex items-center text-micro px-1 py-0.5 rounded border flex-shrink-0 ${
+                              acc.authOriginMatches === false
+                                ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                                : "bg-emerald-500/15 text-emerald-300 border-emerald-500/25"
+                            }`}
+                          >
+                            {shortOrigin(acc.authOrigin)}
+                          </span>
+                        )}
                       </div>
                       {/* 积分：构成条（一段一方块，块内是剩余天数）+ 右侧剩余总额 —— 填充列 */}
                       <div
@@ -2776,7 +2814,21 @@ export default function BuddyPanel() {
                       })}
                       {/* 操作 */}
                       <div style={{ width: COL_ACTIONS }} className="flex items-center justify-end gap-1 px-1 flex-shrink-0 border-l border-white/5">
-                        <button onClick={() => switchAccount(acc.id)} disabled={busy || isCurrent} className={ACC_BTN} title={t("buddy.switch")}><LogIn className="w-3 h-3" /></button>
+                        <button
+                          onClick={() => switchAccount(acc.id)}
+                          disabled={busy || isCurrent}
+                          className={ACC_BTN}
+                          title={
+                            acc.authOriginMatches === false
+                              ? t("buddy.authOriginMismatchTip", {
+                                  origin: shortOrigin(acc.authOrigin),
+                                  client: shortOrigin(acc.platformAuthOrigin),
+                                })
+                              : t("buddy.switch")
+                          }
+                        >
+                          <LogIn className="w-3 h-3" />
+                        </button>
                       </div>
                     </div>
                   );

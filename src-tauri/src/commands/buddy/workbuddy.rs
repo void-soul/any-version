@@ -537,7 +537,7 @@ fn build_auth_account_value(account: &BuddyAccount) -> serde_json::Value {
 }
 
 /// 构建写回客户端的 auth 对象
-fn build_auth_value(account: &BuddyAccount) -> serde_json::Value {
+fn build_auth_value(account: &BuddyAccount, platform: BuddyPlatform) -> serde_json::Value {
     let root_obj = account.auth_raw.as_ref().and_then(|v| v.as_object());
     let raw_auth_obj = root_obj.and_then(|obj| obj.get("auth").and_then(|v| v.as_object()));
     let mut auth_obj = raw_auth_obj
@@ -552,7 +552,12 @@ fn build_auth_value(account: &BuddyAccount) -> serde_json::Value {
     let now_ms = chrono::Utc::now().timestamp_millis();
     let refresh_token = account.refresh_token.as_deref().unwrap_or("");
     let token_type = account.token_type.as_deref().unwrap_or("Bearer");
-    let domain = account.domain.as_deref().unwrap_or("");
+    // `auth.domain` 写**客户端自己使用的域**，不是账号的域。
+    // 2026-10-18/19 实验：客户端拿老域账号（DEDEDE, iss=codebuddy.cn）切进来时，
+    // 若这里沿用账号域，登录态里就是 `www.codebuddy.cn`，而 WorkBuddy 5.8.x 的 endpoint
+    // 是 `www.workbuddy.cn` —— 客户端照着这个域发请求，网关层直接 401（响应是 HTML）。
+    // 域是谁的与 token 是谁的有解耦意义，这里必须是"客户端的域"。
+    let domain = super::api::client_auth_host(platform);
 
     auth_obj.insert("accessToken".to_string(), serde_json::Value::String(account.access_token.clone()));
     auth_obj.insert("refreshToken".to_string(), serde_json::Value::String(refresh_token.to_string()));
@@ -572,7 +577,11 @@ fn build_auth_value(account: &BuddyAccount) -> serde_json::Value {
 }
 
 /// 构建完整登录会话 JSON（合并已有 accounts/allAccounts）
-fn build_auth_session(account: &BuddyAccount, base_session: Option<&serde_json::Value>) -> serde_json::Value {
+fn build_auth_session(
+    account: &BuddyAccount,
+    platform: BuddyPlatform,
+    base_session: Option<&serde_json::Value>,
+) -> serde_json::Value {
     let account_value = build_auth_account_value(account);
     let root_obj = base_session
         .and_then(serde_json::Value::as_object)
@@ -615,7 +624,7 @@ fn build_auth_session(account: &BuddyAccount, base_session: Option<&serde_json::
     let all_accounts = merge_current(existing_all_accounts);
     let mut session = root_obj.cloned().unwrap_or_default();
     session.insert("account".to_string(), account_value);
-    session.insert("auth".to_string(), build_auth_value(account));
+    session.insert("auth".to_string(), build_auth_value(account, platform));
     session.insert("accounts".to_string(), serde_json::Value::Array(accounts));
     session.insert("allAccounts".to_string(), serde_json::Value::Array(all_accounts));
     serde_json::Value::Object(session)
@@ -629,6 +638,7 @@ fn build_auth_session(account: &BuddyAccount, base_session: Option<&serde_json::
 /// 3. 写回用 hash 比对（防切号期间被官方客户端改过）+ 写后校验加密包装仍在
 fn write_encrypted_session(
     account: &BuddyAccount,
+    platform: BuddyPlatform,
     auth_file: &std::path::PathBuf,
     existing: &serde_json::Value,
     expected_hash: &[u8; 32],
@@ -642,7 +652,7 @@ fn write_encrypted_session(
     // 1. 整棵解密，并记下哪些字段原本是加密的
     let (plain_existing, paths) = atrest::decrypt_tree_with_paths(existing, &secret)?;
     // 2. 用目标账号的凭据重建 session（沿用官方其余字段，如 domain / accounts / allAccounts）
-    let session = build_auth_session(account, Some(&plain_existing));
+    let session = build_auth_session(account, platform, Some(&plain_existing));
     // 3. 按原路径重新加密；路径失效会直接报错，不会写出半加密文件
     let encrypted = atrest::encrypt_tree(&session, &paths, &secret)?;
     let content = serde_json::to_string_pretty(&encrypted)
@@ -667,6 +677,34 @@ fn write_encrypted_session(
         account.display_name(),
         auth_file.display()
     ))
+}
+
+/// 读取当前 WorkBuddy 登录文件里的 access token（延时复查用）。
+///
+/// 登录文件不存在 / 不是 JSON / 取不到字段 → `Ok(None)`（登录态确实不在了）。
+/// **取不到官方密钥** → `Err`（探测不可用，调用方不应据此判定切号失败）。
+pub(crate) fn read_session_access_token() -> Result<Option<String>, String> {
+    use super::twoapi::atrest;
+    let auth_file = default_auth_file_path(BuddyPlatform::Workbuddy)
+        .ok_or_else(|| "无法定位 WorkBuddy 登录信息路径".to_string())?;
+    if !auth_file.exists() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(&auth_file)
+        .map_err(|e| format!("读取 WorkBuddy 登录信息失败: {}", e))?;
+    let json: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("WorkBuddy 登录信息不是有效 JSON: {}", e))?;
+    let field = match json.get("auth").and_then(|a| a.get("accessToken")) {
+        Some(f) => f.clone(),
+        None => return Ok(None),
+    };
+    let secret = atrest::fetch_secret()?;
+    let token = atrest::decrypt_field(&field, &secret)?;
+    if token.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(token))
+    }
 }
 
 /// 切换默认客户端到指定账号（写回 auth 文件；无文件时按 account 重建）。
@@ -695,6 +733,7 @@ pub fn write_account_to_default_client(
         if contains_encrypted_wrapper(&existing_json) {
             return write_encrypted_session(
                 account,
+                platform,
                 &auth_file,
                 &existing_json,
                 &expected_hash,
@@ -702,48 +741,114 @@ pub fn write_account_to_default_client(
                 marker_hash_before,
             );
         }
-        let session = build_auth_session(account, Some(&existing_json));
-        let content = serde_json::to_string_pretty(&session)
-            .map_err(|e| format!("序列化登录信息失败: {}", e))?;
-        let written = store::write_atomic_if_hash_matches(&auth_file, &expected_hash, &content)?;
-        if !written {
-            return Err(
-                "WorkBuddy 登录信息在切号期间被官方客户端更新，已停止覆盖，请重试".to_string(),
-            );
+        // 原文件是 5.6 之前的明文遗留文件：同样必须写成加密态。
+        // （2026-10-17 真机故障：这里写明文 → 客户端读出来就是"没登录" → 提示重新登录）
+        backup_auth_file(&auth_file);
+        let session = build_auth_session(account, platform, Some(&existing_json));
+        return write_session_as_encrypted(
+            account,
+            &auth_file,
+            &session,
+            Some(&expected_hash),
+            &marker_path,
+            marker_hash_before,
+        );
+    }
+
+    // 文件不存在（客户端已登出并删除了登录文件）：重建一份**加密**的会话。
+    // 抄 cockpit-tools `workbuddy_account.rs`：切号写回不依赖"原文件是否加密"，
+    // 而是取得到官方密钥就加密 —— 所以客户端登出后也能直接切号救回来。
+    let session = build_auth_session(account, platform, None);
+    write_session_as_encrypted(
+        account,
+        &auth_file,
+        &session,
+        None,
+        &marker_path,
+        marker_hash_before,
+    )
+}
+
+/// 切号写回前备份现有登录文件（客户端自己的 `.bak` 会被它覆盖，用独立后缀）。
+///
+/// 备份失败**不阻断**切号 —— 它只是保险，不该让切号失败。
+fn backup_auth_file(auth_file: &std::path::Path) {
+    if !auth_file.exists() {
+        return;
+    }
+    let mut backup = auth_file.as_os_str().to_os_string();
+    backup.push(format!(".kira-switch-{}.bak", chrono::Utc::now().timestamp()));
+    if let Err(e) = fs::copy(auth_file, std::path::PathBuf::from(backup)) {
+        eprintln!("[buddy] 备份 WorkBuddy 登录信息失败（继续切号）: {e}");
+    }
+}
+
+/// 把明文会话加密后写回登录文件（用于「文件不存在 / 原文件未加密」两种情况）。
+///
+/// 抄 cockpit-tools `workbuddy_auth_crypto::encode_session` 的语义：
+/// **取不到官方密钥就报错停止覆盖**，绝不退回写明文 —— 明文登录态在 5.6+ 客户端上
+/// 等于没切（表现为打开客户端提示登录）。
+fn write_session_as_encrypted(
+    account: &BuddyAccount,
+    auth_file: &std::path::PathBuf,
+    session: &serde_json::Value,
+    expected_hash: Option<&[u8; 32]>,
+    marker_path: &std::path::PathBuf,
+    marker_hash_before: Option<[u8; 32]>,
+) -> Result<String, String> {
+    use super::twoapi::atrest;
+
+    let secret = atrest::fetch_secret().map_err(|e| {
+        format!(
+            "无法取得 WorkBuddy 官方加密密钥，已停止覆盖（写明文登录态 5.6+ 客户端不认）：{e}"
+        )
+    })?;
+    let encrypted = atrest::encrypt_session_fields(session, &secret)?;
+    let content = serde_json::to_string_pretty(&encrypted)
+        .map_err(|e| format!("序列化登录信息失败: {}", e))?;
+
+    match expected_hash {
+        Some(hash) => {
+            if !store::write_atomic_if_hash_matches(auth_file, hash, &content)? {
+                return Err(
+                    "WorkBuddy 登录信息在切号期间被官方客户端更新，已停止覆盖，请重试".to_string(),
+                );
+            }
         }
-    } else {
-        let session = build_auth_session(account, None);
-        let content = serde_json::to_string_pretty(&session)
-            .map_err(|e| format!("序列化登录信息失败: {}", e))?;
-        store::write_atomic(&auth_file, &content)?;
+        None => store::write_atomic(auth_file, &content)?,
     }
 
-    if let Some(expected_hash) = marker_hash_before {
-        let _ = store::remove_file_if_hash_matches(&marker_path, &expected_hash);
-    }
-
-    // 校验写回结果
-    let written = fs::read_to_string(&auth_file)
+    // 写后校验：加密包装必须在、四个官方字段必须在、解出来的 token 必须是目标账号
+    let written = fs::read_to_string(auth_file)
         .map_err(|e| format!("校验 WorkBuddy 登录信息失败: {}", e))?;
     let written_json: serde_json::Value = serde_json::from_str(&written)
         .map_err(|e| format!("校验 WorkBuddy 登录信息 JSON 失败: {}", e))?;
-    let written_token = written_json
-        .get("auth")
-        .and_then(|auth| auth.get("accessToken"))
-        .and_then(|v| v.as_str());
-    if written_token != Some(account.access_token.as_str()) {
-        return Err(format!(
-            "校验 WorkBuddy 登录信息失败，未写入目标账号: {}",
-            auth_file.display()
-        ));
+    if !contains_encrypted_wrapper(&written_json) {
+        return Err(
+            "写回结果不是官方加密态，WorkBuddy 登录态可能已损坏，请重新登录 WorkBuddy".to_string(),
+        );
     }
     for key in ["account", "auth", "accounts", "allAccounts"] {
         if written_json.get(key).is_none() {
             return Err(format!("校验 WorkBuddy 登录信息失败，缺少官方字段 {}", key));
         }
     }
+    let written_token = written_json
+        .get("auth")
+        .and_then(|auth| auth.get("accessToken"))
+        .map(|field| atrest::decrypt_field(field, &secret).unwrap_or_default());
+    if written_token.as_deref() != Some(account.access_token.as_str()) {
+        return Err(format!(
+            "校验 WorkBuddy 登录信息失败，未写入目标账号: {}",
+            auth_file.display()
+        ));
+    }
+
+    if let Some(hash) = marker_hash_before {
+        let _ = store::remove_file_if_hash_matches(marker_path, &hash);
+    }
     Ok(format!(
-        "已切换到 {}（{}）",
+        "已切换到 {}（{}，已按官方加密格式写回）",
         account.display_name(),
         auth_file.display()
     ))
@@ -817,7 +922,7 @@ mod tests {
 
     #[test]
     fn session_contains_official_fields_and_current_account() {
-        let session = build_auth_session(&sample_account(), None);
+        let session = build_auth_session(&sample_account(), BuddyPlatform::Workbuddy, None);
         let obj = session.as_object().unwrap();
         for key in ["account", "auth", "accounts", "allAccounts"] {
             assert!(obj.contains_key(key), "缺少官方字段 {}", key);
@@ -843,7 +948,7 @@ mod tests {
                 {"uid": "u123", "nickname": "OldAlice", "lastLogin": false}
             ]
         });
-        let session = build_auth_session(&sample_account(), Some(&base));
+        let session = build_auth_session(&sample_account(), BuddyPlatform::Workbuddy, Some(&base));
         let obj = session.as_object().unwrap();
         let accounts = obj["accounts"].as_array().unwrap();
         assert_eq!(accounts.len(), 2);

@@ -354,46 +354,127 @@ pub fn resolve_current_account_id(accounts: &[BuddyAccount]) -> Option<String> {
 }
 
 /// 构建写回客户端的会话 JSON
+/// 构建写回 `state.vscdb` 的会话 JSON。
+///
+/// **以账号库里的 `auth_raw`（导入时从客户端解密保存的原始会话）为基底**，只覆盖身份与令牌字段。
+///
+/// 为什么不能从零构造（2026-10-18 逆向 `genie` 插件 `out/extension/index.js` 得来）：
+/// 客户端自己写回的会话带一整套身份上下文 —— `auth.sessionState` / `auth.scope` /
+/// `auth.notBeforePolicy` / `refreshExpires*`，以及 `account` 的 `uin` / `sso` / `idp` /
+/// `oneidAccountId` / `accountType` 等十几个键。我们只写 8 个简化字段时，插件
+/// `AuthenticationManagerImpl.restore()` → `applyStoredSession()` 拿不到这些，会话被判为无效
+/// → 客户端显示未登录（真机：切号提示成功、一操作就要求重新登录）。
 fn build_default_client_session_json(account: &BuddyAccount) -> String {
-    let uid = account.uid.as_deref().unwrap_or("");
-    let nickname = account.nickname.as_deref().unwrap_or("");
-    let enterprise_id = account.enterprise_id.as_deref().unwrap_or("");
-    let enterprise_name = account.enterprise_name.as_deref().unwrap_or("");
-    let domain = account.domain.as_deref().unwrap_or("");
-    let refresh_token = account.refresh_token.as_deref().unwrap_or("");
+    let uid = account.uid.as_deref().unwrap_or("").trim().to_string();
+    let nickname = account.nickname.as_deref().unwrap_or("").trim().to_string();
+    let enterprise_id = account.enterprise_id.as_deref().unwrap_or("").trim().to_string();
+    let enterprise_name = account.enterprise_name.as_deref().unwrap_or("").trim().to_string();
+    let domain = account.domain.as_deref().unwrap_or("").trim().to_string();
+    let refresh_token = account.refresh_token.as_deref().unwrap_or("").to_string();
     let expires_at = account.expires_at.unwrap_or(0);
+    let now_ms = chrono::Utc::now().timestamp_millis();
 
-    serde_json::json!({
-        "id": "Tencent-Cloud.genie-ide-cn",
-        "token": account.access_token,
-        "refreshToken": refresh_token,
-        "expiresAt": expires_at,
-        "domain": domain,
-        "accessToken": format!("{}+{}", uid, account.access_token),
-        "converted": true,
-        "account": {
-            "id": uid,
-            "uid": uid,
-            "label": nickname,
-            "nickname": nickname,
-            "enterpriseId": enterprise_id,
-            "enterpriseName": enterprise_name,
-            "pluginEnabled": true,
-            "lastLogin": true,
-        },
-        "auth": {
-            "accessToken": account.access_token,
-            "refreshToken": refresh_token,
-            "tokenType": account.token_type.as_deref().unwrap_or("Bearer"),
-            "domain": domain,
-            "expiresAt": expires_at,
-            "expiresIn": expires_at,
-            "refreshExpiresIn": 0,
-            "refreshExpiresAt": 0,
-            "lastRefreshTime": chrono::Utc::now().timestamp_millis(),
-        }
-    })
-    .to_string()
+    // 基底：账号库里的原始会话（解密后的完整结构）
+    let base = account.auth_raw.clone().unwrap_or_else(|| serde_json::json!({}));
+    let base_obj = base.as_object().cloned().unwrap_or_default();
+
+    // account：保留原始身份字段，只覆盖昵称/企业与登录标记
+    let mut account_obj = base_obj
+        .get("account")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+    if !uid.is_empty() {
+        account_obj.insert("uid".to_string(), serde_json::Value::String(uid.clone()));
+    }
+    if !nickname.is_empty() {
+        account_obj.insert("nickname".to_string(), serde_json::Value::String(nickname.clone()));
+    }
+    if !enterprise_id.is_empty() {
+        account_obj.insert(
+            "enterpriseId".to_string(),
+            serde_json::Value::String(enterprise_id.clone()),
+        );
+    }
+    if !enterprise_name.is_empty() {
+        account_obj.insert(
+            "enterpriseName".to_string(),
+            serde_json::Value::String(enterprise_name.clone()),
+        );
+    }
+    account_obj.insert("lastLogin".to_string(), serde_json::Value::Bool(true));
+    account_obj.insert("pluginEnabled".to_string(), serde_json::Value::Bool(true));
+    account_obj
+        .entry("type".to_string())
+        .or_insert_with(|| serde_json::Value::String("personal".to_string()));
+
+    // auth：保留原始字段（含 sessionState/scope/notBeforePolicy），只覆盖令牌与时效
+    let mut auth_obj = base_obj
+        .get("auth")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+    auth_obj.insert(
+        "accessToken".to_string(),
+        serde_json::Value::String(account.access_token.clone()),
+    );
+    auth_obj.insert(
+        "refreshToken".to_string(),
+        serde_json::Value::String(refresh_token.clone()),
+    );
+    auth_obj.insert(
+        "tokenType".to_string(),
+        serde_json::Value::String(account.token_type.as_deref().unwrap_or("Bearer").to_string()),
+    );
+    if !domain.is_empty() {
+        auth_obj.insert("domain".to_string(), serde_json::Value::String(domain.clone()));
+    }
+    auth_obj.insert(
+        "lastRefreshTime".to_string(),
+        serde_json::Value::Number(serde_json::Number::from(now_ms)),
+    );
+    if expires_at > 0 {
+        auth_obj.insert(
+            "expiresAt".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(expires_at)),
+        );
+        // 语义修正：expiresIn 是**剩余秒数**，不是绝对时间戳
+        auth_obj.insert(
+            "expiresIn".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(
+                (expires_at - now_ms / 1000).max(0),
+            )),
+        );
+    }
+
+    let mut session = base_obj;
+    session.insert(
+        "id".to_string(),
+        serde_json::Value::String("Tencent-Cloud.genie-ide-cn".to_string()),
+    );
+    session.insert(
+        "token".to_string(),
+        serde_json::Value::String(account.access_token.clone()),
+    );
+    session.insert(
+        "refreshToken".to_string(),
+        serde_json::Value::String(refresh_token.clone()),
+    );
+    session.insert(
+        "expiresAt".to_string(),
+        serde_json::Value::Number(serde_json::Number::from(expires_at)),
+    );
+    if !domain.is_empty() {
+        session.insert("domain".to_string(), serde_json::Value::String(domain.clone()));
+    }
+    session.insert(
+        "accessToken".to_string(),
+        serde_json::Value::String(format!("{}+{}", uid, account.access_token)),
+    );
+    session.insert("converted".to_string(), serde_json::Value::Bool(true));
+    session.insert("account".to_string(), serde_json::Value::Object(account_obj));
+    session.insert("auth".to_string(), serde_json::Value::Object(auth_obj));
+    serde_json::to_string(&serde_json::Value::Object(session)).unwrap_or_default()
 }
 
 /// 注入失败时补充可操作的提示（复刻 cockpit-tools 的 friendly error）
@@ -435,7 +516,87 @@ fn verify_state_db_injection(state_db_path: &std::path::Path, db_key: &str) -> R
     }
 }
 
-/// 切换默认客户端到指定账号（写回 state.vscdb）。
+/// 读取当前 CodeBuddy CN 登录态里的 access token（延时复查用）。
+///
+/// secret 缺失 → `Ok(None)`（登录态确实不在了）；打开/解密失败 → `Err`（探测不可用）。
+pub(crate) fn read_session_access_token() -> Result<Option<String>, String> {
+    let state_db = default_state_db_path().ok_or_else(|| "无法定位 CodeBuddy CN state.vscdb 路径".to_string())?;
+    let data_root = default_data_dir().ok_or_else(|| "无法定位 CodeBuddy CN 数据目录".to_string())?;
+    let raw = super::crypto::read_secret_storage_value(&state_db, SECRET_EXTENSION_ID, SECRET_KEY)?;
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let decrypted =
+        super::crypto::decode_secret_storage_value(&raw, &data_root, Platform::CodeBuddyCn)?;
+    let parsed: serde_json::Value = serde_json::from_str(&decrypted)
+        .map_err(|e| format!("CodeBuddy CN 登录会话解析失败: {}", e))?;
+    Ok(parsed
+        .get("auth")
+        .and_then(|auth| auth.get("accessToken"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string()))
+}
+
+/// 同步 CodeBuddy CN 插件的**身份键** `User/globalStorage/storage.json` → `genie.userId`。
+///
+/// 真机结论（2026-10-18）：插件把 `genie.userId` 当作"当前是谁"，再拿它去和
+/// `state.vscdb` 里的令牌会话对账。**只注入令牌不改这个键**，客户端就会判为未登录
+/// （账号显示正常、一操作就提示登录）—— 这就是切号"看起来成功、实际不生效"的那一半原因。
+///
+/// 同源校验：我们账号库里的 `uid` 就是导入时从客户端会话 `account.uid` 取的，
+/// 与 `genie.userId` 同一个值空间（实测 DEDEDE 两边都是 57c81ef5-…）。
+fn sync_plugin_user_id(data_root: &std::path::Path, uid: &str) -> Result<(), String> {
+    let uid = uid.trim();
+    if uid.is_empty() {
+        return Err("账号缺少 uid，无法同步 CodeBuddy CN 身份键（genie.userId）".to_string());
+    }
+    let path = data_root
+        .join("User")
+        .join("globalStorage")
+        .join("storage.json");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let mut root: serde_json::Value = match std::fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text).unwrap_or_else(|_| serde_json::json!({})),
+        Err(_) => serde_json::json!({}),
+    };
+    if !root.is_object() {
+        root = serde_json::json!({});
+    }
+    // 备份：身份键同步失败时能把它恢复回去（客户端找不到身份 = 直接登出）
+    if path.exists() {
+        let mut backup = path.as_os_str().to_os_string();
+        backup.push(format!(
+            ".kira-switch-{}.bak",
+            chrono::Utc::now().timestamp()
+        ));
+        if let Err(e) = std::fs::copy(&path, std::path::PathBuf::from(backup)) {
+            eprintln!("[buddy] 备份 CodeBuddy CN storage.json 失败（继续切号）: {e}");
+        }
+    }
+    if let Some(obj) = root.as_object_mut() {
+        obj.insert("genie.userId".to_string(), serde_json::Value::String(uid.to_string()));
+    }
+    let content =
+        serde_json::to_string(&root).map_err(|e| format!("序列化 storage.json 失败: {}", e))?;
+    store::write_atomic(&path, &content)?;
+
+    // 写后校验
+    let written = std::fs::read_to_string(&path)
+        .map_err(|e| format!("校验 CodeBuddy CN 身份键失败: {e}"))?;
+    let written_json: serde_json::Value = serde_json::from_str(&written)
+        .map_err(|e| format!("校验 CodeBuddy CN storage.json 失败: {e}"))?;
+    match written_json.get("genie.userId").and_then(|v| v.as_str()) {
+        Some(v) if v == uid => Ok(()),
+        other => Err(format!(
+            "同步 CodeBuddy CN 身份键失败：genie.userId={:?}，期望 {}",
+            other, uid
+        )),
+    }
+}
+
+/// 切换默认客户端到指定账号（写回 state.vscdb + 同步插件身份键）。
 pub fn write_account_to_default_client(account: &BuddyAccount) -> Result<String, String> {
     let state_db = default_state_db_path()
         .ok_or_else(|| "无法定位默认 CodeBuddy CN state.vscdb 路径".to_string())?;
@@ -446,6 +607,18 @@ pub fn write_account_to_default_client(account: &BuddyAccount) -> Result<String,
     let data_root = default_data_dir().ok_or("无法定位 CodeBuddy CN 数据目录")?;
     let db_key = secret_db_key();
     let session_json = build_default_client_session_json(account);
+    // 身份键必须与令牌一起换：插件拿 genie.userId 去对账，只换令牌等于"换人不换名字"
+    let uid = account
+        .uid
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "账号 {} 缺少 uid，无法同步 CodeBuddy CN 身份键（genie.userId）",
+                account.display_name()
+            )
+        })?;
     if let Err(err) = super::crypto::inject_secret_to_state_db(
         &state_db,
         &db_key,
@@ -456,6 +629,10 @@ pub fn write_account_to_default_client(account: &BuddyAccount) -> Result<String,
         return Err(friendly_inject_error(&err));
     }
     verify_state_db_injection(&state_db, &db_key)?;
+    // 身份键**最后**写：令牌已落地并校验通过，再换 genie.userId。
+    // 顺序反过来的话，注入/校验失败会留下「身份已换、令牌还是旧账号」——
+    // 客户端拿新身份配旧令牌，直接登出，而且没有回滚路径。
+    sync_plugin_user_id(&data_root, uid)?;
     Ok(format!(
         "已切换到 {}（{}）",
         account.display_name(),
@@ -540,6 +717,89 @@ mod tests {
         );
         assert_eq!(normalize_local_token("cn123+abc").unwrap(), "abc");
         assert_eq!(normalize_local_token("plain").unwrap(), "plain");
+    }
+
+    /// 客户端自写的会话带 sessionState/scope 等身份字段；我们必须保留 auth_raw 里的这些字段，
+    /// 只替换令牌与时效 —— 否则插件 restore() 拿到的是残缺会话（真机：提示登录）
+    fn session_json_keeps_identity_fields_from_auth_raw() {
+        let mut account = sample_account();
+        account.auth_raw = Some(serde_json::json!({
+            "account": {"uid": "cn123", "uin": "330113710772", "sso": {"domain": "x"},
+                        "oneidAccountId": "oid-1", "accountType": "normal"},
+            "auth": {"sessionState": "sess-abc", "scope": "openid profile offline_access email",
+                     "notBeforePolicy": "nbf", "refreshExpiresIn": 2591662,
+                     "refreshExpiresAt": 1794840894326i64}
+        }));
+
+        let v: serde_json::Value =
+            serde_json::from_str(&build_default_client_session_json(&account)).unwrap();
+
+        // 身份字段必须原样保留
+        assert_eq!(v["auth"]["sessionState"].as_str(), Some("sess-abc"));
+        assert_eq!(
+            v["auth"]["scope"].as_str(),
+            Some("openid profile offline_access email")
+        );
+        assert_eq!(v["auth"]["notBeforePolicy"].as_str(), Some("nbf"));
+        assert_eq!(v["account"]["uin"].as_str(), Some("330113710772"));
+        assert_eq!(v["account"]["oneidAccountId"].as_str(), Some("oid-1"));
+        // 令牌与身份被换成目标账号
+        assert_eq!(v["auth"]["accessToken"].as_str(), Some("cn-token-1"));
+        assert_eq!(v["account"]["uid"].as_str(), Some("cn123"));
+        assert_eq!(v["account"]["lastLogin"].as_bool(), Some(true));
+        // expiresIn 必须是剩余秒（不是绝对毫秒）
+        let expires_in = v["auth"]["expiresIn"].as_i64().expect("expiresIn");
+        assert!(expires_in < 100_000_000, "expiresIn 不应是绝对时间戳: {}", expires_in);
+        // 顶层兼容字段保留
+        assert_eq!(v["id"].as_str(), Some("Tencent-Cloud.genie-ide-cn"));
+        assert_eq!(v["converted"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn plugin_user_id_is_synced_and_verified() {
+        let dir = std::env::temp_dir().join(format!(
+            "kira-cn-userid-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let storage = dir.join("User").join("globalStorage").join("storage.json");
+        std::fs::create_dir_all(storage.parent().unwrap()).unwrap();
+        // 预置一个"旧身份"，模拟已经登录过的客户端
+        std::fs::write(
+            &storage,
+            serde_json::json!({
+                "telemetry.machineId": "abc",
+                "genie.userId": "old-uid",
+                "windowControlHeight": 32
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        sync_plugin_user_id(&dir, "new-uid").expect("同步身份键应成功");
+
+        let after: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&storage).unwrap()).unwrap();
+        assert_eq!(after["genie.userId"].as_str(), Some("new-uid"));
+        // 其它键必须保留
+        assert_eq!(after["telemetry.machineId"].as_str(), Some("abc"));
+        assert_eq!(after["windowControlHeight"].as_i64(), Some(32));
+        // 备份文件应该留下
+        let backups: Vec<_> = std::fs::read_dir(storage.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.starts_with("storage.json.kira-switch-"))
+            .collect();
+        assert_eq!(backups.len(), 1, "应留一份同步前的备份");
+
+        // 空 uid 必须拒绝（否则会把身份键写坏，客户端直接登出）
+        assert!(sync_plugin_user_id(&dir, "  ").is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

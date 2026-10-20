@@ -62,9 +62,13 @@ fn generate_login_id() -> String {
 // ─── HTTP 客户端 ───
 
 fn build_client() -> Result<reqwest::Client, String> {
+    build_client_with_timeout(30)
+}
+
+fn build_client_with_timeout(secs: u64) -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .user_agent(HTTP_USER_AGENT)
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(secs))
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))
 }
@@ -75,6 +79,107 @@ pub fn api_endpoint(platform: BuddyPlatform) -> &'static str {
         BuddyPlatform::Workbuddy => WORKBUDDY_API_ENDPOINT,
         BuddyPlatform::CodebuddyCn => CODEBUDDY_CN_API_ENDPOINT,
     }
+}
+
+/// 客户端实际使用的认证域（它拿 token 去打哪个域的 API）。
+///
+/// 抄 WorkDaddy `profiles.js` / `checkin-result.js` 的"按 issuer 路由"思路：
+/// 官方把国内版认证域从 `www.codebuddy.cn` 迁到了 `www.workbuddy.cn`，
+/// **两个域签发的 token 不通用** —— 客户端只会打自己那个域，域不对就是全量 401
+/// （真机表现：账号显示正确、但"积分获取失败"、发消息报"登录状态已失效"）。
+/// WorkBuddy 的值来自 5.8.3 客户端日志里的 `current endpoint=https://www.workbuddy.cn`。
+pub fn client_auth_origin(platform: BuddyPlatform) -> &'static str {
+    match platform {
+        BuddyPlatform::Workbuddy => "https://www.workbuddy.cn",
+        BuddyPlatform::CodebuddyCn => "https://www.codebuddy.cn",
+    }
+}
+
+/// 同一个域的**纯 host 形式**（不带 scheme）。
+///
+/// 客户端登录文件里的 `domain` 字段历来是纯 host（例如 `example.com` /
+/// `www.codebuddy.cn`），客户端拿它拼 endpoint；写进 `https://...` 会被拼成
+/// `https://https://...`，反而制造登录失败。写文件时用这个，比较 issuer 时用
+/// [`client_auth_origin`]（带 scheme）。
+pub fn client_auth_host(platform: BuddyPlatform) -> &'static str {
+    match platform {
+        BuddyPlatform::Workbuddy => "www.workbuddy.cn",
+        BuddyPlatform::CodebuddyCn => "www.codebuddy.cn",
+    }
+}
+
+/// 从 access token 解出签发方 origin（抄 WorkDaddy `tokenIssuerOrigin`）。
+///
+/// 取 JWT payload 的 `iss`，只保留 `scheme://host` 并转小写；解不出来返回 None
+/// （老 token / 非 JWT 格式），调用方据此跳过校验。
+pub fn token_issuer_origin(access_token: &str) -> Option<String> {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine as _};
+    let payload = access_token.split('.').nth(1)?;
+    let bytes = B64.decode(payload).ok()?;
+    let json: Value = serde_json::from_slice(&bytes).ok()?;
+    let iss = json.get("iss")?.as_str()?;
+    let (scheme, rest) = iss.split_once("://")?;
+    let host = rest.split('/').next().unwrap_or_default();
+    if scheme.is_empty() || host.is_empty() {
+        return None;
+    }
+    Some(format!("{}://{}", scheme, host).to_lowercase())
+}
+
+/// 切号前的认证域体检：账号 token 的签发域与客户端使用的域不一致时给出提示。
+///
+/// 不阻断切换（我们的签到/用量走自己的端点，老域账号仍能刷新），
+/// 但要**明确说出来** —— 否则用户看到的是"切成功了、客户端却报登录失效"这种哑故障。
+pub fn auth_origin_warning(platform: BuddyPlatform, access_token: &str) -> Option<String> {
+    let token_origin = token_issuer_origin(access_token)?;
+    let client_origin = client_auth_origin(platform);
+    if token_origin == client_origin {
+        return None;
+    }
+    Some(format!(
+        "该账号的令牌由 {} 签发，而当前客户端使用 {}，两者不通用：客户端会全量 401\
+         （积分获取失败 / 提示登录失效）。请先在客户端里登录一次该账号，再回到这里重新导入/切换。",
+        token_origin, client_origin
+    ))
+}
+
+/// token 签发域（issuer）→ 官方 API host。抄 WorkDaddy `checkin-result.js::ISSUER_HOST_MAP`
+/// （2026-09-04 `87d8692` 引入，与 `c28c2da` 认证域路由同源）。
+///
+/// 注意它**不含** `copilot.tencent.com` —— 那个是聚合网关，属于"我们额外加的通道"，不是官方域。
+const ISSUER_HOST_MAP: [(&str, &str); 4] = [
+    ("https://www.workbuddy.ai", "https://www.workbuddy.ai"),
+    ("https://www.workbuddy.cn", "https://www.workbuddy.cn"),
+    ("https://www.codebuddy.cn", "https://www.codebuddy.cn"),
+    ("https://www.codebuddy.ai", "https://www.codebuddy.ai"),
+];
+
+/// WorkBuddy 侧请求的**候选 host 顺序**（抄 WorkDaddy `checkinEndpointsForToken` 的
+/// "按 token 签发域路由，解不出就多域兜底"，并按我们的实际情况调整优先级）。
+///
+/// 与 WorkDaddy 的**有意差异**：聚合网关排第一。
+/// 我们已验证 `copilot.tencent.com` 通吃两个域签发的令牌，且承载了部分官方域没有的接口；
+/// 官方域作为后续候选，保证"聚合网关没同步的新端点"也能取到数据。
+/// WorkDaddy 是"按 iss 只打那一个域"，因为它没有聚合网关这条通道。
+///
+/// 401/403 **不**换 host —— 那说明令牌域与该 host 不匹配，重试只会掩盖真实原因
+/// （沿用 `TRAVEL_AUTH_EXPIRED` 语义直接返回）。
+pub fn workbuddy_api_hosts(access_token: &str) -> Vec<&'static str> {
+    let mut hosts: Vec<&'static str> = vec![WORKBUDDY_API_ENDPOINT];
+    if let Some(origin) = token_issuer_origin(access_token) {
+        if let Some((_, host)) = ISSUER_HOST_MAP.iter().find(|(iss, _)| *iss == origin) {
+            if !hosts.contains(host) {
+                hosts.push(host);
+            }
+        }
+    }
+    // 官方双域兜底：解不出 iss（非 JWT / 老 token）时至少还能试官方两域
+    for host in ["https://www.workbuddy.cn", "https://www.codebuddy.cn"] {
+        if !hosts.contains(&host) {
+            hosts.push(host);
+        }
+    }
+    hosts
 }
 
 fn oauth_platform_name(platform: BuddyPlatform) -> &'static str {
@@ -1290,7 +1395,20 @@ pub struct BuddyTravelStatus {
     pub record_id: Option<Value>,
 }
 
-/// 旅行 / 成长中心接口通用请求（WorkBuddy 域名，不带 /v2/ 前缀——与签到路径体系不同）。
+/// 旅行 / 成长中心接口请求的候选域尝试结果。
+///
+/// `Fatal` = 换 host 没意义（401/403：令牌域与该 host 不匹配，重试只会掩盖真实原因），
+/// `Retryable` = 可以换一个 host 再试（网络失败 / 404 / 5xx / 非 JSON 响应）。
+enum TravelAttempt {
+    Fatal(String),
+    Retryable(String),
+}
+
+/// 旅行 / 成长中心接口通用请求（WorkBuddy 侧）。
+///
+/// **按 token 签发域路由 + 聚合网关兜底**（抄 WorkDaddy `checkinEndpointsForToken`）：
+/// 候选顺序见 `workbuddy_api_hosts`。401/403 直接失败（域不匹配的真相要暴露出来），
+/// 网络/5xx/非 JSON 才换下一个 host。
 ///
 /// 注意：成长中心有部分端点只在 `/v2/` 前缀下存在，调用方自行拼接完整 `path`。
 pub(crate) async fn travel_request(
@@ -1302,8 +1420,56 @@ pub(crate) async fn travel_request(
     enterprise_id: Option<&str>,
     domain: Option<&str>,
 ) -> Result<Value, String> {
-    let client = build_client()?;
-    let url = format!("{}{}", WORKBUDDY_API_ENDPOINT, path);
+    let hosts = workbuddy_api_hosts(access_token);
+    // 有副作用的请求（派出 / 领取）**不允许换域重发**：首个 host 可能已经在服务端生效，
+    // 只是响应超时或返回了非 JSON（网关吞包），换域重试会重复派出 / 重复领取。
+    // 这类请求只打首选域，失败就如实报错。
+    let hosts: Vec<&'static str> = if method == reqwest::Method::GET {
+        hosts
+    } else {
+        hosts.into_iter().take(1).collect()
+    };
+    let mut last_err: Option<String> = None;
+    for (index, host) in hosts.iter().enumerate() {
+        // 兜底域用更短的超时：主通道慢 + 兜底也慢会把面板卡住
+        let timeout = if index == 0 { 30 } else { 8 };
+        match travel_request_once(
+            host,
+            timeout,
+            method.clone(),
+            path,
+            body.clone(),
+            access_token,
+            uid,
+            enterprise_id,
+            domain,
+        )
+        .await
+        {
+            Ok(value) => return Ok(value),
+            Err(TravelAttempt::Fatal(msg)) => return Err(msg),
+            Err(TravelAttempt::Retryable(msg)) => last_err = Some(msg),
+        }
+    }
+    Err(last_err
+        .unwrap_or_else(|| format!("请求 {} 失败：所有候选域均不可用", path)))
+}
+
+/// 对单个 host 发一次请求（`travel_request` 的一次尝试）。
+async fn travel_request_once(
+    host: &str,
+    timeout_secs: u64,
+    method: reqwest::Method,
+    path: &str,
+    body: Option<Value>,
+    access_token: &str,
+    uid: Option<&str>,
+    enterprise_id: Option<&str>,
+    domain: Option<&str>,
+) -> Result<Value, TravelAttempt> {
+    let client = build_client_with_timeout(timeout_secs)
+        .map_err(|e| TravelAttempt::Fatal(e))?;
+    let url = format!("{}{}", host, path);
     let mut req = if method == reqwest::Method::GET {
         client.get(&url)
     } else {
@@ -1327,24 +1493,27 @@ pub(crate) async fn travel_request(
     let resp = req
         .send()
         .await
-        .map_err(|e| format!("请求 {} 失败: {}", path, e))?;
+        .map_err(|e| TravelAttempt::Retryable(format!("请求 {} 失败: {}", path, e)))?;
     let status = resp.status().as_u16();
     let text = resp.text().await.unwrap_or_default();
     if status == 401 || status == 403 {
-        return Err(format!(
-            "{}令牌已失效（HTTP {}），请打开 WorkBuddy 刷新登录态",
-            TRAVEL_AUTH_EXPIRED_PREFIX, status
-        ));
+        // 令牌域与该 host 不匹配：换 host 无用，直接暴露（域不匹配的真因要看得见）
+        return Err(TravelAttempt::Fatal(format!(
+            "{}令牌已失效（HTTP {}，host={}），请打开 WorkBuddy 刷新登录态",
+            TRAVEL_AUTH_EXPIRED_PREFIX, status, host
+        )));
     }
     if status != 200 {
-        return Err(format!(
-            "请求 {} 失败 (HTTP {}): {}",
+        return Err(TravelAttempt::Retryable(format!(
+            "请求 {} 失败 (HTTP {}, host={}): {}",
             path,
             status,
+            host,
             text.chars().take(200).collect::<String>()
-        ));
+        )));
     }
-    serde_json::from_str(&text).map_err(|e| format!("解析 {} 响应失败: {}", path, e))
+    serde_json::from_str(&text)
+        .map_err(|e| TravelAttempt::Retryable(format!("解析 {} 响应失败 (host={}): {}", path, host, e)))
 }
 
 /// 查询旅行状态。
@@ -1924,6 +2093,102 @@ pub fn update_checkin_info(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine as _};
+
+    /// 造一个 iss 可指定的 JWT（只要 payload 那段合法即可，签名无所谓）
+    fn fake_jwt(iss: &str) -> String {
+        let payload = B64.encode(json!({"iss": iss, "azp": "console"}).to_string());
+        format!("header.{}.signature", payload)
+    }
+
+    #[test]
+    fn issuer_origin_is_extracted_and_normalized() {
+        assert_eq!(
+            token_issuer_origin(&fake_jwt("https://www.workbuddy.cn/auth/realms/copilot")).as_deref(),
+            Some("https://www.workbuddy.cn")
+        );
+        assert_eq!(
+            token_issuer_origin(&fake_jwt("https://www.codebuddy.cn/auth/realms/copilot")).as_deref(),
+            Some("https://www.codebuddy.cn")
+        );
+        assert_eq!(token_issuer_origin("not-a-jwt"), None);
+    }
+
+    #[test]
+    fn auth_origin_warning_only_fires_on_mismatch() {
+        // 新域 token 切进 WorkBuddy（客户端用 workbuddy.cn）→ 无提示
+        assert_eq!(
+            auth_origin_warning(
+                BuddyPlatform::Workbuddy,
+                &fake_jwt("https://www.workbuddy.cn/auth/realms/copilot")
+            ),
+            None
+        );
+        // 老域 token 切进 WorkBuddy → 必须提示（客户端会全量 401）
+        let warning = auth_origin_warning(
+            BuddyPlatform::Workbuddy,
+            &fake_jwt("https://www.codebuddy.cn/auth/realms/copilot"),
+        )
+        .expect("老域 token 切进新域客户端必须提示");
+        assert!(warning.contains("www.codebuddy.cn") && warning.contains("www.workbuddy.cn"));
+        // 反过来：新域 token 切进 CodeBuddy CN 也要提示
+        assert!(
+            auth_origin_warning(
+                BuddyPlatform::CodebuddyCn,
+                &fake_jwt("https://www.workbuddy.cn/auth/realms/copilot")
+            )
+            .is_some(),
+            "CN 客户端只认 codebuddy.cn 域"
+        );
+    }
+
+    #[test]
+    fn api_hosts_put_gateway_first_then_issuer_host() {
+        // 老域 token：聚合网关优先，其次老域官方域，最后补新域兜底
+        assert_eq!(
+            workbuddy_api_hosts(&fake_jwt("https://www.codebuddy.cn/auth/realms/copilot")),
+            vec![
+                "https://copilot.tencent.com",
+                "https://www.codebuddy.cn",
+                "https://www.workbuddy.cn",
+            ]
+        );
+        // 新域 token：官方域紧跟其后
+        assert_eq!(
+            workbuddy_api_hosts(&fake_jwt("https://www.workbuddy.cn/auth/realms/copilot")),
+            vec![
+                "https://copilot.tencent.com",
+                "https://www.workbuddy.cn",
+                "https://www.codebuddy.cn",
+            ]
+        );
+    }
+
+    #[test]
+    fn api_hosts_fall_back_when_issuer_unparsable() {
+        // 非 JWT / 老 token：解不出 iss 也要有官方双域兜底
+        assert_eq!(
+            workbuddy_api_hosts("opaque-token"),
+            vec![
+                "https://copilot.tencent.com",
+                "https://www.workbuddy.cn",
+                "https://www.codebuddy.cn",
+            ]
+        );
+    }
+
+    #[test]
+    fn api_hosts_never_duplicate() {
+        // 聚合网关自己签发的 token：ISSUER_HOST_MAP 里没有它 → 不能重复入列
+        let hosts = workbuddy_api_hosts(&fake_jwt("https://copilot.tencent.com/auth/realms/x"));
+        let mut seen = std::collections::HashSet::new();
+        for h in &hosts {
+            assert!(seen.insert(*h), "候选域重复: {}", h);
+        }
+        // 国际版 issuer 也要能映射（WorkDaddy ISSUER_HOST_MAP 的四个域都在）
+        assert!(workbuddy_api_hosts(&fake_jwt("https://www.workbuddy.ai/auth/realms/x"))
+            .contains(&"https://www.workbuddy.ai"));
+    }
 
     #[test]
     fn enterprise_usage_wrapping() {
