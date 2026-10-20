@@ -53,3 +53,5 @@ tmp_bins.txt
 .agents/skills/
 .codebuddy/skills/
 # <<< kira skills <<<
+
+__pycache__
