@@ -39,6 +39,43 @@ fn client_paths_file() -> PathBuf {
     get_data_dir().join("buddy").join("client_paths.json")
 }
 
+/// 产品元数据 `resources/app/product.json` 里的 `applicationName`。
+fn product_application_name(exe: &std::path::Path) -> Option<String> {
+    let raw = std::fs::read_to_string(
+        exe.parent()?
+            .join("resources")
+            .join("app")
+            .join("product.json"),
+    )
+    .ok()?;
+    let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    value
+        .get("applicationName")?
+        .as_str()
+        .map(|s| s.trim().to_string())
+}
+
+/// CodeBuddy CN 的身份终判（对齐 WorkDaddy `isCodeBuddyBinary`）。
+///
+/// 只认 exe 名会误判：老版 CN 用的是国际版文件名 `CodeBuddy.exe`，同机装两个版本时会把
+/// 国际版当成 CN 去关/切。读到元数据时以 `applicationName == "buddycn"` 为准；
+/// 读不到（升级中途、非标准布局）退回名字判定，避免把已安装的客户端判成"没装"。
+fn is_codebuddy_cn_binary(exe: &std::path::Path) -> bool {
+    let name_ok = exe
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| {
+            n.eq_ignore_ascii_case("CodeBuddy CN.exe") || n.eq_ignore_ascii_case("CodeBuddy.exe")
+        });
+    if !name_ok {
+        return false;
+    }
+    match product_application_name(exe) {
+        Some(app) => app.eq_ignore_ascii_case("buddycn"),
+        None => true,
+    }
+}
+
 fn read_client_paths() -> serde_json::Map<String, serde_json::Value> {
     std::fs::read_to_string(client_paths_file())
         .ok()
@@ -189,7 +226,12 @@ pub fn resolve_launch_path(platform: BuddyPlatform) -> Option<PathBuf> {
     if let Some(path) = configured_launch_path(platform) {
         return Some(path);
     }
-    default_launch_candidates(platform).into_iter().find(|p| p.exists())
+    let mut candidates = default_launch_candidates(platform);
+    // 同机可能同时装着 CN 与国际版：候选目录里若放的是国际版 exe，不能当成 CN。
+    if cfg!(windows) && matches!(platform, BuddyPlatform::CodebuddyCn) {
+        candidates.retain(|path| is_codebuddy_cn_binary(path));
+    }
+    candidates.into_iter().find(|p| p.exists())
 }
 
 /// 正在运行的客户端进程 pid 列表（按进程名匹配，不区分大小写）
@@ -207,15 +249,26 @@ fn process_pairs(platform: BuddyPlatform) -> Vec<(u32, Option<u32>)> {
         .collect();
     let mut sys = sysinfo::System::new();
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    // CN 进程名可能是国际版遗留的 `CodeBuddy.exe`：能拿到 exe 路径时再用产品元数据终判。
+    let verify_cn_identity = cfg!(windows) && matches!(platform, BuddyPlatform::CodebuddyCn);
     sys.processes()
         .iter()
         .filter(|(_, process)| {
-            names.iter().any(|name| {
+            let name_matches = names.iter().any(|name| {
                 process
                     .name()
                     .to_string_lossy()
                     .eq_ignore_ascii_case(name)
-            })
+            });
+            if !name_matches {
+                return false;
+            }
+            if verify_cn_identity {
+                if let Some(exe) = process.exe() {
+                    return is_codebuddy_cn_binary(exe);
+                }
+            }
+            true
         })
         .map(|(pid, process)| (pid.as_u32(), process.parent().map(|p| p.as_u32())))
         .filter(|(pid, _)| *pid != std::process::id())
@@ -408,12 +461,59 @@ pub fn close_running(platform: BuddyPlatform, timeout_secs: u64) -> Result<(), S
 mod tests {
     use super::*;
 
+    fn make_temp() -> PathBuf {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "kira-client-identity-{}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos(),
+            id
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
     #[test]
     fn name_candidates_match_expected_exes() {
         let cn = process_name_candidates(BuddyPlatform::CodebuddyCn);
         assert!(cn.iter().any(|n| n.eq_ignore_ascii_case("CodeBuddy CN.exe")));
         let wb = process_name_candidates(BuddyPlatform::Workbuddy);
         assert!(wb.iter().any(|n| n.eq_ignore_ascii_case("WorkBuddy.exe")));
+    }
+
+    /// 对齐 WorkDaddy `test/codebuddy-compat.test.js`：名字只是初筛，
+    /// `resources/app/product.json` 的 `applicationName` 才是 CN / 国际版的终判。
+    #[test]
+    fn cn_binary_identity_prefers_product_metadata() {
+        let root = make_temp();
+        let cn = root.join("CodeBuddy CN.exe");
+        let legacy = root.join("CodeBuddy.exe");
+        let wb = root.join("WorkBuddy.exe");
+        for path in [&cn, &legacy, &wb] {
+            std::fs::write(path, b"fixture").unwrap();
+        }
+
+        // 元数据缺失（升级中途/非标准布局）：退回名字判定，不能把已安装的客户端判成没装
+        assert!(is_codebuddy_cn_binary(&cn));
+        assert!(is_codebuddy_cn_binary(&legacy));
+        assert!(!is_codebuddy_cn_binary(&wb));
+
+        let meta = root.join("resources").join("app").join("product.json");
+        std::fs::create_dir_all(meta.parent().unwrap()).unwrap();
+        // 国际版元数据必须否决，哪怕 exe 名是 CN
+        std::fs::write(&meta, r#"{"applicationName":"buddy"}"#).unwrap();
+        assert!(!is_codebuddy_cn_binary(&cn));
+        assert!(!is_codebuddy_cn_binary(&legacy));
+
+        std::fs::write(&meta, r#"{"applicationName":"buddycn"}"#).unwrap();
+        assert!(is_codebuddy_cn_binary(&cn));
+        assert!(is_codebuddy_cn_binary(&legacy), "老版 CN 的 CodeBuddy.exe 仍应被识别");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
