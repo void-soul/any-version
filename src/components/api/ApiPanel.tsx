@@ -8,12 +8,13 @@ import {
   BookOpen, ListChecks, Copy, Check, Loader2, Pencil, Folder,
   KeyRound, Cookie, SlidersHorizontal, FileText, TestTube2, Braces,
   Link2, StickyNote, Star, History, Eraser, AlertTriangle, FolderInput, Lock, X,
+  Square, Terminal, FileDown, Search, Wand2, ListOrdered,
 } from "lucide-react";
 import type {
   ApiProject, ApiEnvironment, ApiModule, ApiEndpoint, KeyValueItem,
   PresetHeaderSet, SendRequestInput, SendRequestOutput,
   UnitTest, UnitTestRunOutput, LoadTestConfig, LoadTestRun, LoadRunStatus,
-  ApiHistoryEntry,
+  ApiHistoryEntry, ExtractResult, ExtractRule,
 } from "./types";
 import {
   METHODS, BODY_TYPES, COMMON_AUTO_HEADERS,
@@ -22,11 +23,13 @@ import {
 import {
   methodIcon, emptyEndpoint, fmtTime, prettyJson, ResponseBody,
   KvEditor, FormDataEditor, AuthPanel, SettingsPanel, ACCENT, VarInput,
+  jsonGetPath, toCurl,
 } from "./panelParts";
 import { PresetHeadersModal, EnvModal, ProjectModal, ModuleModal } from "./panelModals";
 import { LoadReportView } from "./panelReport";
 import VexEmptyState from "../VexEmptyState";
 import { EndpointRow, UnitTestsPanel, DocsPanel, ImportModal } from "./panelSubs";
+import { RunnerPanel } from "./panelRunner";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { SharedModal } from "../shared/Modal";
 import { SharedButton } from "../shared/Button";
@@ -99,8 +102,8 @@ export default function ApiPanel() {
   const [loadRuns, setLoadRuns] = useState<LoadTestRun[]>([]);
   const [response, setResponse] = useState<SendRequestOutput | null>(null);
   const [sending, setSending] = useState(false);
-  const [activeTab, setActiveTab] = useState<"request" | "tests" | "load" | "docs">("request");
-  const [subTab, setSubTab] = useState<"params" | "auth" | "headers" | "body" | "settings" | "cookies">("params");
+  const [activeTab, setActiveTab] = useState<"request" | "tests" | "runner" | "load" | "docs">("request");
+  const [subTab, setSubTab] = useState<"params" | "auth" | "headers" | "body" | "settings" | "cookies" | "extract">("params");
   const [envModal, setEnvModal] = useState(false);
   const [importModal, setImportModal] = useState(false);
   const [presetModal, setPresetModal] = useState(false);
@@ -113,6 +116,11 @@ export default function ApiPanel() {
   const [runningRunId, setRunningRunId] = useState<string | null>(null);
   const [loadStatus, setLoadStatus] = useState<LoadRunStatus | null>(null);
   const [commentDraft, setCommentDraft] = useState("");
+  // 响应操作：变量提取结果 / 响应头筛选 / 复制 cURL 状态 / 导出菜单
+  const [extractResults, setExtractResults] = useState<ExtractResult[]>([]);
+  const [headerFilter, setHeaderFilter] = useState("");
+  const [curlCopied, setCurlCopied] = useState(false);
+  const [exportPop, setExportPop] = useState(false);
   // 美化确认弹窗状态：{ title, message, danger, confirmText, onConfirm }
   const [confirm, setConfirm] = useState<{ title: string; message: string; danger?: boolean; confirmText?: string; onConfirm: () => void } | null>(null);
   // 模块转移弹窗状态
@@ -174,6 +182,13 @@ export default function ApiPanel() {
     const env = envs.find((e) => e.id === activeEnvId);
     return env?.variables ?? {};
   }, [envs, activeEnvId]);
+
+  // 响应头筛选结果（避免在 JSX 里重复过滤）
+  const visibleResponseHeaders = useMemo(() => {
+    const q = headerFilter.trim().toLowerCase();
+    const list = response?.headers ?? [];
+    return q ? list.filter((h) => h.key.toLowerCase().includes(q) || h.value.toLowerCase().includes(q)) : list;
+  }, [response, headerFilter]);
 
   const currentProject = useMemo(
     () => projects.find((p) => p.id === activeProjectId) ?? null,
@@ -257,6 +272,13 @@ export default function ApiPanel() {
       setLoadRuns(runs);
       setResponse(null);
       setTestResults({});
+      setExtractResults([]);
+      setHeaderFilter("");
+      // 恢复该接口上次的压测参数
+      try {
+        const raw = localStorage.getItem(`any_version_api_load_cfg_${selectedId}`);
+        if (raw) setLoadConfig(JSON.parse(raw) as LoadTestConfig);
+      } catch { /* 忽略损坏的本地配置 */ }
       setActiveTab("request");
     })();
   }, [selectedId]);
@@ -272,8 +294,13 @@ export default function ApiPanel() {
         setLoadStatus(st);
         if (!st.running && st.report) {
           setRunningRunId(null);
-          const runs = await invoke<LoadTestRun[]>("api_list_load_runs", { endpointId: selectedId });
-          if (alive) setLoadRuns(runs);
+          // 监督任务落库报告有约 0.7s 延迟（等 worker 收尾），稍后刷新历史列表
+          window.setTimeout(async () => {
+            try {
+              const runs = await invoke<LoadTestRun[]>("api_list_load_runs", { endpointId: selectedId });
+              if (alive) setLoadRuns(runs);
+            } catch { /* 忽略刷新失败 */ }
+          }, 900);
         }
       } catch {
         if (alive) setRunningRunId(null);
@@ -335,12 +362,60 @@ export default function ApiPanel() {
     };
   }, [draft, variables]);
 
+  // 停止当前请求（后端丢弃 reqwest future，立即中断连接）
+  const cancelRequest = async () => {
+    try {
+      await invoke("api_cancel_request");
+    } catch {
+      // 忽略取消失败
+    }
+  };
+
+  // 响应变量提取：按规则读取 JSON 并写回当前环境变量，供后续接口引用
+  const applyExtractRules = async (out: SendRequestOutput, ep: ApiEndpoint) => {
+    const rules = (ep.extract_rules ?? []).filter((r) => r.enabled && r.path.trim() && r.variable.trim());
+    if (rules.length === 0) {
+      setExtractResults([]);
+      return;
+    }
+    let json: unknown;
+    try {
+      json = JSON.parse(out.body);
+    } catch {
+      json = undefined;
+    }
+    const results: ExtractResult[] = [];
+    const updates: Record<string, string | number | boolean> = {};
+    for (const rule of rules) {
+      const value = json === undefined ? undefined : jsonGetPath(json, rule.path);
+      if (value === undefined || value === null) {
+        results.push({ variable: rule.variable, path: rule.path, ok: false, value: "" });
+        continue;
+      }
+      const text = typeof value === "object" ? JSON.stringify(value) : String(value);
+      results.push({ variable: rule.variable, path: rule.path, ok: true, value: text });
+      updates[rule.variable] = typeof value === "string" || typeof value === "number" || typeof value === "boolean" ? value : text;
+    }
+    setExtractResults(results);
+    if (!activeEnvId || Object.keys(updates).length === 0) return;
+    const env = envs.find((e) => e.id === activeEnvId);
+    if (!env) return;
+    const next: ApiEnvironment = { ...env, variables: { ...env.variables, ...updates } };
+    try {
+      await invoke("api_update_environment", { env: next });
+      setEnvs((prev) => prev.map((e) => (e.id === env.id ? next : e)));
+    } catch {
+      // 写回环境失败不影响响应展示
+    }
+  };
+
   const sendRequest = async () => {
     if (!draft || !currentInput) return;
     setSending(true);
     try {
       const out = await invoke<SendRequestOutput>("api_send_request", { input: currentInput });
       setResponse(out);
+      await applyExtractRules(out, draft);
       // 记录请求历史
       if (activeProjectId) {
         try {
@@ -354,10 +429,49 @@ export default function ApiPanel() {
         } catch { /* 历史记录失败不影响请求 */ }
       }
     } catch (e) {
-      setResponse({ ok: false, status: 0, status_text: t("api.statusError"), headers: [], body: String(e), body_truncated: false, time_ms: 0, size_bytes: 0 });
+      const msg = String(e);
+      const cancelled = msg.includes("请求已取消");
+      setResponse({ ok: false, status: 0, status_text: cancelled ? t("api.cancelled") : t("api.statusError"), headers: [], body: msg, body_truncated: false, time_ms: 0, size_bytes: 0 });
     } finally {
       setSending(false);
     }
+  };
+
+  // 响应另存为文件（按 Content-Type 推断扩展名）
+  const saveResponseBody = async () => {
+    if (!response) return;
+    const ct = response.headers.find((h) => h.key.toLowerCase() === "content-type")?.value.toLowerCase() ?? "";
+    const ext = ct.includes("json") ? "json" : ct.includes("html") ? "html" : ct.includes("xml") ? "xml" : "txt";
+    try {
+      const target = await saveDialog({ defaultPath: `response.${ext}`, filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
+      if (target) await invoke("write_text_file", { path: target, content: response.body });
+    } catch (e) {
+      theamedAlert(String(e));
+    }
+  };
+
+  // 当前请求复制为 cURL 命令
+  const copyAsCurl = async () => {
+    if (!draft) return;
+    await navigator.clipboard.writeText(toCurl(draft));
+    setCurlCopied(true);
+    setTimeout(() => setCurlCopied(false), 1200);
+  };
+
+  // ─── 响应变量提取规则编辑 ───
+  const addExtractRule = () => {
+    if (!draft) return;
+    updateDraft({ extract_rules: [...(draft.extract_rules ?? []), { path: "", variable: "", enabled: true }] });
+  };
+
+  const updateExtractRule = (index: number, patch: Partial<ExtractRule>) => {
+    if (!draft) return;
+    updateDraft({ extract_rules: (draft.extract_rules ?? []).map((r, i) => (i === index ? { ...r, ...patch } : r)) });
+  };
+
+  const removeExtractRule = (index: number) => {
+    if (!draft) return;
+    updateDraft({ extract_rules: (draft.extract_rules ?? []).filter((_, i) => i !== index) });
   };
 
   const [history, setHistory] = useState<ApiHistoryEntry[]>([]);
@@ -386,7 +500,7 @@ export default function ApiPanel() {
       body_graphql_query: h.input.body_graphql_query ?? "", body_graphql_variables: h.input.body_graphql_variables ?? "",
       authorization: h.input.authorization ?? defaultAuthorization(),
       cookies: h.input.cookies ?? [], settings: h.input.settings ?? defaultSettings(),
-      response_comment: "", is_favorite: false, description: "", docs_md: "",
+      response_comment: "", is_favorite: false, extract_rules: [], description: "", docs_md: "",
       timeout_ms: h.input.timeout_ms ?? 15000, created_at: "", updated_at: "",
     };
     setSelectedId(null);
@@ -696,6 +810,39 @@ export default function ApiPanel() {
     }
   };
 
+  const exportOpenapi = async () => {
+    if (!activeProjectId) return;
+    try {
+      const json = await invoke<string>("api_export_openapi", { projectId: activeProjectId });
+      const target = await saveDialog({ defaultPath: "openapi.json", filters: [{ name: "OpenAPI JSON", extensions: ["json"] }] });
+      if (target) {
+        await invoke("write_text_file", { path: target, content: json });
+      }
+    } catch (e) {
+      theamedAlert(String(e));
+    }
+  };
+
+  // 压测参数变更：写入本地，切换接口后仍能恢复
+  const updateLoadConfig = (patch: Partial<LoadTestConfig>) => {
+    const next = { ...loadConfig, ...patch };
+    setLoadConfig(next);
+    if (selectedId) {
+      try {
+        localStorage.setItem(`any_version_api_load_cfg_${selectedId}`, JSON.stringify(next));
+      } catch { /* 忽略写入失败 */ }
+    }
+  };
+
+  const stopLoadTest = async () => {
+    if (!runningRunId) return;
+    try {
+      await invoke("api_stop_load_test", { runId: runningRunId });
+    } catch (e) {
+      theamedAlert(String(e));
+    }
+  };
+
   // 渲染树（项目图标 + 模块文件夹图标 + 各方法图标）
   const renderTree = () => {
     const loose = endpoints.filter((e) => !e.module_id);
@@ -973,9 +1120,35 @@ export default function ApiPanel() {
                   <button onClick={() => setImportModal(true)} className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-caption text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer" title={t("api.importTip")}>
                     <Upload className="w-3.5 h-3.5" /> {t("api.importBtn")}
                   </button>
-                  <button onClick={exportPostman} className="flex items-center justify-center gap-1.5 px-2 py-1.5 text-caption text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer" title={t("api.exportTip")}>
-                    <Download className="w-3.5 h-3.5" /> {t("api.exportBtn")}
-                  </button>
+                  <div className="relative">
+                    <button
+                      onClick={() => setExportPop((v) => !v)}
+                      className="flex w-full items-center justify-center gap-1.5 px-2 py-1.5 text-caption text-slate-400 hover:text-white hover:bg-white/5 border border-white/10 rounded-md cursor-pointer"
+                      title={t("api.exportTip")}
+                    >
+                      <Download className="w-3.5 h-3.5" /> {t("api.exportBtn")}
+                    </button>
+                    {exportPop && (
+                      <>
+                        <div className="fixed inset-0 z-30" onClick={() => setExportPop(false)} />
+                        <div className="absolute bottom-full right-0 z-40 mb-1.5 w-44 overflow-hidden rounded-card border border-white/10 shadow-2xl" style={{ background: POPOVER_BG }}>
+                          <div className="px-2.5 py-1.5 text-micro font-semibold text-slate-500 border-b border-white/10">{t("api.exportFormat")}</div>
+                          <button
+                            onClick={() => { setExportPop(false); exportPostman(); }}
+                            className="flex w-full items-center gap-2 px-2.5 py-1.5 text-caption text-slate-300 hover:bg-white/5 hover:text-white cursor-pointer"
+                          >
+                            <Download className="w-3 h-3" /> {t("api.exportPostmanOpt")}
+                          </button>
+                          <button
+                            onClick={() => { setExportPop(false); exportOpenapi(); }}
+                            className="flex w-full items-center gap-2 px-2.5 py-1.5 text-caption text-slate-300 hover:bg-white/5 hover:text-white cursor-pointer"
+                          >
+                            <FileText className="w-3 h-3" /> {t("api.exportOpenapiOpt")}
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
             </>
@@ -1147,6 +1320,15 @@ export default function ApiPanel() {
               {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
               {sending ? t("api.sending") : t("api.send")}
             </button>
+            {sending && (
+              <button
+                onClick={cancelRequest}
+                title={t("api.cancelRequestTip")}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-body bg-rose-500/15 text-rose-300 hover:bg-rose-500/25 border border-rose-500/30 cursor-pointer"
+              >
+                <Square className="w-3.5 h-3.5" /> {t("api.cancelRequest")}
+              </button>
+            )}
             <button onClick={() => saveDraft()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-body bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
               <Save className="w-3.5 h-3.5" /> {t("common.save")}
             </button>
@@ -1196,6 +1378,7 @@ export default function ApiPanel() {
             {([
               ["request", t("api.tabRequest"), Send],
               ["tests", t("api.tabTests"), ListChecks],
+              ["runner", t("api.tabRunner"), ListOrdered],
               ["load", t("api.tabLoad"), Gauge],
               ["docs", t("api.tabDocs"), BookOpen],
             ] as const).map(([key, label, Icon]) => (
@@ -1220,6 +1403,7 @@ export default function ApiPanel() {
                     ["body", "Body", FileText],
                     ["settings", t("api.subSettings"), SlidersHorizontal],
                     ["cookies", "Cookies", Cookie],
+                    ["extract", t("api.extractTab"), Wand2],
                   ] as const).map(([key, label, Icon]) => (
                     <button
                       key={key}
@@ -1364,6 +1548,61 @@ export default function ApiPanel() {
                     <div className="text-tiny text-slate-500">{t("api.cookieHint")}</div>
                   </div>
                 )}
+                {subTab === "extract" && (
+                  <div className="space-y-2">
+                    <div className="text-tiny text-slate-500 leading-relaxed">{t("api.extractHint")}</div>
+                    <div className="space-y-1.5">
+                      {(draft.extract_rules ?? []).map((rule, i) => (
+                        <div key={i} className="flex items-center gap-1.5">
+                          <input
+                            type="checkbox"
+                            checked={rule.enabled}
+                            onChange={(e) => updateExtractRule(i, { enabled: e.target.checked })}
+                            className="accent-[var(--module-accent)]"
+                          />
+                          <input
+                            value={rule.path}
+                            onChange={(e) => updateExtractRule(i, { path: e.target.value })}
+                            placeholder={t("api.extractPathPh")}
+                            className="flex-1 min-w-0 bg-black/30 border border-white/10 rounded-md px-2 py-1 text-caption font-mono text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60"
+                          />
+                          <span className="text-tiny text-slate-500">→</span>
+                          <input
+                            value={rule.variable}
+                            onChange={(e) => updateExtractRule(i, { variable: e.target.value })}
+                            placeholder={t("api.extractVarPh")}
+                            className="w-32 bg-black/30 border border-white/10 rounded-md px-2 py-1 text-caption font-mono text-slate-200 focus:outline-none focus:border-[var(--module-accent)]/60"
+                          />
+                          <button onClick={() => removeExtractRule(i)} className="p-1 text-slate-500 hover:text-rose-400 cursor-pointer">
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                      {(draft.extract_rules ?? []).length === 0 && (
+                        <div className="text-caption text-slate-600">{t("api.extractEmpty")}</div>
+                      )}
+                    </div>
+                    <button onClick={addExtractRule} className="flex items-center gap-1 text-tiny px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
+                      <Plus className="w-3 h-3" /> {t("api.extractAddRule")}
+                    </button>
+                    {extractResults.length > 0 && (
+                      <div className="rounded-ctl border border-white/10 bg-black/20 p-2 space-y-1">
+                        <div className="text-tiny font-semibold text-slate-400">{t("api.extractResultTitle")}</div>
+                        {extractResults.map((r, i) => (
+                          <div key={i} className="flex items-center gap-1.5 text-tiny min-w-0">
+                            {r.ok ? <Check className="w-3 h-3 shrink-0 text-emerald-400" /> : <X className="w-3 h-3 shrink-0 text-rose-400" />}
+                            <code className="shrink-0 text-slate-300">{r.variable}</code>
+                            <span className="text-slate-600">=</span>
+                            <code className={`truncate ${r.ok ? "text-emerald-300" : "text-rose-300"}`} title={r.value}>
+                              {r.ok ? r.value : t("api.extractMissing")}
+                            </code>
+                          </div>
+                        ))}
+                        <div className="text-micro text-slate-500">{t("api.extractSaved")}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -1378,14 +1617,23 @@ export default function ApiPanel() {
               />
             )}
 
+            {activeTab === "runner" && (
+              <RunnerPanel
+                endpoints={endpoints}
+                modules={modules}
+                variables={variables}
+                onSelectEndpoint={setSelectedId}
+              />
+            )}
+
             {activeTab === "load" && (
               <div className="space-y-3">
                 <div className="grid grid-cols-4 gap-2">
                   {([
-                    ["concurrency", t("api.concurrency"), loadConfig.concurrency, (v: number) => setLoadConfig({ ...loadConfig, concurrency: v })],
-                    ["duration_secs", t("api.duration"), loadConfig.duration_secs, (v: number) => setLoadConfig({ ...loadConfig, duration_secs: v })],
-                    ["ramp_up_secs", t("api.rampUp"), loadConfig.ramp_up_secs, (v: number) => setLoadConfig({ ...loadConfig, ramp_up_secs: v })],
-                    ["rps_limit", t("api.rpsLimit"), loadConfig.rps_limit, (v: number) => setLoadConfig({ ...loadConfig, rps_limit: v })],
+                    ["concurrency", t("api.concurrency"), loadConfig.concurrency, (v: number) => updateLoadConfig({ concurrency: v })],
+                    ["duration_secs", t("api.duration"), loadConfig.duration_secs, (v: number) => updateLoadConfig({ duration_secs: v })],
+                    ["ramp_up_secs", t("api.rampUp"), loadConfig.ramp_up_secs, (v: number) => updateLoadConfig({ ramp_up_secs: v })],
+                    ["rps_limit", t("api.rpsLimit"), loadConfig.rps_limit, (v: number) => updateLoadConfig({ rps_limit: v })],
                   ] as const).map(([key, label, value, set]) => (
                     <label key={key} className="block">
                       <span className="text-tiny text-slate-500">{label}</span>
@@ -1410,6 +1658,14 @@ export default function ApiPanel() {
                     <Play className="w-3.5 h-3.5" />
                     {runningRunId ? t("api.loadRunning") : t("api.startLoad")}
                   </button>
+                  {runningRunId && (
+                    <button
+                      onClick={stopLoadTest}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-body bg-rose-500/15 text-rose-300 hover:bg-rose-500/25 border border-rose-500/30 cursor-pointer"
+                    >
+                      <Square className="w-3.5 h-3.5" /> {t("api.stopLoad")}
+                    </button>
+                  )}
                   {runningRunId && loadStatus && (
                     <div className="flex-1 text-caption text-slate-300">
                       {t("api.loadStatus", { s: loadStatus.elapsed_secs, total: loadStatus.total, ok: loadStatus.success, fail: loadStatus.failed, qps: loadStatus.qps.toFixed(1), p95: loadStatus.latency_p95_ms.toFixed(1) })}
@@ -1476,19 +1732,44 @@ export default function ApiPanel() {
                     <button onClick={copyBody} className="flex items-center gap-1 text-tiny px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer">
                       {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />} {copied ? t("api.copied") : t("api.copyBody")}
                     </button>
+                    <button onClick={saveResponseBody} title={t("api.saveBodyTip")} className="flex items-center gap-1 text-tiny px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer">
+                      <FileDown className="w-3 h-3" /> {t("api.saveBody")}
+                    </button>
+                    <button onClick={copyAsCurl} title={t("api.copyCurlTip")} className="flex items-center gap-1 text-tiny px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer">
+                      {curlCopied ? <Check className="w-3 h-3 text-emerald-400" /> : <Terminal className="w-3 h-3" />} {curlCopied ? t("api.copiedCurl") : t("api.copyCurl")}
+                    </button>
+                    {extractResults.length > 0 && (
+                      <span className="text-tiny text-emerald-400" title={t("api.extractBadgeTip")}>
+                        {t("api.extractBadge", { n: extractResults.filter((r) => r.ok).length })}
+                      </span>
+                    )}
                   </div>
                 </>
               )}
             </div>
             <div className="flex-1 min-h-0 grid grid-cols-[minmax(180px,24%)_1fr_220px]">
               <div className="border-r border-white/10 overflow-y-auto p-2">
-                {response?.headers.map((h, i) => (
+                {response && response.headers.length > 0 && (
+                  <div className="relative mb-1.5">
+                    <Search className="w-3 h-3 absolute left-1.5 top-1/2 -translate-y-1/2 text-slate-600" />
+                    <input
+                      value={headerFilter}
+                      onChange={(e) => setHeaderFilter(e.target.value)}
+                      placeholder={t("api.headerFilterPh")}
+                      className="w-full bg-black/30 border border-white/10 rounded-md pl-6 pr-1.5 py-0.5 text-tiny text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-[var(--module-accent)]/60"
+                    />
+                  </div>
+                )}
+                {visibleResponseHeaders.map((h, i) => (
                   <div key={i} className="flex text-tiny py-0.5">
-                    <span className="w-1/2 text-slate-500 truncate">{h.key}</span>
+                    <span className="w-1/2 text-slate-500 truncate" title={h.key}>{h.key}</span>
                     <span className="w-1/2 text-slate-300 truncate" title={h.value}>{h.value}</span>
                   </div>
                 ))}
                 {response && response.headers.length === 0 && <div className="text-tiny text-slate-600">{t("api.noHeaders")}</div>}
+                {response && response.headers.length > 0 && visibleResponseHeaders.length === 0 && (
+                  <div className="text-tiny text-slate-600 pt-1">{t("api.headerNoMatch")}</div>
+                )}
               </div>
               {sending ? (
                 <div className="flex flex-col items-center justify-center h-full gap-2 text-slate-500 select-none">
@@ -1562,9 +1843,9 @@ export default function ApiPanel() {
           projectId={activeProjectId}
           modules={modules}
           onClose={() => setImportModal(false)}
-          onImported={async () => {
+          onImported={async (endpointId?: string) => {
             setImportModal(false);
-            refreshEndpoints();
+            await refreshEndpoints();
             const [modList, envList, presetList] = await Promise.all([
               invoke<ApiModule[]>("api_list_modules", { projectId: activeProjectId }),
               invoke<ApiEnvironment[]>("api_list_environments", { projectId: activeProjectId }),
@@ -1573,6 +1854,8 @@ export default function ApiPanel() {
             setModules(modList);
             setEnvs(envList);
             setPresetSets(presetList);
+            // cURL 导入后直接选中新接口
+            if (endpointId) setSelectedId(endpointId);
           }}
         />
       )}

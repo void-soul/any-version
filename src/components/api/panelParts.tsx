@@ -254,9 +254,133 @@ export function emptyEndpoint(projectId: string, moduleId: string | null): ApiEn
     body: "", body_type: "none", body_form: [], body_urlencoded: [],
     body_graphql_query: "", body_graphql_variables: "",
     authorization: defaultAuthorization(), cookies: [], settings: defaultSettings(),
-    response_comment: "", is_favorite: false, description: "", docs_md: "", timeout_ms: 15000,
+    response_comment: "", is_favorite: false, extract_rules: [], description: "", docs_md: "", timeout_ms: 15000,
     created_at: "", updated_at: "",
   };
+}
+
+/** 保存的接口 → 发送请求入参（批量运行/复制 cURL 复用） */
+export function endpointToInput(ep: ApiEndpoint, variables: Record<string, string | number | boolean | null>): import("./types").SendRequestInput {
+  return {
+    method: ep.method,
+    url: ep.url,
+    headers: ep.headers,
+    query_params: ep.query_params,
+    path_params: ep.path_params,
+    body: ep.body,
+    body_type: ep.body_type,
+    body_form: ep.body_form,
+    body_urlencoded: ep.body_urlencoded,
+    body_graphql_query: ep.body_graphql_query,
+    body_graphql_variables: ep.body_graphql_variables,
+    authorization: ep.authorization,
+    cookies: ep.cookies,
+    settings: ep.settings,
+    timeout_ms: ep.timeout_ms,
+    variables,
+  };
+}
+
+/** 前端 JSON 路径取值（与后端 json_get 行为一致，支持 $.a.b[0].c 与 *） */
+export function jsonGetPath(value: unknown, path: string): unknown {
+  if (!path || path === "$") return value;
+  const clean = path.replace(/^\$\.?/, "");
+  const tokens: string[] = [];
+  let current = "";
+  for (const ch of clean) {
+    if (ch === ".") {
+      if (current) { tokens.push(current); current = ""; }
+    } else if (ch === "[") {
+      if (current) { tokens.push(current); current = ""; }
+      current = "[";
+    } else if (ch === "]" && current.startsWith("[")) {
+      tokens.push(current.slice(1));
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  if (current) tokens.push(current);
+  let cur: unknown = value;
+  for (const tok of tokens) {
+    if (cur === null || cur === undefined) return undefined;
+    if (Array.isArray(cur)) {
+      if (tok === "*") cur = cur[0];
+      else cur = cur[Number(tok)];
+    } else if (typeof cur === "object") {
+      cur = (cur as Record<string, unknown>)[tok];
+    } else {
+      return undefined;
+    }
+    if (cur === undefined) return undefined;
+  }
+  return cur;
+}
+
+/** 把接口配置转成可复制的 cURL 命令（保留 {{变量}} 占位符） */
+export function toCurl(ep: ApiEndpoint): string {
+  const q = (s: string) => (/[^\w@%+=:,./-]/.test(s) ? `'${s.replace(/'/g, `'\\''`)}'` : s);
+  const parts = ["curl"];
+  if (ep.method && ep.method !== "GET") parts.push("-X", ep.method);
+  let url = ep.url;
+  const params = ep.query_params.filter((p) => p.enabled && p.key);
+  if (params.length > 0) {
+    const qs = params.map((p) => `${p.key}=${p.value}`).join("&");
+    url += (url.includes("?") ? "&" : "?") + qs;
+  }
+  parts.push(q(url));
+  for (const h of ep.headers.filter((x) => x.enabled && x.key)) {
+    parts.push("-H", q(`${h.key}: ${h.value}`));
+  }
+  const auth = ep.authorization;
+  if (auth.type === "basic") parts.push("-u", q(`${auth.username}:${auth.password}`));
+  else if (auth.type === "bearer" && auth.token) parts.push("-H", q(`Authorization: Bearer ${auth.token}`));
+  else if (auth.type === "jwt" && auth.jwt_token) parts.push("-H", q(`Authorization: Bearer ${auth.jwt_token}`));
+  else if (auth.type === "apiKey" && auth.api_key_name) {
+    if (auth.api_key_in === "query") parts.push("-G", "--data-urlencode", q(`${auth.api_key_name}=${auth.api_key_value}`));
+    else parts.push("-H", q(`${auth.api_key_name}: ${auth.api_key_value}`));
+  }
+  const cookies = ep.cookies.filter((c) => c.enabled && c.key);
+  if (cookies.length > 0) parts.push("-b", q(cookies.map((c) => `${c.key}=${c.value}`).join("; ")));
+  if (!ep.settings.verify_ssl) parts.push("-k");
+  if (ep.settings.http_version === "http1") parts.push("--http1.1");
+  if (ep.settings.http_version === "http2") parts.push("--http2");
+  switch (ep.body_type) {
+    case "json":
+      if (ep.body.trim()) parts.push("-H", q("Content-Type: application/json"), "--data-raw", q(ep.body));
+      break;
+    case "raw":
+      if (ep.body.trim()) parts.push("--data-raw", q(ep.body));
+      break;
+    case "form": {
+      const items = ep.body_urlencoded.filter((x) => x.enabled && x.key);
+      if (items.length > 0) {
+        for (const kv of items) parts.push("--data-urlencode", q(`${kv.key}=${kv.value}`));
+      }
+      break;
+    }
+    case "formdata": {
+      for (const f of ep.body_form.filter((x) => x.enabled && x.key)) {
+        parts.push("-F", q(f.kind === "file" ? `${f.key}=@${f.file_path}` : `${f.key}=${f.value}`));
+      }
+      break;
+    }
+    case "binary":
+      if (ep.body.trim()) parts.push("--upload-file", q(ep.body));
+      break;
+    case "graphql": {
+      const payload = JSON.stringify({ query: ep.body_graphql_query, variables: safeJson(ep.body_graphql_variables) });
+      parts.push("-H", q("Content-Type: application/json"), "--data-raw", q(payload));
+      break;
+    }
+    default:
+      break;
+  }
+  return parts.join(" ");
+}
+
+function safeJson(text: string): unknown {
+  try { return JSON.parse(text); } catch { return null; }
 }
 
 export function fmtTime(ms: number): string {

@@ -238,9 +238,10 @@ export function ImportModal({ projectId, modules, onClose, onImported }: {
   projectId: string;
   modules: ApiModule[];
   onClose: () => void;
-  onImported: () => void;
+  onImported: (endpointId?: string) => void;
 }) {
-  const [kind, setKind] = useState<"postman" | "swagger" | "framework" | "ai">("postman");
+  const [kind, setKind] = useState<"postman" | "curl" | "swagger" | "framework" | "ai">("postman");
+  const [curlText, setCurlText] = useState("");
   const [postmanJson, setPostmanJson] = useState("");
   /**
    * 已选中的 Postman 集合**文件路径**（支持多选）。
@@ -369,6 +370,11 @@ export function ImportModal({ projectId, modules, onClose, onImported }: {
           onImported();
           return;
         }
+      } else if (kind === "curl") {
+        const ep = await invoke<ApiEndpoint>("api_import_curl", { curl: curlText, projectId, moduleId });
+        setMsg(t("apisubs.curlImported", { name: ep.name }));
+        onImported(ep.id);
+        return;
       } else if (kind === "swagger") {
         count = await invoke<number>("api_import_swagger", { source: swaggerSource, projectId, moduleId });
       } else if (kind === "framework") {
@@ -404,6 +410,7 @@ export function ImportModal({ projectId, modules, onClose, onImported }: {
         <div className="flex gap-1">
           {([
             ["postman", t("apisubs.tabPostman")],
+            ["curl", "cURL"],
             ["swagger", "Swagger"],
             ["framework", t("apisubs.tabFramework")],
             ["ai", t("apisubs.tabAi")],
@@ -477,6 +484,18 @@ export function ImportModal({ projectId, modules, onClose, onImported }: {
             <span className="block text-tiny text-slate-600">{t("apisubs.pasteHint")}</span>
           </div>
         )}
+        {kind === "curl" && (
+          <div className="space-y-1.5">
+            <span className="block text-tiny text-slate-500">{t("apisubs.curlDesc")}</span>
+            <textarea
+              value={curlText}
+              onChange={(e) => setCurlText(e.target.value)}
+              rows={9}
+              placeholder={t("apisubs.curlPlaceholder")}
+              className="w-full bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body font-mono text-slate-200"
+            />
+          </div>
+        )}
         {kind === "swagger" && (
           <label className="block">
             <span className="text-tiny text-slate-500">{t("apisubs.swaggerDesc")}</span>
@@ -548,7 +567,7 @@ export function ImportModal({ projectId, modules, onClose, onImported }: {
           <button onClick={onClose} className="px-3 py-1.5 text-body rounded-ctl bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">{t("common.close")}</button>
           <button
             onClick={doImport}
-            disabled={busy || (kind === "postman" && !postmanJson.trim() && postmanFiles.length === 0) || (kind === "swagger" && !swaggerSource.trim()) || (kind === "framework" && !frameworkDir.trim()) || (kind === "ai" && (!aiDir.trim() || !aiProviderId))}
+            disabled={busy || (kind === "postman" && !postmanJson.trim() && postmanFiles.length === 0) || (kind === "curl" && !curlText.trim()) || (kind === "swagger" && !swaggerSource.trim()) || (kind === "framework" && !frameworkDir.trim()) || (kind === "ai" && (!aiDir.trim() || !aiProviderId))}
             className="px-4 py-1.5 text-body rounded-ctl font-semibold text-white cursor-pointer disabled:opacity-50"
             style={{ background: "var(--module-accent)" }}
           >

@@ -149,13 +149,21 @@ pub fn start_load_run(
         });
     }
 
-    // 监督任务：等时长结束后标记完成并落库报告
+    // 监督任务：时长结束或被手动停止后标记完成并落库报告（每 200ms 检查，停止能立即收尾）
     let state_for_report = state.clone();
     tauri::async_runtime::spawn(async move {
-        let total_wait = state_for_report.duration_secs + ramp_up as u64 + 2;
-        tokio::time::sleep(std::time::Duration::from_secs(total_wait)).await;
+        let deadline = state_for_report.duration_secs + ramp_up as u64 + 1;
+        loop {
+            if !state_for_report.running.load(Ordering::SeqCst)
+                || state_for_report.start.elapsed().as_secs() >= deadline
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
         state_for_report.running.store(false, Ordering::SeqCst);
-        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        // 等待仍在途的请求收尾，避免报告统计与计数不一致
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         let report = build_report(&state_for_report);
         let json = serde_json::to_string(&report).unwrap_or_default();
         let id = state_for_report.id.clone();
@@ -170,6 +178,14 @@ pub fn start_load_run(
     });
 
     run_id
+}
+
+/// 手动停止压测：worker 在下一轮循环退出，监督任务随即生成报告。
+pub fn stop_load_run(run_id: &str) -> Result<(), String> {
+    let guard = runs().lock().unwrap_or_else(|e| e.into_inner());
+    let state = guard.get(run_id).ok_or("压测任务不存在")?;
+    state.running.store(false, Ordering::SeqCst);
+    Ok(())
 }
 
 fn record_failure(state: &std::sync::Arc<LoadRunState>, sec: u64, started: Instant) {
@@ -230,15 +246,16 @@ fn percentile(values: &[f64], p: f64) -> f64 {
 }
 
 fn build_report(state: &LoadRunState) -> LoadTestReport {
-    let duration = state.duration_secs.max(1) as f64;
+    // 实际耗时：手动停止时报告按真实时长统计，而非原计划时长
+    let elapsed = state.start.elapsed().as_secs().max(1);
     let total = state.total.load(Ordering::Relaxed);
     let success = state.success.load(Ordering::Relaxed);
     let failed = state.failed.load(Ordering::Relaxed);
     let samples = state.samples.lock().unwrap_or_else(|e| e.into_inner());
     let latencies: Vec<f64> = samples.iter().map(|s| s.time_ms).collect();
 
-    // 每秒时间线（按 Sample.sec 精确分桶）
-    let sec_count = (state.duration_secs as u32) + 1;
+    // 每秒时间线（按 Sample.sec 精确分桶；桶数跟随实际运行时长）
+    let sec_count = (elapsed as u32) + 1;
     let mut sec_success = vec![0u64; sec_count as usize];
     let mut sec_failed = vec![0u64; sec_count as usize];
     let mut sec_avg: Vec<(f64, u64)> = vec![(0.0, 0); sec_count as usize];
@@ -283,7 +300,7 @@ fn build_report(state: &LoadRunState) -> LoadTestReport {
         success,
         failed,
         error_rate: if total > 0 { failed as f64 / total as f64 } else { 0.0 },
-        qps_avg: total as f64 / duration,
+        qps_avg: total as f64 / elapsed as f64,
         qps_max: timeline.iter().map(|t| t.qps).fold(0.0, f64::max),
         latency_min_ms: sorted.first().copied().unwrap_or(0.0),
         latency_p50_ms: percentile(&sorted, 0.50),

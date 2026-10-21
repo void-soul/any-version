@@ -242,6 +242,36 @@ fn rand_boundary() -> String {
 /// URL 长度上限（防止超长 URL 占用内存 / 攻击面）。
 const URL_MAX_LEN: usize = 10 * 1024;
 
+// ─── 请求取消 ───
+/// 已发起的请求序号；取消时把 CANCEL_AT 推进到当前序号，
+/// 之后新发起的请求序号更大，不会被误取消。
+static SEND_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static CANCEL_AT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// 执行请求，并支持被 `cancel_current_request` 中断（前端「取消」按钮）。
+pub async fn execute_request_cancellable(input: &SendRequestInput) -> Result<SendRequestOutput, String> {
+    use std::sync::atomic::Ordering;
+    let seq = SEND_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    let fut = execute_request(input);
+    tokio::pin!(fut);
+    loop {
+        tokio::select! {
+            result = &mut fut => return result,
+            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                if CANCEL_AT.load(Ordering::SeqCst) >= seq {
+                    return Err("请求已取消".to_string());
+                }
+            }
+        }
+    }
+}
+
+/// 取消当前进行中的请求（丢弃 reqwest 未来即中断底层连接）。
+pub fn cancel_current_request() {
+    use std::sync::atomic::Ordering;
+    CANCEL_AT.store(SEND_SEQ.load(Ordering::SeqCst), Ordering::SeqCst);
+}
+
 /// 组装并执行单个 HTTP 请求（含变量渲染 + 认证 + 设置）。
 pub async fn execute_request(input: &SendRequestInput) -> Result<SendRequestOutput, String> {
     if input.url.len() > URL_MAX_LEN {

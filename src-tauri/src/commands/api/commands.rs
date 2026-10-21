@@ -6,7 +6,7 @@ use super::db::{self, now_ts};
 use super::models::*;
 
 /// 接口表的完整列清单（顺序与 endpoint_row 一致）。
-const EP_COLS: &str = "id, project_id, module_id, name, method, url, headers, query_params, path_params, body, body_type, description, docs_md, timeout_ms, created_at, updated_at, body_form, body_urlencoded, body_graphql_query, body_graphql_variables, authorization, cookies, settings, response_comment, is_favorite";
+const EP_COLS: &str = "id, project_id, module_id, name, method, url, headers, query_params, path_params, body, body_type, description, docs_md, timeout_ms, created_at, updated_at, body_form, body_urlencoded, body_graphql_query, body_graphql_variables, authorization, cookies, settings, response_comment, is_favorite, extract_rules";
 
 // ─── 初始化 ───
 
@@ -584,7 +584,7 @@ pub fn api_create_endpoint(ep: ApiEndpoint) -> Result<ApiEndpoint, String> {
     merge_template_form_items(&mut body_form, &project.common_body);
     db::with_db(|conn| {
         conn.execute(
-            &format!("INSERT INTO api_endpoints ({}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25)", EP_COLS),
+            &format!("INSERT INTO api_endpoints ({}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26)", EP_COLS),
             rusqlite::params![
                 id, ep.project_id, ep.module_id, ep.name, ep.method, ep.url,
                 serde_json::to_string(&headers).unwrap_or_else(|_| "[]".into()),
@@ -597,7 +597,8 @@ pub fn api_create_endpoint(ep: ApiEndpoint) -> Result<ApiEndpoint, String> {
                 serde_json::to_string(&ep.authorization).unwrap_or_else(|_| "{}".into()),
                 serde_json::to_string(&ep.cookies).unwrap_or_else(|_| "[]".into()),
                 serde_json::to_string(&ep.settings).unwrap_or_else(|_| "{}".into()),
-                ep.response_comment, ep.is_favorite
+                ep.response_comment, ep.is_favorite,
+                serde_json::to_string(&ep.extract_rules).unwrap_or_else(|_| "[]".into())
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -620,7 +621,7 @@ pub fn api_update_endpoint(ep: ApiEndpoint) -> Result<(), String> {
     resync_template_form_items(&mut body_form, &project.common_body);
     db::with_db(|conn| {
         conn.execute(
-            &format!("UPDATE api_endpoints SET module_id=?1, name=?2, method=?3, url=?4, headers=?5, query_params=?6, path_params=?7, body=?8, body_type=?9, description=?10, docs_md=?11, timeout_ms=?12, updated_at=?13, body_form=?14, body_urlencoded=?15, body_graphql_query=?16, body_graphql_variables=?17, authorization=?18, cookies=?19, settings=?20, response_comment=?21, is_favorite=?22 WHERE id=?23"),
+            &format!("UPDATE api_endpoints SET module_id=?1, name=?2, method=?3, url=?4, headers=?5, query_params=?6, path_params=?7, body=?8, body_type=?9, description=?10, docs_md=?11, timeout_ms=?12, updated_at=?13, body_form=?14, body_urlencoded=?15, body_graphql_query=?16, body_graphql_variables=?17, authorization=?18, cookies=?19, settings=?20, response_comment=?21, is_favorite=?22, extract_rules=?23 WHERE id=?24"),
             rusqlite::params![
                 ep.module_id, ep.name, ep.method, ep.url,
                 serde_json::to_string(&headers).unwrap_or_else(|_| "[]".into()),
@@ -633,7 +634,9 @@ pub fn api_update_endpoint(ep: ApiEndpoint) -> Result<(), String> {
                 serde_json::to_string(&ep.authorization).unwrap_or_else(|_| "{}".into()),
                 serde_json::to_string(&ep.cookies).unwrap_or_else(|_| "[]".into()),
                 serde_json::to_string(&ep.settings).unwrap_or_else(|_| "{}".into()),
-                ep.response_comment, ep.is_favorite, ep.id
+                ep.response_comment, ep.is_favorite,
+                serde_json::to_string(&ep.extract_rules).unwrap_or_else(|_| "[]".into()),
+                ep.id
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -654,7 +657,13 @@ pub fn api_delete_endpoint(endpoint_id: String) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn api_send_request(input: SendRequestInput) -> Result<SendRequestOutput, String> {
-    super::exec::execute_request(&input).await
+    super::exec::execute_request_cancellable(&input).await
+}
+
+/// 取消当前进行中的请求（前端「取消」按钮）。
+#[tauri::command]
+pub fn api_cancel_request() {
+    super::exec::cancel_current_request();
 }
 
 // ─── 单元测试 ───
@@ -728,7 +737,7 @@ pub async fn api_run_unit_test(
     };
     let mut outputs = Vec::new();
     for test in tests {
-        let output = super::exec::execute_request(&input).await?;
+        let output = super::exec::execute_request_cancellable(&input).await?;
         let results = super::exec::evaluate_assertions(&test.assertions, &output);
         let pass = results.iter().all(|r| r.pass);
         outputs.push(UnitTestRunOutput {
@@ -775,6 +784,12 @@ pub fn api_start_load_test(
 #[tauri::command]
 pub fn api_load_run_status(run_id: String) -> Result<LoadRunStatus, String> {
     super::loadtest::load_run_status(&run_id)
+}
+
+/// 手动停止压测（已产生的统计仍会生成报告）。
+#[tauri::command]
+pub fn api_stop_load_test(run_id: String) -> Result<(), String> {
+    super::loadtest::stop_load_run(&run_id)
 }
 
 #[tauri::command]
@@ -897,6 +912,33 @@ pub fn api_export_postman(project_id: String) -> Result<String, String> {
     super::import::export_postman_collection(&project.name, &modules, &endpoints, &variables)
 }
 
+/// 导入单条 cURL 命令（支持 -X/-H/-d/-F/-u/-b 等常用参数）。
+#[tauri::command]
+pub fn api_import_curl(curl: String, project_id: String, module_id: Option<String>) -> Result<ApiEndpoint, String> {
+    let draft = super::import::parse_curl_command(&curl)?;
+    insert_draft(&project_id, module_id, draft)
+}
+
+/// 导出 OpenAPI 3.0 文档（JSON）。
+#[tauri::command]
+pub fn api_export_openapi(project_id: String) -> Result<String, String> {
+    let project = api_list_projects()?
+        .into_iter()
+        .find(|p| p.id == project_id)
+        .ok_or("项目不存在")?;
+    let modules = api_list_modules(project_id.clone())?
+        .into_iter()
+        .map(|m| (m.id, m.name))
+        .collect::<Vec<_>>();
+    let endpoints = api_list_endpoints(project_id.clone(), None)?;
+    let env_variables = api_list_environments(project_id)?
+        .into_iter()
+        .find(|e| Some(e.id.clone()) == project.active_env_id)
+        .map(|e| e.variables)
+        .unwrap_or_default();
+    super::import::export_openapi(&project.name, &project.description, &modules, &endpoints, &env_variables)
+}
+
 #[tauri::command]
 pub async fn api_import_swagger(source: String, project_id: String, module_id: Option<String>) -> Result<usize, String> {
     let json = super::import::fetch_swagger_source(&source).await?;
@@ -920,46 +962,56 @@ fn insert_drafts(
 ) -> Result<usize, String> {
     let mut count = 0;
     for draft in drafts {
-        let target_module: Option<String> = if let Some(mid) = &module_id {
-            if mid.is_empty() {
-                find_or_create_module(&project_id, &draft.module)?
-            } else {
-                Some(mid.clone())
-            }
-        } else {
-            find_or_create_module(&project_id, &draft.module)?
-        };
-        let ep = ApiEndpoint {
-            id: db::new_id("ep"),
-            project_id: project_id.clone(),
-            module_id: target_module,
-            name: draft.name,
-            method: draft.method,
-            url: draft.url,
-            headers: draft.headers,
-            query_params: draft.query_params,
-            path_params: Vec::new(),
-            body: draft.body,
-            body_type: draft.body_type,
-            body_form: draft.body_form,
-            body_urlencoded: draft.body_urlencoded,
-            body_graphql_query: draft.body_graphql_query,
-            body_graphql_variables: draft.body_graphql_variables,
-            authorization: draft.authorization,
-            cookies: Vec::new(),
-            settings: Default::default(),
-            response_comment: String::new(),
-            is_favorite: false,
-            description: String::new(),
-            docs_md: draft.docs_md,
-            timeout_ms: 15000,
-            created_at: now_ts(),
-            updated_at: now_ts(),
-        };
-        let _ = api_create_endpoint(ep)?;
+        insert_draft(&project_id, module_id.clone(), draft)?;
         count += 1;
     }
     Ok(count)
+}
+
+/// 写入单条导入候选，返回落库后的接口（cURL 导入后前端可直接选中）。
+fn insert_draft(
+    project_id: &str,
+    module_id: Option<String>,
+    draft: super::import::EndpointDraft,
+) -> Result<ApiEndpoint, String> {
+    let target_module: Option<String> = if let Some(mid) = &module_id {
+        if mid.is_empty() {
+            find_or_create_module(project_id, &draft.module)?
+        } else {
+            Some(mid.clone())
+        }
+    } else {
+        find_or_create_module(project_id, &draft.module)?
+    };
+    let ep = ApiEndpoint {
+        id: db::new_id("ep"),
+        project_id: project_id.to_string(),
+        module_id: target_module,
+        name: draft.name,
+        method: draft.method,
+        url: draft.url,
+        headers: draft.headers,
+        query_params: draft.query_params,
+        path_params: Vec::new(),
+        body: draft.body,
+        body_type: draft.body_type,
+        body_form: draft.body_form,
+        body_urlencoded: draft.body_urlencoded,
+        body_graphql_query: draft.body_graphql_query,
+        body_graphql_variables: draft.body_graphql_variables,
+        authorization: draft.authorization,
+        cookies: Vec::new(),
+        settings: draft.settings,
+        response_comment: String::new(),
+        is_favorite: false,
+        extract_rules: Vec::new(),
+        description: String::new(),
+        docs_md: draft.docs_md,
+        timeout_ms: 15000,
+        created_at: now_ts(),
+        updated_at: now_ts(),
+    };
+    api_create_endpoint(ep)
 }
 
 // ─── 预设 Headers（项目级） ───

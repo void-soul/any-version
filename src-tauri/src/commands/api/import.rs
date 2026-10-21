@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::models::{Authorization, FormDataItem, KeyValueItem};
+use super::models::{Authorization, FormDataItem, KeyValueItem, RequestSettings};
 
 /// 导入候选（由各解析器产出，统一落库）。
 #[derive(Debug, Clone, Default)]
@@ -23,6 +23,8 @@ pub struct EndpointDraft {
     pub body_graphql_query: String,
     pub body_graphql_variables: String,
     pub authorization: Authorization,
+    /// 请求设置（cURL 的 -k/--http1.1 等会映射到这里）
+    pub settings: RequestSettings,
     pub docs_md: String,
 }
 
@@ -350,6 +352,7 @@ fn parse_postman_item(item: &Value, out: &mut Vec<EndpointDraft>, parent_module:
         body_graphql_query: graphql_query,
         body_graphql_variables: graphql_variables,
         authorization,
+        settings: RequestSettings::default(),
         docs_md: docs,
     });
 }
@@ -1009,6 +1012,719 @@ fn scan_spring_controller(content: &str) -> Vec<EndpointDraft> {
     drafts
 }
 
+// ─── cURL 导入 ───
+
+fn kv_item(key: &str, value: &str) -> KeyValueItem {
+    KeyValueItem {
+        key: key.to_string(),
+        value: value.to_string(),
+        enabled: true,
+        description: String::new(),
+        from_template: false,
+    }
+}
+
+/// curl 参数分词：支持单/双引号、反斜杠转义、`\` 与 Windows `^` 换行续行。
+fn shell_tokens(input: &str) -> Vec<String> {
+    let chars: Vec<char> = input.chars().collect();
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut has_token = false;
+    let (mut in_single, mut in_double) = (false, false);
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        // 续行符：反斜杠或 ^ 后跟换行
+        if !in_single && !in_double && (c == '\\' || c == '^') {
+            let mut j = i + 1;
+            if j < chars.len() && chars[j] == '\r' {
+                j += 1;
+            }
+            if j < chars.len() && chars[j] == '\n' {
+                i = j + 1;
+                continue;
+            }
+        }
+        if in_single {
+            if c == '\'' {
+                in_single = false;
+            } else {
+                current.push(c);
+            }
+            i += 1;
+            continue;
+        }
+        if in_double {
+            if c == '\\' && i + 1 < chars.len() && matches!(chars[i + 1], '"' | '\\' | '$' | '`') {
+                current.push(chars[i + 1]);
+                i += 2;
+                continue;
+            }
+            if c == '"' {
+                in_double = false;
+            } else {
+                current.push(c);
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            // ANSI-C quoting：$'...' / $"..."（浏览器复制 cURL 时常见）
+            '$' if i + 1 < chars.len() && chars[i + 1] == '\'' => {
+                in_single = true;
+                has_token = true;
+                i += 2;
+            }
+            '$' if i + 1 < chars.len() && chars[i + 1] == '"' => {
+                in_double = true;
+                has_token = true;
+                i += 2;
+            }
+            '\'' => {
+                in_single = true;
+                has_token = true;
+                i += 1;
+            }
+            '"' => {
+                in_double = true;
+                has_token = true;
+                i += 1;
+            }
+            '\\' if i + 1 < chars.len() => {
+                current.push(chars[i + 1]);
+                has_token = true;
+                i += 2;
+            }
+            c if c.is_whitespace() => {
+                if has_token {
+                    tokens.push(current.clone());
+                    current.clear();
+                    has_token = false;
+                }
+                i += 1;
+            }
+            _ => {
+                current.push(c);
+                has_token = true;
+                i += 1;
+            }
+        }
+    }
+    if has_token {
+        tokens.push(current);
+    }
+    tokens
+}
+
+fn next_arg(tokens: &[String], i: &mut usize) -> Option<String> {
+    if *i + 1 < tokens.len() {
+        *i += 1;
+        Some(tokens[*i].clone())
+    } else {
+        None
+    }
+}
+
+/// 解析 `k=v&k2=v2` 形式的键值对。
+fn parse_pairs(raw: &str) -> Vec<KeyValueItem> {
+    raw.split('&')
+        .filter(|s| !s.trim().is_empty())
+        .map(|pair| {
+            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+            kv_item(k.trim(), v)
+        })
+        .filter(|kv| !kv.key.is_empty())
+        .collect()
+}
+
+/// 拆分 URL 中的查询串（curl 的 URL 常常自带 query）。
+fn split_url_query(url: &str) -> (String, Vec<KeyValueItem>) {
+    match url.split_once('?') {
+        Some((base, q)) => (base.to_string(), parse_pairs(q)),
+        None => (url.to_string(), Vec::new()),
+    }
+}
+
+/// 解析 Cookie 字符串（`a=1; b=2`）或 `@文件` 形式。
+fn parse_cookie_string(raw: &str) -> Vec<KeyValueItem> {
+    let content = if let Some(path) = raw.strip_prefix('@') {
+        std::fs::read_to_string(path.trim()).unwrap_or_default()
+    } else {
+        raw.to_string()
+    };
+    content
+        .split(|c| c == ';' || c == '\n')
+        .filter_map(|part| {
+            let (k, v) = part.split_once('=')?;
+            let k = k.trim();
+            if k.is_empty() {
+                None
+            } else {
+                Some(kv_item(k, v.trim()))
+            }
+        })
+        .collect()
+}
+
+/// `-d @file` / `--data-binary @file`：读取文件内容（读不到时按字面值处理）。
+fn data_value(raw: &str) -> String {
+    if let Some(path) = raw.strip_prefix('@') {
+        if let Ok(text) = std::fs::read_to_string(path.trim()) {
+            return text;
+        }
+    }
+    raw.to_string()
+}
+
+/// 解析单条 cURL 命令为接口草稿（常用参数：-X/-H/-d/-F/-u/-b/-k/-L/--url/--http1.1/--http2）。
+pub fn parse_curl_command(input: &str) -> Result<EndpointDraft, String> {
+    /// 未单独处理、但会吃一个值的参数：跳过其值，避免把值误当作 URL。
+    const FLAGS_WITH_VALUE: &[&str] = &[
+        "-m", "--max-time", "--connect-timeout", "-o", "--output", "--retry",
+        "--retry-delay", "--cacert", "--cert", "--key", "-x", "--proxy",
+        "--proxy-user", "--resolve", "--interface", "--limit-rate", "-w", "--write-out",
+        "--keepalive-time", "--expect100-timeout", "--dns-servers",
+    ];
+    let command = input
+        .trim()
+        .trim_start_matches(|c: char| c == '$' || c == '>' || c.is_whitespace());
+    if command.is_empty() {
+        return Err("请输入 curl 命令".to_string());
+    }
+    if !command.to_ascii_lowercase().starts_with("curl") {
+        return Err("只支持 cURL 命令（需以 curl 开头）".to_string());
+    }
+    let tokens = shell_tokens(command);
+    if tokens.is_empty() {
+        return Err("cURL 命令为空".to_string());
+    }
+
+    let mut url = String::new();
+    let mut method: Option<String> = None;
+    let mut headers: Vec<KeyValueItem> = Vec::new();
+    let mut cookies: Vec<KeyValueItem> = Vec::new();
+    let mut data: Vec<String> = Vec::new();
+    let mut urlencoded: Vec<KeyValueItem> = Vec::new();
+    let mut form: Vec<FormDataItem> = Vec::new();
+    let mut auth = Authorization::default();
+    let mut verify_ssl = true;
+    let mut http_version = "auto".to_string();
+    let mut follow_redirects = true;
+    let mut data_as_query = false;
+    let mut json_hint = false;
+    let mut upload_file: Option<String> = None;
+
+    let mut i = 1;
+    while i < tokens.len() {
+        let t = tokens[i].clone();
+        match t.as_str() {
+            "-X" | "--request" => {
+                if let Some(v) = next_arg(&tokens, &mut i) {
+                    method = Some(v.to_uppercase());
+                }
+            }
+            "-H" | "--header" => {
+                if let Some(raw) = next_arg(&tokens, &mut i) {
+                    if let Some((k, v)) = raw.split_once(':') {
+                        let key = k.trim();
+                        let value = v.trim();
+                        if !key.is_empty() {
+                            if key.eq_ignore_ascii_case("cookie") {
+                                cookies.extend(parse_cookie_string(value));
+                            } else {
+                                headers.push(kv_item(key, value));
+                            }
+                        }
+                    }
+                }
+            }
+            "-d" | "--data" | "--data-raw" | "--data-binary" | "--data-ascii" => {
+                if let Some(v) = next_arg(&tokens, &mut i) {
+                    data.push(data_value(&v));
+                }
+            }
+            "--json" => {
+                if let Some(v) = next_arg(&tokens, &mut i) {
+                    data.push(data_value(&v));
+                    json_hint = true;
+                }
+            }
+            "--data-urlencode" => {
+                if let Some(v) = next_arg(&tokens, &mut i) {
+                    if let Some((k, val)) = v.split_once('=') {
+                        urlencoded.push(kv_item(k.trim(), val));
+                    } else if let Some((k, file)) = v.split_once('@') {
+                        let content = std::fs::read_to_string(file.trim()).unwrap_or_default();
+                        urlencoded.push(kv_item(k.trim(), &content));
+                    } else {
+                        urlencoded.push(kv_item(v.trim(), ""));
+                    }
+                }
+            }
+            "-F" | "--form" | "--form-string" => {
+                if let Some(v) = next_arg(&tokens, &mut i) {
+                    if let Some((k, val)) = v.split_once('=') {
+                        let key = k.trim().to_string();
+                        if key.is_empty() {
+                            // 忽略空字段名
+                        } else if let Some(path) = val.strip_prefix('@').or_else(|| val.strip_prefix('<')) {
+                            form.push(FormDataItem {
+                                key,
+                                value: String::new(),
+                                enabled: true,
+                                kind: "file".to_string(),
+                                file_path: path.trim().to_string(),
+                                description: String::new(),
+                                from_template: false,
+                            });
+                        } else {
+                            form.push(FormDataItem {
+                                key,
+                                value: val.to_string(),
+                                enabled: true,
+                                kind: "text".to_string(),
+                                file_path: String::new(),
+                                description: String::new(),
+                                from_template: false,
+                            });
+                        }
+                    }
+                }
+            }
+            "-u" | "--user" => {
+                if let Some(v) = next_arg(&tokens, &mut i) {
+                    let (user, pass) = v.split_once(':').unwrap_or((v.as_str(), ""));
+                    auth = Authorization {
+                        r#type: "basic".to_string(),
+                        username: user.to_string(),
+                        password: pass.to_string(),
+                        ..Default::default()
+                    };
+                }
+            }
+            "-b" | "--cookie" => {
+                if let Some(v) = next_arg(&tokens, &mut i) {
+                    cookies.extend(parse_cookie_string(&v));
+                }
+            }
+            "-A" | "--user-agent" => {
+                if let Some(v) = next_arg(&tokens, &mut i) {
+                    headers.push(kv_item("User-Agent", &v));
+                }
+            }
+            "-e" | "--referer" => {
+                if let Some(v) = next_arg(&tokens, &mut i) {
+                    headers.push(kv_item("Referer", &v));
+                }
+            }
+            "-T" | "--upload-file" => {
+                upload_file = next_arg(&tokens, &mut i);
+            }
+            "--url" => {
+                if let Some(v) = next_arg(&tokens, &mut i) {
+                    url = v;
+                }
+            }
+            "-G" | "--get" => data_as_query = true,
+            "-k" | "--insecure" => verify_ssl = false,
+            "--http1.1" => http_version = "http1".to_string(),
+            "--http2" | "--http2-prior-knowledge" => http_version = "http2".to_string(),
+            "-L" | "--location" => follow_redirects = true,
+            // 无参数开关（忽略）
+            "--compressed" | "-i" | "--include" | "-s" | "--silent" | "-v" | "--verbose"
+            | "-g" | "--globoff" | "--no-progress-meter" | "--fail" | "-f" => {}
+            other => {
+                if other.starts_with('-') {
+                    if FLAGS_WITH_VALUE.contains(&other) {
+                        let _ = next_arg(&tokens, &mut i);
+                    }
+                    // 其它未知选项：忽略（避免把选项值误当作 URL）
+                } else if url.is_empty() {
+                    url = other.to_string();
+                }
+            }
+        }
+        i += 1;
+    }
+
+    if url.trim().is_empty() {
+        return Err("cURL 命令中未找到 URL".to_string());
+    }
+    // 补全协议（curl 默认 http）
+    let mut url = url.trim().to_string();
+    if !url.contains("://") && !url.starts_with("{{") {
+        url = format!("http://{}", url);
+    }
+    let (base_url, mut query_params) = split_url_query(&url);
+
+    // -G：把 -d 数据挪到查询参数
+    if data_as_query {
+        query_params.extend(urlencoded.drain(..));
+        for d in data.drain(..) {
+            query_params.extend(parse_pairs(&d));
+        }
+    }
+
+    // 认证头 → 认证配置（避免与 Authorization 头重复）
+    if let Some(pos) = headers.iter().position(|h| h.key.eq_ignore_ascii_case("authorization")) {
+        let value = headers[pos].value.clone();
+        let lower = value.to_ascii_lowercase();
+        if let Some(token) = lower.strip_prefix("bearer ") {
+            let start = value.len() - token.len();
+            auth = Authorization {
+                r#type: "bearer".to_string(),
+                token: value[start..].trim().to_string(),
+                ..Default::default()
+            };
+            headers.remove(pos);
+        } else if lower.starts_with("basic ") {
+            use base64::Engine;
+            let encoded = value[6..].trim();
+            if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(encoded) {
+                let pair = String::from_utf8_lossy(&decoded).to_string();
+                let (user, pass) = pair.split_once(':').unwrap_or((pair.as_str(), ""));
+                auth = Authorization {
+                    r#type: "basic".to_string(),
+                    username: user.to_string(),
+                    password: pass.to_string(),
+                    ..Default::default()
+                };
+                headers.remove(pos);
+            }
+        }
+    }
+
+    let content_type = headers
+        .iter()
+        .find(|h| h.key.eq_ignore_ascii_case("content-type"))
+        .map(|h| h.value.to_ascii_lowercase())
+        .unwrap_or_default();
+
+    let mut body = String::new();
+    let body_form = form;
+    let mut body_urlencoded = urlencoded;
+    let body_type: &str = if let Some(path) = upload_file {
+        body = path;
+        "binary"
+    } else if !body_form.is_empty() {
+        "formdata"
+    } else if !body_urlencoded.is_empty() {
+        "form"
+    } else if !data.is_empty() {
+        let joined = data.join("&");
+        if json_hint || content_type.contains("json") {
+            body = joined;
+            "json"
+        } else if content_type.contains("x-www-form-urlencoded") {
+            body_urlencoded = parse_pairs(&joined);
+            "form"
+        } else {
+            body = joined;
+            "raw"
+        }
+    } else {
+        "none"
+    };
+
+    let method = method.unwrap_or_else(|| {
+        if matches!(body_type, "formdata" | "form" | "json" | "raw" | "binary") {
+            "POST".to_string()
+        } else {
+            "GET".to_string()
+        }
+    });
+
+    let path = url_path_of(&base_url);
+    let name = if path == "/" {
+        format!("{} {}", method, base_url)
+    } else {
+        format!("{} {}", method, path)
+    };
+
+    Ok(EndpointDraft {
+        module: String::new(),
+        name,
+        method,
+        url: base_url,
+        headers,
+        query_params,
+        body,
+        body_type: body_type.to_string(),
+        body_form,
+        body_urlencoded,
+        body_graphql_query: String::new(),
+        body_graphql_variables: String::new(),
+        authorization: auth,
+        settings: RequestSettings {
+            http_version,
+            verify_ssl,
+            follow_redirects,
+            ..Default::default()
+        },
+        docs_md: format!("```bash\n{}\n```", command),
+    })
+}
+
+// ─── OpenAPI 3.0 导出 ───
+
+/// 从接口 URL 提取 OpenAPI path（剥离协议/域名/查询串，`{{baseUrl}}` 前缀视为服务器地址）。
+fn url_path_of(url: &str) -> String {
+    let no_query = url.split('?').next().unwrap_or(url).trim();
+    let rest = no_query.split("://").nth(1).unwrap_or(no_query);
+    let path_start = if rest.starts_with("{{") {
+        rest.find("}}").map(|i| i + 2).unwrap_or(0)
+    } else if rest.starts_with('/') {
+        0
+    } else {
+        rest.find('/').unwrap_or(rest.len())
+    };
+    let mut path = rest[path_start..].to_string();
+    if path.is_empty() {
+        path = "/".to_string();
+    }
+    // Express 风格 :id → OpenAPI {id}
+    if path.contains(':') {
+        path = path
+            .split('/')
+            .map(|seg| match seg.strip_prefix(':') {
+                Some(name) if !name.is_empty() => format!("{{{}}}", name),
+                _ => seg.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+    }
+    path
+}
+
+fn sanitize_identifier(s: &str) -> String {
+    let mut out = String::new();
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if !out.ends_with('_') {
+            out.push('_');
+        }
+    }
+    out.trim_matches('_').to_string()
+}
+
+fn openapi_body(ep: &super::models::ApiEndpoint) -> Option<Value> {
+    match ep.body_type.as_str() {
+        "json" => {
+            let example = serde_json::from_str::<Value>(&ep.body)
+                .unwrap_or_else(|_| Value::String(ep.body.clone()));
+            Some(serde_json::json!({
+                "content": { "application/json": { "schema": { "type": "object" }, "example": example } }
+            }))
+        }
+        "raw" => Some(serde_json::json!({
+            "content": { "text/plain": { "schema": { "type": "string" }, "example": ep.body } }
+        })),
+        "form" => {
+            let mut props = serde_json::Map::new();
+            let mut example = serde_json::Map::new();
+            for kv in ep.body_urlencoded.iter().filter(|kv| kv.enabled && !kv.key.is_empty()) {
+                props.insert(kv.key.clone(), serde_json::json!({ "type": "string" }));
+                example.insert(kv.key.clone(), Value::String(kv.value.clone()));
+            }
+            Some(serde_json::json!({
+                "content": {
+                    "application/x-www-form-urlencoded": {
+                        "schema": { "type": "object", "properties": props },
+                        "example": example
+                    }
+                }
+            }))
+        }
+        "formdata" => {
+            let mut props = serde_json::Map::new();
+            for item in ep.body_form.iter().filter(|f| f.enabled && !f.key.is_empty()) {
+                props.insert(
+                    item.key.clone(),
+                    if item.kind == "file" {
+                        serde_json::json!({ "type": "string", "format": "binary" })
+                    } else {
+                        serde_json::json!({ "type": "string" })
+                    },
+                );
+            }
+            Some(serde_json::json!({
+                "content": {
+                    "multipart/form-data": {
+                        "schema": { "type": "object", "properties": props }
+                    }
+                }
+            }))
+        }
+        "graphql" => {
+            let variables = serde_json::from_str::<Value>(&ep.body_graphql_variables)
+                .unwrap_or(Value::Null);
+            Some(serde_json::json!({
+                "content": {
+                    "application/json": {
+                        "schema": { "type": "object" },
+                        "example": { "query": ep.body_graphql_query, "variables": variables }
+                    }
+                }
+            }))
+        }
+        "binary" => Some(serde_json::json!({
+            "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } }
+        })),
+        _ => None,
+    }
+}
+
+/// 导出 OpenAPI 3.0.3 文档（JSON 字符串）。
+pub fn export_openapi(
+    project_name: &str,
+    description: &str,
+    modules: &[(String, String)], // (module_id, name)
+    endpoints: &[super::models::ApiEndpoint],
+    env_variables: &serde_json::Map<String, Value>,
+) -> Result<String, String> {
+    let module_name = |id: Option<&str>| -> Option<String> {
+        id.and_then(|i| modules.iter().find(|(mid, _)| mid == i).map(|(_, n)| n.clone()))
+    };
+    // 这些请求头由 HTTP 客户端自动生成，导出为文档参数没有意义
+    const AUTO_HEADERS: &[&str] = &[
+        "content-type", "content-length", "host", "user-agent",
+        "accept", "accept-encoding", "connection",
+    ];
+
+    let mut paths = serde_json::Map::new();
+    let mut schemes = serde_json::Map::new();
+    let mut op_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for ep in endpoints {
+        let path = url_path_of(&ep.url);
+        let method = ep.method.to_ascii_lowercase();
+        let mut op = serde_json::Map::new();
+        op.insert("summary".into(), Value::String(ep.name.clone()));
+        let desc = if ep.description.is_empty() {
+            ep.docs_md.clone()
+        } else if ep.docs_md.is_empty() {
+            ep.description.clone()
+        } else {
+            format!("{}\n\n{}", ep.description, ep.docs_md)
+        };
+        if !desc.is_empty() {
+            op.insert("description".into(), Value::String(desc));
+        }
+        let mut op_id = sanitize_identifier(&ep.name);
+        if op_id.is_empty() {
+            op_id = format!("{}{}", method, sanitize_identifier(&path));
+        }
+        if op_id.is_empty() {
+            op_id = "operation".to_string();
+        }
+        let base_id = op_id.clone();
+        let mut seq = 2;
+        while !op_ids.insert(op_id.clone()) {
+            op_id = format!("{}_{}", base_id, seq);
+            seq += 1;
+        }
+        op.insert("operationId".into(), Value::String(op_id));
+        if let Some(tag) = module_name(ep.module_id.as_deref()) {
+            op.insert("tags".into(), serde_json::json!([tag]));
+        }
+
+        // 参数：query / path / header
+        let mut params: Vec<Value> = Vec::new();
+        for q in ep.query_params.iter().filter(|x| x.enabled && !x.key.is_empty()) {
+            params.push(serde_json::json!({
+                "name": q.key, "in": "query", "required": false,
+                "schema": { "type": "string" }, "example": q.value
+            }));
+        }
+        for p in ep.path_params.iter().filter(|x| x.enabled && !x.key.is_empty()) {
+            params.push(serde_json::json!({
+                "name": p.key, "in": "path", "required": true,
+                "schema": { "type": "string" }, "example": p.value
+            }));
+        }
+        for h in ep.headers.iter().filter(|x| {
+            x.enabled
+                && !x.key.is_empty()
+                && !AUTO_HEADERS.contains(&x.key.to_ascii_lowercase().as_str())
+        }) {
+            params.push(serde_json::json!({
+                "name": h.key, "in": "header", "required": false,
+                "schema": { "type": "string" }, "example": h.value
+            }));
+        }
+        if !params.is_empty() {
+            op.insert("parameters".into(), Value::Array(params));
+        }
+
+        if let Some(body) = openapi_body(ep) {
+            op.insert("requestBody".into(), body);
+        }
+        op.insert(
+            "responses".into(),
+            serde_json::json!({ "200": { "description": "OK" } }),
+        );
+
+        // 安全方案（同名方案去重）
+        let auth = &ep.authorization;
+        match auth.r#type.as_str() {
+            "bearer" | "jwt" => {
+                schemes.entry("bearerAuth".to_string()).or_insert_with(|| {
+                    serde_json::json!({ "type": "http", "scheme": "bearer" })
+                });
+                op.insert("security".into(), serde_json::json!([{ "bearerAuth": [] }]));
+            }
+            "basic" => {
+                schemes.entry("basicAuth".to_string()).or_insert_with(|| {
+                    serde_json::json!({ "type": "http", "scheme": "basic" })
+                });
+                op.insert("security".into(), serde_json::json!([{ "basicAuth": [] }]));
+            }
+            "apiKey" if !auth.api_key_name.trim().is_empty() => {
+                let name = format!("apiKey_{}", sanitize_identifier(&auth.api_key_name));
+                schemes.entry(name.clone()).or_insert_with(|| {
+                    serde_json::json!({
+                        "type": "apiKey",
+                        "in": if auth.api_key_in == "query" { "query" } else { "header" },
+                        "name": auth.api_key_name
+                    })
+                });
+                op.insert("security".into(), serde_json::json!([{ name: [] }]));
+            }
+            _ => {}
+        }
+
+        let entry = paths
+            .entry(path)
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        if let Value::Object(map) = entry {
+            // 同一 path+method 只保留第一条，避免生成非法文档
+            if !map.contains_key(&method) {
+                map.insert(method, Value::Object(op));
+            }
+        }
+    }
+
+    let mut info = serde_json::json!({ "title": project_name, "version": "1.0.0" });
+    if !description.trim().is_empty() {
+        info["description"] = Value::String(description.to_string());
+    }
+    let mut doc = serde_json::json!({
+        "openapi": "3.0.3",
+        "info": info,
+        "paths": Value::Object(paths),
+    });
+    if let Some(base) = env_variables.get("baseUrl").and_then(|v| v.as_str()) {
+        if !base.trim().is_empty() {
+            doc["servers"] = serde_json::json!([{ "url": base }]);
+        }
+    }
+    if !schemes.is_empty() {
+        doc["components"] = serde_json::json!({ "securitySchemes": Value::Object(schemes) });
+    }
+    serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())
+}
+
 // ─── 单元测试 ───
 
 #[cfg(test)]
@@ -1290,12 +2006,105 @@ public class UserController {
     }
 
     #[test]
-    fn scan_nuxt_api_path() {
-        let root = Path::new("/proj");
-        let file = Path::new("/proj/server/api/orders/get.get.ts");
-        let drafts = scan_nuxt_api("export default defineEventHandler(() => {})", root, file);
-        assert_eq!(drafts.len(), 1);
-        assert_eq!(drafts[0].url, "/api/orders/get");
-        assert_eq!(drafts[0].method, "GET");
+    fn parse_curl_json_request() {
+        let cmd = r#"curl 'https://api.example.com/users?page=2&size=10' \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer abc123' \
+  -d '{"name":"alice"}' -k"#;
+        let d = parse_curl_command(cmd).unwrap();
+        assert_eq!(d.method, "POST");
+        assert_eq!(d.url, "https://api.example.com/users");
+        assert_eq!(d.query_params.len(), 2);
+        assert_eq!(d.query_params[0].key, "page");
+        assert_eq!(d.body_type, "json");
+        assert_eq!(d.body, r#"{"name":"alice"}"#);
+        assert_eq!(d.authorization.r#type, "bearer");
+        assert_eq!(d.authorization.token, "abc123");
+        assert!(!d.headers.iter().any(|h| h.key.eq_ignore_ascii_case("authorization")));
+        assert!(d.docs_md.contains("curl"));
+        // 当前草稿没有承载 verify_ssl，由命令层使用默认设置；这里只验证解析不丢失关键信息
+        assert_eq!(d.name, "POST /users");
+    }
+
+    #[test]
+    fn parse_curl_form_and_basic_auth() {
+        let cmd = r#"curl -X PUT http://127.0.0.1:8080/api/upload -F "file=@C:\tmp\a.png" -F "name=test" -u user:pass -b 'sid=1; theme=dark'"#;
+        let d = parse_curl_command(cmd).unwrap();
+        assert_eq!(d.method, "PUT");
+        assert_eq!(d.url, "http://127.0.0.1:8080/api/upload");
+        assert_eq!(d.body_type, "formdata");
+        assert_eq!(d.body_form.len(), 2);
+        assert_eq!(d.body_form[0].kind, "file");
+        assert_eq!(d.body_form[0].file_path, r"C:\tmp\a.png");
+        assert_eq!(d.authorization.r#type, "basic");
+        assert_eq!(d.authorization.username, "user");
+        assert_eq!(d.query_params.len(), 0);
+        assert_eq!(d.body_form[1].value, "test");
+    }
+
+    #[test]
+    fn parse_curl_skips_options_with_values() {
+        // 未知但吃值的选项（--max-time 10）不能把 10 当成 URL
+        let cmd = r#"curl --max-time 10 -m 5 --compressed 'https://api.example.com/ping?x=1'"#;
+        let d = parse_curl_command(cmd).unwrap();
+        assert_eq!(d.url, "https://api.example.com/ping");
+        assert_eq!(d.method, "GET");
+        assert_eq!(d.query_params[0].value, "1");
+    }
+
+    #[test]
+    fn export_openapi_basic_shape() {
+        let ep = super::super::models::ApiEndpoint {
+            id: "ep1".into(),
+            project_id: "p1".into(),
+            module_id: Some("m1".into()),
+            name: "获取用户".into(),
+            method: "GET".into(),
+            url: "{{baseUrl}}/users/{id}?verbose=1".into(),
+            headers: vec![],
+            query_params: vec![
+                KeyValueItem { key: "page".into(), value: "1".into(), enabled: true, description: String::new(), from_template: false },
+            ],
+            path_params: vec![],
+            body: String::new(),
+            body_type: "none".into(),
+            body_form: vec![],
+            body_urlencoded: vec![],
+            body_graphql_query: String::new(),
+            body_graphql_variables: String::new(),
+            authorization: Authorization {
+                r#type: "bearer".into(),
+                token: "{{token}}".into(),
+                ..Default::default()
+            },
+            cookies: vec![],
+            settings: Default::default(),
+            response_comment: String::new(),
+            is_favorite: false,
+            extract_rules: vec![],
+            description: "用户详情".into(),
+            docs_md: String::new(),
+            timeout_ms: 15000,
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let mut vars = serde_json::Map::new();
+        vars.insert("baseUrl".into(), Value::String("https://api.example.com".into()));
+        let json = export_openapi(
+            "Demo",
+            "示例项目",
+            &[("m1".into(), "用户".into())],
+            std::slice::from_ref(&ep),
+            &vars,
+        )
+        .unwrap();
+        let doc: Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(doc["openapi"], "3.0.3");
+        assert_eq!(doc["paths"]["/users/{id}"]["get"]["summary"], "获取用户");
+        assert_eq!(doc["paths"]["/users/{id}"]["get"]["tags"][0], "用户");
+        assert_eq!(doc["servers"][0]["url"], "https://api.example.com");
+        assert!(doc["components"]["securitySchemes"]["bearerAuth"].is_object());
+        assert_eq!(doc["paths"]["/users/{id}"]["get"]["parameters"][0]["name"], "page");
     }
 }

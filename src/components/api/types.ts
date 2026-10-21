@@ -94,11 +94,28 @@ export interface ApiEndpoint {
   settings: RequestSettings;
   response_comment: string;
   is_favorite: boolean;
+  /** 响应变量提取规则：发送成功后把响应 JSON 中的值写回当前环境变量 */
+  extract_rules: ExtractRule[];
   description: string;
   docs_md: string;
   timeout_ms: number;
   created_at: string;
   updated_at: string;
+}
+
+/** 响应变量提取规则（与 models.rs ExtractRule 对应） */
+export interface ExtractRule {
+  path: string;
+  variable: string;
+  enabled: boolean;
+}
+
+/** 一次发送后的提取结果（仅前端展示） */
+export interface ExtractResult {
+  variable: string;
+  path: string;
+  ok: boolean;
+  value: string;
 }
 
 export interface SendRequestInput {

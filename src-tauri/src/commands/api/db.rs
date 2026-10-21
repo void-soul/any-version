@@ -202,6 +202,7 @@ fn migrate_endpoint_columns(conn: &rusqlite::Connection) -> Result<(), String> {
         ("settings", "TEXT NOT NULL DEFAULT '{}'"),
         ("response_comment", "TEXT NOT NULL DEFAULT ''"),
         ("is_favorite", "INTEGER NOT NULL DEFAULT 0"),
+        ("extract_rules", "TEXT NOT NULL DEFAULT '[]'"),
     ];
     for (name, def) in cols {
         if !has_column(name)? {
@@ -307,6 +308,7 @@ pub fn endpoint_row(row: &rusqlite::Row) -> Result<super::models::ApiEndpoint, r
     let auth_raw: String = row.get(20)?;
     let cookies_raw: String = row.get(21)?;
     let settings_raw: String = row.get(22)?;
+    let extract_rules_raw: String = row.get(25)?;
     Ok(super::models::ApiEndpoint {
         id: row.get(0)?,
         project_id: row.get(1)?,
@@ -328,6 +330,7 @@ pub fn endpoint_row(row: &rusqlite::Row) -> Result<super::models::ApiEndpoint, r
         settings: serde_json::from_str(&settings_raw).unwrap_or_default(),
         response_comment: row.get(23)?,
         is_favorite: row.get::<_, i64>(24)? != 0,
+        extract_rules: serde_json::from_str(&extract_rules_raw).unwrap_or_default(),
         description: row.get(11)?,
         docs_md: row.get(12)?,
         timeout_ms: row.get(13)?,

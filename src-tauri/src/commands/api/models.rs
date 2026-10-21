@@ -154,6 +154,32 @@ impl Default for RequestSettings {
     }
 }
 
+// ─── 响应变量提取规则 ───
+/// 从响应 JSON 中提取值写入环境变量（发送成功后自动执行）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExtractRule {
+    /// JSON 路径，如 data.token / items[0].id
+    pub path: String,
+    /// 写入环境变量的名称
+    pub variable: String,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+fn default_enabled() -> bool {
+    true
+}
+
+impl Default for ExtractRule {
+    fn default() -> Self {
+        Self {
+            path: String::new(),
+            variable: String::new(),
+            enabled: true,
+        }
+    }
+}
+
 // ─── 接口 ───
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiEndpoint {
@@ -186,6 +212,9 @@ pub struct ApiEndpoint {
     pub response_comment: String,
     #[serde(default)]
     pub is_favorite: bool,
+    /// 响应变量提取规则（发送成功后写回当前环境变量）
+    #[serde(default)]
+    pub extract_rules: Vec<ExtractRule>,
     pub description: String,
     pub docs_md: String,
     pub timeout_ms: i64,
