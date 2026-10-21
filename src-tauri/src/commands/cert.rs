@@ -1,9 +1,10 @@
-//! 证书管理（Q-005）：Let's Encrypt 泛域名证书申请 + 多节点部署 + 应用内调度。
+//! 证书管理（Q-005）：免费 ACME 证书申请 + 多节点部署 + 应用内调度。
 //!
 //! 架构：
 //! - 数据模型（Certificate / DeployNode / Credential）持久化在 `get_data_dir()/certs/` 下三个 JSON 文件。
-//! - ACME 引擎：封装 lego sidecar（`lego --dns <provider> run` / `renew`），DNS-01 由 lego 内置插件完成。
-//! - 部署：qiniu / aliyun / linux / windows 四种节点类型。
+//! - 验证方式：DNS-01（lego --dns <provider>）与 HTTP-01（lego --http）；CNAME 委托需公网权威 DNS，暂不支持。
+//! - 域名列表 → 部署方式：`Certificate.deploy_links` 保存关联；部署方式本身不保存域名。
+//! - 部署：Windows 接收端 / API / Docker / SSH / Webhook / 阿里云 SSL / 腾讯云 SSL / 七牛 SSL。
 //! - 调度：应用内 tokio 定时器，扫描到期并触发申请/部署。
 
 use aes_gcm::aead::Aead;
@@ -16,7 +17,8 @@ use hmac::Mac;
 use hmac::Hmac;
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
-use std::collections::HashMap;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::process::Command;
 #[cfg(windows)]
@@ -65,6 +67,15 @@ pub struct DeployNode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeployLink {
+    /// 关联的部署方式（DeployNode.id）
+    pub node_id: String,
+    /// 域名列表关联该部署方式时指定的目标域名（CDN/负载均衡等节点使用）；为空时取证书首个域名
+    #[serde(default)]
+    pub target: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Certificate {
     pub id: String,
     pub domains: Vec<String>,
@@ -72,9 +83,17 @@ pub struct Certificate {
     /// letsencrypt（生产） / letsencrypt-staging（测试）
     #[serde(default = "default_ca")]
     pub ca: String,
-    /// lego 的 DNS provider 标识，或 "custom"（custom 时凭据 data 的键即 lego 环境变量名）
+    /// DNS 授权模式使用：lego 的 DNS provider 标识，或 "custom"
     pub dns_provider: String,
+    /// DNS 授权模式下关联的凭据；HTTP 验证模式可为空
+    #[serde(default)]
     pub credential_id: String,
+    /// 验证方式：dns（DNS-01）/ http（HTTP-01）
+    #[serde(default = "default_validation")]
+    pub validation: String,
+    /// HTTP-01 监听端口（默认 80，需要外部可达）
+    #[serde(default = "default_http_port")]
+    pub http_port: u16,
     #[serde(default = "default_days")]
     pub renew_before_days: i64,
     #[serde(default)]
@@ -87,6 +106,10 @@ pub struct Certificate {
     pub status: String,
     #[serde(default)]
     pub last_error: Option<String>,
+    /// 域名列表 → 部署方式关联（新模型）
+    #[serde(default)]
+    pub deploy_links: Vec<DeployLink>,
+    /// 兼容旧数据：仅保存关联的节点 ID
     #[serde(default)]
     pub deploy_node_ids: Vec<String>,
 }
@@ -135,6 +158,71 @@ impl Default for CertScheduler {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 证书监控 + 通知
+// ---------------------------------------------------------------------------
+
+fn default_true() -> bool {
+    true
+}
+fn default_https_port() -> u16 {
+    443
+}
+fn default_notify_days() -> Vec<i64> {
+    vec![30, 14, 7, 3, 1]
+}
+
+/// 外部域名/IP 的证书监控目标（与「申请中的证书」相互独立）：
+/// 仅做 TLS 握手读取对端证书有效期，不校验证书链（自签证书同样可监控）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitorTarget {
+    pub id: String,
+    /// 域名或 IP，可写成 `example.com:8443` / `https://example.com`
+    pub host: String,
+    #[serde(default = "default_https_port")]
+    pub port: u16,
+    #[serde(default)]
+    pub note: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 剩余天数到达这些阈值时提醒（默认 30/14/7/3/1 天）
+    #[serde(default = "default_notify_days")]
+    pub notify_days: Vec<i64>,
+    #[serde(default)]
+    pub not_after: Option<String>,
+    #[serde(default)]
+    pub days_left: Option<i64>,
+    #[serde(default)]
+    pub subject: String,
+    #[serde(default)]
+    pub issuer: String,
+    #[serde(default)]
+    pub last_check_at: Option<String>,
+    #[serde(default)]
+    pub last_error: Option<String>,
+    /// 上次提醒所命中的阈值（用于避免同一阈值反复提醒；续期后自动重置）
+    #[serde(default)]
+    pub last_notify_bucket: Option<i64>,
+    #[serde(default)]
+    pub last_notified_at: Option<String>,
+}
+
+/// 通知渠道：钉钉 / 企业微信 / Slack / Discord / Teams / 自定义 Webhook
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotifyChannel {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub channel_type: String,
+    pub name: String,
+    /// url（必填）；dingtalk 可选 secret（加签）；webhook 可选 token（Bearer）
+    #[serde(default)]
+    pub config: HashMap<String, String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub note: String,
+}
+
 fn default_days() -> i64 {
     30
 }
@@ -143,6 +231,12 @@ fn default_ca() -> String {
 }
 fn default_status() -> String {
     "pending".to_string()
+}
+fn default_validation() -> String {
+    "dns".to_string()
+}
+fn default_http_port() -> u16 {
+    80
 }
 
 // ---------------------------------------------------------------------------
@@ -189,6 +283,36 @@ fn gen_id(prefix: &str) -> String {
         Utc::now().timestamp_millis(),
         buf[0], buf[1], buf[2], buf[3]
     )
+}
+
+/// 读取域名列表，并把旧版 `deploy_node_ids` 自动迁移为 `deploy_links`。
+///
+/// 新模型：域名列表负责「关联部署方式」，部署方式本身不再保存域名；
+/// 旧数据只有节点 ID，迁移时 target 留空，部署时回退到证书首个域名。
+fn load_certs() -> Vec<Certificate> {
+    let mut certs = load_json::<Certificate>("certificates.json");
+    let mut changed = false;
+    for c in certs.iter_mut() {
+        if c.deploy_links.is_empty() && !c.deploy_node_ids.is_empty() {
+            c.deploy_links = c
+                .deploy_node_ids
+                .iter()
+                .map(|id| DeployLink {
+                    node_id: id.clone(),
+                    target: String::new(),
+                })
+                .collect();
+            changed = true;
+        }
+        if c.deploy_node_ids.len() != c.deploy_links.len() {
+            c.deploy_node_ids = c.deploy_links.iter().map(|l| l.node_id.clone()).collect();
+            changed = true;
+        }
+    }
+    if changed {
+        save_json("certificates.json", &certs);
+    }
+    certs
 }
 
 // ---------------------------------------------------------------------------
@@ -599,7 +723,7 @@ fn read_lego_pems(cert_dir: &PathBuf, prefer_domain: Option<&str>) -> Option<Leg
     None
 }
 
-fn run_lego(cert: &Certificate, cred: &Credential, renew: bool) -> Result<(String, String, String), String> {
+fn run_lego(cert: &Certificate, cred: Option<&Credential>, renew: bool) -> Result<(String, String, String), String> {
     let lego = find_lego();
     let cert_dir = ensure_dir().join(&cert.id);
     let _ = std::fs::create_dir_all(&cert_dir);
@@ -619,20 +743,40 @@ fn run_lego(cert: &Certificate, cred: &Credential, renew: bool) -> Result<(Strin
     if let Some(s) = ca_server(&cert.ca) {
         cmd.arg("--server").arg(s);
     }
-    cmd.arg("--dns").arg(&cert.dns_provider);
+    match cert.validation.as_str() {
+        "http" => {
+            if cert.domains.iter().any(|d| d.starts_with("*.")) {
+                return Err("HTTP-01 验证不支持泛域名，请改用 DNS 授权".into());
+            }
+            cmd.arg("--http");
+            // lego v5 使用 --http.address（默认 ":80"），不是 --http.port
+            cmd.arg("--http.address")
+                .arg(format!(":{}", cert.http_port.max(1)));
+        }
+        "cname" => {
+            return Err(
+                "免 DNS 授权（CNAME 委托）需要一个公网可达的权威 DNS 服务；桌面版无法单独提供，\
+                 请改用 DNS 授权或 HTTP 验证"
+                    .into(),
+            );
+        }
+        _ => {
+            let cred = cred.ok_or_else(|| "DNS 验证需要关联 DNS 授权凭据".to_string())?;
+            cmd.arg("--dns").arg(&cert.dns_provider);
+            let envs = lego_env(&cert.dns_provider, cred);
+            for (k, v) in &envs {
+                cmd.env(k, v);
+            }
+            if !envs.iter().any(|(k, _)| k == "LEGO_DNS_RESOLVERS") {
+                cmd.arg("--dns.resolvers").arg("223.5.5.5:53,114.114.114.114:53,8.8.8.8:53");
+            }
+        }
+    }
     for dom in &cert.domains {
         cmd.arg("--domains").arg(dom);
     }
     if renew {
         cmd.arg("--renew-days").arg(cert.renew_before_days.to_string());
-    }
-    for (k, v) in lego_env(&cert.dns_provider, cred) {
-        cmd.env(&k, &v);
-    }
-    let envs = lego_env(&cert.dns_provider, cred);
-    let has_custom_resolvers = envs.iter().any(|(k, _)| k == "LEGO_DNS_RESOLVERS");
-    if !has_custom_resolvers {
-        cmd.arg("--dns.resolvers").arg("223.5.5.5:53,114.114.114.114:53,8.8.8.8:53");
     }
 
     // 打印完整命令行，便于在终端排查
@@ -701,17 +845,41 @@ async fn deploy_to_node(
     node: &DeployNode,
     cert: &Certificate,
     pems: &(String, String, String),
+    target: &str,
 ) -> Result<(), String> {
     match node.node_type.as_str() {
-        "windows" => deploy_windows(node, cert, pems).await,
+        // Windows 接收端 / API / Docker 拉取，均走独立的 cert-receiver /push
+        "windows" | "api" | "docker" => deploy_http_push(node, cert, pems, target).await,
+        "ssh" => deploy_ssh(node, cert, pems, target),
+        // 旧版 linux 节点保留原有「证书路径 + 私钥路径 + 重载命令」语义
         "linux" => deploy_linux(node, pems),
-        "qiniu" => deploy_qiniu(node, cert, pems).await,
-        "aliyun" => deploy_aliyun(node, cert, pems).await,
+        "webhook" => deploy_webhook(node, cert, pems).await,
+        "baota" => deploy_baota(node, cert, pems, target).await,
+        "one_panel" => deploy_one_panel(node, cert, pems, target).await,
+        "synology" => deploy_synology(node, cert, pems, target).await,
+        "upyun" | "upyun_ssl" => deploy_upyun(node, cert, pems, target).await,
+        "baidu_cdn" => deploy_baidu_cdn(node, cert, pems, target).await,
+        "huawei_cdn" => deploy_huawei_cdn(node, cert, pems, target).await,
+        "volcengine_cdn" => deploy_volcengine_cdn(node, cert, pems, target).await,
+        "doge_cdn" => deploy_doge_cdn(node, cert, pems, target).await,
+        "aliyun_oss" => deploy_aliyun_oss(node, cert, pems, target).await,
+        "aliyun_fc" => deploy_aliyun_fc(node, cert, pems, target).await,
+        "aliyun" | "aliyun_ssl" => deploy_aliyun_ssl(node, cert, pems, target).await,
+        "aliyun_cdn" => deploy_aliyun_cdn(node, cert, pems, target).await,
+        "aliyun_dcdn" => deploy_aliyun_dcdn(node, cert, pems, target).await,
+        "aliyun_slb" => deploy_aliyun_slb(node, cert, pems, target).await,
+        "aliyun_alb" => deploy_aliyun_alb(node, cert, pems, target).await,
+        "aliyun_nlb" => deploy_aliyun_nlb(node, cert, pems, target).await,
+        "aliyun_api_gateway" => deploy_aliyun_api_gateway(node, cert, pems, target).await,
+        "tencent_ssl" => deploy_tencent_ssl(node, cert, pems, target).await,
+        "tencent_clb" => deploy_tencent_clb(node, cert, pems, target).await,
+        "tencent_cdn" => deploy_tencent_cdn(node, cert, pems, target).await,
+        "qiniu" | "qiniu_ssl" => deploy_qiniu_ssl(node, cert, pems, target).await,
         other => Err(format!("未知部署节点类型: {}", other)),
     }
 }
 
-/// 把 Windows 接收端 URL 归一化为「基础地址」（不含 /push 段、无结尾斜杠）。
+/// 把接收端 URL 归一化为「基础地址」（不含 /push 段、无结尾斜杠）。
 /// 兼容用户三种输入：`http://h:9000` / `http://h:9000/` / `http://h:9000/push`。
 /// 部署与连通性测试必须从同一基础地址派生（/push 与 /health），
 /// 否则按占位提示输入完整 /push URL 时，连通测试会打到 `.../push/health`（404）。
@@ -728,31 +896,68 @@ fn windows_base_url(url: &str) -> String {
     u
 }
 
-async fn deploy_windows(
+fn cfg(node: &DeployNode, key: &str) -> String {
+    node.config.get(key).cloned().unwrap_or_default().trim().to_string()
+}
+
+/// 通用云厂商 AK/SK（字段名与阿里云/百度/华为/火山一致）。
+fn ak_sk(node: &DeployNode, provider: &str) -> Result<(String, String), String> {
+    let ak = cfg(node, "access_key_id");
+    let sk = cfg(node, "access_key_secret");
+    if ak.is_empty() || sk.is_empty() {
+        return Err(format!("{} 节点缺少 AccessKey ID / Secret", provider));
+    }
+    Ok((ak, sk))
+}
+
+fn cert_name_for(cert: &Certificate, target: &str, fallback: &str) -> String {
+    let base = if !target.trim().is_empty() {
+        target.trim()
+    } else {
+        cert.domains.first().map(|s| s.as_str()).unwrap_or(fallback)
+    };
+    let mut name: String = base
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    name.push('-');
+    name.push_str(&Utc::now().format("%Y%m%d%H%M%S").to_string());
+    name.chars().take(63).collect()
+}
+
+async fn deploy_http_push(
     node: &DeployNode,
     cert: &Certificate,
     pems: &(String, String, String),
+    target: &str,
 ) -> Result<(), String> {
-    let url = node.config.get("url").cloned().unwrap_or_default();
-    let token = node.config.get("token").cloned().unwrap_or_default();
-    let base = windows_base_url(&url);
+    let base = windows_base_url(&cfg(node, "url"));
+    let token = cfg(node, "token");
     if base.is_empty() {
-        return Err("windows 节点缺少 url".into());
+        return Err(format!("{} 节点缺少 url", node.node_type));
     }
-    // Token 与接收端（cert-receiver.toml）必须一致；空 Token 提前报错，
-    // 避免发出 `Bearer `（空凭据）被接收端 401 拒绝后难以定位
     if token.is_empty() {
-        return Err("windows 节点缺少共享 Token（需与 cert-receiver 配置的 token 一致）".into());
+        return Err("节点缺少共享 Token（需与 cert-receiver 的 token 一致）".into());
     }
     let push_url = format!("{}/push", base);
     let body = serde_json::json!({
-        "domain": cert.domains.first().cloned().unwrap_or_default(),
+        "certificate_id": cert.id,
+        "domain": if target.is_empty() { cert.domains.first().cloned().unwrap_or_default() } else { target.to_string() },
+        "domains": cert.domains,
         "cert": pems.0,
         "key": pems.1,
         "ca": pems.2,
+        "expired_time": cert.not_after.clone().unwrap_or_default(),
+        "cert_name": cert_name_for(cert, target, &cert.id),
     });
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(20))
         .connect_timeout(std::time::Duration::from_secs(5))
         .build()
         .map_err(|e| e.to_string())?;
@@ -762,9 +967,11 @@ async fn deploy_windows(
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("推送证书到 Windows 接收端失败: {}", e))?;
-    if !resp.status().is_success() {
-        return Err(format!("Windows 接收端返回 {}", resp.status()));
+        .map_err(|e| format!("推送证书到接收端失败: {}", e))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("接收端返回 {}: {}", status, text.trim()));
     }
     Ok(())
 }
@@ -842,9 +1049,373 @@ fn deploy_linux(node: &DeployNode, pems: &(String, String, String)) -> Result<()
     Ok(())
 }
 
-// --- 七牛 / 阿里云：签名实现为 best-effort，未经真实账号验证，需按官方文档核对 ---
+fn remote_safe_name(s: &str) -> String {
+    let out: String = s
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if out.is_empty() {
+        "cert".into()
+    } else {
+        out
+    }
+}
 
-#[allow(dead_code)]
+struct SshAuth {
+    password: Option<String>,
+    key: Option<String>,
+}
+
+fn ssh_auth(node: &DeployNode) -> SshAuth {
+    let method = cfg(node, "auth_method");
+    if method == "password" {
+        SshAuth {
+            password: Some(cfg(node, "password")),
+            key: None,
+        }
+    } else {
+        let key = cfg(node, "private_key");
+        SshAuth {
+            password: None,
+            key: if key.is_empty() { None } else { Some(key) },
+        }
+    }
+}
+
+fn ssh_cmd_args(node: &DeployNode, auth: &SshAuth, remote_cmd: &str) -> Result<(Command, String), String> {
+    let host = cfg(node, "host");
+    let port = {
+        let p = cfg(node, "port");
+        if p.is_empty() { "22".to_string() } else { p }
+    };
+    let user = {
+        let u = cfg(node, "user");
+        if u.is_empty() { "root".to_string() } else { u }
+    };
+    if host.is_empty() {
+        return Err("ssh 节点缺少 host".into());
+    }
+    let target = format!("{}@{}", user, host);
+    let mut cmd = if let Some(pw) = &auth.password {
+        if pw.is_empty() {
+            return Err("ssh 密码认证需要填写 password".into());
+        }
+        if Command::new("sshpass").arg("-V").output().is_err() {
+            return Err("密码认证需要系统安装 sshpass；建议改用私钥认证".into());
+        }
+        let mut c = Command::new("sshpass");
+        c.arg("-p").arg(pw).arg("ssh");
+        c
+    } else {
+        Command::new("ssh")
+    };
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000);
+    if let Some(key) = &auth.key {
+        cmd.arg("-i").arg(key);
+    }
+    cmd.arg("-o").arg("StrictHostKeyChecking=accept-new");
+    cmd.arg("-p").arg(port);
+    cmd.arg(&target).arg(remote_cmd);
+    Ok((cmd, target))
+}
+
+fn scp_upload(node: &DeployNode, auth: &SshAuth, local: &str, remote: &str) -> Result<(), String> {
+    let host = cfg(node, "host");
+    let port = {
+        let p = cfg(node, "port");
+        if p.is_empty() { "22".to_string() } else { p }
+    };
+    let user = {
+        let u = cfg(node, "user");
+        if u.is_empty() { "root".to_string() } else { u }
+    };
+    let target = format!("{}@{}", user, host);
+    let mut cmd = if let Some(pw) = &auth.password {
+        let mut c = Command::new("sshpass");
+        c.arg("-p").arg(pw).arg("scp");
+        c
+    } else {
+        Command::new("scp")
+    };
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000);
+    if let Some(key) = &auth.key {
+        cmd.arg("-i").arg(key);
+    }
+    cmd.arg("-P").arg(port);
+    cmd.arg("-o").arg("StrictHostKeyChecking=accept-new");
+    cmd.arg(local).arg(format!("{}:{}", target, remote));
+    let out = cmd
+        .output()
+        .map_err(|e| format!("scp 失败: {}", e))?;
+    if !out.status.success() {
+        return Err(format!(
+            "scp 失败 ({}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
+/// SSH 部署（对齐 ohttps）：前置命令 → 上传 cert.key/fullchain.cer → 后置命令。
+fn deploy_ssh(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+) -> Result<(), String> {
+    let auth = ssh_auth(node);
+    let cert_dir = {
+        let d = cfg(node, "cert_dir");
+        if d.is_empty() { "/etc/nginx/certificates".to_string() } else { d }
+    };
+    let name = remote_safe_name(if target.trim().is_empty() {
+        cert.domains.first().map(|s| s.as_str()).unwrap_or(&cert.id)
+    } else {
+        target
+    });
+    let remote_dir = format!("{}/{}", cert_dir.trim_end_matches('/'), name);
+    let quoted_dir = remote_dir.replace('\'', "'\\''");
+
+    let pre = cfg(node, "pre_command");
+    if !pre.is_empty() {
+        let (mut cmd, _) = ssh_cmd_args(node, &auth, &pre)?;
+        let out = cmd.output().map_err(|e| format!("执行前置命令失败: {}", e))?;
+        if !out.status.success() {
+            return Err(format!(
+                "前置命令失败 ({}): {}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+    }
+
+    let (mut mkdir_cmd, _) = ssh_cmd_args(node, &auth, &format!("mkdir -p '{}'", quoted_dir))?;
+    let mkdir = mkdir_cmd.output().map_err(|e| format!("创建远端目录失败: {}", e))?;
+    if !mkdir.status.success() {
+        return Err(format!(
+            "创建远端目录失败 ({}): {}",
+            mkdir.status,
+            String::from_utf8_lossy(&mkdir.stderr).trim()
+        ));
+    }
+
+    let isolate_dir = std::env::temp_dir().join(format!(
+        ".cert_deploy_{}_{}",
+        node.id,
+        Utc::now().timestamp_millis()
+    ));
+    std::fs::create_dir_all(&isolate_dir).map_err(|e| e.to_string())?;
+    let local_cert = isolate_dir.join("fullchain.cer");
+    let local_key = isolate_dir.join("cert.key");
+    std::fs::write(&local_cert, &pems.0).map_err(|e| e.to_string())?;
+    std::fs::write(&local_key, &pems.1).map_err(|e| e.to_string())?;
+    let upload = scp_upload(node, &auth, &local_cert.to_string_lossy(), &format!("{}/fullchain.cer", remote_dir))
+        .and_then(|_| scp_upload(node, &auth, &local_key.to_string_lossy(), &format!("{}/cert.key", remote_dir)));
+    let _ = std::fs::remove_dir_all(&isolate_dir);
+    upload?;
+
+    let post = cfg(node, "post_command");
+    if !post.is_empty() {
+        let (mut cmd, _) = ssh_cmd_args(node, &auth, &post)?;
+        let out = cmd.output().map_err(|e| format!("执行后置命令失败: {}", e))?;
+        if !out.status.success() {
+            return Err(format!(
+                "后置命令失败 ({}): {}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+    }
+    Ok(())
+}
+
+async fn deploy_webhook(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+) -> Result<(), String> {
+    let url = cfg(node, "url");
+    if url.is_empty() {
+        return Err("webhook 节点缺少 url".into());
+    }
+    let token = cfg(node, "token");
+    let ts = Utc::now().timestamp_millis();
+    let sign = format!("{:x}", md5::compute(format!("{}:{}", ts, token).as_bytes()));
+    let body = serde_json::json!({
+        "timestamp": ts,
+        "payload": {
+            "certificateName": cert.id,
+            "certificateDomains": cert.domains,
+            "certificateCertKey": pems.1,
+            "certificateFullchainCerts": pems.0,
+            "certificateExpireAt": cert.not_after.clone().unwrap_or_default(),
+        },
+        "sign": sign,
+    });
+    let resp = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| e.to_string())?
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("调用 webhook 失败: {}", e))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("webhook 返回 {}: {}", status, text.trim()));
+    }
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+        if v.get("success").and_then(|x| x.as_bool()) == Some(false) {
+            return Err(format!(
+                "webhook 返回失败: {}",
+                v.get("msg").and_then(|x| x.as_str()).unwrap_or("")
+            ));
+        }
+    }
+    Ok(())
+}
+
+// --- 宝塔面板：网站 SSL / 面板 SSL ---
+
+/// 面板地址归一化：补全 scheme、去掉结尾斜杠。
+fn http_base_url(raw: &str) -> String {
+    let mut u = raw.trim().trim_end_matches('/').to_string();
+    if !u.is_empty() && !u.starts_with("http://") && !u.starts_with("https://") {
+        u = format!("http://{}", u);
+    }
+    u
+}
+
+fn baota_sign(api_sk: &str) -> (String, String) {
+    // 宝塔 API：request_token = md5(request_time + md5(api_sk))
+    let time = Utc::now().timestamp().to_string();
+    let sk_md5 = format!("{:x}", md5::compute(api_sk.as_bytes()));
+    let token = format!("{:x}", md5::compute(format!("{}{}", time, sk_md5).as_bytes()));
+    (time, token)
+}
+
+async fn baota_post(
+    base: &str,
+    path_query: &str,
+    mut form: Vec<(String, String)>,
+    api_sk: &str,
+) -> Result<serde_json::Value, String> {
+    let (time, token) = baota_sign(api_sk);
+    form.push(("request_time".into(), time));
+    form.push(("request_token".into(), token));
+    let resp = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?
+        .post(format!("{}{}", base, path_query))
+        .form(&form)
+        .send()
+        .await
+        .map_err(|e| format!("调用宝塔面板失败: {}", e))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    serde_json::from_str(&text).map_err(|_| {
+        format!(
+            "宝塔返回非 JSON ({}): {}",
+            status,
+            text.chars().take(300).collect::<String>().trim()
+        )
+    })
+}
+
+fn baota_check(v: &serde_json::Value, action: &str) -> Result<(), String> {
+    match v.get("status").and_then(|x| x.as_bool()) {
+        Some(true) => Ok(()),
+        Some(false) => Err(format!(
+            "宝塔 {} 失败: {}",
+            action,
+            v.get("msg").and_then(|x| x.as_str()).unwrap_or("未知错误")
+        )),
+        // 部分接口不返回 status（直接返回数据），视为成功
+        None => Ok(()),
+    }
+}
+
+fn baota_api_sk(node: &DeployNode) -> String {
+    let sk = cfg(node, "api_sk");
+    if sk.is_empty() { cfg(node, "api_key") } else { sk }
+}
+
+async fn deploy_baota(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+) -> Result<(), String> {
+    let base = http_base_url(&cfg(node, "url"));
+    let api_sk = baota_api_sk(node);
+    if base.is_empty() || api_sk.is_empty() {
+        return Err("宝塔节点缺少面板地址或 API 密钥".into());
+    }
+    if cfg(node, "scope") == "panel" {
+        // 面板 SSL：不同版本字段名不一致，同时提交常见别名（多余字段会被忽略）
+        let form = vec![
+            ("key".into(), pems.1.clone()),
+            ("csr".into(), pems.0.clone()),
+            ("cert".into(), pems.0.clone()),
+            ("privateKey".into(), pems.1.clone()),
+            ("publicKey".into(), pems.0.clone()),
+        ];
+        let v = baota_post(&base, "/config?action=SetPanelSSL", form, &api_sk).await?;
+        return baota_check(&v, "面板 SSL");
+    }
+    // 网站 SSL：站点名取域名列表关联时填写的目标域名
+    let site = if target.trim().is_empty() {
+        cert.domains.first().cloned().unwrap_or_default()
+    } else {
+        target.trim().to_string()
+    };
+    if site.is_empty() {
+        return Err("宝塔网站 SSL 需要在域名列表关联时填写站点域名".into());
+    }
+    let form = vec![
+        ("siteName".into(), site.clone()),
+        ("key".into(), pems.1.clone()),
+        ("csr".into(), pems.0.clone()),
+        ("type".into(), "1".into()),
+    ];
+    let v = baota_post(&base, "/site?action=SetSSL", form, &api_sk).await?;
+    baota_check(&v, "网站 SSL")?;
+    // 部分版本需要再写入一次站点 SSL 配置才生效；失败不影响已保存的证书
+    let _ = baota_post(
+        &base,
+        "/site?action=SetSSLConf",
+        vec![("siteName".into(), site)],
+        &api_sk,
+    )
+    .await;
+    Ok(())
+}
+
+async fn baota_test(node: &DeployNode) -> Result<String, String> {
+    let base = http_base_url(&cfg(node, "url"));
+    let api_sk = baota_api_sk(node);
+    if base.is_empty() || api_sk.is_empty() {
+        return Err("宝塔节点缺少面板地址或 API 密钥".into());
+    }
+    let v = baota_post(&base, "/site?action=GetSiteList", vec![], &api_sk).await?;
+    baota_check(&v, "API 鉴权")?;
+    Ok("宝塔 API 鉴权正常".to_string())
+}
+
+// --- 云厂商：阿里云 CAS / 腾讯云 SSL / 七牛 Fusion ---
+
 fn percent_encode(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
@@ -858,44 +1429,1773 @@ fn percent_encode(s: &str) -> String {
     out
 }
 
-async fn deploy_qiniu(
-    _node: &DeployNode,
-    _cert: &Certificate,
-    _pems: &(String, String, String),
-) -> Result<(), String> {
-    // TODO: 七牛证书上传需 Qiniu 管理 API 签名（HMAC-SHA1 over "POST /sslcert\n\n<body>"）。
-    // 结构已就绪，签名待按 https://developer.qiniu.com 核对后启用。
-    Err("七牛部署：签名实现待完成（见部署节点备注）".into())
-}
-
-#[allow(dead_code)]
-fn aliyun_rpc_sign(params: &HashMap<String, String>, secret: &str) -> String {
-    let mut keys: Vec<&String> = params.keys().collect();
-    keys.sort();
-    let mut canonical = String::new();
-    for k in keys {
-        canonical.push_str(&percent_encode(k));
-        canonical.push('=');
-        canonical.push_str(&percent_encode(params.get(k).unwrap()));
-        canonical.push('&');
-    }
-    canonical.pop();
-    let string_to_sign = format!("GET&{}&{}", percent_encode("/"), percent_encode(&canonical));
+/// 阿里云 RPC 签名（POST + form）。参数需按 key 字典序排列。
+fn aliyun_rpc_sign(params: &BTreeMap<String, String>, secret: &str) -> String {
+    let canonical = params
+        .iter()
+        .map(|(k, v)| format!("{}={}", percent_encode(k), percent_encode(v)))
+        .collect::<Vec<_>>()
+        .join("&");
+    let string_to_sign = format!("POST&{}&{}", percent_encode("/"), percent_encode(&canonical));
     let key = format!("{}&", secret);
     let mut mac = <HmacSha1 as Mac>::new_from_slice(key.as_bytes()).unwrap();
     mac.update(string_to_sign.as_bytes());
-    let sig = mac.finalize().into_bytes();
-    B64.encode(sig)
+    B64.encode(mac.finalize().into_bytes())
 }
 
-async fn deploy_aliyun(
-    _node: &DeployNode,
-    _cert: &Certificate,
-    _pems: &(String, String, String),
+fn aliyun_auth(node: &DeployNode) -> Result<(String, String, String), String> {
+    let ak = cfg(node, "access_key_id");
+    let sk = cfg(node, "access_key_secret");
+    if ak.is_empty() || sk.is_empty() {
+        return Err("阿里云节点缺少 AccessKey ID / Secret".into());
+    }
+    Ok((ak, sk, cfg(node, "region")))
+}
+
+/// 阿里云 RPC 通用调用：自动补公共参数、签名，并以 form 方式 POST。
+async fn aliyun_rpc(
+    host: &str,
+    version: &str,
+    action: &str,
+    params: BTreeMap<String, String>,
+    ak: &str,
+    sk: &str,
+) -> Result<serde_json::Value, String> {
+    let mut p = params;
+    p.insert("Action".into(), action.into());
+    p.insert("Version".into(), version.into());
+    p.insert("Format".into(), "JSON".into());
+    p.insert("AccessKeyId".into(), ak.into());
+    p.insert("SignatureMethod".into(), "HMAC-SHA1".into());
+    p.insert("SignatureVersion".into(), "1.0".into());
+    p.insert(
+        "SignatureNonce".into(),
+        format!("{}-{}", Utc::now().timestamp_millis(), std::process::id()),
+    );
+    p.insert(
+        "Timestamp".into(),
+        Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+    );
+    let signature = aliyun_rpc_sign(&p, sk);
+    p.insert("Signature".into(), signature);
+    let body = p
+        .iter()
+        .map(|(k, v)| format!("{}={}", percent_encode(k), percent_encode(v)))
+        .collect::<Vec<_>>()
+        .join("&");
+    let resp = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?
+        .post(format!("https://{}/", host))
+        .header(reqwest::header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("调用阿里云 {} 失败: {}", action, e))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    let v: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|_| format!("阿里云返回非 JSON ({}): {}", status, text.trim()))?;
+    if let Some(code) = v.get("Code").and_then(|x| x.as_str()) {
+        return Err(format!(
+            "阿里云 {} 失败: {} - {}",
+            action,
+            code,
+            v.get("Message").and_then(|x| x.as_str()).unwrap_or("")
+        ));
+    }
+    if !status.is_success() {
+        return Err(format!("阿里云 {} 返回 {}: {}", action, status, text.trim()));
+    }
+    Ok(v)
+}
+
+async fn aliyun_upload_cert(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+) -> Result<String, String> {
+    let (ak, sk, _) = aliyun_auth(node)?;
+    let name = cert_name_for(cert, target, &cert.id);
+    let mut p = BTreeMap::new();
+    p.insert("Name".into(), name.chars().take(63).collect());
+    p.insert("Cert".into(), pems.0.clone());
+    p.insert("Key".into(), pems.1.clone());
+    let v = aliyun_rpc("cas.aliyuncs.com", "2020-04-07", "UploadUserCertificate", p, &ak, &sk).await?;
+    v.get("CertId")
+        .map(|x| x.to_string().trim_matches('"').to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "阿里云上传证书成功但未返回 CertId".to_string())
+}
+
+async fn deploy_aliyun_ssl(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
 ) -> Result<(), String> {
-    // TODO: 阿里云 CAS UploadCertificate 需 RPC 签名（见 aliyun_rpc_sign）。
-    // 结构已就绪，签名待按 https://help.aliyun.com 核对后启用。
-    Err("阿里云部署：签名实现待完成（见部署节点备注）".into())
+    aliyun_upload_cert(node, cert, pems, target).await.map(|_| ())
+}
+
+async fn deploy_aliyun_cdn_like(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+    host: &str,
+    version: &str,
+    action: &str,
+) -> Result<(), String> {
+    if target.trim().is_empty() {
+        return Err("CDN 部署需要在域名列表关联时填写目标域名".into());
+    }
+    let (ak, sk, _) = aliyun_auth(node)?;
+    let name = cert_name_for(cert, target, &cert.id);
+    let mut p = BTreeMap::new();
+    p.insert("DomainName".into(), target.trim().to_string());
+    p.insert("CertName".into(), name.chars().take(63).collect());
+    p.insert("CertType".into(), "upload".into());
+    p.insert("SSLPub".into(), pems.0.clone());
+    p.insert("SSLPri".into(), pems.1.clone());
+    p.insert("SSLProtocol".into(), "on".into());
+    aliyun_rpc(host, version, action, p, &ak, &sk).await?;
+    Ok(())
+}
+
+async fn deploy_aliyun_cdn(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+) -> Result<(), String> {
+    deploy_aliyun_cdn_like(
+        node,
+        cert,
+        pems,
+        target,
+        "cdn.aliyuncs.com",
+        "2018-05-10",
+        "SetCdnDomainSSLCertificate",
+    )
+    .await
+}
+
+async fn deploy_aliyun_dcdn(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+) -> Result<(), String> {
+    deploy_aliyun_cdn_like(
+        node,
+        cert,
+        pems,
+        target,
+        "dcdn.aliyuncs.com",
+        "2018-01-15",
+        "SetDcdnDomainSSLCertificate",
+    )
+    .await
+}
+
+fn listener_port(node: &DeployNode) -> Result<u16, String> {
+    let s = {
+        let p = cfg(node, "listener_port");
+        if p.is_empty() { cfg(node, "port") } else { p }
+    };
+    s.parse::<u16>()
+        .map_err(|_| "节点缺少有效的监听端口（listener_port / port）".to_string())
+}
+
+fn load_balancer_id(node: &DeployNode) -> Result<String, String> {
+    let id = {
+        let v = cfg(node, "load_balancer_id");
+        if v.is_empty() { cfg(node, "instance_id") } else { v }
+    };
+    if id.is_empty() {
+        Err("节点缺少负载均衡实例 ID".into())
+    } else {
+        Ok(id)
+    }
+}
+
+async fn aliyun_listener_id(
+    node: &DeployNode,
+    host: &str,
+    version: &str,
+    lb_id: &str,
+    port: u16,
+    protocol: Option<&str>,
+) -> Result<String, String> {
+    let (ak, sk, region) = aliyun_auth(node)?;
+    let mut p = BTreeMap::new();
+    if !region.is_empty() {
+        p.insert("RegionId".into(), region);
+    }
+    p.insert("LoadBalancerIds.1".into(), lb_id.to_string());
+    if let Some(proto) = protocol {
+        p.insert("ListenerProtocol".into(), proto.to_string());
+    }
+    let v = aliyun_rpc(host, version, "ListListeners", p, &ak, &sk).await?;
+    let listeners = v
+        .get("Listeners")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default();
+    for l in &listeners {
+        if l.get("ListenerPort").and_then(|x| x.as_i64()) == Some(port as i64) {
+            if let Some(id) = l.get("ListenerId").and_then(|x| x.as_str()) {
+                return Ok(id.to_string());
+            }
+        }
+    }
+    let ports: Vec<String> = listeners
+        .iter()
+        .filter_map(|l| l.get("ListenerPort").map(|p| p.to_string()))
+        .collect();
+    Err(format!(
+        "未找到端口 {} 的监听；当前监听端口: {}",
+        port,
+        if ports.is_empty() { "无".to_string() } else { ports.join(", ") }
+    ))
+}
+
+async fn deploy_aliyun_slb(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+) -> Result<(), String> {
+    let (ak, sk, region) = aliyun_auth(node)?;
+    if region.is_empty() {
+        return Err("SLB 节点缺少 region".into());
+    }
+    let lb = load_balancer_id(node)?;
+    let port = listener_port(node)?;
+    let cert_id = aliyun_upload_cert(node, cert, pems, target).await?;
+    let mut p = BTreeMap::new();
+    p.insert("RegionId".into(), region);
+    p.insert("LoadBalancerId".into(), lb);
+    p.insert("ListenerPort".into(), port.to_string());
+    p.insert("ServerCertificateId".into(), cert_id);
+    aliyun_rpc(
+        "slb.aliyuncs.com",
+        "2014-05-15",
+        "SetLoadBalancerHTTPSListenerAttribute",
+        p,
+        &ak,
+        &sk,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn deploy_aliyun_alb(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+) -> Result<(), String> {
+    let (ak, sk, region) = aliyun_auth(node)?;
+    if region.is_empty() {
+        return Err("ALB 节点缺少 region".into());
+    }
+    let lb = load_balancer_id(node)?;
+    let port = listener_port(node)?;
+    let listener = aliyun_listener_id(node, "alb.aliyuncs.com", "2020-06-16", &lb, port, None).await?;
+    let cert_id = aliyun_upload_cert(node, cert, pems, target).await?;
+    let mut p = BTreeMap::new();
+    p.insert("RegionId".into(), region);
+    p.insert("ListenerId".into(), listener);
+    p.insert("Certificates.1.CertificateId".into(), cert_id);
+    p.insert("Certificates.1.IsDefault".into(), "true".into());
+    aliyun_rpc(
+        "alb.aliyuncs.com",
+        "2020-06-16",
+        "UpdateListenerAttribute",
+        p,
+        &ak,
+        &sk,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn deploy_aliyun_nlb(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+) -> Result<(), String> {
+    let (ak, sk, region) = aliyun_auth(node)?;
+    if region.is_empty() {
+        return Err("NLB 节点缺少 region".into());
+    }
+    let lb = load_balancer_id(node)?;
+    let port = listener_port(node)?;
+    let listener = aliyun_listener_id(
+        node,
+        "nlb.aliyuncs.com",
+        "2022-04-30",
+        &lb,
+        port,
+        Some("TCPSSL"),
+    )
+    .await?;
+    let cert_id = aliyun_upload_cert(node, cert, pems, target).await?;
+    let mut p = BTreeMap::new();
+    p.insert("RegionId".into(), region);
+    p.insert("ListenerId".into(), listener);
+    p.insert("CertificateIds.1".into(), cert_id);
+    aliyun_rpc(
+        "nlb.aliyuncs.com",
+        "2022-04-30",
+        "UpdateListenerAttribute",
+        p,
+        &ak,
+        &sk,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn deploy_aliyun_api_gateway(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+) -> Result<(), String> {
+    let group_id = cfg(node, "group_id");
+    if group_id.is_empty() {
+        return Err("API 网关节点缺少 group_id".into());
+    }
+    if target.trim().is_empty() {
+        return Err("API 网关部署需要在域名列表关联时填写目标域名".into());
+    }
+    let (ak, sk, _) = aliyun_auth(node)?;
+    let mut p = BTreeMap::new();
+    p.insert("GroupId".into(), group_id);
+    p.insert("DomainName".into(), target.trim().to_string());
+    p.insert(
+        "CertificateName".into(),
+        cert_name_for(cert, target, &cert.id).chars().take(63).collect(),
+    );
+    p.insert("CertificateBody".into(), pems.0.clone());
+    p.insert("PrivateKey".into(), pems.1.clone());
+    aliyun_rpc(
+        "apigateway.aliyuncs.com",
+        "2016-07-14",
+        "SetDomainCertificate",
+        p,
+        &ak,
+        &sk,
+    )
+    .await?;
+    Ok(())
+}
+
+fn hmac_sha256(key: &[u8], msg: &str) -> Vec<u8> {
+    type HmacSha256 = Hmac<Sha256>;
+    let mut mac = <HmacSha256 as Mac>::new_from_slice(key).expect("HMAC key");
+    mac.update(msg.as_bytes());
+    mac.finalize().into_bytes().to_vec()
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+fn tencent_auth(node: &DeployNode) -> Result<(String, String, String), String> {
+    let id = cfg(node, "secret_id");
+    let key = cfg(node, "secret_key");
+    if id.is_empty() || key.is_empty() {
+        return Err("腾讯云节点缺少 SecretId / SecretKey".into());
+    }
+    Ok((id, key, cfg(node, "region")))
+}
+
+/// 腾讯云 TC3-HMAC-SHA256 通用调用。
+async fn tencent_rpc(
+    host: &str,
+    service: &str,
+    version: &str,
+    action: &str,
+    region: &str,
+    body: serde_json::Value,
+    secret_id: &str,
+    secret_key: &str,
+) -> Result<serde_json::Value, String> {
+    let content_type = "application/json; charset=utf-8";
+    let now = Utc::now();
+    let timestamp = now.timestamp();
+    let date = now.format("%Y-%m-%d").to_string();
+    let body_text = serde_json::to_string(&body).map_err(|e| e.to_string())?;
+
+    let mut headers: Vec<(String, String)> = vec![
+        ("content-type".into(), content_type.into()),
+        ("host".into(), host.into()),
+        ("x-tc-action".into(), action.to_lowercase()),
+        ("x-tc-timestamp".into(), timestamp.to_string()),
+        ("x-tc-version".into(), version.into()),
+    ];
+    if !region.is_empty() {
+        headers.push(("x-tc-region".into(), region.to_string()));
+    }
+    headers.sort_by(|a, b| a.0.cmp(&b.0));
+    let canonical_headers = headers
+        .iter()
+        .map(|(k, v)| format!("{}:{}\n", k, v))
+        .collect::<String>();
+    let signed_headers = headers
+        .iter()
+        .map(|(k, _)| k.clone())
+        .collect::<Vec<_>>()
+        .join(";");
+    let payload_hash = hex(&Sha256::digest(body_text.as_bytes()));
+    let canonical_request = format!(
+        "POST\n/\n\n{}\n{}\n{}",
+        canonical_headers, signed_headers, payload_hash
+    );
+    let string_to_sign = format!(
+        "TC3-HMAC-SHA256\n{}\n{}/{}/tc3_request\n{}",
+        timestamp,
+        date,
+        service,
+        hex(&Sha256::digest(canonical_request.as_bytes()))
+    );
+    let secret_date = hmac_sha256(format!("TC3{}", secret_key).as_bytes(), &date);
+    let secret_service = hmac_sha256(&secret_date, service);
+    let secret_signing = hmac_sha256(&secret_service, "tc3_request");
+    let signature = hex(&hmac_sha256(&secret_signing, &string_to_sign));
+    let auth = format!(
+        "TC3-HMAC-SHA256 Credential={}/{}/{}/tc3_request, SignedHeaders={}, Signature={}",
+        secret_id, date, service, signed_headers, signature
+    );
+
+    let mut req = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?
+        .post(format!("https://{}", host))
+        .header(reqwest::header::CONTENT_TYPE, content_type)
+        .header("X-TC-Action", action)
+        .header("X-TC-Timestamp", timestamp.to_string())
+        .header("X-TC-Version", version)
+        .header(reqwest::header::AUTHORIZATION, auth);
+    if !region.is_empty() {
+        req = req.header("X-TC-Region", region);
+    }
+    let resp = req
+        .body(body_text)
+        .send()
+        .await
+        .map_err(|e| format!("调用腾讯云 {} 失败: {}", action, e))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    let v: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|_| format!("腾讯云返回非 JSON ({}): {}", status, text.trim()))?;
+    if let Some(err) = v.pointer("/Response/Error") {
+        return Err(format!(
+            "腾讯云 {} 失败: {} - {}",
+            action,
+            err.get("Code").and_then(|x| x.as_str()).unwrap_or(""),
+            err.get("Message").and_then(|x| x.as_str()).unwrap_or("")
+        ));
+    }
+    if !status.is_success() {
+        return Err(format!("腾讯云 {} 返回 {}: {}", action, status, text.trim()));
+    }
+    Ok(v.get("Response").cloned().unwrap_or(v))
+}
+
+async fn tencent_upload_cert(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+) -> Result<String, String> {
+    let (id, key, _) = tencent_auth(node)?;
+    let body = serde_json::json!({
+        "CertificatePublicKey": pems.0,
+        "CertificatePrivateKey": pems.1,
+        "Alias": cert_name_for(cert, target, &cert.id),
+        "CertificateType": "SVR",
+    });
+    let v = tencent_rpc(
+        "ssl.tencentcloudapi.com",
+        "ssl",
+        "2019-12-05",
+        "UploadCertificate",
+        "",
+        body,
+        &id,
+        &key,
+    )
+    .await?;
+    v.get("CertificateId")
+        .and_then(|x| x.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "腾讯云上传证书成功但未返回 CertificateId".to_string())
+}
+
+async fn deploy_tencent_ssl(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+) -> Result<(), String> {
+    tencent_upload_cert(node, cert, pems, target).await.map(|_| ())
+}
+
+async fn deploy_tencent_clb(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+) -> Result<(), String> {
+    let (id, key, region) = tencent_auth(node)?;
+    if region.is_empty() {
+        return Err("腾讯云 CLB 节点缺少 region".into());
+    }
+    let lb = load_balancer_id(node)?;
+    let port = listener_port(node)?;
+    let v = tencent_rpc(
+        "clb.tencentcloudapi.com",
+        "clb",
+        "2017-03-12",
+        "DescribeListeners",
+        &region,
+        serde_json::json!({ "LoadBalancerId": lb }),
+        &id,
+        &key,
+    )
+    .await?;
+    let listeners = v
+        .get("Listeners")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let listener = listeners
+        .iter()
+        .find(|l| {
+            l.get("Port").and_then(|x| x.as_i64()) == Some(port as i64)
+                || l.get("ListenerPort").and_then(|x| x.as_i64()) == Some(port as i64)
+        })
+        .and_then(|l| l.get("ListenerId").and_then(|x| x.as_str()))
+        .ok_or_else(|| format!("未找到端口 {} 的 CLB 监听", port))?
+        .to_string();
+    let cert_id = tencent_upload_cert(node, cert, pems, target).await?;
+    tencent_rpc(
+        "clb.tencentcloudapi.com",
+        "clb",
+        "2017-03-12",
+        "ModifyListener",
+        &region,
+        serde_json::json!({
+            "LoadBalancerId": lb,
+            "ListenerId": listener,
+            "Certificate": { "SSLMode": "UNIDIRECTIONAL", "CertId": cert_id }
+        }),
+        &id,
+        &key,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn deploy_tencent_cdn(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+) -> Result<(), String> {
+    if target.trim().is_empty() {
+        return Err("腾讯云 CDN 部署需要在域名列表关联时填写目标域名".into());
+    }
+    let (id, key, region) = tencent_auth(node)?;
+    let cert_id = tencent_upload_cert(node, cert, pems, target).await?;
+    // 先打开 HTTPS，再替换证书
+    let _ = tencent_rpc(
+        "cdn.tencentcloudapi.com",
+        "cdn",
+        "2018-03-09",
+        "ModifyDomainConfig",
+        &region,
+        serde_json::json!({
+            "Domain": target.trim(),
+            "Route": "Https.Switch",
+            "Value": "{\"update\":\"on\"}"
+        }),
+        &id,
+        &key,
+    )
+    .await;
+    tencent_rpc(
+        "cdn.tencentcloudapi.com",
+        "cdn",
+        "2018-03-09",
+        "ModifyDomainConfig",
+        &region,
+        serde_json::json!({
+            "Domain": target.trim(),
+            "Route": "Https.CertInfo.CertId",
+            "Value": format!("{{\"update\":\"{}\"}}", cert_id)
+        }),
+        &id,
+        &key,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn deploy_qiniu_ssl(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+) -> Result<(), String> {
+    let ak = cfg(node, "access_key");
+    let sk = cfg(node, "secret_key");
+    if ak.is_empty() || sk.is_empty() {
+        return Err("七牛 SSL 节点缺少 AccessKey / SecretKey".into());
+    }
+    let name = {
+        let configured = cfg(node, "cert_name");
+        if configured.is_empty() {
+            cert_name_for(cert, target, &cert.id)
+        } else {
+            format!("{}-{}", configured, Utc::now().format("%Y%m%d%H%M%S"))
+        }
+    };
+    let body = serde_json::json!({
+        "name": name,
+        "pri": pems.1,
+        "ca": pems.0,
+    });
+    let body_text = serde_json::to_string(&body).map_err(|e| e.to_string())?;
+    let key = format!("{}&", sk);
+    let mut mac = <HmacSha1 as Mac>::new_from_slice(key.as_bytes()).unwrap();
+    mac.update(format!("/sslcert\n{}", body_text).as_bytes());
+    let sign = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+
+    let resp = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?
+        .post("https://fusion.qiniuapi.com/sslcert")
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .header(
+            reqwest::header::AUTHORIZATION,
+            format!("QBox {}:{}", ak, sign),
+        )
+        .body(body_text)
+        .send()
+        .await
+        .map_err(|e| format!("调用七牛证书服务失败: {}", e))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    let v: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|_| format!("七牛返回非 JSON ({}): {}", status, text.trim()))?;
+    if v.get("certID").and_then(|x| x.as_str()).is_some() {
+        return Ok(());
+    }
+    if let Some(code) = v.get("code").and_then(|x| x.as_i64()) {
+        return Err(format!(
+            "七牛上传证书失败: {} - {}",
+            code,
+            v.get("error").and_then(|x| x.as_str()).unwrap_or("")
+        ));
+    }
+    if !status.is_success() {
+        return Err(format!("七牛返回 {}: {}", status, text.trim()));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 第三方面板：1Panel / 群晖 DSM / 又拍云
+// ---------------------------------------------------------------------------
+
+fn one_panel_base(raw: &str) -> String {
+    let mut u = http_base_url(raw);
+    if !u.is_empty() && !u.ends_with("/api/v1") {
+        while u.ends_with('/') {
+            u.pop();
+        }
+        u.push_str("/api/v1");
+    }
+    u
+}
+
+async fn one_panel_post(
+    base: &str,
+    path: &str,
+    api_key: &str,
+    body: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    // 1Panel：Timestamp 为 Unix 秒，Token = md5("1panel" + api_key + timestamp)
+    let ts = Utc::now().timestamp().to_string();
+    let token = format!("{:x}", md5::compute(format!("1panel{}{}", api_key, ts).as_bytes()));
+    let resp = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?
+        .post(format!("{}{}", base, path))
+        .header("1Panel-Token", token)
+        .header("1Panel-Timestamp", ts)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("调用 1Panel 失败: {}", e))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    let v: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|_| format!("1Panel 返回非 JSON ({}): {}", status, text.trim()))?;
+    if let Some(code) = v.get("code").and_then(|x| x.as_i64()) {
+        if code != 200 {
+            return Err(format!(
+                "1Panel {} 失败: {} - {}",
+                path,
+                code,
+                v.get("message").and_then(|x| x.as_str()).unwrap_or("")
+            ));
+        }
+    }
+    if !status.is_success() {
+        return Err(format!("1Panel 返回 {}: {}", status, text.trim()));
+    }
+    Ok(v)
+}
+
+fn json_id_str(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+async fn deploy_one_panel(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+) -> Result<(), String> {
+    let base = one_panel_base(&cfg(node, "url"));
+    let api_key = cfg(node, "api_key");
+    if base.is_empty() || api_key.is_empty() {
+        return Err("1Panel 节点缺少面板地址或 API 密钥".into());
+    }
+    if cfg(node, "scope") == "panel" {
+        one_panel_post(
+            &base,
+            "/settings/ssl/update",
+            &api_key,
+            serde_json::json!({
+                "ssl": "enable",
+                "sslType": "import-paste",
+                "cert": pems.0,
+                "key": pems.1,
+                "autoRestart": "true"
+            }),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let domain = if target.trim().is_empty() {
+        cert.domains.first().cloned().unwrap_or_default()
+    } else {
+        target.trim().to_string()
+    };
+    if domain.is_empty() {
+        return Err("1Panel 网站 SSL 需要在域名列表关联时填写目标域名".into());
+    }
+    let description = cert_name_for(cert, &domain, &cert.id);
+
+    // 1) 上传证书（paste）；2) 查回刚上传的 SSL 记录 ID
+    one_panel_post(
+        &base,
+        "/websites/ssl/upload",
+        &api_key,
+        serde_json::json!({
+            "type": "paste",
+            "description": description,
+            "certificate": pems.0,
+            "privateKey": pems.1
+        }),
+    )
+    .await?;
+    let ssl_list = one_panel_post(
+        &base,
+        "/websites/ssl/search",
+        &api_key,
+        serde_json::json!({ "page": 1, "pageSize": 100, "orderBy": "created_at", "order": "desc" }),
+    )
+    .await?;
+    let ssl_items = ssl_list
+        .pointer("/data/items")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default();
+    // 优先按 description 匹配；新版可能改写描述，退回最新一条（列表已按创建时间倒序）
+    let ssl_id = ssl_items
+        .iter()
+        .find(|i| i.get("description").and_then(|d| d.as_str()) == Some(description.as_str()))
+        .or_else(|| ssl_items.first())
+        .and_then(|i| i.get("id"))
+        .map(json_id_str)
+        .ok_or_else(|| "1Panel 上传证书后未找到 SSL 记录".to_string())?;
+
+    // 3) 按域名找到网站 ID
+    let sites = one_panel_post(
+        &base,
+        "/websites/search",
+        &api_key,
+        serde_json::json!({ "page": 1, "pageSize": 10, "name": domain }),
+    )
+    .await?;
+    let site_id = sites
+        .pointer("/data/items")
+        .and_then(|x| x.as_array())
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|i| i.get("name").and_then(|n| n.as_str()) == Some(domain.as_str()))
+                .or_else(|| items.first())
+        })
+        .and_then(|i| i.get("id"))
+        .map(json_id_str)
+        .ok_or_else(|| format!("1Panel 中未找到网站：{}", domain))?;
+
+    // 4) 绑定证书并开启 HTTPS
+    let qid: serde_json::Value = site_id
+        .parse::<i64>()
+        .map(|n| serde_json::json!(n))
+        .unwrap_or_else(|_| serde_json::json!(site_id));
+    let qssl: serde_json::Value = ssl_id
+        .parse::<i64>()
+        .map(|n| serde_json::json!(n))
+        .unwrap_or_else(|_| serde_json::json!(ssl_id));
+    one_panel_post(
+        &base,
+        &format!("/websites/{}/https", site_id),
+        &api_key,
+        serde_json::json!({
+            "websiteId": qid,
+            "enable": true,
+            "type": "existed",
+            "websiteSSLId": qssl,
+            "httpConfig": "HTTPToHTTPS",
+            "SSLProtocol": [],
+            "algorithm": ""
+        }),
+    )
+    .await?;
+    Ok(())
+}
+
+// --- 群晖 DSM ---
+
+fn synology_base(node: &DeployNode) -> String {
+    http_base_url(&cfg(node, "url"))
+}
+
+async fn synology_login(node: &DeployNode) -> Result<(String, String, String), String> {
+    let base = synology_base(node);
+    let account = cfg(node, "username");
+    let passwd = cfg(node, "password");
+    if base.is_empty() || account.is_empty() || passwd.is_empty() {
+        return Err("群晖节点缺少地址 / 账号 / 密码".into());
+    }
+    let mut query = vec![
+        ("api", "SYNO.API.Auth".to_string()),
+        ("version", "6".to_string()),
+        ("method", "login".to_string()),
+        ("format", "sid".to_string()),
+        ("account", account),
+        ("passwd", passwd),
+        ("session", "Certificate".to_string()),
+        ("enable_syno_token", "yes".to_string()),
+    ];
+    let otp = cfg(node, "otp_code");
+    if !otp.is_empty() {
+        query.push(("otp_code", otp));
+    }
+    let resp = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| e.to_string())?
+        .get(format!("{}/webapi/auth.cgi", base))
+        .query(&query)
+        .send()
+        .await
+        .map_err(|e| format!("连接群晖失败: {}", e))?;
+    let text = resp.text().await.unwrap_or_default();
+    let v: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|_| format!("群晖返回非 JSON: {}", text.chars().take(200).collect::<String>()))?;
+    if v.get("success").and_then(|x| x.as_bool()) != Some(true) {
+        let code = v.pointer("/error/code").and_then(|x| x.as_i64()).unwrap_or(-1);
+        return Err(format!("群晖登录失败（错误码 {}）", code));
+    }
+    let sid = v
+        .pointer("/data/sid")
+        .and_then(|x| x.as_str())
+        .unwrap_or_default()
+        .to_string();
+    if sid.is_empty() {
+        return Err("群晖登录成功但未返回 sid".to_string());
+    }
+    let token = v
+        .pointer("/data/synotoken")
+        .and_then(|x| x.as_str())
+        .unwrap_or_default()
+        .to_string();
+    Ok((base, sid, token))
+}
+
+async fn synology_cert_id(
+    base: &str,
+    sid: &str,
+    node: &DeployNode,
+) -> Result<String, String> {
+    let configured = cfg(node, "cert_id");
+    if !configured.is_empty() {
+        return Ok(configured);
+    }
+    let resp = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| e.to_string())?
+        .post(format!("{}/webapi/entry.cgi", base))
+        .form(&[
+            ("api", "SYNO.Core.Certificate.CRT"),
+            ("method", "list"),
+            ("version", "1"),
+            ("_sid", sid),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("获取群晖证书列表失败: {}", e))?;
+    let text = resp.text().await.unwrap_or_default();
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+    let certs = v
+        .pointer("/data/certificates")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default();
+    // 优先默认证书（系统正在使用的那张），否则第一张
+    certs
+        .iter()
+        .find(|c| c.get("is_default").and_then(|x| x.as_bool()) == Some(true))
+        .or_else(|| certs.first())
+        .and_then(|c| c.get("id"))
+        .map(json_id_str)
+        .ok_or_else(|| "群晖中未找到可用的证书，请在节点配置里填写证书 ID".to_string())
+}
+
+async fn deploy_synology(
+    node: &DeployNode,
+    _cert: &Certificate,
+    pems: &(String, String, String),
+    _target: &str,
+) -> Result<(), String> {
+    let (base, sid, token) = synology_login(node).await?;
+    let cert_id = synology_cert_id(&base, &sid, node).await?;
+
+    // cert 只放叶子证书，中间链放 inter_cert
+    let leaf = pem_first_block(&pems.0);
+    let chain = pems.0.replacen(leaf.as_str(), "", 1);
+    let mut form = reqwest::multipart::Form::new()
+        .text("id", cert_id)
+        .text("desc", cert_name_for(_cert, "", &_cert.id))
+        .text("key", pems.1.clone())
+        .text("cert", leaf)
+        .text("inter_cert", chain);
+    if cfg(node, "as_default") == "true" {
+        form = form.text("as_default", "true");
+    }
+    let resp = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| e.to_string())?
+        .post(format!("{}/webapi/entry.cgi", base))
+        .query(&[
+            ("api", "SYNO.Core.Certificate"),
+            ("method", "import"),
+            ("version", "1"),
+            ("_sid", sid.as_str()),
+            ("SynoToken", token.as_str()),
+        ])
+        .header("X-SYNO-TOKEN", token)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("导入群晖证书失败: {}", e))?;
+    let text = resp.text().await.unwrap_or_default();
+    let v: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|_| format!("群晖返回非 JSON: {}", text.chars().take(200).collect::<String>()))?;
+    if v.get("success").and_then(|x| x.as_bool()) != Some(true) {
+        let code = v.pointer("/error/code").and_then(|x| x.as_i64()).unwrap_or(-1);
+        return Err(format!("群晖导入证书失败（错误码 {}）", code));
+    }
+    Ok(())
+}
+
+// --- 又拍云（控制台会话） ---
+
+async fn upyun_login(node: &DeployNode) -> Result<String, String> {
+    let username = cfg(node, "username");
+    let password = cfg(node, "password");
+    if username.is_empty() || password.is_empty() {
+        return Err("又拍云节点缺少账号 / 密码".into());
+    }
+    let resp = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| e.to_string())?
+        .post("https://console.upyun.com/accounts/signin/")
+        .json(&serde_json::json!({ "username": username, "password": password }))
+        .send()
+        .await
+        .map_err(|e| format!("登录又拍云失败: {}", e))?;
+    let status = resp.status();
+    let cookies: Vec<String> = resp
+        .headers()
+        .get_all(reqwest::header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .filter_map(|v| v.split(';').next())
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .collect();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("登录又拍云失败 ({}): {}", status, text.trim()));
+    }
+    if cookies.is_empty() {
+        return Err("又拍云登录成功但未返回会话 Cookie（可能需要二次验证）".to_string());
+    }
+    Ok(cookies.join("; "))
+}
+
+async fn upyun_upload_cert(pems: &(String, String, String), cookie: &str) -> Result<String, String> {
+    let resp = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?
+        .post("https://console.upyun.com/api/https/certificate/")
+        .header(reqwest::header::COOKIE, cookie)
+        .json(&serde_json::json!({
+            "certificate": pems.0,
+            "private_key": pems.1
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("上传又拍云证书失败: {}", e))?;
+    let text = resp.text().await.unwrap_or_default();
+    let v: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|_| format!("又拍云返回非 JSON: {}", text.chars().take(200).collect::<String>()))?;
+    v.pointer("/data/result/certificate_id")
+        .map(json_id_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| format!("又拍云上传证书失败: {}", text.chars().take(300).collect::<String>()))
+}
+
+async fn deploy_upyun(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+) -> Result<(), String> {
+    let domain = if target.trim().is_empty() {
+        cert.domains.first().cloned().unwrap_or_default()
+    } else {
+        target.trim().to_string()
+    };
+    if domain.is_empty() {
+        return Err("又拍云部署需要在域名列表关联时填写目标域名".into());
+    }
+    let cookie = upyun_login(node).await?;
+    let cert_id = upyun_upload_cert(pems, &cookie).await?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    // 未开 HTTPS 的域名绑定证书
+    let bind = client
+        .post("https://console.upyun.com/api/https/certificate/manager")
+        .header(reqwest::header::COOKIE, &cookie)
+        .json(&serde_json::json!({
+            "certificate_id": cert_id,
+            "domain": domain,
+            "https": true,
+            "force_https": true
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("绑定又拍云证书失败: {}", e))?;
+    let status = bind.status();
+    let text = bind.text().await.unwrap_or_default();
+    if status.is_success() {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+            if v.get("code").and_then(|x| x.as_i64()).unwrap_or(0) == 0 {
+                return Ok(());
+            }
+        } else {
+            return Ok(());
+        }
+    }
+    // 已启用 HTTPS 的域名使用换证接口重试
+    let migrate = client
+        .post("https://console.upyun.com/api/https/migrate/domain")
+        .header(reqwest::header::COOKIE, &cookie)
+        .json(&serde_json::json!({ "crt_id": cert_id, "domain_name": domain }))
+        .send()
+        .await
+        .map_err(|e| format!("又拍云换证失败: {}", e))?;
+    let mstatus = migrate.status();
+    let mtext = migrate.text().await.unwrap_or_default();
+    if !mstatus.is_success() {
+        return Err(format!(
+            "又拍云绑定证书失败 ({}): {}",
+            mstatus,
+            mtext.chars().take(300).collect::<String>()
+        ));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 更多云厂商：百度智能云 / 华为云 / 火山引擎 / 多吉云 / 阿里云 OSS / 函数计算
+// ---------------------------------------------------------------------------
+
+fn hmac_sha1_hex(key: &[u8], msg: &str) -> String {
+    let mut mac = <HmacSha1 as Mac>::new_from_slice(key).unwrap();
+    mac.update(msg.as_bytes());
+    mac.finalize()
+        .into_bytes()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect()
+}
+
+fn sorted_canonical_headers(headers: &[(String, String)]) -> (String, String) {
+    let mut hs = headers.to_vec();
+    hs.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    let canonical = hs
+        .iter()
+        .map(|(k, v)| format!("{}:{}\n", k.to_lowercase(), v.trim()))
+        .collect::<String>();
+    let signed = hs
+        .iter()
+        .map(|(k, _)| k.to_lowercase())
+        .collect::<Vec<_>>()
+        .join(";");
+    (canonical, signed)
+}
+
+/// 百度智能云 BCE 签名（bce-auth-v1 / HMAC-SHA256；V1 规范不签 body）。
+fn bce_headers(
+    method: &str,
+    uri: &str,
+    query: &str,
+    mut headers: Vec<(String, String)>,
+    ak: &str,
+    sk: &str,
+) -> Vec<(String, String)> {
+    let ts = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    headers.push(("x-bce-date".into(), ts.clone()));
+    let (canonical_headers, signed_headers) = sorted_canonical_headers(&headers);
+    let canonical_request = format!(
+        "{}\n{}\n{}\n{}",
+        method, uri, query, canonical_headers
+    );
+    let auth_prefix = format!("bce-auth-v1/{}/{}/1800", ak, ts);
+    let signing_key = hex(&hmac_sha256(sk.as_bytes(), &auth_prefix));
+    let signature = hex(&hmac_sha256(
+        signing_key.as_bytes(),
+        &format!(
+            "{}\n{}",
+            auth_prefix,
+            hex(&Sha256::digest(canonical_request.as_bytes()))
+        ),
+    ));
+    headers.push((
+        "Authorization".into(),
+        format!("{}/{}/{}", auth_prefix, signed_headers, signature),
+    ));
+    headers
+}
+
+async fn deploy_baidu_cdn(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+) -> Result<(), String> {
+    if target.trim().is_empty() {
+        return Err("百度智能云 CDN 需要在域名列表关联时填写目标域名".into());
+    }
+    let (ak, sk) = ak_sk(node, "百度智能云")?;
+    let domain = target.trim();
+    let uri = format!("/v2/{}/certificates", domain);
+    let leaf = pem_first_block(&pems.0);
+    let chain = pems.0.replacen(leaf.as_str(), "", 1);
+    let body = serde_json::json!({
+        "httpsEnable": "ON",
+        "certificate": {
+            "certName": cert_name_for(cert, domain, &cert.id),
+            "certServerData": leaf,
+            "certPrivateData": pems.1,
+            "certLinkData": chain
+        }
+    });
+    let body_text = serde_json::to_string(&body).map_err(|e| e.to_string())?;
+    let headers = bce_headers(
+        "PUT",
+        &uri,
+        "",
+        vec![
+            ("host".into(), "cdn.baidubce.com".into()),
+            ("content-type".into(), "application/json".into()),
+        ],
+        &ak,
+        &sk,
+    );
+    let mut req = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?
+        .put(format!("https://cdn.baidubce.com{}", uri));
+    for (k, v) in headers {
+        req = req.header(k, v);
+    }
+    let resp = req
+        .body(body_text)
+        .send()
+        .await
+        .map_err(|e| format!("调用百度智能云 CDN 失败: {}", e))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!(
+            "百度智能云 CDN 返回 {}: {}",
+            status,
+            text.chars().take(300).collect::<String>()
+        ));
+    }
+    Ok(())
+}
+
+/// 华为云 AK/SK 签名（SDK-HMAC-SHA256）。
+fn huawei_headers(
+    method: &str,
+    uri: &str,
+    query: &str,
+    mut headers: Vec<(String, String)>,
+    body: &[u8],
+    ak: &str,
+    sk: &str,
+) -> Vec<(String, String)> {
+    let date = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    headers.push(("X-Sdk-Date".into(), date.clone()));
+    let (canonical_headers, signed_headers) = sorted_canonical_headers(&headers);
+    let canonical_request = format!(
+        "{}\n{}\n{}\n{}\n{}\n{}",
+        method,
+        uri,
+        query,
+        canonical_headers,
+        signed_headers,
+        hex(&Sha256::digest(body))
+    );
+    let string_to_sign = format!(
+        "SDK-HMAC-SHA256\n{}\n{}",
+        date,
+        hex(&Sha256::digest(canonical_request.as_bytes()))
+    );
+    let signature = hex(&hmac_sha256(sk.as_bytes(), &string_to_sign));
+    headers.push((
+        "Authorization".into(),
+        format!(
+            "SDK-HMAC-SHA256 Access={}, SignedHeaders={}, Signature={}",
+            ak, signed_headers, signature
+        ),
+    ));
+    headers
+}
+
+async fn deploy_huawei_cdn(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+) -> Result<(), String> {
+    if target.trim().is_empty() {
+        return Err("华为云 CDN 需要在域名列表关联时填写目标域名".into());
+    }
+    let (ak, sk) = ak_sk(node, "华为云")?;
+    let domain = target.trim();
+    let uri = "/v1.0/cdn/domains/config-https-info";
+    let query = "enterprise_project_id=all";
+    let body = serde_json::json!({
+        "https": {
+            "domain_name": domain,
+            "https_switch": 1,
+            "cert_name": cert_name_for(cert, domain, &cert.id),
+            "certificate": pems.0,
+            "private_key": pems.1,
+            "certificate_type": 0
+        }
+    });
+    let body_text = serde_json::to_string(&body).map_err(|e| e.to_string())?;
+    let headers = huawei_headers(
+        "PUT",
+        uri,
+        query,
+        vec![
+            ("content-type".into(), "application/json".into()),
+            ("host".into(), "cdn.myhuaweicloud.com".into()),
+        ],
+        body_text.as_bytes(),
+        &ak,
+        &sk,
+    );
+    let mut req = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?
+        .put(format!("https://cdn.myhuaweicloud.com{}?{}", uri, query));
+    for (k, v) in headers {
+        req = req.header(k, v);
+    }
+    let resp = req
+        .body(body_text)
+        .send()
+        .await
+        .map_err(|e| format!("调用华为云 CDN 失败: {}", e))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!(
+            "华为云 CDN 返回 {}: {}",
+            status,
+            text.chars().take(300).collect::<String>()
+        ));
+    }
+    Ok(())
+}
+
+/// 火山引擎 V4 签名（service=cdn, region=cn-north-1）。
+fn volc_headers(
+    method: &str,
+    uri: &str,
+    query: &str,
+    mut headers: Vec<(String, String)>,
+    body: &[u8],
+    ak: &str,
+    sk: &str,
+) -> Vec<(String, String)> {
+    let date = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let short = &date[..8];
+    headers.push(("X-Date".into(), date.clone()));
+    let (canonical_headers, signed_headers) = sorted_canonical_headers(&headers);
+    let canonical_request = format!(
+        "{}\n{}\n{}\n{}\n{}\n{}",
+        method,
+        uri,
+        query,
+        canonical_headers,
+        signed_headers,
+        hex(&Sha256::digest(body))
+    );
+    let scope = format!("{}/cn-north-1/cdn/request", short);
+    let string_to_sign = format!(
+        "HMAC-SHA256\n{}\n{}\n{}",
+        date,
+        scope,
+        hex(&Sha256::digest(canonical_request.as_bytes()))
+    );
+    let k_date = hmac_sha256(sk.as_bytes(), short);
+    let k_region = hmac_sha256(&k_date, "cn-north-1");
+    let k_service = hmac_sha256(&k_region, "cdn");
+    let k_signing = hmac_sha256(&k_service, "request");
+    let signature = hex(&hmac_sha256(&k_signing, &string_to_sign));
+    headers.push((
+        "Authorization".into(),
+        format!(
+            "HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
+            ak, scope, signed_headers, signature
+        ),
+    ));
+    headers
+}
+
+async fn volc_call(
+    node: &DeployNode,
+    action: &str,
+    body: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let (ak, sk) = ak_sk(node, "火山引擎")?;
+    let query = format!("Action={}&Version=2021-03-01", action);
+    let body_text = serde_json::to_string(&body).map_err(|e| e.to_string())?;
+    let headers = volc_headers(
+        "POST",
+        "/",
+        &query,
+        vec![
+            ("content-type".into(), "application/json".into()),
+            ("host".into(), "cdn.volcengineapi.com".into()),
+        ],
+        body_text.as_bytes(),
+        &ak,
+        &sk,
+    );
+    let mut req = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?
+        .post(format!("https://cdn.volcengineapi.com/?{}", query));
+    for (k, v) in headers {
+        req = req.header(k, v);
+    }
+    let resp = req
+        .body(body_text)
+        .send()
+        .await
+        .map_err(|e| format!("调用火山引擎 {} 失败: {}", action, e))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+    if let Some(err) = v.pointer("/ResponseMetadata/Error") {
+        return Err(format!(
+            "火山引擎 {} 失败: {} - {}",
+            action,
+            err.get("Code").and_then(|x| x.as_str()).unwrap_or(""),
+            err.get("Message").and_then(|x| x.as_str()).unwrap_or("")
+        ));
+    }
+    if !status.is_success() {
+        return Err(format!(
+            "火山引擎 {} 返回 {}: {}",
+            action,
+            status,
+            text.chars().take(300).collect::<String>()
+        ));
+    }
+    Ok(v)
+}
+
+async fn deploy_volcengine_cdn(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+) -> Result<(), String> {
+    if target.trim().is_empty() {
+        return Err("火山引擎 CDN 需要在域名列表关联时填写目标域名".into());
+    }
+    let domain = target.trim();
+    let uploaded = volc_call(
+        node,
+        "AddCertificate",
+        serde_json::json!({
+            "Certificate": pems.0,
+            "PrivateKey": pems.1,
+            "Source": "volc_cert_center",
+            "CertType": "server_cert",
+            "Desc": cert_name_for(cert, domain, &cert.id)
+        }),
+    )
+    .await?;
+    let cert_id = uploaded
+        .pointer("/Result/CertId")
+        .map(json_id_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "火山引擎上传证书成功但未返回 CertId".to_string())?;
+    volc_call(
+        node,
+        "UpdateCdnConfig",
+        serde_json::json!({
+            "Domain": domain,
+            "HTTPS": { "Switch": true, "CertInfo": { "CertId": cert_id } }
+        }),
+    )
+    .await?;
+    Ok(())
+}
+
+/// 多吉云：Authorization: TOKEN {AK}:{hmac_sha1_hex(SK, uri + "\n" + body)}
+async fn doge_call(path: &str, body: serde_json::Value, ak: &str, sk: &str) -> Result<serde_json::Value, String> {
+    let body_text = serde_json::to_string(&body).map_err(|e| e.to_string())?;
+    let sign = hmac_sha1_hex(sk.as_bytes(), &format!("{}\n{}", path, body_text));
+    let resp = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?
+        .post(format!("https://api.dogecloud.com{}", path))
+        .header(reqwest::header::AUTHORIZATION, format!("TOKEN {}:{}", ak, sign))
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(body_text)
+        .send()
+        .await
+        .map_err(|e| format!("调用多吉云失败: {}", e))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    let v: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|_| format!("多吉云返回非 JSON ({}): {}", status, text.trim()))?;
+    if let Some(code) = v.get("code").and_then(|x| x.as_i64()) {
+        if code != 200 {
+            return Err(format!(
+                "多吉云 {} 失败: {} - {}",
+                path,
+                code,
+                v.get("msg").and_then(|x| x.as_str()).unwrap_or("")
+            ));
+        }
+    }
+    if !status.is_success() {
+        return Err(format!("多吉云返回 {}: {}", status, text.trim()));
+    }
+    Ok(v)
+}
+
+async fn deploy_doge_cdn(
+    node: &DeployNode,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+) -> Result<(), String> {
+    if target.trim().is_empty() {
+        return Err("多吉云 CDN 需要在域名列表关联时填写目标域名".into());
+    }
+    let ak = cfg(node, "access_key");
+    let sk = cfg(node, "secret_key");
+    if ak.is_empty() || sk.is_empty() {
+        return Err("多吉云节点缺少 AccessKey / SecretKey".into());
+    }
+    let domain = target.trim();
+    let uploaded = doge_call(
+        "/cdn/cert/upload.json",
+        serde_json::json!({
+            "note": cert_name_for(cert, domain, &cert.id),
+            "cert": pems.0,
+            "private": pems.1
+        }),
+        &ak,
+        &sk,
+    )
+    .await?;
+    let cert_id = uploaded
+        .pointer("/data/id")
+        .map(json_id_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "多吉云上传证书成功但未返回证书 ID".to_string())?;
+    doge_call(
+        "/cdn/cert/bind.json",
+        serde_json::json!({ "id": cert_id, "domain": domain }),
+        &ak,
+        &sk,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn deploy_aliyun_oss(
+    node: &DeployNode,
+    _cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+) -> Result<(), String> {
+    if target.trim().is_empty() {
+        return Err("阿里云 OSS 需要在域名列表关联时填写目标域名".into());
+    }
+    let bucket = cfg(node, "bucket");
+    let endpoint = cfg(node, "endpoint");
+    let ak = cfg(node, "access_key_id");
+    let sk = cfg(node, "access_key_secret");
+    if bucket.is_empty() || endpoint.is_empty() || ak.is_empty() || sk.is_empty() {
+        return Err("阿里云 OSS 节点缺少 Bucket / Endpoint / AccessKey".into());
+    }
+    let host = http_base_url(&endpoint)
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .to_string();
+    let date = Utc::now().format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+    let content_type = "application/xml";
+    let canonical_resource = format!("/{}/?cname&comp=add", bucket);
+    let string_to_sign = format!("POST\n\n{}\n{}\n{}", content_type, date, canonical_resource);
+    let mut mac = <HmacSha1 as Mac>::new_from_slice(format!("{}&", sk).as_bytes()).unwrap();
+    mac.update(string_to_sign.as_bytes());
+    let signature = B64.encode(mac.finalize().into_bytes());
+    let domain = target.trim();
+    let body = format!(
+        "<BucketCnameConfiguration><Cname><Domain>{}</Domain><CertificateConfiguration><Certificate>{}</Certificate><PrivateKey>{}</PrivateKey><Force>true</Force></CertificateConfiguration></Cname></BucketCnameConfiguration>",
+        domain.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;"),
+        pems.0,
+        pems.1
+    );
+    let resp = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?
+        .post(format!("https://{}.{}/?cname&comp=add", bucket, host))
+        .header(reqwest::header::DATE, date)
+        .header(reqwest::header::CONTENT_TYPE, content_type)
+        .header(
+            reqwest::header::AUTHORIZATION,
+            format!("OSS {}:{}", ak, signature),
+        )
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("调用阿里云 OSS 失败: {}", e))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!(
+            "阿里云 OSS 返回 {}: {}",
+            status,
+            text.chars().take(300).collect::<String>()
+        ));
+    }
+    Ok(())
+}
+
+/// 阿里云 ACS3-HMAC-SHA256 签名（函数计算自定义域名使用）。
+fn acs3_headers(
+    method: &str,
+    path: &str,
+    mut headers: Vec<(String, String)>,
+    body: &[u8],
+    ak: &str,
+    sk: &str,
+) -> Vec<(String, String)> {
+    let date = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let mut nonce = [0u8; 16];
+    let _ = getrandom::getrandom(&mut nonce);
+    headers.push(("x-acs-date".into(), date));
+    headers.push(("x-acs-signature-nonce".into(), hex(&nonce)));
+    headers.push((
+        "x-acs-content-sha256".into(),
+        hex(&Sha256::digest(body)),
+    ));
+    let (canonical_headers, signed_headers) = sorted_canonical_headers(&headers);
+    let canonical_request = format!(
+        "{}\n{}\n\n{}\n{}\n{}",
+        method,
+        path,
+        canonical_headers,
+        signed_headers,
+        hex(&Sha256::digest(body))
+    );
+    let string_to_sign = format!(
+        "ACS3-HMAC-SHA256\n{}",
+        hex(&Sha256::digest(canonical_request.as_bytes()))
+    );
+    let signature = hex(&hmac_sha256(sk.as_bytes(), &string_to_sign));
+    headers.push((
+        "Authorization".into(),
+        format!(
+            "ACS3-HMAC-SHA256 Credential={},SignedHeaders={},Signature={}",
+            ak, signed_headers, signature
+        ),
+    ));
+    headers
+}
+
+async fn deploy_aliyun_fc(
+    node: &DeployNode,
+    _cert: &Certificate,
+    pems: &(String, String, String),
+    target: &str,
+) -> Result<(), String> {
+    if target.trim().is_empty() {
+        return Err("阿里云函数计算需要在域名列表关联时填写自定义域名".into());
+    }
+    let account = cfg(node, "account_id");
+    let region = cfg(node, "region");
+    let ak = cfg(node, "access_key_id");
+    let sk = cfg(node, "access_key_secret");
+    if account.is_empty() || region.is_empty() || ak.is_empty() || sk.is_empty() {
+        return Err("函数计算节点缺少 Account ID / Region / AccessKey".into());
+    }
+    let host = format!("{}.{}.fc.aliyuncs.com", account, region);
+    let domain = target.trim();
+    let path = format!("/2023-03-30/custom-domains/{}", domain);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    // 先读取现有配置，避免 PUT 覆盖路由/TLS 配置
+    let headers = acs3_headers(
+        "GET",
+        &path,
+        vec![("host".into(), host.clone())],
+        b"",
+        &ak,
+        &sk,
+    );
+    let mut get_req = client.get(format!("https://{}{}", host, path));
+    for (k, v) in headers {
+        get_req = get_req.header(k, v);
+    }
+    let existing = get_req.send().await.ok();
+    let mut cfg_json = match existing {
+        Some(r) if r.status().is_success() => r
+            .json::<serde_json::Value>()
+            .await
+            .unwrap_or_else(|_| serde_json::json!({})),
+        _ => serde_json::json!({}),
+    };
+    if !cfg_json.is_object() {
+        cfg_json = serde_json::json!({});
+    }
+    let obj = cfg_json.as_object_mut().unwrap();
+    obj.insert("protocol".into(), serde_json::json!("HTTP,HTTPS"));
+    obj.insert(
+        "certConfig".into(),
+        serde_json::json!({
+            "certName": cert_name_for(_cert, domain, &_cert.id),
+            "certificate": pems.0,
+            "privateKey": pems.1
+        }),
+    );
+    let body_text = serde_json::to_string(&cfg_json).map_err(|e| e.to_string())?;
+    let headers = acs3_headers(
+        "PUT",
+        &path,
+        vec![
+            ("content-type".into(), "application/json".into()),
+            ("host".into(), host.clone()),
+        ],
+        body_text.as_bytes(),
+        &ak,
+        &sk,
+    );
+    let mut req = client.put(format!("https://{}{}", host, path));
+    for (k, v) in headers {
+        req = req.header(k, v);
+    }
+    let resp = req
+        .body(body_text)
+        .send()
+        .await
+        .map_err(|e| format!("调用函数计算失败: {}", e))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!(
+            "函数计算返回 {}: {}",
+            status,
+            text.chars().take(300).collect::<String>()
+        ));
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -904,7 +3204,7 @@ async fn deploy_aliyun(
 
 /// 申请（或续期）指定证书，并部署到其所有关联节点。
 pub async fn issue_and_deploy(cert_id: &str) -> Result<Certificate, String> {
-    let mut certs = load_json::<Certificate>("certificates.json");
+    let mut certs = load_certs();
     let mut nodes = load_json::<DeployNode>("deploy_nodes.json");
     let creds = load_json::<Credential>("credentials.json");
 
@@ -914,15 +3214,22 @@ pub async fn issue_and_deploy(cert_id: &str) -> Result<Certificate, String> {
         .ok_or_else(|| "证书不存在".to_string())?;
     let cert = certs[idx].clone();
 
+    // HTTP 验证不需要 DNS 授权凭据；DNS 验证必须有
     let cred = creds
         .into_iter()
         .find(|c| c.id == cert.credential_id)
-        .ok_or_else(|| "关联凭据不存在".to_string())?;
-    let cred = decrypt_credential(cred);
+        .map(decrypt_credential);
 
     let renew = cert.last_issue_at.is_some();
-    let (crt, key, ca) = run_lego(&cert, &cred, renew)?;
-    let pems = (crt, key, ca);
+    let pems = match run_lego(&cert, cred.as_ref(), renew) {
+        Ok(v) => v,
+        Err(e) => {
+            certs[idx].status = "error".to_string();
+            certs[idx].last_error = Some(e.clone());
+            save_json("certificates.json", &certs);
+            return Err(e);
+        }
+    };
 
     // 更新有效期（从证书 DER 解析 notBefore / notAfter）
     let (not_before, not_after) = extract_validity(&pems.0);
@@ -933,19 +3240,36 @@ pub async fn issue_and_deploy(cert_id: &str) -> Result<Certificate, String> {
     certs[idx].status = "issued".to_string();
     certs[idx].last_error = None;
 
-    // 部署到所有关联节点
-    for nid in &cert.deploy_node_ids {
-        if let Some(node) = find_node(&nodes, nid) {
+    // 域名列表 → 部署方式关联；target 用于 CDN / 负载均衡等需要目标域名的节点
+    let links: Vec<DeployLink> = if cert.deploy_links.is_empty() {
+        cert.deploy_node_ids
+            .iter()
+            .map(|id| DeployLink {
+                node_id: id.clone(),
+                target: String::new(),
+            })
+            .collect()
+    } else {
+        cert.deploy_links.clone()
+    };
+    let default_target = cert.domains.first().cloned().unwrap_or_default();
+    for link in &links {
+        if let Some(node) = find_node(&nodes, &link.node_id) {
             let node = node.clone();
-            match deploy_to_node(&node, &cert, &pems).await {
+            let target = if link.target.trim().is_empty() {
+                default_target.clone()
+            } else {
+                link.target.trim().to_string()
+            };
+            match deploy_to_node(&node, &cert, &pems, &target).await {
                 Ok(()) => {
-                    if let Some(n) = nodes.iter_mut().find(|n| n.id == *nid) {
+                    if let Some(n) = nodes.iter_mut().find(|n| n.id == link.node_id) {
                         n.last_deploy_at = Some(now.clone());
                         n.last_deploy_error = None;
                     }
                 }
                 Err(e) => {
-                    if let Some(n) = nodes.iter_mut().find(|n| n.id == *nid) {
+                    if let Some(n) = nodes.iter_mut().find(|n| n.id == link.node_id) {
                         n.last_deploy_error = Some(e.clone());
                     }
                 }
@@ -1363,7 +3687,7 @@ fn collect_pem_files(cert_dir: &PathBuf) -> HashMap<String, String> {
 /// 查看证书：解析出的详情 + 目录内 PEM 原文。
 #[tauri::command]
 pub fn cert_detail(id: String) -> Result<CertDetail, String> {
-    let certs = load_json::<Certificate>("certificates.json");
+    let certs = load_certs();
     let cert = find_cert(&certs, &id).ok_or_else(|| "证书不存在".to_string())?;
     let cert_dir = ensure_dir().join(&cert.id);
     let prefer = cert.domains.first().map(|s| s.as_str());
@@ -1415,7 +3739,7 @@ fn build_zip(files: &[(String, String)]) -> Result<Vec<u8>, String> {
 /// - `lego/<原名>` lego 原生文件
 #[tauri::command]
 pub fn cert_export_zip(id: String, target_path: String) -> Result<String, String> {
-    let certs = load_json::<Certificate>("certificates.json");
+    let certs = load_certs();
     let cert = find_cert(&certs, &id).ok_or_else(|| "证书不存在".to_string())?;
     let cert_dir = ensure_dir().join(&cert.id);
     let prefer = cert.domains.first().map(|s| s.as_str());
@@ -1457,6 +3781,289 @@ pub fn cert_export_zip(id: String, target_path: String) -> Result<String, String
 }
 
 // ---------------------------------------------------------------------------
+// 证书监控：TLS 到期检查
+// ---------------------------------------------------------------------------
+
+/// 把 DER 编码的证书转成 PEM（复用 parse_cert_detail 的解析入口）。
+fn pem_from_der(der: &[u8]) -> String {
+    let b64 = B64.encode(der);
+    let mut pem = String::from("-----BEGIN CERTIFICATE-----\n");
+    for chunk in b64.as_bytes().chunks(64) {
+        pem.push_str(std::str::from_utf8(chunk).unwrap_or_default());
+        pem.push('\n');
+    }
+    pem.push_str("-----END CERTIFICATE-----\n");
+    pem
+}
+
+/// 解析 `example.com:8443` / `https://example.com` / `[::1]:443` 形式的监控目标。
+fn split_host_port(raw: &str, default_port: u16) -> (String, u16) {
+    let s = raw
+        .trim()
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .trim_end_matches('/');
+    if let Some(rest) = s.strip_prefix('[') {
+        if let Some(idx) = rest.find(']') {
+            let host = rest[..idx].to_string();
+            let port = rest[idx + 1..]
+                .trim_start_matches(':')
+                .parse::<u16>()
+                .unwrap_or(default_port);
+            return (host, port);
+        }
+    }
+    if let Some((h, p)) = s.rsplit_once(':') {
+        if let Ok(port) = p.parse::<u16>() {
+            return (h.to_string(), port);
+        }
+    }
+    (s.to_string(), default_port)
+}
+
+struct TlsProbe {
+    subject: String,
+    issuer: String,
+    not_after: Option<String>,
+}
+
+/// 与目标做 TLS 握手并读取对端证书。
+/// 不校验证书链与主机名：监控只关心到期时间，自签/过期证书同样应被检测到。
+async fn probe_tls(host: &str, port: u16) -> Result<TlsProbe, String> {
+    let addr = if host.contains(':') {
+        format!("[{}]:{}", host, port)
+    } else {
+        format!("{}:{}", host, port)
+    };
+    let tcp = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        tokio::net::TcpStream::connect(&addr),
+    )
+    .await
+    .map_err(|_| format!("连接 {} 超时", addr))?
+    .map_err(|e| format!("连接 {} 失败: {}", addr, e))?;
+
+    let builder = native_tls::TlsConnector::builder()
+        .danger_accept_invalid_certs(true)
+        .danger_accept_invalid_hostnames(true)
+        .build()
+        .map_err(|e| format!("初始化 TLS 失败: {}", e))?;
+    let connector = tokio_native_tls::TlsConnector::from(builder);
+    let stream = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        connector.connect(host, tcp),
+    )
+    .await
+    .map_err(|_| format!("{} TLS 握手超时", addr))?
+    .map_err(|e| format!("{} TLS 握手失败: {}", addr, e))?;
+
+    let cert = stream
+        .get_ref()
+        .peer_certificate()
+        .map_err(|e| format!("读取对端证书失败: {}", e))?
+        .ok_or_else(|| "对端未提供证书".to_string())?;
+    let der = cert.to_der().map_err(|e| format!("证书编码失败: {}", e))?;
+    let detail = parse_cert_detail(&pem_from_der(&der));
+    Ok(TlsProbe {
+        subject: detail.subject.unwrap_or_default(),
+        issuer: detail.issuer.unwrap_or_default(),
+        not_after: detail.not_after,
+    })
+}
+
+/// 剩余天数命中的提醒阈值：返回最小的 `>= days_left` 阈值。
+/// 已过期返回 Some(0)；高于所有阈值返回 None（不提醒）。
+fn notify_bucket(days_left: i64, thresholds: &[i64]) -> Option<i64> {
+    if days_left <= 0 {
+        return Some(0);
+    }
+    let mut sorted: Vec<i64> = thresholds.iter().copied().filter(|d| *d > 0).collect();
+    sorted.sort_unstable();
+    sorted.into_iter().find(|d| days_left <= *d)
+}
+
+async fn check_one_monitor(
+    m: &mut MonitorTarget,
+    channels: &[NotifyChannel],
+    notify: bool,
+) {
+    if !m.enabled {
+        return;
+    }
+    let (host, port) = split_host_port(&m.host, if m.port == 0 { 443 } else { m.port });
+    if host.is_empty() {
+        m.last_error = Some("监控目标缺少域名".to_string());
+        return;
+    }
+    m.last_check_at = Some(Utc::now().to_rfc3339());
+
+    match probe_tls(&host, port).await {
+        Ok(p) => {
+            m.last_error = None;
+            m.subject = p.subject;
+            m.issuer = p.issuer;
+            m.not_after = p.not_after.clone();
+            let days_left = m
+                .not_after
+                .as_ref()
+                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                .map(|d| (d.with_timezone(&Utc) - Utc::now()).num_days());
+            m.days_left = days_left;
+
+            let bucket = days_left.and_then(|d| notify_bucket(d, &m.notify_days));
+            if bucket.is_none() {
+                // 续期成功（剩余天数回到阈值之外）后重置，便于下一次到期重新提醒
+                m.last_notify_bucket = None;
+                return;
+            }
+            if notify && bucket != m.last_notify_bucket {
+                let na = m.not_after.clone().unwrap_or_default();
+                let msg = match days_left {
+                    Some(d) if d >= 0 => format!(
+                        "{}:{} 的证书将在 {} 天后到期（{}），请及时续期。",
+                        host, port, d, na
+                    ),
+                    Some(d) => format!(
+                        "{}:{} 的证书已过期 {} 天（{}）。",
+                        host, port, -d, na
+                    ),
+                    None => format!("{}:{} 无法解析证书有效期（{}）。", host, port, na),
+                };
+                notify_all(channels, "证书到期提醒", &msg).await;
+                m.last_notify_bucket = bucket;
+                m.last_notified_at = Some(Utc::now().to_rfc3339());
+            }
+        }
+        Err(e) => {
+            let first = m.last_error.is_none();
+            m.last_error = Some(e.clone());
+            if notify && first {
+                notify_all(
+                    channels,
+                    "证书监控失败",
+                    &format!("{}:{} 检测失败：{}", host, port, e),
+                )
+                .await;
+            }
+        }
+    }
+}
+
+async fn run_monitor_checks(notify: bool) -> Vec<MonitorTarget> {
+    let mut monitors = load_json::<MonitorTarget>("monitors.json");
+    let channels = load_json::<NotifyChannel>("notify_channels.json");
+    for m in monitors.iter_mut() {
+        check_one_monitor(m, &channels, notify).await;
+    }
+    save_json("monitors.json", &monitors);
+    monitors
+}
+
+// ---------------------------------------------------------------------------
+// 通知渠道
+// ---------------------------------------------------------------------------
+
+async fn notify_send(
+    channel: &NotifyChannel,
+    title: &str,
+    content: &str,
+) -> Result<(), String> {
+    let cfg_get = |k: &str| {
+        channel
+            .config
+            .get(k)
+            .cloned()
+            .unwrap_or_default()
+            .trim()
+            .to_string()
+    };
+    let mut url = cfg_get("url");
+    if url.is_empty() {
+        return Err(format!("通知渠道「{}」缺少 url", channel.name));
+    }
+
+    let body = match channel.channel_type.as_str() {
+        "dingtalk" => {
+            let secret = cfg_get("secret");
+            if !secret.is_empty() {
+                // 钉钉加签：timestamp + "\n" + secret 做 HMAC-SHA256，Base64 后再 URL 编码
+                let ts = Utc::now().timestamp_millis();
+                let sign = B64.encode(hmac_sha256(
+                    secret.as_bytes(),
+                    &format!("{}\n{}", ts, secret),
+                ));
+                let sep = if url.contains('?') { '&' } else { '?' };
+                url = format!("{}{}timestamp={}&sign={}", url, sep, ts, percent_encode(&sign));
+            }
+            serde_json::json!({
+                "msgtype": "markdown",
+                "markdown": { "title": title, "text": format!("### {}\n\n{}", title, content) }
+            })
+        }
+        "wecom" => serde_json::json!({
+            "msgtype": "markdown",
+            "markdown": { "content": format!("**{}**\n\n{}", title, content) }
+        }),
+        "slack" => serde_json::json!({ "text": format!("*{}*\n{}", title, content) }),
+        "discord" => serde_json::json!({ "content": format!("**{}**\n{}", title, content) }),
+        "teams" => serde_json::json!({
+            "@type": "MessageCard",
+            "@context": "https://schema.org/extensions",
+            "summary": title,
+            "themeColor": "0078D7",
+            "sections": [{ "activityTitle": title, "text": content }]
+        }),
+        "webhook" => serde_json::json!({
+            "event": "cert_notify",
+            "title": title,
+            "content": content,
+            "timestamp": Utc::now().to_rfc3339()
+        }),
+        other => return Err(format!("未知通知类型: {}", other)),
+    };
+
+    let mut req = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| e.to_string())?
+        .post(&url)
+        .json(&body);
+    let token = cfg_get("token");
+    if channel.channel_type == "webhook" && !token.is_empty() {
+        req = req.bearer_auth(token);
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("发送通知失败: {}", e))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("通知接口返回 {}: {}", status, text.trim()));
+    }
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+        if let Some(code) = v.get("errcode").and_then(|x| x.as_i64()) {
+            if code != 0 {
+                return Err(format!(
+                    "通知接口返回错误: {} - {}",
+                    code,
+                    v.get("errmsg").and_then(|x| x.as_str()).unwrap_or("")
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn notify_all(channels: &[NotifyChannel], title: &str, content: &str) {
+    for ch in channels.iter().filter(|c| c.enabled) {
+        if let Err(e) = notify_send(ch, title, content).await {
+            eprintln!("[cert] 通知「{}」发送失败: {}", ch.name, e);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 调度器
 // ---------------------------------------------------------------------------
 
@@ -1487,7 +4094,7 @@ pub fn start_scheduler(app: tauri::AppHandle) {
                 if !s.enabled {
                     Vec::new()
                 } else {
-                    let certs = load_json::<Certificate>("certificates.json");
+                    let certs = load_certs();
                     let now = Utc::now();
                     certs
                         .iter()
@@ -1513,15 +4120,35 @@ pub fn start_scheduler(app: tauri::AppHandle) {
                     Ok(_) => (true, "已续期".to_string()),
                     Err(e) => (false, e.clone()),
                 };
+                {
+                    let st = app.state::<CertScheduler>();
+                    let mut s = st.state.lock().unwrap();
+                    s.push_log(SchedulerLogEntry {
+                        at: Utc::now().to_rfc3339(),
+                        cert_id: id.clone(),
+                        action: "renew".into(),
+                        ok,
+                        message: message.clone(),
+                    });
+                }
+                // 续期结果通过已启用的通知渠道推送（未配置渠道时无操作）
+                let channels = load_json::<NotifyChannel>("notify_channels.json");
+                notify_all(
+                    &channels,
+                    if ok { "证书续期成功" } else { "证书续期失败" },
+                    &format!("证书 {}：{}", id, message),
+                )
+                .await;
+            }
+
+            // 到期扫描后顺带检查外部域名证书（同一调度周期）
+            let scheduler_enabled = {
                 let st = app.state::<CertScheduler>();
-                let mut s = st.state.lock().unwrap();
-                s.push_log(SchedulerLogEntry {
-                    at: Utc::now().to_rfc3339(),
-                    cert_id: id.clone(),
-                    action: "renew".into(),
-                    ok,
-                    message,
-                });
+                let s = st.state.lock().unwrap();
+                s.enabled
+            };
+            if scheduler_enabled {
+                run_monitor_checks(true).await;
             }
 
             // 更新运行时间（短锁）
@@ -1540,7 +4167,7 @@ pub fn start_scheduler(app: tauri::AppHandle) {
 
 #[tauri::command]
 pub fn cert_list() -> Vec<Certificate> {
-    let mut certs = load_json::<Certificate>("certificates.json");
+    let mut certs = load_certs();
     // 旧数据补解析：已申请但缺有效期的证书，从本地 PEM 读取
     let mut changed = false;
     for c in certs.iter_mut() {
@@ -1590,8 +4217,24 @@ pub fn cert_create(
     credential_id: String,
     renew_before_days: Option<i64>,
     deploy_node_ids: Option<Vec<String>>,
+    validation: Option<String>,
+    http_port: Option<u16>,
+    deploy_links: Option<Vec<DeployLink>>,
 ) -> Certificate {
-    let mut certs = load_json::<Certificate>("certificates.json");
+    let mut certs = load_certs();
+    let links = deploy_links.unwrap_or_else(|| {
+        deploy_node_ids
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|node_id| DeployLink {
+                node_id,
+                target: String::new(),
+            })
+            .collect()
+    });
+    let node_ids = deploy_node_ids
+        .unwrap_or_else(|| links.iter().map(|l| l.node_id.clone()).collect());
     let cert = Certificate {
         id: gen_id("cert"),
         domains,
@@ -1599,13 +4242,16 @@ pub fn cert_create(
         ca: ca.unwrap_or_else(default_ca),
         dns_provider,
         credential_id,
+        validation: validation.unwrap_or_else(default_validation),
+        http_port: http_port.unwrap_or_else(default_http_port),
         renew_before_days: renew_before_days.unwrap_or_else(default_days),
         not_before: None,
         not_after: None,
         last_issue_at: None,
         status: default_status(),
         last_error: None,
-        deploy_node_ids: deploy_node_ids.unwrap_or_default(),
+        deploy_links: links,
+        deploy_node_ids: node_ids,
     };
     certs.push(cert.clone());
     save_json("certificates.json", &certs);
@@ -1613,20 +4259,75 @@ pub fn cert_create(
 }
 
 #[tauri::command]
-pub fn cert_update_nodes(id: String, deploy_node_ids: Vec<String>) -> Result<(), String> {
-    let mut certs = load_json::<Certificate>("certificates.json");
+pub fn cert_update(
+    id: String,
+    domains: Vec<String>,
+    email: String,
+    ca: String,
+    dns_provider: String,
+    credential_id: String,
+    validation: String,
+    http_port: u16,
+    renew_before_days: i64,
+) -> Result<Certificate, String> {
+    let mut certs = load_certs();
     let c = certs
         .iter_mut()
         .find(|c| c.id == id)
         .ok_or_else(|| "证书不存在".to_string())?;
+    c.domains = domains;
+    c.email = email;
+    c.ca = ca;
+    c.dns_provider = dns_provider;
+    c.credential_id = credential_id;
+    c.validation = validation;
+    c.http_port = http_port.max(1);
+    c.renew_before_days = renew_before_days;
+    let updated = c.clone();
+    save_json("certificates.json", &certs);
+    Ok(updated)
+}
+
+#[tauri::command]
+pub fn cert_update_nodes(id: String, deploy_node_ids: Vec<String>) -> Result<(), String> {
+    let mut certs = load_certs();
+    let c = certs
+        .iter_mut()
+        .find(|c| c.id == id)
+        .ok_or_else(|| "证书不存在".to_string())?;
+    let old = c.deploy_links.clone();
+    c.deploy_links = deploy_node_ids
+        .iter()
+        .map(|node_id| DeployLink {
+            node_id: node_id.clone(),
+            target: old
+                .iter()
+                .find(|l| &l.node_id == node_id)
+                .map(|l| l.target.clone())
+                .unwrap_or_default(),
+        })
+        .collect();
     c.deploy_node_ids = deploy_node_ids;
     save_json("certificates.json", &certs);
     Ok(())
 }
 
 #[tauri::command]
+pub fn cert_update_links(id: String, deploy_links: Vec<DeployLink>) -> Result<(), String> {
+    let mut certs = load_certs();
+    let c = certs
+        .iter_mut()
+        .find(|c| c.id == id)
+        .ok_or_else(|| "证书不存在".to_string())?;
+    c.deploy_node_ids = deploy_links.iter().map(|l| l.node_id.clone()).collect();
+    c.deploy_links = deploy_links;
+    save_json("certificates.json", &certs);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn cert_delete(id: String) {
-    let certs: Vec<Certificate> = load_json::<Certificate>("certificates.json")
+    let certs: Vec<Certificate> = load_certs()
         .into_iter()
         .filter(|c| c.id != id)
         .collect();
@@ -1640,7 +4341,7 @@ pub async fn cert_issue_now(id: String) -> Result<Certificate, String> {
 
 #[tauri::command]
 pub fn cert_get_pem(id: String) -> Result<HashMap<String, String>, String> {
-    let certs = load_json::<Certificate>("certificates.json");
+    let certs = load_certs();
     let cert = find_cert(&certs, &id).ok_or_else(|| "证书不存在".to_string())?;
     Ok(collect_pem_files(&ensure_dir().join(&cert.id)))
 }
@@ -1698,9 +4399,10 @@ pub fn deploy_node_delete(id: String) {
         .collect();
     save_json("deploy_nodes.json", &nodes);
     // 同时解除证书对它的关联
-    let certs: Vec<Certificate> = load_json::<Certificate>("certificates.json")
+    let certs: Vec<Certificate> = load_certs()
         .into_iter()
         .map(|mut c| {
+            c.deploy_links.retain(|l| l.node_id != id);
             c.deploy_node_ids.retain(|d| d != &id);
             c
         })
@@ -1713,14 +4415,14 @@ pub async fn deploy_node_test(id: String) -> Result<String, String> {
     let nodes = load_json::<DeployNode>("deploy_nodes.json");
     let node = find_node(&nodes, &id).ok_or_else(|| "节点不存在".to_string())?;
     match node.node_type.as_str() {
-        "windows" => {
+        "windows" | "api" | "docker" => {
             let url = node.config.get("url").cloned().unwrap_or_default();
             let token = node.config.get("token").cloned().unwrap_or_default();
             let base = windows_base_url(&url);
             if base.is_empty() {
-                return Err("windows 节点缺少 url".into());
+                return Err(format!("{} 节点缺少 url", node.node_type));
             }
-            // 与 deploy_windows 同一基础地址派生 /health（兼容用户填写的 /push 后缀）
+            // 与部署同一基础地址派生 /health（兼容用户填写的 /push 后缀）
             let health = format!("{}/health", base);
             let resp = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(10))
@@ -1732,24 +4434,37 @@ pub async fn deploy_node_test(id: String) -> Result<String, String> {
                 .send()
                 .await
                 .map_err(|e| format!("连接失败: {}", e))?;
-            Ok(format!("Windows 接收端响应 {}", resp.status()))
+            Ok(format!("接收端响应 {}", resp.status()))
         }
-        "linux" => {
-            let host = node.config.get("host").cloned().unwrap_or_default();
-            let port = node.config.get("port").cloned().unwrap_or_else(|| "22".into());
-            let user = node.config.get("user").cloned().unwrap_or_default();
-            let mut ssh_cmd = Command::new("ssh");
-            #[cfg(windows)]
-            ssh_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-            let out = ssh_cmd
-                .args(["-p", &port, &format!("{}@{}", user, host), "echo ok"])
-                .output();
-            match out {
-                Ok(o) if o.status.success() => Ok("Linux SSH 连通".into()),
-                Ok(o) => Err(format!("SSH 失败: {}", String::from_utf8_lossy(&o.stderr))),
+        "ssh" | "linux" => {
+            let auth = ssh_auth(node);
+            let (mut ssh_cmd, target) = ssh_cmd_args(node, &auth, "echo ok")?;
+            match ssh_cmd.output() {
+                Ok(o) if o.status.success() => Ok(format!("SSH 连通（{}）", target)),
+                Ok(o) => Err(format!("SSH 失败: {}", String::from_utf8_lossy(&o.stderr).trim())),
                 Err(e) => Err(format!("无法执行 ssh: {}", e)),
             }
         }
+        "webhook" => {
+            let url = cfg(node, "url");
+            if url.is_empty() {
+                return Err("webhook 节点缺少 url".into());
+            }
+            let resp = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .map_err(|e| e.to_string())?
+                .post(&url)
+                .json(&serde_json::json!({ "event": "test" }))
+                .send()
+                .await
+                .map_err(|e| format!("连接失败: {}", e))?;
+            Ok(format!("Webhook 响应 {}", resp.status()))
+        }
+        "baota" => baota_test(node).await,
+        "aliyun" | "aliyun_ssl" | "tencent_ssl" | "qiniu" | "qiniu_ssl" => Ok(
+            "云厂商类型不支持预检，凭据会在实际部署时校验".to_string(),
+        ),
         other => Ok(format!("节点类型 {} 暂不支持连通性测试", other)),
     }
 }
@@ -1814,7 +4529,7 @@ pub fn cert_scheduler_set(enabled: bool, interval_minutes: Option<u64>, state: t
 
 #[tauri::command]
 pub async fn cert_scheduler_run_now() -> Result<Vec<String>, String> {
-    let certs = load_json::<Certificate>("certificates.json");
+    let certs = load_certs();
     let mut results = Vec::new();
     for c in &certs {
         match issue_and_deploy(&c.id).await {
@@ -1823,6 +4538,178 @@ pub async fn cert_scheduler_run_now() -> Result<Vec<String>, String> {
         }
     }
     Ok(results)
+}
+
+// ---------------------------------------------------------------------------
+// Tauri 命令：证书监控 / 通知渠道
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn monitor_list() -> Vec<MonitorTarget> {
+    load_json("monitors.json")
+}
+
+#[tauri::command]
+pub fn monitor_upsert(
+    id: Option<String>,
+    host: String,
+    port: Option<u16>,
+    note: Option<String>,
+    enabled: Option<bool>,
+    notify_days: Option<Vec<i64>>,
+) -> Result<MonitorTarget, String> {
+    let host = host.trim().to_string();
+    if host.is_empty() {
+        return Err("请填写要监控的域名或 IP".into());
+    }
+    let thresholds = match notify_days {
+        Some(d) => {
+            let mut v: Vec<i64> = d.into_iter().filter(|x| *x > 0).collect();
+            v.sort_unstable();
+            v.dedup();
+            if v.is_empty() { default_notify_days() } else { v }
+        }
+        None => default_notify_days(),
+    };
+    let mut list = load_json::<MonitorTarget>("monitors.json");
+    let mid = id.unwrap_or_else(|| gen_id("mon"));
+    let target = if let Some(pos) = list.iter().position(|m| m.id == mid) {
+        let mut m = list[pos].clone();
+        m.host = host;
+        m.port = port.unwrap_or(m.port);
+        m.note = note.unwrap_or(m.note);
+        m.enabled = enabled.unwrap_or(m.enabled);
+        m.notify_days = thresholds;
+        m
+    } else {
+        MonitorTarget {
+            id: mid.clone(),
+            host,
+            port: port.unwrap_or(443),
+            note: note.unwrap_or_default(),
+            enabled: enabled.unwrap_or(true),
+            notify_days: thresholds,
+            not_after: None,
+            days_left: None,
+            subject: String::new(),
+            issuer: String::new(),
+            last_check_at: None,
+            last_error: None,
+            last_notify_bucket: None,
+            last_notified_at: None,
+        }
+    };
+    if let Some(pos) = list.iter().position(|m| m.id == mid) {
+        list[pos] = target.clone();
+    } else {
+        list.push(target.clone());
+    }
+    save_json("monitors.json", &list);
+    Ok(target)
+}
+
+#[tauri::command]
+pub fn monitor_delete(id: String) {
+    let list: Vec<MonitorTarget> = load_json::<MonitorTarget>("monitors.json")
+        .into_iter()
+        .filter(|m| m.id != id)
+        .collect();
+    save_json("monitors.json", &list);
+}
+
+#[tauri::command]
+pub async fn monitor_check(id: String) -> Result<MonitorTarget, String> {
+    let mut list = load_json::<MonitorTarget>("monitors.json");
+    let channels = load_json::<NotifyChannel>("notify_channels.json");
+    let m = list
+        .iter_mut()
+        .find(|m| m.id == id)
+        .ok_or_else(|| "监控目标不存在".to_string())?;
+    check_one_monitor(m, &channels, true).await;
+    let out = m.clone();
+    save_json("monitors.json", &list);
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn monitor_check_all() -> Vec<MonitorTarget> {
+    run_monitor_checks(true).await
+}
+
+#[tauri::command]
+pub fn notify_channel_list() -> Vec<NotifyChannel> {
+    load_json("notify_channels.json")
+}
+
+#[tauri::command]
+pub fn notify_channel_upsert(
+    id: Option<String>,
+    channel_type: String,
+    name: String,
+    config: HashMap<String, String>,
+    enabled: Option<bool>,
+    note: Option<String>,
+) -> Result<NotifyChannel, String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("请填写通知渠道名称".into());
+    }
+    let url = config.get("url").cloned().unwrap_or_default();
+    if url.trim().is_empty() {
+        return Err("请填写 Webhook 地址".into());
+    }
+    let mut list = load_json::<NotifyChannel>("notify_channels.json");
+    let cid = id.unwrap_or_else(|| gen_id("notify"));
+    let channel = if let Some(pos) = list.iter().position(|c| c.id == cid) {
+        let mut c = list[pos].clone();
+        c.channel_type = channel_type;
+        c.name = name;
+        c.config = config;
+        c.enabled = enabled.unwrap_or(c.enabled);
+        c.note = note.unwrap_or(c.note);
+        c
+    } else {
+        NotifyChannel {
+            id: cid.clone(),
+            channel_type,
+            name,
+            config,
+            enabled: enabled.unwrap_or(true),
+            note: note.unwrap_or_default(),
+        }
+    };
+    if let Some(pos) = list.iter().position(|c| c.id == cid) {
+        list[pos] = channel.clone();
+    } else {
+        list.push(channel.clone());
+    }
+    save_json("notify_channels.json", &list);
+    Ok(channel)
+}
+
+#[tauri::command]
+pub fn notify_channel_delete(id: String) {
+    let list: Vec<NotifyChannel> = load_json::<NotifyChannel>("notify_channels.json")
+        .into_iter()
+        .filter(|c| c.id != id)
+        .collect();
+    save_json("notify_channels.json", &list);
+}
+
+#[tauri::command]
+pub async fn notify_channel_test(id: String) -> Result<String, String> {
+    let list = load_json::<NotifyChannel>("notify_channels.json");
+    let channel = list
+        .iter()
+        .find(|c| c.id == id)
+        .ok_or_else(|| "通知渠道不存在".to_string())?;
+    notify_send(
+        channel,
+        "AnyVersion 测试通知",
+        "这是一条测试消息：证书监控与部署通知已配置成功。",
+    )
+    .await?;
+    Ok("已发送".to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -1943,6 +4830,58 @@ mod tests {
         // 结尾的 /push 段一律剥离（含反向代理子路径场景）：
         // 部署与连通测试从同一 base 派生，保证两者指向同一个接收端
         assert_eq!(windows_base_url("http://h:9000/api/push"), "http://h:9000/api");
+    }
+
+    /// 阿里云 RPC 签名：参数按字典序、RFC3986 编码、POST + `/` 参与签名。
+    /// 期望值由独立实现计算，防止百分号编码或排序被改坏。
+    #[test]
+    fn aliyun_rpc_signature_matches_reference() {
+        let mut p = BTreeMap::new();
+        p.insert("AccessKeyId".to_string(), "ak".to_string());
+        p.insert("Action".to_string(), "UploadUserCertificate".to_string());
+        p.insert(
+            "Cert".to_string(),
+            "-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----".to_string(),
+        );
+        p.insert("Format".to_string(), "JSON".to_string());
+        p.insert(
+            "Key".to_string(),
+            "-----BEGIN PRIVATE KEY-----\nBBB\n-----END PRIVATE KEY-----".to_string(),
+        );
+        p.insert("Name".to_string(), "a.com-2026".to_string());
+        p.insert("SignatureMethod".to_string(), "HMAC-SHA1".to_string());
+        p.insert("SignatureVersion".to_string(), "1.0".to_string());
+        p.insert("SignatureNonce".to_string(), "1234".to_string());
+        p.insert("Timestamp".to_string(), "2026-01-01T00:00:00Z".to_string());
+        p.insert("Version".to_string(), "2020-04-07".to_string());
+        assert_eq!(aliyun_rpc_sign(&p, "sk"), "1Td495sRTleqWu7Jt3Zd65Pvwek=");
+    }
+
+    #[test]
+    fn remote_name_and_cert_name_are_path_safe() {
+        assert_eq!(remote_safe_name("*.a.com"), "_.a.com");
+        assert_eq!(remote_safe_name("../../x"), ".._.._x");
+        let cert = Certificate {
+            id: "cert-1".into(),
+            domains: vec!["a.com".into()],
+            email: String::new(),
+            ca: default_ca(),
+            dns_provider: "alidns".into(),
+            credential_id: String::new(),
+            validation: default_validation(),
+            http_port: 80,
+            renew_before_days: 30,
+            not_before: None,
+            not_after: None,
+            last_issue_at: None,
+            status: default_status(),
+            last_error: None,
+            deploy_links: Vec::new(),
+            deploy_node_ids: Vec::new(),
+        };
+        let name = cert_name_for(&cert, "", "fallback");
+        assert!(name.starts_with("a.com-"));
+        assert!(name.len() <= 63);
     }
 
     fn unique_tmp(prefix: &str) -> PathBuf {
@@ -2073,5 +5012,42 @@ mod tests {
             .read_to_string(&mut s)
             .unwrap();
         assert_eq!(s, "KEY\n");
+    }
+
+    /// 监控目标输入兼容：裸域名、带 scheme、带端口、IPv6 方括号
+    #[test]
+    fn split_host_port_parses_common_forms() {
+        assert_eq!(split_host_port("example.com", 443), ("example.com".into(), 443));
+        assert_eq!(split_host_port("https://example.com/", 443), ("example.com".into(), 443));
+        assert_eq!(split_host_port("example.com:8443", 443), ("example.com".into(), 8443));
+        assert_eq!(split_host_port("  http://a.com:80  ", 443), ("a.com".into(), 80));
+        assert_eq!(split_host_port("[::1]:8443", 443), ("::1".into(), 8443));
+        assert_eq!(split_host_port("[::1]", 443), ("::1".into(), 443));
+    }
+
+    /// 到期提醒按阈值分桶：同一档只提醒一次，续期后自动回到 None
+    #[test]
+    fn notify_bucket_crosses_each_threshold_once() {
+        let t = [1, 3, 7, 14, 30];
+        assert_eq!(notify_bucket(45, &t), None);
+        assert_eq!(notify_bucket(30, &t), Some(30));
+        assert_eq!(notify_bucket(20, &t), Some(30));
+        assert_eq!(notify_bucket(14, &t), Some(14));
+        assert_eq!(notify_bucket(2, &t), Some(3));
+        assert_eq!(notify_bucket(0, &t), Some(0));
+        assert_eq!(notify_bucket(-9, &t), Some(0));
+        assert_eq!(notify_bucket(10, &[]), None);
+    }
+
+    /// 各云厂商签名共用：请求头必须按小写名称排序，值去掉首尾空白
+    #[test]
+    fn canonical_headers_are_lowercased_and_sorted() {
+        let h = vec![
+            ("Host".to_string(), " a.com ".to_string()),
+            ("Content-Type".to_string(), "application/json".to_string()),
+        ];
+        let (canonical, signed) = sorted_canonical_headers(&h);
+        assert_eq!(signed, "content-type;host");
+        assert_eq!(canonical, "content-type:application/json\nhost:a.com\n");
     }
 }

@@ -32,7 +32,7 @@ serde_json = "1.0"
 url = "2.5"
 winreg = "0.52"
 walkdir = "2.5"
-reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli"] }
+reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "multipart"] }
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["macros"] }
 hyper-util = { version = "0.1", features = ["tokio", "client-legacy"] }
@@ -72,6 +72,9 @@ serde_yaml = "0.9"
 encoding_rs = "0.8"
 # 凭据加密（AES-256-GCM）
 aes-gcm = "0.10"
+# 证书监控：与目标端口做 TLS 握手并读取对端证书（Windows 走 schannel）
+native-tls = "0.2"
+tokio-native-tls = "0.3"
 getrandom = "0.2"
 # 无中毒 Mutex
 parking_lot = "0.12"

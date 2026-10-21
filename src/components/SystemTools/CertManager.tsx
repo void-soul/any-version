@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { theamedAlert, alertError } from "../shared/ThemedAlert";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
@@ -16,6 +16,8 @@ import {
   Download,
   Copy,
   Check,
+  Activity,
+  Bell,
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -28,13 +30,25 @@ interface Certificate {
   ca: string;
   dns_provider: string;
   credential_id: string;
+  /** dns / http（cname 需要公网权威 DNS，暂未开放） */
+  validation: string;
+  http_port: number;
   renew_before_days: number;
   not_before?: string | null;
   not_after?: string | null;
   last_issue_at?: string | null;
   status: string;
   last_error?: string | null;
+  /** 域名列表 → 部署方式关联 */
+  deploy_links: DeployLink[];
+  /** 兼容旧数据 */
   deploy_node_ids: string[];
+}
+
+interface DeployLink {
+  node_id: string;
+  /** 目标域名（CDN / 负载均衡等节点使用），为空时取证书首个域名 */
+  target: string;
 }
 
 /** 证书详情（后端 cert_detail 返回）：解析出的展示信息 + 证书目录内 PEM 原文 */
@@ -95,7 +109,34 @@ interface SchedulerState {
   log: SchedulerLogEntry[];
 }
 
-type SubTab = "certs" | "nodes" | "creds" | "sched";
+/** 外部域名/IP 的证书监控目标（与后端 MonitorTarget 对齐） */
+interface MonitorTarget {
+  id: string;
+  host: string;
+  port: number;
+  note: string;
+  enabled: boolean;
+  notify_days: number[];
+  not_after?: string | null;
+  days_left?: number | null;
+  subject: string;
+  issuer: string;
+  last_check_at?: string | null;
+  last_error?: string | null;
+  last_notified_at?: string | null;
+}
+
+/** 通知渠道（与后端 NotifyChannel 对齐） */
+interface NotifyChannel {
+  id: string;
+  type: string;
+  name: string;
+  config: Record<string, string>;
+  enabled: boolean;
+  note: string;
+}
+
+type SubTab = "certs" | "nodes" | "creds" | "sched" | "monitors" | "notify";
 
 // 跨组件卸载持久化：切换子 tab / 离开证书页面再回来时，仍保留上次选中的 tab
 // 与「申请中」状态，避免申请未结束时误以为可再次点击申请。
@@ -116,33 +157,196 @@ function parseKV(text: string): Record<string, string> {
   return out;
 }
 
-// ---- 逐字段规格：部署节点配置 ----
-type FieldSpec = { key: string; label: string; type: "text" | "password"; placeholder?: string };
+// ---- 逐字段规格：部署方式 ----
+// 注意：部署方式只保存「连接 / 凭据 / 资源」信息，**不保存域名**；
+// 域名与部署方式的关联统一在「域名列表」里配置。
+type FieldSpec = {
+  key: string;
+  label: string;
+  type: "text" | "password";
+  placeholder?: string;
+  textarea?: boolean;
+  select?: { value: string; label: string }[];
+};
+
+const AUTH_OPTIONS = [
+  { value: "key", label: "私钥认证" },
+  { value: "password", label: "密码认证（需 sshpass）" },
+];
 
 const NODE_FIELDS: Record<string, FieldSpec[]> = {
-  qiniu: [
-    { key: "access_key", label: "AccessKey", type: "text" },
-    { key: "secret_key", label: "SecretKey", type: "password" },
-    { key: "cdn_domains", label: "CDN 域名（逗号分隔）", type: "text", placeholder: "cdn.example.com" },
+  windows: [
+    { key: "url", label: "接收端地址", type: "text", placeholder: "http://127.0.0.1:9000（/push 可省略）" },
+    { key: "token", label: "共享 Token", type: "password" },
   ],
-  aliyun: [
-    { key: "access_key_id", label: "AccessKey ID", type: "text" },
-    { key: "access_key_secret", label: "AccessKey Secret", type: "password" },
-    { key: "region", label: "Region", type: "text", placeholder: "cn-hangzhou" },
-    { key: "resource_arn", label: "资源 ARN（可选）", type: "text" },
+  api: [
+    { key: "url", label: "接收端地址", type: "text", placeholder: "http://127.0.0.1:9000" },
+    { key: "token", label: "共享 Token", type: "password" },
+    { key: "api_key", label: "客户端 API 密钥", type: "password", placeholder: "与 cert-receiver.toml 的 api_key 一致" },
+  ],
+  docker: [
+    { key: "url", label: "接收端地址", type: "text", placeholder: "http://127.0.0.1:9000" },
+    { key: "token", label: "共享 Token", type: "password" },
+    {
+      key: "container",
+      label: "容器类型",
+      type: "text",
+      select: [
+        { value: "nginx", label: "NGINX" },
+        { value: "httpd", label: "HTTPD" },
+        { value: "openresty", label: "OpenResty" },
+        { value: "custom", label: "自定义" },
+      ],
+    },
+  ],
+  ssh: [
+    { key: "host", label: "主机地址", type: "text", placeholder: "192.168.1.10" },
+    { key: "port", label: "SSH 端口", type: "text", placeholder: "22" },
+    { key: "user", label: "用户名", type: "text", placeholder: "root" },
+    { key: "auth_method", label: "认证方式", type: "text", select: AUTH_OPTIONS },
+    { key: "private_key", label: "私钥路径", type: "text", placeholder: "C:\\Users\\me\\.ssh\\id_rsa" },
+    { key: "password", label: "密码（仅密码认证）", type: "password" },
+    { key: "cert_dir", label: "证书目录", type: "text", placeholder: "/etc/nginx/certificates" },
+    { key: "pre_command", label: "前置命令", type: "text", placeholder: "cd /etc/nginx && mkdir -p certificates", textarea: true },
+    { key: "post_command", label: "后置命令", type: "text", placeholder: "nginx -s reload", textarea: true },
   ],
   linux: [
     { key: "host", label: "主机地址", type: "text", placeholder: "192.168.1.1" },
     { key: "port", label: "SSH 端口", type: "text", placeholder: "22" },
     { key: "user", label: "用户名", type: "text", placeholder: "root" },
-    { key: "cert_path", label: "证书路径", type: "text", placeholder: "/etc/nginx/certs/" },
-    { key: "key_path", label: "私钥路径", type: "text", placeholder: "/etc/nginx/certs/" },
+    { key: "cert_path", label: "证书路径", type: "text", placeholder: "/etc/nginx/certs/cert.pem" },
+    { key: "key_path", label: "私钥路径", type: "text", placeholder: "/etc/nginx/certs/key.pem" },
     { key: "reload_cmd", label: "重载命令", type: "text", placeholder: "nginx -s reload" },
   ],
-  windows: [
-    { key: "url", label: "接收端地址", type: "text", placeholder: "http://192.168.1.10:9000（/push 可省略）" },
-    { key: "token", label: "共享 Token", type: "password" },
+  webhook: [
+    { key: "url", label: "回调地址", type: "text", placeholder: "https://example.com/cert-hook" },
+    { key: "token", label: "回调令牌", type: "password" },
   ],
+  baota: [
+    { key: "url", label: "面板地址", type: "text", placeholder: "http://1.2.3.4:8888" },
+    { key: "api_sk", label: "API 密钥", type: "password", placeholder: "面板设置 → API 接口" },
+    {
+      key: "scope",
+      label: "部署范围",
+      type: "text",
+      select: [
+        { value: "site", label: "网站 SSL（站点名取目标域名）" },
+        { value: "panel", label: "面板 SSL" },
+      ],
+    },
+  ],
+  one_panel: [
+    { key: "url", label: "面板地址", type: "text", placeholder: "http://1.2.3.4:8080" },
+    { key: "api_key", label: "API 密钥", type: "password", placeholder: "面板设置 → API 接口" },
+    {
+      key: "scope",
+      label: "部署范围",
+      type: "text",
+      select: [
+        { value: "site", label: "网站 SSL（站点名取目标域名）" },
+        { value: "panel", label: "面板 SSL" },
+      ],
+    },
+  ],
+  synology: [
+    { key: "url", label: "DSM 地址", type: "text", placeholder: "https://192.168.1.2:5001" },
+    { key: "username", label: "账号", type: "text" },
+    { key: "password", label: "密码", type: "password" },
+    { key: "otp_code", label: "双因素验证码（可选）", type: "text" },
+    { key: "cert_id", label: "证书 ID（留空使用默认证书）", type: "text" },
+    {
+      key: "as_default",
+      label: "设为默认证书",
+      type: "text",
+      select: [
+        { value: "false", label: "否" },
+        { value: "true", label: "是" },
+      ],
+    },
+  ],
+  upyun: [
+    { key: "username", label: "又拍云账号", type: "text" },
+    { key: "password", label: "密码", type: "password" },
+  ],
+  baidu_cdn: [
+    { key: "access_key_id", label: "AccessKey ID", type: "text" },
+    { key: "access_key_secret", label: "Secret Access Key", type: "password" },
+  ],
+  huawei_cdn: [
+    { key: "access_key_id", label: "AccessKey ID", type: "text" },
+    { key: "access_key_secret", label: "Secret Access Key", type: "password" },
+  ],
+  volcengine_cdn: [
+    { key: "access_key_id", label: "AccessKey ID", type: "text" },
+    { key: "access_key_secret", label: "Secret Access Key", type: "password" },
+  ],
+  doge_cdn: [
+    { key: "access_key", label: "AccessKey", type: "text" },
+    { key: "secret_key", label: "SecretKey", type: "password" },
+  ],
+  aliyun_oss: [
+    { key: "bucket", label: "Bucket 名称", type: "text" },
+    { key: "endpoint", label: "Endpoint", type: "text", placeholder: "oss-cn-hangzhou.aliyuncs.com" },
+    { key: "access_key_id", label: "AccessKey ID", type: "text" },
+    { key: "access_key_secret", label: "AccessKey Secret", type: "password" },
+  ],
+  aliyun_fc: [
+    { key: "account_id", label: "阿里云账号 ID", type: "text" },
+    { key: "region", label: "Region", type: "text", placeholder: "cn-hangzhou" },
+    { key: "access_key_id", label: "AccessKey ID", type: "text" },
+    { key: "access_key_secret", label: "AccessKey Secret", type: "password" },
+  ],
+  aliyun_ssl: [
+    { key: "access_key_id", label: "AccessKey ID", type: "text" },
+    { key: "access_key_secret", label: "AccessKey Secret", type: "password" },
+    { key: "cert_name", label: "证书名前缀（可选）", type: "text" },
+  ],
+  tencent_ssl: [
+    { key: "secret_id", label: "SecretId", type: "text" },
+    { key: "secret_key", label: "SecretKey", type: "password" },
+    { key: "region", label: "Region（可选）", type: "text", placeholder: "ap-guangzhou" },
+    { key: "cert_name", label: "证书名前缀（可选）", type: "text" },
+  ],
+  qiniu_ssl: [
+    { key: "access_key", label: "AccessKey", type: "text" },
+    { key: "secret_key", label: "SecretKey", type: "password" },
+    { key: "cert_name", label: "证书名前缀（可选）", type: "text" },
+  ],
+  // 旧版类型（历史数据）：保留可编辑，后端会按新版 SSL 列表接口部署
+  qiniu: [
+    { key: "access_key", label: "AccessKey", type: "text" },
+    { key: "secret_key", label: "SecretKey", type: "password" },
+    { key: "cert_name", label: "证书名前缀（可选）", type: "text" },
+  ],
+  aliyun: [
+    { key: "access_key_id", label: "AccessKey ID", type: "text" },
+    { key: "access_key_secret", label: "AccessKey Secret", type: "password" },
+    { key: "cert_name", label: "证书名前缀（可选）", type: "text" },
+  ],
+};
+
+const NODE_TYPE_LABELS: Record<string, string> = {
+  windows: "Windows 接收端 / Nginx",
+  api: "API 拉取",
+  docker: "Docker 容器拉取",
+  ssh: "SSH",
+  linux: "Linux（旧版路径模式）",
+  webhook: "Webhook",
+  baota: "宝塔面板",
+  one_panel: "1Panel 面板",
+  synology: "群晖 DSM",
+  upyun: "又拍云",
+  baidu_cdn: "百度智能云 CDN",
+  huawei_cdn: "华为云 CDN",
+  volcengine_cdn: "火山引擎 CDN",
+  doge_cdn: "多吉云 CDN",
+  aliyun_oss: "阿里云 OSS",
+  aliyun_fc: "阿里云函数计算",
+  aliyun_ssl: "阿里云 SSL 证书列表",
+  tencent_ssl: "腾讯云 SSL 证书列表",
+  qiniu_ssl: "七牛云 SSL 证书列表",
+  qiniu: "七牛云（旧版）",
+  aliyun: "阿里云（旧版）",
 };
 
 // ---- DNS 服务商标识 → 显示名称 ----
@@ -233,6 +437,8 @@ export default function CertManager() {
           { k: "certs" as const, label: t("certmgr.tabCerts"), icon: ShieldCheck },
           { k: "nodes" as const, label: t("certmgr.tabNodes"), icon: Server },
           { k: "creds" as const, label: t("certmgr.tabCreds"), icon: KeyRound },
+          { k: "monitors" as const, label: t("certmgr.tabMonitors"), icon: Activity },
+          { k: "notify" as const, label: t("certmgr.tabNotify"), icon: Bell },
           { k: "sched" as const, label: t("certmgr.tabSched"), icon: History },
         ]).map(({ k, label, icon: Icon }) => (
           <button
@@ -253,6 +459,8 @@ export default function CertManager() {
         {tab === "certs" && <CertList />}
         {tab === "nodes" && <DeployNodes />}
         {tab === "creds" && <Credentials />}
+        {tab === "monitors" && <MonitorView />}
+        {tab === "notify" && <NotifyView />}
         {tab === "sched" && <SchedulerView />}
       </div>
     </div>
@@ -266,6 +474,7 @@ function CertList() {
   const [creds, setCreds] = useState<Credential[]>([]);
   const [nodes, setNodes] = useState<DeployNode[]>([]);
   const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<Certificate | null>(null);
   const [issuing, setIssuing] = useState<Set<string>>(() => new Set(issuingSet));
   const markIssuing = (id: string, on: boolean) => {
     if (on) issuingSet.add(id); else issuingSet.delete(id);
@@ -373,6 +582,18 @@ function CertList() {
           }}
         />
       )}
+      {editing && (
+        <CertForm
+          key={editing.id}
+          creds={creds}
+          nodes={nodes}
+          initial={editing}
+          onDone={() => {
+            setEditing(null);
+            refresh();
+          }}
+        />
+      )}
 
       <div className="overflow-x-auto rounded-ctl border border-white/5">
         <table className="w-full text-caption text-slate-300">
@@ -381,6 +602,7 @@ function CertList() {
               <th className="px-3 py-2 text-left">{t("certmgr.colDomain")}</th>
               <th className="px-3 py-2 text-left">CA</th>
               <th className="px-3 py-2 text-left">{t("certmgr.colDns")}</th>
+              <th className="px-3 py-2 text-left">{t("certmgr.validation")}</th>
               <th className="px-3 py-2 text-left">{t("certmgr.colExpire")}</th>
               <th className="px-3 py-2 text-left">{t("certmgr.colStatus")}</th>
               <th className="px-3 py-2 text-left">{t("certmgr.colNodes")}</th>
@@ -392,17 +614,58 @@ function CertList() {
               <tr key={c.id} className="border-t border-white/5">
                 <td className="px-3 py-2">{c.domains.join(", ")}</td>
                 <td className="px-3 py-2">{c.ca}</td>
-                <td className="px-3 py-2">{c.dns_provider}</td>
+                <td className="px-3 py-2">{c.dns_provider || "-"}</td>
+                <td className="px-3 py-2">
+                  {c.validation === "http"
+                    ? t("certmgr.validationHttp")
+                    : t("certmgr.validationDns")}
+                </td>
                 <td className="px-3 py-2">{fmtDate(c.not_after)}</td>
                 <td className="px-3 py-2">
-                  <span className={c.status === "issued" ? "text-emerald-400" : "text-amber-400"}>
+                  <span
+                    title={c.last_error || undefined}
+                    className={
+                      c.status === "issued"
+                        ? "text-emerald-400"
+                        : c.status === "error"
+                          ? "text-rose-400"
+                          : "text-amber-400"
+                    }
+                  >
                     {c.status}
                   </span>
                 </td>
-                <td className="px-3 py-2">{t("certmgr.nodesCount", { count: c.deploy_node_ids.length })}</td>
+                <td className="px-3 py-2">
+                  {c.deploy_links?.length ? (
+                    <span
+                      className="text-tiny text-slate-300"
+                      title={c.deploy_links
+                        .map((l) => {
+                          const n = nodes.find((x) => x.id === l.node_id);
+                          return `${n?.name ?? l.node_id}${l.target ? ` → ${l.target}` : ""}`;
+                        })
+                        .join("\n")}
+                    >
+                      {c.deploy_links
+                        .map((l) => {
+                          const n = nodes.find((x) => x.id === l.node_id);
+                          return `${n?.name ?? l.node_id}${l.target ? `→${l.target}` : ""}`;
+                        })
+                        .join(" · ")}
+                    </span>
+                  ) : (
+                    <span className="text-slate-500">{t("certmgr.nodesCount", { count: 0 })}</span>
+                  )}
+                </td>
                 <td className="px-3 py-2 text-right whitespace-nowrap">
                   <button onClick={() => issue(c.id)} disabled={issuing.has(c.id)} className="text-[var(--module-accent)] hover:text-[var(--module-accent-strong)] mr-2 disabled:opacity-50">
                     {issuing.has(c.id) ? t("certmgr.issuing") : t("certmgr.apply")}
+                  </button>
+                  <button
+                    onClick={() => { setEditing(c); setShowForm(false); }}
+                    className="text-slate-300 hover:text-white mr-2"
+                  >
+                    {t("certmgr.edit")}
                   </button>
                   <button
                     onClick={() => viewDetail(c.id)}
@@ -420,7 +683,7 @@ function CertList() {
             ))}
             {certs.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-3 py-6 text-center text-slate-500">{t("certmgr.certsEmpty")}</td>
+                <td colSpan={8} className="px-3 py-6 text-center text-slate-500">{t("certmgr.certsEmpty")}</td>
               </tr>
             )}
           </tbody>
@@ -539,15 +802,32 @@ function CertList() {
   );
 }
 
-function CertForm({ creds, nodes, onDone }: { creds: Credential[]; nodes: DeployNode[]; onDone: () => void }) {
+function CertForm({
+  creds,
+  nodes,
+  initial,
+  onDone,
+}: {
+  creds: Credential[];
+  nodes: DeployNode[];
+  initial?: Certificate | null;
+  onDone: () => void;
+}) {
   const { t } = useTranslation();
-  const [domains, setDomains] = useState("");
-  const [email, setEmail] = useState("");
-  const [ca, setCa] = useState("letsencrypt");
-  const [dnsProvider, setDnsProvider] = useState("alidns");
-  const [credentialId, setCredentialId] = useState("");
-  const [renewBefore, setRenewBefore] = useState(30);
-  const [deployNodes, setDeployNodes] = useState<string[]>([]);
+  const [domains, setDomains] = useState(initial?.domains.join(", ") ?? "");
+  const [email, setEmail] = useState(initial?.email ?? "");
+  const [ca, setCa] = useState(initial?.ca ?? "letsencrypt");
+  const [validation, setValidation] = useState(initial?.validation ?? "dns");
+  const [httpPort, setHttpPort] = useState(initial?.http_port ?? 80);
+  const [dnsProvider, setDnsProvider] = useState(initial?.dns_provider ?? "alidns");
+  const [credentialId, setCredentialId] = useState(initial?.credential_id ?? "");
+  const [renewBefore, setRenewBefore] = useState(initial?.renew_before_days ?? 30);
+  const [links, setLinks] = useState<Record<string, string>>(() => {
+    const src = initial?.deploy_links?.length
+      ? initial.deploy_links
+      : (initial?.deploy_node_ids ?? []).map((node_id) => ({ node_id, target: "" }));
+    return Object.fromEntries(src.map((l) => [l.node_id, l.target]));
+  });
   const [err, setErr] = useState("");
 
   const submit = async () => {
@@ -564,16 +844,42 @@ function CertForm({ creds, nodes, onDone }: { creds: Credential[]; nodes: Deploy
         if (!domList.includes(root)) domList.push(root);
       }
       if (domList.length === 0) return setErr(t("certmgr.domainRequired"));
-      if (!credentialId) return setErr(t("certmgr.credRequired"));
-      await invoke("cert_create", {
-        domains: domList,
-        email,
-        ca,
-        dnsProvider,
-        credentialId,
-        renewBeforeDays: renewBefore,
-        deployNodeIds: deployNodes,
-      });
+      if (validation === "http" && domList.some((d) => d.startsWith("*."))) {
+        return setErr(t("certmgr.httpWildcard"));
+      }
+      if (validation === "dns" && !credentialId) {
+        return setErr(t("certmgr.credRequired"));
+      }
+      const deployLinks: DeployLink[] = nodes
+        .filter((n) => links[n.id] !== undefined)
+        .map((n) => ({ node_id: n.id, target: links[n.id] || "" }));
+
+      if (initial) {
+        await invoke("cert_update", {
+          id: initial.id,
+          domains: domList,
+          email,
+          ca,
+          dnsProvider: validation === "dns" ? dnsProvider : "",
+          credentialId: validation === "dns" ? credentialId : "",
+          validation,
+          httpPort,
+          renewBeforeDays: renewBefore,
+        });
+        await invoke("cert_update_links", { id: initial.id, deployLinks });
+      } else {
+        await invoke("cert_create", {
+          domains: domList,
+          email,
+          ca,
+          dnsProvider: validation === "dns" ? dnsProvider : "",
+          credentialId: validation === "dns" ? credentialId : "",
+          validation,
+          httpPort,
+          renewBeforeDays: renewBefore,
+          deployLinks,
+        });
+      }
       onDone();
     } catch (e) {
       setErr(String(e));
@@ -599,45 +905,96 @@ function CertForm({ creds, nodes, onDone }: { creds: Credential[]; nodes: Deploy
           </select>
         </label>
         <label className="text-caption text-slate-400">
-          {t("certmgr.dnsProvider")}
-          <select value={dnsProvider} onChange={(e) => setDnsProvider(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none">
-            {[...DNS_PROVIDER_MAP, { id: "custom", label: t("certmgr.custom") }].map((p) => (
-              <option key={p.id} value={p.id} className="bg-slate-800 text-slate-200">{t(p.label)}</option>
-            ))}
+          {t("certmgr.validation")}
+          <select value={validation} onChange={(e) => setValidation(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none">
+            <option value="dns" className="bg-slate-800 text-slate-200">{t("certmgr.validationDns")}</option>
+            <option value="http" className="bg-slate-800 text-slate-200">{t("certmgr.validationHttp")}</option>
+            <option value="cname" disabled className="bg-slate-800 text-slate-500">{t("certmgr.validationCname")}</option>
           </select>
         </label>
-        <label className="text-caption text-slate-400">          {t("certmgr.credLabel")}
-            <select value={credentialId} onChange={(e) => setCredentialId(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none">
-            <option value="">{t("certmgr.select")}</option>
-            {creds.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}（{c.type}）</option>
-            ))}
-          </select>
-        </label>
+        {validation === "http" && (
+          <label className="text-caption text-slate-400">
+            {t("certmgr.httpPort")}
+            <input type="number" value={httpPort} onChange={(e) => setHttpPort(Number(e.target.value))} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" />
+          </label>
+        )}
+        {validation === "dns" && (
+          <>
+            <label className="text-caption text-slate-400">
+              {t("certmgr.dnsProvider")}
+              <select value={dnsProvider} onChange={(e) => setDnsProvider(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none">
+                {[...DNS_PROVIDER_MAP, { id: "custom", label: t("certmgr.custom") }].map((p) => (
+                  <option key={p.id} value={p.id} className="bg-slate-800 text-slate-200">{t(p.label)}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-caption text-slate-400">
+              {t("certmgr.credLabel")}
+              <select value={credentialId} onChange={(e) => setCredentialId(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none">
+                <option value="">{t("certmgr.select")}</option>
+                {creds.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}（{c.type}）</option>
+                ))}
+              </select>
+            </label>
+          </>
+        )}
         <label className="text-caption text-slate-400">
           {t("certmgr.renewDays")}
           <input type="number" value={renewBefore} onChange={(e) => setRenewBefore(Number(e.target.value))} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" />
         </label>
       </div>
+
+      {validation === "http" && (
+        <p className="text-tiny text-amber-400/90 bg-amber-500/5 border border-amber-500/10 rounded-ctl p-2">
+          {t("certmgr.httpHint")}
+        </p>
+      )}
+
       <div className="text-caption text-slate-400">
         {t("certmgr.deployNodes")}
-        <div className="mt-1 flex flex-wrap gap-2">
-          {nodes.map((n) => (
-            <label key={n.id} className="flex items-center gap-1 text-tiny text-slate-300 bg-black/30 rounded px-2 py-1 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={deployNodes.includes(n.id)}
-                onChange={(e) => setDeployNodes((v) => (e.target.checked ? [...v, n.id] : v.filter((x) => x !== n.id)))}
-              />
-              {n.name}
-            </label>
-          ))}
+        <p className="mt-0.5 text-tiny text-slate-500">{t("certmgr.deployLinkHint")}</p>
+        <div className="mt-2 space-y-1.5">
+          {nodes.map((n) => {
+            const checked = links[n.id] !== undefined;
+            return (
+              <div key={n.id} className="flex items-center gap-2 text-tiny text-slate-300 bg-black/30 rounded px-2 py-1.5">
+                <label className="flex items-center gap-1.5 cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(e) => {
+                      setLinks((v) => {
+                        const next = { ...v };
+                        if (e.target.checked) next[n.id] = next[n.id] ?? "";
+                        else delete next[n.id];
+                        return next;
+                      });
+                    }}
+                  />
+                  {n.name}
+                  <span className="text-micro text-slate-500">{NODE_TYPE_LABELS[n.type] ?? n.type}</span>
+                </label>
+                {checked && (
+                  <input
+                    value={links[n.id] ?? ""}
+                    onChange={(e) => setLinks((v) => ({ ...v, [n.id]: e.target.value }))}
+                    className="ml-auto w-64 bg-black/30 rounded px-2 py-1 text-tiny text-slate-200 outline-none"
+                    placeholder={t("certmgr.targetPh")}
+                  />
+                )}
+              </div>
+            );
+          })}
           {nodes.length === 0 && <span className="text-slate-500">{t("certmgr.noNodesHint")}</span>}
         </div>
       </div>
+
       {err && <div className="text-caption text-rose-400">{err}</div>}
       <div className="flex gap-2">
-        <button onClick={submit} className="px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-caption font-semibold">{t("certmgr.createSave")}</button>
+        <button onClick={submit} className="px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-caption font-semibold">
+          {initial ? t("certmgr.save") : t("certmgr.createSave")}
+        </button>
         <button onClick={onDone} className="px-3 py-1.5 rounded-ctl bg-white/10 text-slate-300 text-caption">{t("certmgr.cancel")}</button>
       </div>
     </div>
@@ -690,7 +1047,7 @@ function DeployNodes() {
           <div key={n.id} className="rounded-ctl border border-white/5 bg-white/5 p-3">
             <div className="flex items-center justify-between">
               <div className="text-body font-semibold text-slate-200">{n.name}</div>
-              <span className="text-tiny px-2 py-0.5 rounded bg-sky-500/20 text-sky-300">{n.type}</span>
+              <span className="text-tiny px-2 py-0.5 rounded bg-sky-500/20 text-sky-300">{NODE_TYPE_LABELS[n.type] ?? n.type}</span>
             </div>
             <div className="text-tiny text-slate-500 mt-1">{t("certmgr.deployInfo", { days: n.deploy_before_days, time: fmtDate(n.last_deploy_at) })}</div>
             {n.last_deploy_error && <div className="text-tiny text-rose-400 mt-1">⚠ {n.last_deploy_error}</div>}
@@ -718,7 +1075,7 @@ function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDone: () 
   // `type` 是 Rust 侧序列化出来的名字（cert.rs 里 node_type 带 rename = "type"）。
   // 这里不能再写 node_type —— 那样恒为 undefined，任何非 linux 节点都会退化成 linux，
   // 保存时还会把这个错误类型写回去。
-  const initialType = initial?.type || "linux";
+  const initialType = initial?.type || "windows";
   const [nodeType, setNodeType] = useState(initialType);
   const [name, setName] = useState(initial?.name || "");
   const [data, setData] = useState<Record<string, string>>(() =>
@@ -727,8 +1084,14 @@ function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDone: () 
   const [deployBefore, setDeployBefore] = useState(initial?.deploy_before_days || 7);
   const [note, setNote] = useState(initial?.note || "");
   const [err, setErr] = useState("");
+  // 首次挂载保留 initial 配置；只有用户切换类型时才清空字段
+  const firstTypeRun = useRef(true);
 
   useEffect(() => {
+    if (firstTypeRun.current) {
+      firstTypeRun.current = false;
+      return;
+    }
     setData(makeData({}, NODE_FIELDS[nodeType] || []));
   }, [nodeType]);
 
@@ -765,8 +1128,8 @@ function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDone: () 
         <label className="text-caption text-slate-400">
           {t("certmgr.type")}
           <select value={nodeType} onChange={(e) => setNodeType(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none">
-            {Object.keys(NODE_FIELDS).map((t) => (
-              <option key={t} value={t} className="bg-slate-800 text-slate-200">{t}</option>
+            {Object.keys(NODE_FIELDS).map((k) => (
+              <option key={k} value={k} className="bg-slate-800 text-slate-200">{NODE_TYPE_LABELS[k] ?? k}</option>
             ))}
           </select>
         </label>
@@ -774,18 +1137,44 @@ function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDone: () 
       <div className="text-caption text-slate-400 font-semibold">{t("certmgr.configItems")}</div>
       <div className="grid grid-cols-2 gap-3">
         {fields.map((f) => (
-          <label key={f.key} className="text-caption text-slate-400">
+          <label key={f.key} className={`text-caption text-slate-400 ${f.textarea ? "col-span-2" : ""}`}>
             {t(f.label)}
-            <input
-              type={f.type}
-              value={data[f.key] ?? ""}
-              onChange={(e) => setField(f.key, e.target.value)}
-              className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none"
-              placeholder={f.placeholder || ""}
-            />
+            {f.select ? (
+              <select
+                value={data[f.key] ?? ""}
+                onChange={(e) => setField(f.key, e.target.value)}
+                className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none"
+              >
+                <option value="">{t("certmgr.select")}</option>
+                {f.select.map((o) => (
+                  <option key={o.value} value={o.value} className="bg-slate-800 text-slate-200">{o.label}</option>
+                ))}
+              </select>
+            ) : f.textarea ? (
+              <textarea
+                rows={2}
+                value={data[f.key] ?? ""}
+                onChange={(e) => setField(f.key, e.target.value)}
+                className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none font-mono text-tiny"
+                placeholder={f.placeholder || ""}
+              />
+            ) : (
+              <input
+                type={f.type}
+                value={data[f.key] ?? ""}
+                onChange={(e) => setField(f.key, e.target.value)}
+                className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none"
+                placeholder={f.placeholder || ""}
+              />
+            )}
           </label>
         ))}
       </div>
+      {nodeType === "windows" && (
+        <p className="ui-note ui-note-info">
+          {t("certmgr.receiverHint")}
+        </p>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <label className="text-caption text-slate-400">
           {t("certmgr.deployDays")}
@@ -1016,6 +1405,331 @@ function SchedulerView() {
           ))}
           {(!state?.log || state.log.length === 0) && <div className="text-tiny text-slate-500">{t("certmgr.noRecords")}</div>}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- 证书监控（外部域名 / IP） ----
+function MonitorView() {
+  const { t } = useTranslation();
+  const [items, setItems] = useState<MonitorTarget[]>([]);
+  const [editing, setEditing] = useState<MonitorTarget | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [checking, setChecking] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setItems(await invoke<MonitorTarget[]>("monitor_list"));
+  }, []);
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const checkAll = async () => {
+    setChecking(true);
+    try {
+      setItems(await invoke<MonitorTarget[]>("monitor_check_all"));
+    } catch (e) {
+      theamedAlert(String(e));
+    } finally {
+      setChecking(false);
+    }
+  };
+  const checkOne = async (id: string) => {
+    try {
+      await invoke<MonitorTarget>("monitor_check", { id });
+    } catch (e) {
+      theamedAlert(String(e));
+    }
+    refresh();
+  };
+  const del = async (id: string) => {
+    if (!confirm(t("certmgr.delMonitorConfirm"))) return;
+    await invoke("monitor_delete", { id });
+    refresh();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-bold text-slate-200">{t("certmgr.monitorsTitle")}</h3>
+          <p className="text-tiny text-slate-500 mt-1">{t("certmgr.monitorsHint")}</p>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={checkAll} disabled={checking} className="px-3 py-1.5 rounded-ctl bg-white/10 text-slate-200 text-caption flex items-center gap-1.5">
+            <RefreshCw className={`w-3.5 h-3.5 ${checking ? "animate-spin" : ""}`} /> {checking ? t("certmgr.checking") : t("certmgr.checkAll")}
+          </button>
+          <button onClick={() => { setEditing(null); setShowForm(true); }} className="px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-caption font-semibold flex items-center gap-1.5">
+            <Plus className="w-3.5 h-3.5" /> {t("certmgr.newMonitor")}
+          </button>
+        </div>
+      </div>
+
+      {showForm && (
+        <MonitorForm
+          initial={editing}
+          onDone={() => { setShowForm(false); setEditing(null); refresh(); }}
+        />
+      )}
+
+      <div className="space-y-2">
+        {items.map((m) => {
+          const d = m.days_left;
+          const tone = d == null ? "text-slate-400" : d <= 7 ? "text-rose-400" : d <= 30 ? "text-amber-400" : "text-emerald-400";
+          return (
+            <div key={m.id} className="rounded-ctl border border-white/5 bg-white/5 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-body font-semibold text-slate-200 truncate">
+                    {m.host}:{m.port}
+                    {m.note && <span className="ml-2 text-tiny text-slate-500 font-normal">{m.note}</span>}
+                  </div>
+                  <div className="text-tiny text-slate-500 mt-1">
+                    {t("certmgr.monitorExpire", { time: fmtDate(m.not_after) })} · {t("certmgr.monitorChecked", { time: fmtDate(m.last_check_at) })}
+                  </div>
+                  {m.subject && <div className="text-tiny text-slate-500 truncate">{m.subject} · {m.issuer}</div>}
+                </div>
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  <span className={`text-caption font-semibold ${tone}`}>
+                    {d == null ? "-" : d >= 0 ? t("certmgr.daysLeft", { days: d }) : t("certmgr.daysExpired", { days: -d })}
+                  </span>
+                  <button onClick={() => checkOne(m.id)} className="text-caption text-sky-400 hover:text-sky-300">{t("certmgr.checkNow")}</button>
+                  <button onClick={() => { setEditing(m); setShowForm(true); }} className="text-caption text-slate-300 hover:text-white">{t("certmgr.edit")}</button>
+                  <button onClick={() => del(m.id)} className="text-caption text-rose-400 hover:text-rose-300">{t("certmgr.delete")}</button>
+                </div>
+              </div>
+              {m.last_error && <div className="text-tiny text-rose-400 mt-1">⚠ {m.last_error}</div>}
+            </div>
+          );
+        })}
+        {items.length === 0 && <div className="text-caption text-slate-500">{t("certmgr.monitorsEmpty")}</div>}
+      </div>
+    </div>
+  );
+}
+
+function MonitorForm({ initial, onDone }: { initial: MonitorTarget | null; onDone: () => void }) {
+  const { t } = useTranslation();
+  const [host, setHost] = useState(initial?.host || "");
+  const [port, setPort] = useState(String(initial?.port || 443));
+  const [days, setDays] = useState((initial?.notify_days?.length ? initial.notify_days : [30, 14, 7, 3, 1]).join(","));
+  const [note, setNote] = useState(initial?.note || "");
+  const [enabled, setEnabled] = useState(initial?.enabled ?? true);
+  const [err, setErr] = useState("");
+
+  const submit = async () => {
+    setErr("");
+    try {
+      const notifyDays = days.split(/[,，\s]+/).map((x) => Number(x.trim())).filter((x) => Number.isFinite(x) && x > 0);
+      await invoke("monitor_upsert", {
+        id: initial?.id,
+        host,
+        port: Number(port) || 443,
+        note,
+        enabled,
+        notifyDays,
+      });
+      onDone();
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
+  return (
+    <div className="rounded-ctl border border-white/10 bg-white/5 p-4 space-y-3">
+      <div className="grid grid-cols-3 gap-3">
+        <label className="text-caption text-slate-400 col-span-2">
+          {t("certmgr.monitorHost")}
+          <input value={host} onChange={(e) => setHost(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" placeholder="example.com 或 https://example.com:8443" />
+        </label>
+        <label className="text-caption text-slate-400">
+          {t("certmgr.monitorPort")}
+          <input type="number" value={port} onChange={(e) => setPort(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" />
+        </label>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <label className="text-caption text-slate-400">
+          {t("certmgr.monitorDays")}
+          <input value={days} onChange={(e) => setDays(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" placeholder="30,14,7,3,1" />
+        </label>
+        <label className="text-caption text-slate-400">
+          {t("certmgr.remark")}
+          <input value={note} onChange={(e) => setNote(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" />
+        </label>
+      </div>
+      <label className="flex items-center gap-2 text-caption text-slate-400">
+        <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+        {t("certmgr.monitorEnabled")}
+      </label>
+      {err && <div className="text-caption text-rose-400">{err}</div>}
+      <div className="flex gap-2">
+        <button onClick={submit} className="px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-caption font-semibold">{t("certmgr.save")}</button>
+        <button onClick={onDone} className="px-3 py-1.5 rounded-ctl bg-white/10 text-slate-300 text-caption">{t("certmgr.cancel")}</button>
+      </div>
+    </div>
+  );
+}
+
+// ---- 通知渠道 ----
+const NOTIFY_TYPES = [
+  { value: "dingtalk", label: "钉钉机器人" },
+  { value: "wecom", label: "企业微信机器人" },
+  { value: "slack", label: "Slack" },
+  { value: "discord", label: "Discord" },
+  { value: "teams", label: "Microsoft Teams" },
+  { value: "webhook", label: "自定义 Webhook" },
+];
+
+function NotifyView() {
+  const { t } = useTranslation();
+  const [items, setItems] = useState<NotifyChannel[]>([]);
+  const [editing, setEditing] = useState<NotifyChannel | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  const refresh = useCallback(async () => {
+    setItems(await invoke<NotifyChannel[]>("notify_channel_list"));
+  }, []);
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const test = async (id: string) => {
+    setMsg(t("certmgr.testing"));
+    try {
+      setMsg(await invoke<string>("notify_channel_test", { id }));
+    } catch (e) {
+      setMsg(t("certmgr.testFail", { err: String(e) }));
+    }
+  };
+  const del = async (id: string) => {
+    if (!confirm(t("certmgr.delNotifyConfirm"))) return;
+    await invoke("notify_channel_delete", { id });
+    refresh();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-bold text-slate-200">{t("certmgr.notifyTitle")}</h3>
+          <p className="text-tiny text-slate-500 mt-1">{t("certmgr.notifyHint")}</p>
+        </div>
+        <button onClick={() => { setEditing(null); setShowForm(true); }} className="px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-caption font-semibold flex items-center gap-1.5">
+          <Plus className="w-3.5 h-3.5" /> {t("certmgr.newNotify")}
+        </button>
+      </div>
+
+      {showForm && (
+        <NotifyForm
+          initial={editing}
+          onDone={() => { setShowForm(false); setEditing(null); refresh(); }}
+        />
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {items.map((c) => (
+          <div key={c.id} className="rounded-ctl border border-white/5 bg-white/5 p-3">
+            <div className="flex items-center justify-between">
+              <div className="text-body font-semibold text-slate-200">{c.name}</div>
+              <span className="text-tiny px-2 py-0.5 rounded bg-sky-500/20 text-sky-300">
+                {NOTIFY_TYPES.find((x) => x.value === c.type)?.label ?? c.type}
+              </span>
+            </div>
+            <div className="text-tiny text-slate-500 mt-1 break-all">{c.config.url}</div>
+            {!c.enabled && <div className="text-tiny text-amber-400 mt-1">{t("certmgr.notifyDisabled")}</div>}
+            <div className="flex gap-3 mt-2 text-caption">
+              <button onClick={() => { setEditing(c); setShowForm(true); }} className="text-slate-300 hover:text-white">{t("certmgr.edit")}</button>
+              <button onClick={() => test(c.id)} className="text-sky-400 hover:text-sky-300">{t("certmgr.sendTest")}</button>
+              <button onClick={() => del(c.id)} className="text-rose-400 hover:text-rose-300">{t("certmgr.delete")}</button>
+            </div>
+          </div>
+        ))}
+        {items.length === 0 && <div className="text-caption text-slate-500">{t("certmgr.notifyEmpty")}</div>}
+      </div>
+      {msg && <div className="text-caption text-slate-400">{t("certmgr.testLabel", { msg })}</div>}
+    </div>
+  );
+}
+
+function NotifyForm({ initial, onDone }: { initial: NotifyChannel | null; onDone: () => void }) {
+  const { t } = useTranslation();
+  const [type, setType] = useState(initial?.type || "dingtalk");
+  const [name, setName] = useState(initial?.name || "");
+  const [url, setUrl] = useState(initial?.config?.url || "");
+  const [secret, setSecret] = useState(initial?.config?.secret || "");
+  const [token, setToken] = useState(initial?.config?.token || "");
+  const [enabled, setEnabled] = useState(initial?.enabled ?? true);
+  const [note, setNote] = useState(initial?.note || "");
+  const [err, setErr] = useState("");
+
+  const submit = async () => {
+    setErr("");
+    try {
+      const config: Record<string, string> = { url };
+      if (type === "dingtalk" && secret) config.secret = secret;
+      if (type === "webhook" && token) config.token = token;
+      await invoke("notify_channel_upsert", {
+        id: initial?.id,
+        channelType: type,
+        name,
+        config,
+        enabled,
+        note,
+      });
+      onDone();
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
+  return (
+    <div className="rounded-ctl border border-white/10 bg-white/5 p-4 space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <label className="text-caption text-slate-400">
+          {t("certmgr.notifyType")}
+          <select value={type} onChange={(e) => setType(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none">
+            {NOTIFY_TYPES.map((o) => (
+              <option key={o.value} value={o.value} className="bg-slate-800 text-slate-200">{o.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="text-caption text-slate-400">
+          {t("certmgr.name")}
+          <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" />
+        </label>
+      </div>
+      <label className="text-caption text-slate-400 block">
+        {t("certmgr.notifyUrl")}
+        <input value={url} onChange={(e) => setUrl(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" placeholder="https://..." />
+      </label>
+      {type === "dingtalk" && (
+        <label className="text-caption text-slate-400 block">
+          {t("certmgr.notifySecret")}
+          <input type="password" value={secret} onChange={(e) => setSecret(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" placeholder="SEC..." />
+        </label>
+      )}
+      {type === "webhook" && (
+        <label className="text-caption text-slate-400 block">
+          {t("certmgr.notifyToken")}
+          <input type="password" value={token} onChange={(e) => setToken(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" />
+        </label>
+      )}
+      <div className="grid grid-cols-2 gap-3">
+        <label className="flex items-center gap-2 text-caption text-slate-400">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          {t("certmgr.monitorEnabled")}
+        </label>
+        <label className="text-caption text-slate-400">
+          {t("certmgr.remark")}
+          <input value={note} onChange={(e) => setNote(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" />
+        </label>
+      </div>
+      {err && <div className="text-caption text-rose-400">{err}</div>}
+      <div className="flex gap-2">
+        <button onClick={submit} className="px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-caption font-semibold">{t("certmgr.save")}</button>
+        <button onClick={onDone} className="px-3 py-1.5 rounded-ctl bg-white/10 text-slate-300 text-caption">{t("certmgr.cancel")}</button>
       </div>
     </div>
   );

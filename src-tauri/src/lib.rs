@@ -892,7 +892,9 @@ pub fn run() {
             // 证书管理（Q-005）
             commands::cert::cert_list,
             commands::cert::cert_create,
+            commands::cert::cert_update,
             commands::cert::cert_update_nodes,
+            commands::cert::cert_update_links,
             commands::cert::cert_delete,
             commands::cert::cert_issue_now,
             commands::cert::cert_get_pem,
@@ -908,6 +910,15 @@ pub fn run() {
             commands::cert::cert_scheduler_status,
             commands::cert::cert_scheduler_set,
             commands::cert::cert_scheduler_run_now,
+            commands::cert::monitor_list,
+            commands::cert::monitor_upsert,
+            commands::cert::monitor_delete,
+            commands::cert::monitor_check,
+            commands::cert::monitor_check_all,
+            commands::cert::notify_channel_list,
+            commands::cert::notify_channel_upsert,
+            commands::cert::notify_channel_delete,
+            commands::cert::notify_channel_test,
 
             // RTSP 服务器
             commands::rtsp_server::get_rtsp_camera_devices,
