@@ -11,6 +11,7 @@ use super::bilibili;
 use super::check;
 use super::zhihu;
 use super::classify::{self, BATCH_SIZE};
+use super::organize;
 use super::db::{self, NewFavorite};
 use super::github;
 
@@ -369,6 +370,81 @@ pub async fn fav_classify(
     out
 }
 
+/// 让 AI 给出「分类层级整理」方案（只生成、不落库）。
+///
+/// 只输出「把哪个分类移到哪个父级下」；不新建 / 不删除 / 不改名 / 不改 ID，
+/// 因此条目的分类关联不受影响。前端先预览勾选，再调 [`fav_apply_category_moves`]。
+#[tauri::command]
+pub async fn fav_plan_category_moves(
+    provider_id: Option<String>,
+    model_id: Option<String>,
+) -> Result<organize::CategoryMovePlan, String> {
+    let cfg = crate::commands::ai::config::load_ai_config();
+    let (provider, model) = resolve_ai_target(&cfg, &provider_id, &model_id)?;
+    let cats = db::with_conn(|conn| db::category_briefs(conn))?;
+    let considered = cats.iter().filter(|c| c.kind != "follow").count();
+    // 少于两个主题分类时不可能形成父子关系，直接返回空方案，不白花一次模型调用
+    if considered < 2 {
+        return Ok(organize::CategoryMovePlan {
+            model,
+            considered,
+            groups: Vec::new(),
+            moves: Vec::new(),
+            skipped: Vec::new(),
+        });
+    }
+
+    let prompt = organize::build_prompt(&cats);
+    let outcome = crate::commands::ai::channel::complete_chat(
+        &crate::commands::ai::channel::NoHooks,
+        &provider,
+        &model,
+        organize::SYSTEM_PROMPT,
+        &prompt,
+        0.2,
+        None,
+        crate::commands::ai::usage::tool_ids::FAVORITES,
+    )
+    .await
+    .map_err(|e| format!("{}（供应商: {}，模型: {}）", e, provider.name, model))?;
+
+    let (groups, raw_moves) = organize::parse_plan(&outcome.text)?;
+    let plan = organize::build_plan(&cats, &groups, &raw_moves);
+    crate::exit_log!(
+        "[收藏] 整理类目方案: model={}, considered={}, groups={}, moves={}, skipped={}",
+        model,
+        considered,
+        plan.groups.len(),
+        plan.moves.len(),
+        plan.skipped.len()
+    );
+    Ok(organize::CategoryMovePlan {
+        model,
+        considered,
+        groups: plan.groups,
+        moves: plan.moves,
+        skipped: plan.skipped,
+    })
+}
+
+/// 应用整理方案：可按需新建分组，再只改已有分类的 `parent_id` / `sort_order`。
+/// 已有分类 ID 与条目关联保持不变。
+#[tauri::command]
+pub fn fav_apply_category_moves(
+    moves: Vec<db::CategoryMove>,
+    groups: Option<Vec<organize::PlannedGroup>>,
+) -> Result<organize::ApplyResult, String> {
+    let groups = groups.unwrap_or_default();
+    let result = db::with_conn(|conn| organize::apply(conn, &groups, &moves))?;
+    crate::exit_log!(
+        "[收藏] 应用整理类目: created={}, applied={}, skipped={}",
+        result.created,
+        result.applied,
+        result.skipped.len()
+    );
+    Ok(result)
+}
+
 async fn classify_inner(
     app: tauri::AppHandle,
     provider_id: Option<String>,
@@ -430,7 +506,10 @@ async fn classify_inner(
             break;
         }
         batch_no += 1;
-        let prompt = classify::build_prompt(&batch);
+        // 每批都读一次现有分类：上一批新建的分类也要进入下一批的候选，
+        // 否则模型会一直按自己的命名重新发明同类分类（平级重复的根因）。
+        let existing = db::with_conn(|conn| db::category_paths(conn, 200))?;
+        let prompt = classify::build_prompt(&batch, &existing);
         let outcome = crate::commands::ai::channel::complete_chat(
             &crate::commands::ai::channel::NoHooks,
             &provider,

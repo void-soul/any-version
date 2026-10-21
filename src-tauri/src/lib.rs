@@ -687,6 +687,8 @@ pub fn run() {
             commands::favorites::fav_import_github,
             commands::favorites::fav_cancel,
             commands::favorites::fav_classify,
+            commands::favorites::fav_plan_category_moves,
+            commands::favorites::fav_apply_category_moves,
             commands::favorites::fav_check_gone,
             commands::favorites::fav_import_zhihu,
             commands::favorites::fav_credential_status,

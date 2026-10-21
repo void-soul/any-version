@@ -16,6 +16,9 @@ pub const BATCH_SIZE: usize = 40;
 /// 单条送入的字符上限（描述很长的仓库会挤掉别的条目）。
 const MAX_TITLE_CHARS: usize = 120;
 const MAX_DESC_CHARS: usize = 200;
+/// 现有分类最多带多少条、每条多长（分类太多时全塞进去会挤掉条目本身）。
+const MAX_EXISTING_PATHS: usize = 200;
+const MAX_PATH_CHARS: usize = 80;
 /// 链接留够长度（带查询串的文档站地址可能很长），但别让它把一行的预算吃光
 const MAX_URL_CHARS: usize = 120;
 
@@ -35,14 +38,26 @@ pub const SYSTEM_PROMPT: &str = "你是一个信息整理助手。用户会给�
 3. 一个序号可以出现在多个组里（多标签），但每个组内的序号不要重复；\n\
 4. `items` 里的序号必须是输入里出现过的序号，不要编造；也不要臆造输入里没有的主题；\n\
 5. 无法确定归属的放进「其他」；\n\
-6. 只输出 JSON。";
+6. 如果下方给了「现有分类」，优先复用其中的完整路径：已有「编程语言/Rust」时就不要再新建\n\
+   「Rust」「编程语言/Rust语言」这类平级或近似分类；只有现有分类确实不合适时才新建，\n\
+   且新建分类尽量挂到合适的现有大类下；\n\
+7. 只输出 JSON。";
 
 /// 把一批条目压成 prompt：每条一行，`序号|名称|简介|语言|标签`。
 ///
 /// 只喂元数据（不抓 README）：上千条逐一抓正文的成本不可接受，
 /// 而「名称 + 简介 + 语言 + topics」对归类的判断已经足够。
-pub fn build_prompt(items: &[ClassifyItem]) -> String {
-    let mut lines = Vec::with_capacity(items.len() + 2);
+///
+/// `existing` 是现有分类的完整路径：把它们一并喂给模型，模型才会复用已有层级，
+/// 而不是每批都从零发明一套平级分类（那正是分类越跑越乱的根因）。
+pub fn build_prompt(items: &[ClassifyItem], existing: &[String]) -> String {
+    let mut lines = Vec::with_capacity(items.len() + existing.len() + 8);
+    if !existing.is_empty() {
+        lines.push("现有分类（路径用 / 分隔，优先复用）：".to_string());
+        for path in existing.iter().take(MAX_EXISTING_PATHS) {
+            lines.push(format!("- {}", clamp(path, MAX_PATH_CHARS)));
+        }
+    }
     lines.push(format!("共 {} 条，请归类：", items.len()));
     for (index, item) in items.iter().enumerate() {
         // 热度（star 数）只在有值时追加：视频/文章条目没有这个字段，
@@ -133,7 +148,7 @@ pub fn parse_groups(raw: &str, len: usize) -> Result<Vec<(Vec<String>, Vec<usize
 }
 
 /// 去掉 ```json 围栏与前后废话，只留最外层花括号包裹的部分。
-fn strip_fence(raw: &str) -> Option<String> {
+pub(crate) fn strip_fence(raw: &str) -> Option<String> {
     let text = raw.trim();
     let without_fence = text.strip_prefix("```json").unwrap_or(text);
     let without_fence = without_fence
@@ -164,10 +179,21 @@ mod tests {
         }
     }
 
+    /// 现有分类要进 prompt：模型看到「编程语言/Rust」才会复用，而不是再发明一个平级 Rust。
+    #[test]
+    fn prompt_includes_existing_category_paths() {
+        let prompt = build_prompt(
+            &[item("o/r", "a cli", "Rust", &[])],
+            &["编程语言".to_string(), "编程语言/Rust".to_string()],
+        );
+        assert!(prompt.contains("现有分类"));
+        assert!(prompt.contains("- 编程语言/Rust"));
+    }
+
     #[test]
     fn prompt_is_one_line_per_item() {
         let items = vec![item("o/r", "a cli", "Rust", &["cli", "rust"])];
-        let prompt = build_prompt(&items);
+        let prompt = build_prompt(&items, &[]);
         assert!(prompt.contains("0|o/r|a cli|Rust|cli,rust"), "实际: {}", prompt);
         assert!(prompt.contains("共 1 条"));
     }
@@ -179,7 +205,7 @@ mod tests {
         starred.stars = Some(123456);
         let plain = item("BV1xx", "一个视频", "", &[]);
 
-        let prompt = build_prompt(&[starred, plain]);
+        let prompt = build_prompt(&[starred, plain], &[]);
         assert!(prompt.contains("0|o/popular|well known|Rust||123456"), "实际: {}", prompt);
         assert!(
             prompt.contains("1|BV1xx|一个视频||"),
@@ -194,7 +220,7 @@ mod tests {
     fn prompt_includes_url_for_bookmarks() {
         let mut bm = item("Python 官方文档", "", "", &[]);
         bm.url = "https://docs.python.org/3/".to_string();
-        let prompt = build_prompt(&[bm]);
+        let prompt = build_prompt(&[bm], &[]);
         assert!(
             prompt.contains("https://docs.python.org/3/"),
             "书签链接必须喂给模型: {}",
@@ -205,7 +231,7 @@ mod tests {
     #[test]
     fn prompt_truncates_very_long_descriptions() {
         let long = "描".repeat(500);
-        let prompt = build_prompt(&[item("o/r", &long, "Rust", &[])]);
+        let prompt = build_prompt(&[item("o/r", &long, "Rust", &[])], &[]);
         let line = prompt.lines().nth(1).unwrap();
         assert!(line.chars().count() < 400, "单行过长: {}", line.chars().count());
     }

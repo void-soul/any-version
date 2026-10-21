@@ -98,6 +98,53 @@ export interface ClassifyResult {
   cancelled: boolean;
 }
 
+/** AI 整理分类层级时补建的分组（tempId 为负数占位，落库后才分配真实 ID） */
+export interface PlannedCategoryGroup {
+  tempId: number;
+  name: string;
+  /** null = 根级；否则是已有分类 ID */
+  parentId: number | null;
+  parentName?: string | null;
+  depth: number;
+}
+
+/** AI 整理分类层级：一条「只改上级」的移动建议（分类 ID 不变） */
+export interface PlannedCategoryMove {
+  id: number;
+  name: string;
+  /** 当前完整路径，如 `编程语言/Rust` */
+  path: string;
+  fromParentId: number | null;
+  fromParentName?: string | null;
+  toParentId: number | null;
+  toParentName?: string | null;
+  /** 移动后的层级（根级 = 1） */
+  depth: number;
+  reason: string;
+}
+
+/** 未通过本地校验的建议（成环 / 超深 / 同级重名等） */
+export interface SkippedCategoryMove {
+  id: number;
+  name: string;
+  problem: string;
+}
+
+export interface CategoryMovePlan {
+  model: string;
+  considered: number;
+  groups: PlannedCategoryGroup[];
+  moves: PlannedCategoryMove[];
+  skipped: SkippedCategoryMove[];
+}
+
+export interface ApplyCategoryMovesResult {
+  applied: number;
+  /** 本次实际新建的分组数 */
+  created: number;
+  skipped: SkippedCategoryMove[];
+}
+
 export interface CheckResult {
   checked: number;
   gone: number;

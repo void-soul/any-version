@@ -55,9 +55,13 @@ import {
   SOURCE_LABELS,
   expiringInDays,
   statusBadge,
+  type ApplyCategoryMovesResult,
   type CachedContent,
+  type CategoryMovePlan,
   type CheckResult,
   type ClassifyResult,
+  type PlannedCategoryGroup,
+  type PlannedCategoryMove,
   type CredentialStatus,
   type FavoriteDeletedRow,
   type FavoriteRow,
@@ -110,6 +114,13 @@ export default function FavoritesPanel() {
   // 条目分类选择器
   const [pickerFor, setPickerFor] = useState<FavoriteRow | null>(null);
   const [pickerSelected, setPickerSelected] = useState<number[]>([]);
+  // 整理类目：AI 只生成「改上级」的方案，用户在预览里勾选后才落库
+  const [organizeOpen, setOrganizeOpen] = useState(false);
+  const [organizePlan, setOrganizePlan] = useState<CategoryMovePlan | null>(null);
+  const [organizeSelected, setOrganizeSelected] = useState<number[]>([]);
+  const [organizeBusy, setOrganizeBusy] = useState(false);
+  const [organizeApplying, setOrganizeApplying] = useState(false);
+  const [organizeError, setOrganizeError] = useState<string | null>(null);
   const [source, setSource] = useState<string | null>(null);
   const [keyword, setKeyword] = useState("");
   // 收藏时间过滤（全部 / 近 7 天 / 近 30 天 / 近一年）
@@ -426,6 +437,89 @@ export default function FavoritesPanel() {
       toast(String(e), "err");
     }
   };
+
+  // ── 整理类目（AI 只给「改上级」建议，预览确认后才落库）──
+  const organizeReady = Boolean(providerId && modelId) && running.length === 0;
+
+  /** 请求 AI 生成方案。只读：不落库，用户勾选后才应用。 */
+  const loadOrganizePlan = async () => {
+    if (!providerId || !modelId || organizeBusy) return;
+    setOrganizeBusy(true);
+    setOrganizeError(null);
+    setOrganizePlan(null);
+    setOrganizeSelected([]);
+    try {
+      const plan = await invoke<CategoryMovePlan>("fav_plan_category_moves", {
+        providerId,
+        modelId,
+      });
+      setOrganizePlan(plan);
+      setOrganizeSelected(plan.moves.map((m) => m.id));
+    } catch (e) {
+      setOrganizeError(String(e));
+    } finally {
+      setOrganizeBusy(false);
+    }
+  };
+
+  const openOrganize = () => {
+    setOrganizeOpen(true);
+    void loadOrganizePlan();
+  };
+
+  /** 只把勾选的建议发回后端；后端会重新校验一次（前端传的可以是子集）。 */
+  const applyOrganize = async () => {
+    if (!organizePlan || organizeApplying) return;
+    const picked = new Set(organizeSelected);
+    const moves = organizePlan.moves
+      .filter((m: PlannedCategoryMove) => picked.has(m.id))
+      .map((m) => ({ id: m.id, parentId: m.toParentId }));
+    if (moves.length === 0) return;
+    // 新建分组由后端按「被勾选的移动」筛选用到的，不会被多余创建
+    const groups = organizePlan.groups.map((g: PlannedCategoryGroup) => ({
+      tempId: g.tempId,
+      name: g.name,
+      parentId: g.parentId,
+      parentName: g.parentName ?? null,
+      depth: g.depth,
+    }));
+    setOrganizeApplying(true);
+    try {
+      const result = await invoke<ApplyCategoryMovesResult>("fav_apply_category_moves", {
+        moves,
+        groups,
+      });
+      setOrganizeOpen(false);
+      setOrganizePlan(null);
+      await refresh();
+      if (result.skipped.length > 0) {
+        toast(
+          t("favorites.organizeAppliedSkipped", {
+            applied: result.applied,
+            skipped: result.skipped.length,
+          }),
+          "info",
+        );
+      } else if (result.created > 0) {
+        toast(
+          t("favorites.organizeAppliedWithGroups", {
+            count: result.applied,
+            groups: result.created,
+          }),
+          "ok",
+        );
+      } else {
+        toast(t("favorites.organizeApplied", { count: result.applied }), "ok");
+      }
+    } catch (e) {
+      toast(t("favorites.organizeApplyFail", { err: String(e) }), "err");
+    } finally {
+      setOrganizeApplying(false);
+    }
+  };
+
+  const organizePickedCount =
+    organizePlan?.moves.filter((m: PlannedCategoryMove) => organizeSelected.includes(m.id)).length ?? 0;
 
   // ── 条目分类选择器 ──
   const openPicker = (item: FavoriteRow) => {
@@ -1333,6 +1427,27 @@ export default function FavoritesPanel() {
             <Plus className="w-3 h-3 inline mr-1" />
             {t("favorites.newCategory")}
           </button>
+
+          {/* 整理类目：AI 检查「该做子类却建成平级」的分类，只改上下级关系 */}
+          <button
+            onClick={openOrganize}
+            disabled={!organizeReady}
+            title={
+              !providerId || !modelId
+                ? t("favorites.organizeNeedProvider")
+                : running.length > 0
+                  ? t("favorites.organizeBlocked")
+                  : t("favorites.organizeHint")
+            }
+            className="w-full text-left px-2 py-1 rounded text-tiny text-slate-500 hover:text-slate-200 hover:bg-white/5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {organizeBusy ? (
+              <Loader2 className="w-3 h-3 inline mr-1 animate-spin" />
+            ) : (
+              <Sparkles className="w-3 h-3 inline mr-1" />
+            )}
+            {t("favorites.organize")}
+          </button>
           {/* 原先这里还有一个「+ 关注分组」（kind=follow）。已删除：它建完之后没有任何入口
               能把收藏项归进去——真正在用的机制一直是星标（侧栏「星标」筛选 + 行内星标按钮）。
               已存在的 follow 分组不删数据，按普通分类照样显示与筛选。 */}
@@ -1796,6 +1911,171 @@ export default function FavoritesPanel() {
               </button>
             </>
           )}
+        </div>
+      )}
+
+      {/* 整理类目方案预览：AI 只给「改上级」建议，勾选后才应用；ID / 名称 / 条目关联都不动 */}
+      {organizeOpen && (
+        <div className="fixed inset-0 z-[300] modal-mask bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-xl bg-surface-panel border border-white/15 rounded-panel p-4 shadow-2xl space-y-3 text-body">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white">{t("favorites.organizeTitle")}</h3>
+              <button
+                onClick={() => { setOrganizeOpen(false); setOrganizePlan(null); }}
+                disabled={organizeApplying}
+                className="text-slate-400 hover:text-white p-1 cursor-pointer disabled:opacity-40"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-tiny text-slate-500 leading-relaxed">{t("favorites.organizeDesc")}</p>
+
+            {organizeBusy ? (
+              <div className="flex items-center justify-center gap-2 py-8 text-caption text-slate-400">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                {t("favorites.organizeRunning")}
+              </div>
+            ) : organizeError ? (
+              <div className="py-4 text-caption text-rose-400 break-all">
+                {t("favorites.organizePlanFail", { err: organizeError })}
+              </div>
+            ) : organizePlan ? (
+              <>
+                <div className="flex items-center gap-2 text-tiny text-slate-500">
+                  <span>{t("favorites.organizeConsidered", { count: organizePlan.considered })}</span>
+                  {organizePlan.moves.length > 0 && (
+                    <>
+                      <span className="text-slate-600">·</span>
+                      <button
+                        onClick={() => setOrganizeSelected(organizePlan.moves.map((m) => m.id))}
+                        className="hover:text-slate-200 cursor-pointer"
+                      >
+                        {t("favorites.organizeSelectAll")}
+                      </button>
+                      <button
+                        onClick={() => setOrganizeSelected([])}
+                        className="hover:text-slate-200 cursor-pointer"
+                      >
+                        {t("favorites.organizeSelectNone")}
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                {organizePlan.groups.length > 0 && (
+                  <div className="rounded-ctl border border-[var(--module-accent)]/20 bg-[var(--module-accent)]/5 px-2 py-1.5">
+                    <div className="text-tiny text-slate-300">
+                      {t("favorites.organizeNewGroups", { count: organizePlan.groups.length })}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {organizePlan.groups.map((g: PlannedCategoryGroup) => (
+                        <span
+                          key={g.tempId}
+                          className="text-micro px-1.5 py-0.5 rounded-full bg-white/5 text-slate-300"
+                        >
+                          {g.name}
+                          {" · "}
+                          {g.parentName
+                            ? t("favorites.organizeUnder", { parent: g.parentName })
+                            : t("favorites.organizeRoot")}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {organizePlan.moves.length === 0 ? (
+                  <p className="py-6 text-center text-caption text-slate-400">
+                    {organizePlan.skipped.length > 0
+                      ? t("favorites.organizeEmptyAllSkipped")
+                      : t("favorites.organizeEmpty")}
+                  </p>
+                ) : (
+                  <div className="max-h-80 overflow-y-auto space-y-1">
+                    {organizePlan.moves.map((m: PlannedCategoryMove) => (
+                      <label
+                        key={m.id}
+                        className="flex items-start gap-2 rounded-ctl border border-white/5 bg-white/[0.02] px-2 py-1.5 hover:bg-white/5 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={organizeSelected.includes(m.id)}
+                          onChange={() =>
+                            setOrganizeSelected((s) =>
+                              s.includes(m.id) ? s.filter((x) => x !== m.id) : [...s, m.id],
+                            )
+                          }
+                          className="mt-0.5 accent-[var(--module-accent)] cursor-pointer"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-caption font-semibold text-slate-200">{m.name}</span>
+                            <span className="text-micro text-slate-500">
+                              {m.fromParentName ?? t("favorites.organizeRoot")}
+                            </span>
+                            <ChevronRight className="w-3 h-3 text-slate-600" />
+                            <span className="text-micro text-[var(--module-accent)]">
+                              {m.toParentName ?? t("favorites.organizeRoot")}
+                            </span>
+                            <span className="text-micro text-slate-600">
+                              · {t("favorites.organizeDepth", { depth: m.depth })}
+                            </span>
+                          </div>
+                          <div className="text-micro text-slate-500 truncate" title={m.path}>
+                            {m.path}
+                          </div>
+                          {m.reason && (
+                            <div className="text-micro text-slate-400 mt-0.5 leading-snug">{m.reason}</div>
+                          )}
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                )}
+
+                {organizePlan.skipped.length > 0 && (
+                  <details className="rounded-ctl border border-amber-500/20 bg-amber-500/5 px-2 py-1.5">
+                    <summary className="text-tiny text-amber-300/90 cursor-pointer select-none">
+                      {t("favorites.organizeSkipped", { count: organizePlan.skipped.length })}
+                    </summary>
+                    <div className="mt-1 max-h-28 overflow-y-auto space-y-0.5">
+                      {organizePlan.skipped.map((s) => (
+                        <div key={`${s.id}-${s.problem}`} className="text-micro text-slate-400">
+                          <span className="text-slate-300">{s.name || `#${s.id}`}</span> · {s.problem}
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+              </>
+            ) : null}
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                onClick={() => void loadOrganizePlan()}
+                disabled={organizeBusy || organizeApplying}
+                className="px-2.5 py-1.5 rounded-ctl border border-white/10 text-tiny text-slate-300 hover:text-white cursor-pointer disabled:opacity-40 flex items-center gap-1"
+              >
+                <RefreshCw className={`w-3 h-3 ${organizeBusy ? "animate-spin" : ""}`} />
+                {t("favorites.organizeRegenerate")}
+              </button>
+              <button
+                onClick={() => { setOrganizeOpen(false); setOrganizePlan(null); }}
+                disabled={organizeApplying}
+                className="px-2.5 py-1.5 rounded-ctl border border-white/10 text-tiny text-slate-300 hover:text-white cursor-pointer disabled:opacity-40"
+              >
+                {t("common.cancel")}
+              </button>
+              <button
+                onClick={() => void applyOrganize()}
+                disabled={organizePickedCount === 0 || organizeBusy || organizeApplying}
+                className="px-2.5 py-1.5 rounded-ctl bg-[var(--module-accent)] text-white text-tiny font-semibold cursor-pointer disabled:opacity-40 flex items-center gap-1"
+              >
+                {organizeApplying && <Loader2 className="w-3 h-3 animate-spin" />}
+                {t("favorites.organizeApply", { count: organizePickedCount })}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

@@ -1214,6 +1214,138 @@ pub fn list_category_tree(conn: &Connection) -> Result<Vec<CategoryNode>, String
     Ok(out)
 }
 
+/// 分类概览（供「整理类目」把整棵树的上下文喂给模型）。
+///
+/// `path` 是完整层级路径（如 `编程语言/Rust`）；`samples` 只带几条标题，
+/// 用来帮助模型判断「其他」这类名字含糊的分类到底装了什么。
+#[derive(Debug, Clone, Default)]
+pub struct CategoryBrief {
+    pub id: i64,
+    pub parent_id: Option<i64>,
+    pub name: String,
+    pub kind: String,
+    pub count: i64,
+    pub path: String,
+    pub samples: Vec<String>,
+}
+
+/// 一次「只改上级」的分类移动。
+///
+/// 刻意**不含**名称/新建/删除字段：整理类目只允许改 `parent_id`，
+/// 分类 ID 与条目关联都不动，避免条目指向不存在的分类。
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CategoryMove {
+    pub id: i64,
+    pub parent_id: Option<i64>,
+    /// 模型给出的理由（前端应用时可不传）
+    #[serde(default)]
+    pub reason: String,
+}
+
+fn category_path_of(
+    id: i64,
+    parent_of: &std::collections::HashMap<i64, Option<i64>>,
+    name_of: &std::collections::HashMap<i64, String>,
+) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut cur = Some(id);
+    while let Some(cid) = cur {
+        // 老库/异常数据可能成环：遇到走过的节点就停，别让路径查询死循环
+        if !seen.insert(cid) {
+            break;
+        }
+        if let Some(name) = name_of.get(&cid) {
+            parts.push(name.clone());
+        }
+        cur = parent_of.get(&cid).copied().flatten();
+    }
+    parts.reverse();
+    parts.join("/")
+}
+
+/// 整棵分类树（含路径、直属条目数与前几条示例标题）。
+pub fn category_briefs(conn: &Connection) -> Result<Vec<CategoryBrief>, String> {
+    let flat = load_flat_categories(conn)?;
+    let parent_of: std::collections::HashMap<i64, Option<i64>> =
+        flat.iter().map(|c| (c.id, c.parent_id)).collect();
+    let name_of: std::collections::HashMap<i64, String> =
+        flat.iter().map(|c| (c.id, c.name.clone())).collect();
+
+    // 示例标题：按条目 id 取前 3 条，只用于给模型一点上下文
+    let mut samples: std::collections::HashMap<i64, Vec<String>> = std::collections::HashMap::new();
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT ic.category_id, f.title FROM favorite_item_category ic \
+                 JOIN favorite f ON f.id = ic.favorite_id ORDER BY f.id",
+            )
+            .map_err(|e| format!("查询分类示例失败: {e}"))?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| format!("查询分类示例失败: {e}"))?;
+        for row in rows {
+            let (cid, title) = row.map_err(|e| format!("读取分类示例失败: {e}"))?;
+            let list = samples.entry(cid).or_default();
+            if list.len() < 3 {
+                list.push(title);
+            }
+        }
+    }
+
+    let mut out: Vec<CategoryBrief> = flat
+        .into_iter()
+        .map(|c| CategoryBrief {
+            id: c.id,
+            parent_id: c.parent_id,
+            name: c.name,
+            kind: c.kind,
+            count: c.count,
+            path: category_path_of(c.id, &parent_of, &name_of),
+            samples: samples.remove(&c.id).unwrap_or_default(),
+        })
+        .collect();
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(out)
+}
+
+/// 现有分类的完整路径（只读名称与父级，供 AI 归类时「优先复用已有层级」）。
+///
+/// 轻量查询：不像 [`category_briefs`] 那样带条目示例，归类每批都要读一次。
+pub fn category_paths(conn: &Connection, limit: usize) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare("SELECT id, parent_id, name FROM favorite_category WHERE kind != 'follow'")
+        .map_err(|e| format!("查询分类路径失败: {e}"))?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, Option<i64>>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|e| format!("查询分类路径失败: {e}"))?;
+    let mut parent_of = std::collections::HashMap::new();
+    let mut name_of = std::collections::HashMap::new();
+    for row in rows {
+        let (id, parent_id, name) = row.map_err(|e| format!("读取分类路径失败: {e}"))?;
+        parent_of.insert(id, parent_id);
+        name_of.insert(id, name);
+    }
+    let mut out: Vec<String> = name_of
+        .keys()
+        .filter_map(|id| {
+            let path = category_path_of(*id, &parent_of, &name_of);
+            (!path.is_empty()).then_some(path)
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out.truncate(limit);
+    Ok(out)
+}
+
 /// 取某分类的全部子孙 id（含自己），用于「按分类筛选时把子分类也算进来」。
 pub fn descendant_ids(conn: &Connection, id: i64) -> Result<Vec<i64>, String> {
     let mut stmt = conn
@@ -1686,7 +1818,7 @@ pub fn count_all(conn: &Connection) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_status, apply_tags, clear_deleted, count_all, create_category, delete,
+        apply_status, apply_tags, category_briefs, category_paths, clear_deleted, count_all, create_category, delete,
         delete_category, find_category_by_name, get_credential, get_import_cursor, is_deleted,
         link_item_category, list, list_category_tree, list_deleted, mark_deleted, migrate,
         move_category, prune_all_empty_categories, rename_category, reset_classification,
@@ -2153,6 +2285,26 @@ mod tests {
         assert_eq!(removed, 2, "子孙分类要一起删");
         assert!(find_category_by_name(&conn, "LLVM").unwrap().is_some(), "移走的分类不受影响");
         assert_eq!(count_all(&conn).unwrap(), 2, "条目不能跟着分类一起没");
+    }
+
+    /// 整理类目依赖的概览：完整路径要沿父级拼出来，示例标题只取直属条目的前几条。
+    #[test]
+    fn category_briefs_and_paths_include_hierarchy_and_samples() {
+        let conn = seeded();
+        let root = create_category(&conn, "技术", None, "topic").unwrap();
+        let child = create_category(&conn, "编译器", Some(root), "topic").unwrap();
+        let grand = create_category(&conn, "LLVM", Some(child), "topic").unwrap();
+        set_item_categories(&conn, 1, &[grand]).unwrap();
+        set_item_categories(&conn, 2, &[child]).unwrap();
+
+        let paths = category_paths(&conn, 20).unwrap();
+        assert!(paths.contains(&"技术/编译器/LLVM".to_string()));
+        assert!(paths.contains(&"技术/编译器".to_string()));
+
+        let briefs = category_briefs(&conn).unwrap();
+        let hit = briefs.iter().find(|b| b.id == child).unwrap();
+        assert_eq!(hit.path, "技术/编译器");
+        assert_eq!(hit.samples, vec!["o/web".to_string()], "只带直属条目的标题");
     }
 
     /// 分类树的条目数：自己挂的 + 所有子孙的（侧栏显示这个才有意义）。

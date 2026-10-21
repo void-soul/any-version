@@ -9,6 +9,7 @@ pub mod db;
 pub mod settings;
 pub mod github;
 pub mod classify;
+pub mod organize;
 pub mod cookie_expiry;
 pub mod check;
 pub mod wbi;
