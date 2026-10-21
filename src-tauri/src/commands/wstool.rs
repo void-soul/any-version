@@ -7,6 +7,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
@@ -46,6 +47,7 @@ struct Session {
 enum WsOut {
     Text(String),
     Binary(Vec<u8>),
+    Ping(Vec<u8>),
     Close,
 }
 
@@ -119,6 +121,7 @@ pub async fn ws_connect(
             let (msg, is_close) = match out {
                 WsOut::Text(t) => (Message::Text(t), false),
                 WsOut::Binary(b) => (Message::Binary(b), false),
+                WsOut::Ping(p) => (Message::Ping(p), false),
                 WsOut::Close => (Message::Close(None), true),
             };
             if sink.send(msg).await.is_err() {
@@ -147,7 +150,15 @@ pub async fn ws_connect(
                         serde_json::json!({ "id": id_reader, "kind": "binary", "hex": hex, "text": String::from_utf8_lossy(&bytes), "len": bytes.len() }),
                     );
                 }
-                Ok(Message::Ping(_)) | Ok(Message::Pong(_)) | Ok(_) => {}
+                Ok(Message::Pong(payload)) => {
+                    // 客户端 Ping 发出的 token 会原样回传，前端据此计算往返延迟
+                    let token = String::from_utf8_lossy(&payload).to_string();
+                    let _ = app_reader.emit(
+                        "wstool://pong",
+                        serde_json::json!({ "id": id_reader, "token": token }),
+                    );
+                }
+                Ok(_) => {}
                 Err(e) => {
                     warn!("[wstool] {} 读错误: {}", id_reader, e);
                     break;
@@ -177,6 +188,23 @@ pub fn ws_send(state: tauri::State<'_, WsState>, id: String, data: String, hex_m
         WsOut::Text(data)
     };
     session.tx.as_ref().ok_or("通道已关闭")?.send(out).map_err(|_| "发送失败：连接已关闭".to_string())
+}
+
+/// 发送 WebSocket Ping，服务端自动回 Pong 后由读任务推送 `wstool://pong`。
+/// token 只用于前端配对往返耗时，限制为短 ASCII，避免把控制帧当数据通道用。
+#[tauri::command]
+pub fn ws_ping(state: tauri::State<'_, WsState>, id: String, token: String) -> Result<(), String> {
+    if token.is_empty() || token.len() > 64 || !token.is_ascii() {
+        return Err("Ping token 必须为 1-64 位 ASCII 字符".into());
+    }
+    let map = state.sessions.lock().unwrap_or_else(|e| e.into_inner());
+    let session = map.get(&id).ok_or_else(|| format!("{} 未连接", id))?;
+    session
+        .tx
+        .as_ref()
+        .ok_or("该连接不支持 Ping")?
+        .send(WsOut::Ping(token.into_bytes()))
+        .map_err(|_| "发送失败：连接已关闭".to_string())
 }
 
 /// 断开指定连接（WS / SSE / TCP / UDP 共用注册表）。
@@ -253,9 +281,13 @@ pub async fn net_connect_core(
 ) -> Result<(), String> {
     match protocol.as_str() {
         "tcp" => {
-            let stream = TcpStream::connect((host.as_str(), port))
-                .await
-                .map_err(|e| format!("TCP 连接失败: {}", e))?;
+            let stream = tokio::time::timeout(
+                Duration::from_secs(10),
+                TcpStream::connect((host.as_str(), port)),
+            )
+            .await
+            .map_err(|_| format!("TCP 连接超时（10s）: {}:{}", host, port))?
+            .map_err(|e| format!("TCP 连接失败: {}", e))?;
             info!("[nettool] {} 已连接 tcp://{}:{}", id, host, port);
             emit("wstool://open", serde_json::json!({ "id": id, "url": format!("tcp://{}:{}", host, port), "proto": "tcp" }));
             let (mut rd, mut wr) = stream.into_split();
@@ -281,10 +313,12 @@ pub async fn net_connect_core(
                     match rd.read(&mut buf).await {
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
-                            let hex: String = buf[..n].iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+                            let bytes = &buf[..n];
+                            let kind = if std::str::from_utf8(bytes).is_ok() { "text" } else { "binary" };
+                            let hex: String = bytes.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
                             emit_r(
                                 "wstool://message",
-                                serde_json::json!({ "id": id_r, "kind": "text", "proto": "tcp", "hex": hex, "data": String::from_utf8_lossy(&buf[..n]), "len": n }),
+                                serde_json::json!({ "id": id_r, "kind": kind, "proto": "tcp", "hex": hex, "data": String::from_utf8_lossy(bytes), "len": n }),
                             );
                         }
                     }
@@ -331,10 +365,12 @@ pub async fn net_connect_core(
                     match sock.recv_from(&mut buf).await {
                         Ok((0, _)) | Err(_) => break,
                         Ok((n, from)) => {
-                            let hex: String = buf[..n].iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+                            let bytes = &buf[..n];
+                            let kind = if std::str::from_utf8(bytes).is_ok() { "text" } else { "binary" };
+                            let hex: String = bytes.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
                             emit_r(
                                 "wstool://message",
-                                serde_json::json!({ "id": id_r, "kind": "text", "proto": "udp", "from": from.to_string(), "hex": hex, "data": String::from_utf8_lossy(&buf[..n]), "len": n }),
+                                serde_json::json!({ "id": id_r, "kind": kind, "proto": "udp", "from": from.to_string(), "hex": hex, "data": String::from_utf8_lossy(bytes), "len": n }),
                             );
                         }
                     }

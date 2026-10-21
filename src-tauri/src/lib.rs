@@ -554,6 +554,7 @@ pub fn run() {
                 commands::wstool::wstool_list,
                 commands::wstool::ws_connect,
                 commands::wstool::ws_send,
+                commands::wstool::ws_ping,
                 commands::wstool::wstool_disconnect,
                 commands::wstool::sse_connect,
                 commands::wstool::net_connect,
