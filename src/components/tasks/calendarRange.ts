@@ -47,6 +47,16 @@ export function monthGrid(dateStr: string): string[] {
   return Array.from({ length: 42 }, (_, i) => addDays(gridStart, i));
 }
 
+/**
+ * 一组「可见格子」覆盖的闭区间（月网格 42 格 / 一周 7 格都适用）。
+ *
+ * 月视图必须按**网格范围**而不是「1 号 ~ 月末」拉数据：42 格里含前后月份的
+ * 补齐格子，只拉当月的话那些格子里的任务看不见，拖进去的任务也会当场消失。
+ */
+export function daysRange(days: string[]): { start: string; end: string } {
+  return { start: days[0], end: days[days.length - 1] };
+}
+
 /** 按月平移锚点（跨年由 Date 归一，避免手写进位）。 */
 export function shiftMonth(dateStr: string, delta: number): string {
   const dt = parse(dateStr);

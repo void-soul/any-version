@@ -5,41 +5,33 @@
 // 独立之后任务直接排在某一天，与任何导图无关（旧的节点计划已一次性迁移进来）。
 //
 // 交互（日历即操作台）：
-// - 点某天空白处 = 在当天新建任务；点任务 = 编辑（标题/日期/优先级/进度/标签/描述）
+// - 点某天空白处 = 在当天新建任务；点任务 = 查看/编辑（标题/日期/优先级/进度/标签/描述/预估）
 // - 把任务拖到别的日子 = 改期（带原因，写进 move record，便于复盘「为什么一再顺延」）
+// - 同一天内把任务拖到另一张卡片上/下沿 = 插入排序（tasks_reorder，刷新后保持）
 // - 未排期任务在底部收集箱里，可拖进任意一天完成排期
-// - 表头汇总逾期数量；逾期任务在格子里以红色左边条标出，可在编辑弹窗里一键顺延到今天
+// - 表头：逾期数量 + 一键结转全部逾期到今天；搜索（结果替换日历区，归档任务在此找回）；复盘统计弹窗
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { open } from "@tauri-apps/plugin-dialog";
 import {
-  AlertTriangle, CalendarDays, Check, ChevronLeft, ChevronRight, Clock, Inbox, Loader2, Pencil, Plus, Trash2,
+  AlertTriangle, BarChart3, CalendarDays, Check, ChevronLeft, ChevronRight, CornerDownRight,
+  Inbox, Loader2, Plus, Search, X,
 } from "lucide-react";
-import { SharedButton, inputCls, labelCls } from "../shared/Button";
+import { SharedButton } from "../shared/Button";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
-import { SharedModal } from "../shared/Modal";
-import { MarkdownFieldEditor } from "../mindmap/MarkdownFieldEditor";
-import { isOverdue, monthGrid, monthRange, shiftMonth, weekRange } from "./calendarRange";
+import { daysRange, isOverdue, monthGrid, shiftMonth, weekRange } from "./calendarRange";
+import { TaskEditorModal } from "./TaskEditorModal";
+import { ReviewModal } from "./ReviewModal";
+import { TaskSearchPanel } from "./TaskSearchPanel";
 import {
-  PRIORITY_META, addDays, deriveStatus, progressColor, tasksApi, todayStr,
-  type TaskItem, type TaskPriority,
+  PRIORITY_META, addDays, tasksApi, todayStr,
+  type TaskItem,
 } from "./types";
 
 const WEEKDAY_KEYS = [
   "taskPlan.weekdayMon", "taskPlan.weekdayTue", "taskPlan.weekdayWed", "taskPlan.weekdayThu",
   "taskPlan.weekdayFri", "taskPlan.weekdaySat", "taskPlan.weekdaySun",
 ];
-const PRIORITY_ORDER: TaskPriority[] = ["low", "medium", "high", "urgent"];
-const PRIORITY_LABEL: Record<TaskPriority, string> = {
-  low: "taskPlan.priorityLow",
-  medium: "taskPlan.priorityMedium",
-  high: "taskPlan.priorityHigh",
-  urgent: "taskPlan.priorityUrgent",
-};
-
-/** 一天的毫秒数（快速按钮「明天」用） */
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 export default function TaskCalendarPanel() {
   const { t } = useTranslation();
@@ -58,11 +50,20 @@ export default function TaskCalendarPanel() {
   const [removing, setRemoving] = useState<TaskItem | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<string | null>(null);
+  /** 插入排序落点：落在某天某张卡片的上/下沿（与格子高亮环 dragOver 互斥） */
+  const [chipDrop, setChipDrop] = useState<{ day: string; id: string; pos: "before" | "after" } | null>(null);
+  // 搜索：有查询词时结果区替换日历网格（表头保留）
+  const [query, setQuery] = useState("");
+  const [debounced, setDebounced] = useState("");
+  /** 编辑弹窗保存后递增，让结果区重搜（归档状态等可能已变） */
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  /** 结转确认弹窗的载体：非 null 即打开，值是 listOverdue 现查到的全局逾期数 */
+  const [carryCount, setCarryCount] = useState<number | null>(null);
+  // 轻量成功提示（3 秒自灭），与 PickyPanel 的 flash 同款
+  const [notice, setNotice] = useState("");
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const range = useMemo(
-    () => (view === "month" ? monthRange(anchor) : weekRange(anchor)),
-    [view, anchor],
-  );
   const days = useMemo(() => {
     if (view === "week") {
       const { start } = weekRange(anchor);
@@ -70,7 +71,10 @@ export default function TaskCalendarPanel() {
     }
     return monthGrid(anchor);
   }, [view, anchor]);
+  // 拉数据的区间 = 屏幕上真正看得见的格子（月视图含前后月份的补齐格）
+  const range = useMemo(() => daysRange(days), [days]);
   const currentMonth = anchor.slice(0, 7);
+  const searchActive = debounced.trim() !== "";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -89,10 +93,29 @@ export default function TaskCalendarPanel() {
     }
   }, [range.start, range.end]);
 
-  // 首次进入确保库已就绪（含从思维导图旧计划的一次性迁移），再拉数据
+  // 首次进入确保库已就绪（含从思维导图旧计划的一次性迁移），再拉数据。
+  // init 只跑一次：`load` 随可见区间变化，若把它当依赖每次切月都会重跑 init。
+  const inited = useRef(false);
   useEffect(() => {
+    if (inited.current) {
+      void load();
+      return;
+    }
+    inited.current = true;
     void tasksApi.init().catch(() => {}).then(() => load());
   }, [load]);
+
+  // 搜索防抖：300ms 内连续输入不发请求
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(query), 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const flash = (msg: string) => {
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    setNotice(msg);
+    noticeTimer.current = setTimeout(() => setNotice(""), 3000);
+  };
 
   const byDay = useMemo(() => {
     const map = new Map<string, TaskItem[]>();
@@ -112,6 +135,7 @@ export default function TaskCalendarPanel() {
     const id = dragId;
     setDragId(null);
     setDragOver(null);
+    setChipDrop(null);
     if (!id) return;
     const task = items.find((x) => x.id === id) ?? unscheduled.find((x) => x.id === id);
     if (task?.scheduledDate === day) return;
@@ -123,16 +147,69 @@ export default function TaskCalendarPanel() {
     }
   };
 
+  /** 同一天内拖到某张卡片上/下沿：插入排序。乐观更新，失败回滚（重新加载） */
+  const reorderSameDay = async (day: string, srcId: string, targetId: string, pos: "before" | "after") => {
+    const dayList = byDay.get(day) ?? [];
+    const ids = dayList.map((x) => x.id).filter((id) => id !== srcId);
+    let idx = ids.indexOf(targetId);
+    if (idx === -1) return;
+    if (pos === "after") idx += 1;
+    ids.splice(idx, 0, srcId);
+    const current = dayList.map((x) => x.id);
+    if (ids.every((id, i) => id === current[i])) return;
+    const reordered = ids
+      .map((id) => dayList.find((x) => x.id === id))
+      .filter((x): x is TaskItem => !!x);
+    setItems((prev) => [...prev.filter((x) => x.scheduledDate !== day), ...reordered]);
+    try {
+      await tasksApi.reorder(ids);
+    } catch (e) {
+      setErr(String(e));
+      void load();
+    }
+  };
+
+  /**
+   * 一键结转全部逾期到今天。后端是全局口径（不限当前可见范围），
+   * 所以条数必须 listOverdue 现查，不能复用表头 chip 的可见范围计数。
+   */
+  const requestCarryOver = async () => {
+    try {
+      const list = await tasksApi.listOverdue();
+      if (list.length === 0) {
+        flash(t("taskPlan.carryOverNone"));
+        return;
+      }
+      setCarryCount(list.length);
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
+  const confirmCarryOver = async () => {
+    setCarryCount(null);
+    try {
+      const n = await tasksApi.carryOver();
+      flash(t("taskPlan.carryOverDone", { count: n }));
+      await load();
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
   const jumpTo = (delta: number) => {
     setAnchor((prev) => (view === "month" ? shiftMonth(prev, delta) : addDays(prev, delta * 7)));
   };
 
-  const taskChip = (task: TaskItem) => {
+  /**
+   * 任务卡片。day 存在 = 日历格内（挂插入排序的 dragOver/drop）；
+   * day 缺省 = 收集箱（只做拖出源，不做排序落点）。
+   */
+  const taskChip = (task: TaskItem, day?: string) => {
     const done = task.progress >= 100;
     const late = isOverdue(task, today);
     return (
       <div
-        key={task.id}
         draggable
         onDragStart={(e) => {
           setDragId(task.id);
@@ -140,7 +217,49 @@ export default function TaskCalendarPanel() {
           // 拖到格子外（收集箱）也要能识别，用 text 兜底
           e.dataTransfer.setData("text/plain", task.id);
         }}
-        onDragEnd={() => { setDragId(null); setDragOver(null); }}
+        onDragEnd={() => { setDragId(null); setDragOver(null); setChipDrop(null); }}
+        onDragOver={(e) => {
+          if (!day) return;
+          e.preventDefault();
+          // 阻止冒泡到格子：排序指示线亮起时格子环必须熄灭（两种落点语义互斥）
+          e.stopPropagation();
+          if (!dragId || dragId === task.id) {
+            setChipDrop(null);
+            return;
+          }
+          const rect = e.currentTarget.getBoundingClientRect();
+          const pos = e.clientY < rect.top + rect.height / 2 ? "before" : "after";
+          setChipDrop((prev) =>
+            prev && prev.day === day && prev.id === task.id && prev.pos === pos
+              ? prev
+              : { day, id: task.id, pos },
+          );
+        }}
+        onDragLeave={() => {
+          if (!day) return;
+          setChipDrop((prev) => (prev?.id === task.id ? null : prev));
+        }}
+        onDrop={(e) => {
+          if (!day) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const srcId = dragId || e.dataTransfer.getData("text/plain");
+          const pos = chipDrop?.id === task.id ? chipDrop.pos : "before";
+          setDragId(null);
+          setDragOver(null);
+          setChipDrop(null);
+          if (!srcId || srcId === task.id) return;
+          const src = items.find((x) => x.id === srcId) ?? unscheduled.find((x) => x.id === srcId);
+          if (src?.scheduledDate === day) {
+            void reorderSameDay(day, srcId, task.id, pos);
+          } else {
+            // 跨天/收集箱落到卡片上：等效落到该天（追加到末尾），与格子 drop 行为一致
+            void tasksApi
+              .move(srcId, { toDate: day, reason: t("taskPlan.dragReason") })
+              .then(() => load())
+              .catch((err2) => setErr(String(err2)));
+          }
+        }}
         onClick={(e) => { e.stopPropagation(); setEditing(task); }}
         title={`${task.title} · ${t("taskPlan.progressLabel")} ${task.progress}%`}
         className={`flex cursor-pointer items-center gap-1 rounded border border-white/10 bg-white/[0.04] px-1 py-0.5 text-tiny transition hover:bg-white/[0.1] ${
@@ -186,7 +305,17 @@ export default function TaskCalendarPanel() {
           {list.length > 0 && <span className="ml-auto text-micro text-slate-600">{list.length}</span>}
         </div>
         <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
-          {list.map(taskChip)}
+          {list.map((task) => (
+            <div key={task.id} className="flex flex-col gap-0.5">
+              {chipDrop?.day === day && chipDrop.id === task.id && chipDrop.pos === "before" && (
+                <div className="h-0.5 shrink-0 rounded bg-[var(--module-accent)]" />
+              )}
+              {taskChip(task, day)}
+              {chipDrop?.day === day && chipDrop.id === task.id && chipDrop.pos === "after" && (
+                <div className="h-0.5 shrink-0 rounded bg-[var(--module-accent)]" />
+              )}
+            </div>
+          ))}
         </div>
       </div>
     );
@@ -219,7 +348,7 @@ export default function TaskCalendarPanel() {
         </div>
         {loading && <Loader2 className="h-3 w-3 animate-spin text-slate-500" />}
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           {overdue.length > 0 && (
             <span className="flex items-center gap-1 rounded-md border border-rose-400/30 bg-rose-500/10 px-2 py-0.5 text-tiny text-rose-300"
               title={t("taskPlan.overdueHint")}>
@@ -227,6 +356,31 @@ export default function TaskCalendarPanel() {
               {t("taskPlan.overdueChip", { count: overdue.length })}
             </span>
           )}
+          {/* 结转是全局口径：不依赖可见范围有逾期，所以按钮常显，空转时 flash 提示 */}
+          <button type="button" onClick={() => void requestCarryOver()} title={t("taskPlan.carryOverBtn")}
+            className="rounded-md p-1 text-rose-300 transition hover:bg-rose-500/10">
+            <CornerDownRight className="h-3.5 w-3.5" />
+          </button>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-1.5 top-1/2 h-3 w-3 -translate-y-1/2 text-slate-500" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t("taskPlan.searchPlaceholder")}
+              className="h-7 w-40 rounded-md border border-white/10 bg-white/[0.03] pl-6 pr-5 text-tiny text-slate-200 placeholder:text-slate-600 focus:border-[var(--module-accent)] focus:outline-none"
+            />
+            {query && (
+              <button type="button" onClick={() => setQuery("")}
+                className="absolute right-1 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white">
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+          <SharedButton variant="secondary" className="!h-7 !px-2 !text-tiny"
+            onClick={() => setReviewOpen(true)} title={t("taskPlan.reviewTitle")}>
+            <BarChart3 className="h-3 w-3" />
+            {t("taskPlan.reviewBtn")}
+          </SharedButton>
           {/* 视图切换：分段按钮，与模块内其它控件同一套外观 */}
           <div className="flex items-center gap-0.5 rounded-ctl border border-white/10 bg-white/[0.03] p-0.5">
             {(["month", "week"] as const).map((v) => (
@@ -258,36 +412,54 @@ export default function TaskCalendarPanel() {
         </div>
       )}
 
-      {/* 日历网格 */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-card border border-white/10">
-        <div className="grid flex-shrink-0 grid-cols-7 border-b border-white/10 bg-white/[0.02]">
-          {WEEKDAY_KEYS.map((key) => (
-            <div key={key} className="px-2 py-1 text-center text-tiny font-semibold text-slate-500">{t(key)}</div>
-          ))}
+      {notice && (
+        <div className="flex flex-shrink-0 items-center gap-2 rounded-ctl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-caption text-emerald-300">
+          <Check className="h-3.5 w-3.5 shrink-0" />
+          <span className="min-w-0 flex-1 break-all">{notice}</span>
         </div>
-        <div className={view === "month"
-          ? "grid min-h-0 flex-1 grid-cols-7 grid-rows-6"
-          : "grid min-h-0 flex-1 grid-cols-7"}>
-          {days.map(dayCell)}
-        </div>
-      </div>
+      )}
 
-      {/* 未排期收集箱：拖到格子里即完成排期（不显示的话，这些任务等于在日历上消失） */}
-      {showInbox && (
-        <div className="flex max-h-28 flex-shrink-0 flex-col gap-1 overflow-hidden rounded-card border border-white/10 bg-white/[0.02] p-2">
-          <div className="flex shrink-0 items-center gap-1.5 text-tiny font-semibold text-slate-400">
-            <Inbox className="h-3 w-3" />
-            {t("taskPlan.inboxTitle")}
-            <span className="text-slate-600">{unscheduled.length}</span>
-          </div>
-          <div className="flex min-h-0 flex-1 flex-wrap gap-1 overflow-y-auto">
-            {unscheduled.length === 0
-              ? <span className="text-tiny text-slate-600">{t("taskPlan.inboxEmpty")}</span>
-              : unscheduled.map((task) => (
-                <div key={task.id} className="w-48">{taskChip(task)}</div>
+      {searchActive ? (
+        /* 搜索态：结果区替换日历与收集箱（表头保留，搜索框在表头） */
+        <TaskSearchPanel
+          query={debounced.trim()}
+          refreshNonce={refreshNonce}
+          onOpenTask={(task) => setEditing(task)}
+        />
+      ) : (
+        <>
+          {/* 日历网格 */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-card border border-white/10">
+            <div className="grid flex-shrink-0 grid-cols-7 border-b border-white/10 bg-white/[0.02]">
+              {WEEKDAY_KEYS.map((key) => (
+                <div key={key} className="px-2 py-1 text-center text-tiny font-semibold text-slate-500">{t(key)}</div>
               ))}
+            </div>
+            <div className={view === "month"
+              ? "grid min-h-0 flex-1 grid-cols-7 grid-rows-6"
+              : "grid min-h-0 flex-1 grid-cols-7"}>
+              {days.map(dayCell)}
+            </div>
           </div>
-        </div>
+
+          {/* 未排期收集箱：拖到格子里即完成排期（不显示的话，这些任务等于在日历上消失） */}
+          {showInbox && (
+            <div className="flex max-h-28 flex-shrink-0 flex-col gap-1 overflow-hidden rounded-card border border-white/10 bg-white/[0.02] p-2">
+              <div className="flex shrink-0 items-center gap-1.5 text-tiny font-semibold text-slate-400">
+                <Inbox className="h-3 w-3" />
+                {t("taskPlan.inboxTitle")}
+                <span className="text-slate-600">{unscheduled.length}</span>
+              </div>
+              <div className="flex min-h-0 flex-1 flex-wrap gap-1 overflow-y-auto">
+                {unscheduled.length === 0
+                  ? <span className="text-tiny text-slate-600">{t("taskPlan.inboxEmpty")}</span>
+                  : unscheduled.map((task) => (
+                    <div key={task.id} className="w-48">{taskChip(task)}</div>
+                  ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* 编辑 / 新建 */}
@@ -296,10 +468,21 @@ export default function TaskCalendarPanel() {
           task={editing}
           day={draftDay ?? today}
           onClose={() => { setEditing(null); setDraftDay(null); }}
-          onSaved={() => { setEditing(null); setDraftDay(null); void load(); }}
+          onSaved={() => { setEditing(null); setDraftDay(null); setRefreshNonce((n) => n + 1); void load(); }}
           onRequestDelete={(task) => { setEditing(null); setRemoving(task); }}
         />
       )}
+
+      <ReviewModal open={reviewOpen} onClose={() => setReviewOpen(false)} range={range} items={items} />
+
+      <ConfirmDialog
+        open={carryCount !== null}
+        title={t("taskPlan.carryOverTitle")}
+        desc={t("taskPlan.carryOverDesc", { count: carryCount ?? 0 })}
+        confirmText={t("taskPlan.carryOverBtn")}
+        onCancel={() => setCarryCount(null)}
+        onConfirm={() => void confirmCarryOver()}
+      />
 
       <ConfirmDialog
         open={removing !== null}
@@ -316,273 +499,5 @@ export default function TaskCalendarPanel() {
         }}
       />
     </div>
-  );
-}
-
-// ════════════ 任务编辑弹窗（新建与编辑共用） ════════════
-
-function TaskEditorModal({
-  task, day, onClose, onSaved, onRequestDelete,
-}: {
-  task: TaskItem | null;
-  day: string;
-  onClose: () => void;
-  onSaved: () => void;
-  onRequestDelete: (task: TaskItem) => void;
-}) {
-  const { t } = useTranslation();
-  const today = todayStr();
-  const [title, setTitle] = useState(task?.title ?? "");
-  const [date, setDate] = useState(task?.scheduledDate ?? day);
-  const [priority, setPriority] = useState<TaskPriority>((task?.priority as TaskPriority) ?? "medium");
-  const [progress, setProgress] = useState(task?.progress ?? 0);
-  const [tags, setTags] = useState(task?.tags ?? "");
-  const [description, setDescription] = useState(task?.description ?? "");
-  const [detail, setDetail] = useState(task?.detail ?? "");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  /**
-   * 打开**已有任务**先只读浏览，点「编辑」才进可编辑态；新建任务直接就是编辑态。
-   *
-   * 为什么：点开一个任务就想改内容，是最容易误改的路径（顺手把字删了、进度拖错了）。
-   * 默认浏览把「看」和「改」分开，改动变得有明确意图。
-   */
-  const [editing, setEditing] = useState(!task);
-  /** 只读浏览态 */
-  const ro = !!task && !editing;
-
-  const late = !!task && isOverdue({ progress, scheduledDate: date || null }, today);
-
-  /** 选一个本地文件插入详细说明（绝对路径：任务不属于任何项目目录，
-   *  相对路径没有可解析的根，所以一律存绝对路径）。 */
-  const pickTaskFile = async () => {
-    const sel = await open({ multiple: false, title: t("taskPlan.pickFileTitle") });
-    if (!sel) return null;
-    return typeof sel === "string" ? sel : null;
-  };
-
-  const save = async () => {
-    const trimmed = title.trim();
-    if (!trimmed) {
-      setErr(t("taskPlan.titleRequired"));
-      return;
-    }
-    setBusy(true);
-    setErr("");
-    try {
-      if (task) {
-        await tasksApi.update(task.id, {
-          title: trimmed,
-          scheduledDate: date || null,
-          priority,
-          tags,
-          description,
-          detail,
-        });
-        // 进度走专用命令：它会记 move record（进度变化也值得留痕）
-        if (progress !== task.progress) await tasksApi.setProgress(task.id, { progress });
-      } else {
-        await tasksApi.create({ title: trimmed, scheduledDate: date || null, priority, tags, description, detail, progress });
-      }
-      onSaved();
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const carryToToday = async () => {
-    if (!task) return;
-    setBusy(true);
-    setErr("");
-    try {
-      await tasksApi.move(task.id, { toDate: today, reason: t("taskPlan.carryReason") });
-      onSaved();
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <SharedModal
-      open
-      onClose={onClose}
-      width={520}
-      title={task ? (ro ? t("taskPlan.viewTask") : t("taskPlan.editTask")) : t("taskPlan.newTask")}
-      footer={
-        <>
-          {/* 删除是破坏性动作，只在编辑态露出来：浏览态不该摆着一个红按钮 */}
-          {task && !ro && (
-            <SharedButton variant="ghost" className="!text-rose-300 hover:!bg-rose-500/10" disabled={busy}
-              onClick={() => onRequestDelete(task)}>
-              <Trash2 className="h-3 w-3" />
-              {t("taskPlan.delete")}
-            </SharedButton>
-          )}
-          <div className="ml-auto flex items-center gap-2">
-            {ro ? (
-              <>
-                <SharedButton variant="secondary" onClick={onClose}>{t("taskPlan.close")}</SharedButton>
-                <SharedButton variant="primary" onClick={() => setEditing(true)}>
-                  <Pencil className="h-3 w-3" />
-                  {t("taskPlan.edit")}
-                </SharedButton>
-              </>
-            ) : (
-              <>
-                <SharedButton variant="secondary" onClick={onClose}>{t("taskPlan.cancel")}</SharedButton>
-                <SharedButton variant="primary" disabled={busy} onClick={() => void save()}>{t("taskPlan.save")}</SharedButton>
-              </>
-            )}
-          </div>
-        </>
-      }
-    >
-      {err && (
-        <div className="flex items-start gap-2 rounded-ctl border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-caption text-rose-300">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-all">{err}</span>
-        </div>
-      )}
-
-      <div>
-        <label className={labelCls}>{t("taskPlan.titleLabel")}</label>
-        {ro ? (
-          <div className="text-body font-semibold text-slate-100 break-words">{title || "—"}</div>
-        ) : (
-          <input className={inputCls} autoFocus value={title}
-            placeholder={t("taskPlan.titlePlaceholder")}
-            onChange={(e) => setTitle(e.target.value)} />
-        )}
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className={labelCls}>{t("taskPlan.dateLabel")}</label>
-          {ro ? (
-            <div className="text-caption text-slate-300">{date || t("taskPlan.unscheduled")}</div>
-          ) : (
-            <>
-              <input type="date" className={inputCls} value={date} onChange={(e) => setDate(e.target.value)} />
-              <div className="mt-1 flex items-center gap-1">
-                <button type="button" onClick={() => setDate(todayStr())}
-                  className="rounded border border-white/10 px-1.5 py-0.5 text-tiny text-slate-400 hover:bg-white/10">
-                  {t("taskPlan.setToday")}
-                </button>
-                <button type="button" onClick={() => setDate(new Date(Date.now() + DAY_MS).toISOString().slice(0, 10))}
-                  className="rounded border border-white/10 px-1.5 py-0.5 text-tiny text-slate-400 hover:bg-white/10">
-                  {t("taskPlan.setTomorrow")}
-                </button>
-                <button type="button" onClick={() => setDate("")}
-                  className="rounded border border-white/10 px-1.5 py-0.5 text-tiny text-slate-400 hover:bg-white/10">
-                  {t("taskPlan.unschedule")}
-                </button>
-              </div>
-              {!date && <div className="mt-1 text-tiny text-slate-500">{t("taskPlan.unscheduledHint")}</div>}
-            </>
-          )}
-        </div>
-        <div>
-          <label className={labelCls}>{t("taskPlan.priorityLabel")}</label>
-          {ro ? (
-            <span className={`inline-flex items-center rounded-ctl border px-2 py-1 text-tiny font-semibold ${PRIORITY_META[priority].bg} ${PRIORITY_META[priority].text}`}>
-              {t(PRIORITY_LABEL[priority])}
-            </span>
-          ) : (
-            <div className="flex items-center gap-1">
-              {PRIORITY_ORDER.map((p) => (
-                <button key={p} type="button" onClick={() => setPriority(p)}
-                  className={`flex-1 rounded-ctl border px-1.5 py-1 text-tiny transition ${
-                    priority === p ? `${PRIORITY_META[p].bg} ${PRIORITY_META[p].text} font-semibold` : "border-white/10 text-slate-400 hover:bg-white/5"
-                  }`}>
-                  {t(PRIORITY_LABEL[p])}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div>
-        <label className={labelCls}>
-          {t("taskPlan.progressLabel")} · {progress}%
-          <span className="ml-2 font-normal text-slate-500">{t(`taskPlan.status${deriveStatus(progress) === "done" ? "Done" : deriveStatus(progress) === "inProgress" ? "InProgress" : "Todo"}`)}</span>
-        </label>
-        {!ro && (
-          <div className="flex items-center gap-2">
-            <input type="range" min={0} max={100} step={5} value={progress}
-              onChange={(e) => setProgress(Number(e.target.value))}
-              className="h-1.5 flex-1 cursor-pointer accent-[var(--module-accent)]" />
-            <div className="flex items-center gap-1">
-              {[0, 50, 100].map((p) => (
-                <button key={p} type="button" onClick={() => setProgress(p)}
-                  className={`rounded border px-1.5 py-0.5 text-tiny transition ${
-                    progress === p ? "border-white/25 bg-white/10 text-white" : "border-white/10 text-slate-400 hover:bg-white/5"
-                  }`}>
-                  {p}%
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-white/10">
-          <div className={`h-full ${progressColor(progress)}`} style={{ width: `${progress}%` }} />
-        </div>
-      </div>
-
-      <div>
-        <label className={labelCls}>{t("taskPlan.tagsLabel")}</label>
-        {ro ? (
-          <div className="text-caption text-slate-300 break-words">{tags || "—"}</div>
-        ) : (
-          <input className={inputCls} value={tags} placeholder={t("taskPlan.tagsPlaceholder")}
-            onChange={(e) => setTags(e.target.value)} />
-        )}
-      </div>
-
-      <div>
-        <label className={labelCls}>{t("taskPlan.descriptionLabel")}</label>
-        {ro ? (
-          <div className="whitespace-pre-wrap break-words text-caption leading-relaxed text-slate-300">
-            {description || "—"}
-          </div>
-        ) : (
-          <textarea className={`${inputCls} !h-16 resize-none py-1.5`} value={description}
-            onChange={(e) => setDescription(e.target.value)} />
-        )}
-      </div>
-
-      {/* 详细说明：Markdown + 本地文件链接。链接点在预览里即可打开，
-          与思维导图里的文件链接是同一套做法（复用 MindmapMarkdown 渲染）。 */}
-      <div className="flex min-h-0 flex-col">
-        <label className={labelCls}>{t("taskPlan.detailLabel")}</label>
-        <MarkdownFieldEditor
-          value={detail}
-          onChange={setDetail}
-          minHeight="140px"
-          pickFile={pickTaskFile}
-          readOnly={ro}
-        />
-      </div>
-
-      {task && (
-        <div className="flex flex-wrap items-center gap-2 border-t border-white/10 pt-2 text-tiny text-slate-500">
-          <Clock className="h-3 w-3" />
-          {t("taskPlan.metaLine", {
-            created: task.createdAt.slice(0, 10),
-            updated: task.updatedAt.slice(0, 10),
-          })}
-          {!ro && late && (
-            <button type="button" disabled={busy} onClick={() => void carryToToday()}
-              className="ml-auto rounded-md border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-tiny text-amber-200 transition hover:bg-amber-400/20 disabled:opacity-50">
-              {t("taskPlan.carryToToday")}
-            </button>
-          )}
-        </div>
-      )}
-    </SharedModal>
   );
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { isOverdue, monthGrid, monthRange, shiftMonth, weekRange, weekStartOf } from "../calendarRange";
+import { daysRange, isOverdue, monthGrid, monthRange, shiftMonth, weekRange, weekStartOf } from "../calendarRange";
+import { addDays } from "../types";
 
 describe("weekStartOf / weekRange", () => {
   it("周四归到本周一", () => {
@@ -56,6 +57,19 @@ describe("monthGrid", () => {
     // 2026-06-01 是周一
     const grid = monthGrid("2026-06-15");
     expect(grid[0]).toBe("2026-06-01");
+  });
+});
+
+describe("daysRange", () => {
+  it("月视图按 42 格取区间（含前后月份补齐格），不是只到月末", () => {
+    // 只按「09-01 ~ 09-30」拉数据的话，网格里 08-31 与 10-01 之后的格子会是空的
+    expect(daysRange(monthGrid("2026-09-24"))).toEqual({ start: "2026-08-31", end: "2026-10-11" });
+  });
+
+  it("周视图正好是周一到周日", () => {
+    const { start } = weekRange("2026-09-24");
+    const week = Array.from({ length: 7 }, (_, i) => addDays(start, i));
+    expect(daysRange(week)).toEqual({ start: "2026-09-21", end: "2026-09-27" });
   });
 });
 
