@@ -2,9 +2,10 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import {
-  Search, Trash2, ShieldAlert, CheckCircle,
+  Search, Trash2, ShieldAlert, ShieldCheck, CheckCircle,
   AlertTriangle, Cpu, List
 } from "lucide-react";
+import { ConfirmDialogHost, type ConfirmRequest } from "./shared/ConfirmDialog";
 
 interface PortOwner {
   port: string;
@@ -15,7 +16,10 @@ interface PortOwner {
 interface PortStatus {
   port: number;
   free: boolean;
+  /** 落在系统动态保留段内：真的绑不上 */
   reserved: boolean;
+  /** 已加入管理员排除段：系统不会再抢，但应用仍可显式绑定 */
+  protected: boolean;
   occupied: boolean;
   owner: PortOwner | null;
 }
@@ -24,13 +28,15 @@ interface ReservedRange {
   start: number;
   end: number;
   process: string;
-  /** 系统动态保留（netsh 输出带 `*`）：不是用户加的段，删除通常被拒绝 */
+  /** 系统动态保留（Hyper-V / WSL 运行时占用）：不是用户加的段，删除通常被拒绝 */
   managed?: boolean;
 }
 
 interface ProtectResult {
   port: number;
   protocol: string;
+  already_protected: boolean;
+  winnat_was_running: boolean;
   winnat_stopped: boolean;
   winnat_started: boolean;
   detail: string;
@@ -55,14 +61,11 @@ export default function PortScanner() {
   const [protecting, setProtecting] = useState(false);
   const [protectDetail, setProtectDetail] = useState<string | null>(null);
   const [protectMsg, setProtectMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // 二次确认统一走 app 规范里的 ConfirmDialogHost（原生 window.confirm 样式跟系统、还会阻塞事件循环）
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
 
-  const handleProtect = async () => {
-    const port = Number(protectPort.trim());
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      setProtectMsg({ ok: false, text: t("portscan.rangeInvalid") });
-      return;
-    }
-    if (!confirm(t("portscan.protectConfirm", { port }))) return;
+  /** 确认通过后真正执行；成功后顺手刷新保留段列表与当前查询结果 */
+  const runProtect = async (port: number) => {
     setProtecting(true);
     setProtectMsg(null);
     setProtectDetail(null);
@@ -71,17 +74,44 @@ export default function PortScanner() {
         port,
         protocol: "tcp",
       });
-      setProtectMsg({
-        ok: true,
-        text: t(res.winnat_started ? "portscan.protectDone" : "portscan.protectDoneNoNat", { port }),
-      });
+      const key = res.already_protected
+        ? "portscan.protectAlready"
+        : res.winnat_was_running
+          ? res.winnat_started
+            ? "portscan.protectDone"
+            : "portscan.protectDoneNoNat"
+          : "portscan.protectDoneNatIdle";
+      // WinNAT 原本没跑、或本来就已经保护过，都不算「没恢复」的告警
+      const ok = res.already_protected || !res.winnat_was_running || res.winnat_started;
+      setProtectMsg({ ok, text: t(key, { port }) });
       setProtectDetail(res.detail || null);
       setReservedRanges(await invoke<ReservedRange[]>("get_reserved_ports"));
+      if (status?.port === port) {
+        setStatus(await invoke<PortStatus>("check_port_status", { portStr: String(port) }));
+      }
     } catch (e: any) {
       setProtectMsg({ ok: false, text: String(e) });
     } finally {
       setProtecting(false);
     }
+  };
+
+  const askProtect = (port: number) => {
+    setConfirmRequest({
+      title: t("portscan.protect"),
+      desc: t("portscan.protectConfirm", { port }),
+      confirmText: t("portscan.protect"),
+      onConfirm: () => void runProtect(port),
+    });
+  };
+
+  const handleProtect = () => {
+    const port = Number(protectPort.trim());
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      setProtectMsg({ ok: false, text: t("portscan.rangeInvalid") });
+      return;
+    }
+    askProtect(port);
   };
 
   const runRange = async (action: "add" | "delete") => {
@@ -150,9 +180,8 @@ export default function PortScanner() {
     }
   };
 
-  const handleRelease = async () => {
-    if (!status || !status.occupied || !status.owner) return;
-    if (!confirm(t("portscan.releaseConfirm", { proc: status.owner.process_name, pid: status.owner.pid, port: status.port }))) return;
+  const runRelease = async () => {
+    if (!status || !status.occupied) return;
     setReleasing(true);
     setErrorMsg(null);
     setSuccessMsg(null);
@@ -166,6 +195,21 @@ export default function PortScanner() {
     } finally {
       setReleasing(false);
     }
+  };
+
+  const handleRelease = () => {
+    if (!status || !status.occupied || !status.owner) return;
+    setConfirmRequest({
+      title: t("portscan.killProc"),
+      desc: t("portscan.releaseConfirm", {
+        proc: status.owner.process_name,
+        pid: status.owner.pid,
+        port: status.port,
+      }),
+      confirmText: t("portscan.killProc"),
+      danger: true,
+      onConfirm: () => void runRelease(),
+    });
   };
 
   const handleShowReserved = async () => {
@@ -224,24 +268,41 @@ export default function PortScanner() {
                 <div>
                   <span className="text-tiny text-slate-500 font-mono">{t("portscan.portLabel", { n: status.port })}</span>
                   <p className="text-body text-white font-semibold mt-0.5">
-                    {status.free && t("portscan.free")}
                     {status.occupied && t("portscan.occupiedBy", { name: status.owner?.process_name })}
                     {!status.occupied && status.reserved && t("portscan.reserved")}
+                    {!status.occupied && !status.reserved && status.protected && t("portscan.protectedStatus")}
+                    {!status.occupied && !status.reserved && !status.protected && t("portscan.free")}
                   </p>
                 </div>
                 {status.occupied ? (
                   <span className="px-2 py-0.5 rounded bg-red-500/10 border border-red-500/20 text-micro text-red-400 font-semibold">{t("portscan.occupiedBadge")}</span>
                 ) : status.reserved ? (
                   <span className="px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-micro text-amber-400 font-semibold">{t("portscan.reservedBadge")}</span>
+                ) : status.protected ? (
+                  <span className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-micro text-emerald-400 font-semibold">{t("portscan.protectedBadge")}</span>
                 ) : (
                   <span className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-micro text-emerald-400 font-semibold">{t("portscan.freeBadge")}</span>
                 )}
               </div>
 
               {status.reserved && (
-                <p className="text-tiny text-amber-400/90 bg-amber-500/5 border border-amber-500/10 p-2.5 rounded-ctl flex items-start gap-1.5">
+                <div className="text-tiny text-amber-400/90 bg-amber-500/5 border border-amber-500/10 p-2.5 rounded-ctl flex items-start gap-1.5">
                   <ShieldAlert className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                  {t("portscan.reservedHint")}
+                  <span className="flex-1">{t("portscan.reservedHint")}</span>
+                  <button
+                    onClick={() => askProtect(status.port)}
+                    disabled={protecting}
+                    className="shrink-0 px-2 py-0.5 rounded text-micro font-semibold bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 cursor-pointer disabled:opacity-50"
+                  >
+                    {t("portscan.protect")}
+                  </button>
+                </div>
+              )}
+
+              {!status.occupied && !status.reserved && status.protected && (
+                <p className="text-tiny text-emerald-400/90 bg-emerald-500/5 border border-emerald-500/10 p-2.5 rounded-ctl flex items-start gap-1.5">
+                  <ShieldCheck className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                  {t("portscan.protectedHint")}
                 </p>
               )}
 
@@ -367,10 +428,7 @@ export default function PortScanner() {
                 <tbody className="text-slate-300 divide-y divide-white/[0.03]">
                   {reservedRanges.map((r, i) => (
                     <tr key={i} className="hover:bg-white/[0.02]">
-                      <td className="py-1 font-mono">
-                        {r.managed && <span className="mr-0.5 text-amber-400" title={t("portscan.managedHint")}>*</span>}
-                        {r.start}
-                      </td>
+                      <td className="py-1 font-mono">{r.start}</td>
                       <td className="py-1 font-mono">{r.end}</td>
                       <td className="py-1 font-mono text-slate-500">{r.end - r.start + 1}</td>
                       <td className="py-1 text-slate-400">{r.process || "-"}</td>
@@ -397,6 +455,9 @@ export default function PortScanner() {
           )}
         </div>
       </div>
+
+      {/* 统一确认弹窗：禁止被预留 / 结束进程释放端口 */}
+      <ConfirmDialogHost request={confirmRequest} onClose={() => setConfirmRequest(null)} />
     </div>
   );
 }

@@ -24,7 +24,12 @@ fn is_self_pid(pid: &str) -> bool {
 pub struct PortStatus {
     pub port: i32,
     pub free: bool,
+    /// true = 落在**系统动态保留段**内：这类端口真正绑不上（WSAEACCES 10013）。
     pub reserved: bool,
+    /// true = 已被「禁止被预留」加进**管理员排除段**：系统不会再把它动态分出去，
+    /// 应用仍可显式 bind —— 和 `reserved` 是两件相反的事，不能合并。
+    #[serde(default)]
+    pub protected: bool,
     pub occupied: bool,
     pub owner: Option<PortOwner>,
 }
@@ -34,8 +39,9 @@ pub struct PortStatus {
 struct ExcludedPortRange {
     start: i32,
     end: i32,
-    /// 行首带 `*` = 系统**动态**保留（Hyper-V / WSL / 容器网络在运行时占用），
-    /// 不是用户手工加的段，通常也删不掉。
+    /// true = 系统**动态**保留（Hyper-V / WSL / 容器网络在运行时占用），
+    /// 不是用户手工加的段，通常也删不掉。判定逻辑见 `parse_excluded_ranges` ——
+    /// 新旧 Windows 的 `*` 位置与含义相反，不能只看行首。
     managed: bool,
     /// 行尾备注（多为触发保留的组件名），没有则空串
     label: String,
@@ -43,12 +49,23 @@ struct ExcludedPortRange {
 
 /// 解析 `netsh int ipv4 show excludedportrange` 输出。
 ///
-/// **行首的 `*` 必须处理**：原实现直接把第一个字段当数字解析，遇到 `*` 就整行丢弃，
-/// 结果最常碰到的动态保留段（Hyper-V / WSL 抢端口的那批）反而被当成「未保留」——
-/// `check_port_status` 会把根本绑不上的端口报成空闲。
+/// **两种格式都要兼容**（星号含义在新旧 Windows 上是反的）：
+/// - 旧版（Win10 早期）：行首 `*` = 系统动态保留（Hyper-V / WSL 抢的那批），
+///   没有标记的是管理员静态排除；
+/// - 新版（Win10 2004+ / Win11）：行尾独立 `*` = **管理员手工排除**（脚注
+///   `* - Administered port exclusions.`），反而**没有**标记的行才是动态保留。
+///
+/// 原实现只认行首 `*`，在新格式机器上会把动态段当静态段（「来源」列错、删除按钮
+/// 错放），行尾 `*` 还会漏进「关联进程」列。格式判定用脚注行（`* - ...`，与
+/// 显示语言无关），单条数据行则按「行首星 > 行尾星 > 组件名标签 > 格式默认」归类。
 fn parse_excluded_ranges(text: &str) -> Vec<ExcludedPortRange> {
     let mut ranges = Vec::new();
     let mut in_table = false;
+    // 脚注行 `* - Administered port exclusions.` 只在新格式里出现
+    let new_format = text.lines().any(|l| {
+        let t = l.trim();
+        t.starts_with("* -") || t.starts_with("*-")
+    });
     for line in text.lines() {
         let line_trimmed = line.trim();
         if line_trimmed.contains("---") {
@@ -58,7 +75,7 @@ fn parse_excluded_ranges(text: &str) -> Vec<ExcludedPortRange> {
         if !in_table || line_trimmed.is_empty() {
             continue;
         }
-        let managed = line_trimmed.starts_with('*');
+        let leading_star = line_trimmed.starts_with('*');
         let fields: Vec<&str> = line_trimmed
             .trim_start_matches('*')
             .split_whitespace()
@@ -66,18 +83,39 @@ fn parse_excluded_ranges(text: &str) -> Vec<ExcludedPortRange> {
         if fields.len() < 2 {
             continue;
         }
-        if let (Ok(start), Ok(end)) = (fields[0].parse::<i32>(), fields[1].parse::<i32>()) {
-            let label = if fields.len() > 2 { fields[2..].join(" ") } else { String::new() };
-            ranges.push(ExcludedPortRange { start, end, managed, label });
-        }
+        let (Ok(start), Ok(end)) = (fields[0].parse::<i32>(), fields[1].parse::<i32>()) else {
+            continue;
+        };
+        let rest = &fields[2..];
+        let trailing_star = rest.last() == Some(&"*");
+        let label = if trailing_star {
+            rest[..rest.len() - 1].join(" ")
+        } else {
+            rest.join(" ")
+        };
+        let managed = if leading_star {
+            true // 旧格式：行首 * = 系统动态保留
+        } else if trailing_star {
+            false // 新格式：行尾 * = 管理员手工排除
+        } else if !label.is_empty() {
+            true // 带组件名（Hyper-V 等）= 动态保留
+        } else {
+            new_format // 新格式无标记行 = 动态保留；旧格式无标记行 = 静态排除
+        };
+        ranges.push(ExcludedPortRange { start, end, managed, label });
     }
     ranges.sort_by_key(|r| r.start);
     ranges
 }
 
 fn get_excluded_port_ranges() -> Vec<ExcludedPortRange> {
+    // chcp 65001 与 netstat / tasklist 两处保持一致：不加的话中文 Windows 上
+    // 「关联进程」列（Hyper-V 之类）会按 GBK 落到 from_utf8_lossy 里变乱码。
     let output = super::hidden_cmd::hidden_cmd("cmd")
-        .args(&["/c", "netsh int ipv4 show excludedportrange protocol=tcp"])
+        .args(&[
+            "/c",
+            "chcp 65001 >nul & netsh int ipv4 show excludedportrange protocol=tcp",
+        ])
         .output();
 
     match output {
@@ -93,6 +131,20 @@ fn is_port_reserved(port: i32, ranges: &[ExcludedPortRange]) -> bool {
         }
     }
     false
+}
+
+/// 端口是否已被**静态排除段**（管理员手工添加、持久生效的那种）覆盖。
+/// 动态保留段不算 —— 它随时可能消失，不能当作「已禁止被预留」的凭据。
+fn is_port_statically_excluded(port: i32, ranges: &[ExcludedPortRange]) -> bool {
+    ranges.iter().any(|r| !r.managed && port >= r.start && port <= r.end)
+}
+
+/// 覆盖该端口的**系统动态保留段**（Hyper-V / WSL / 容器网络抢的那批）。
+/// 在段内 = 这个端口真的绑不上，是「禁止被预留」唯一要消灭的目标。
+fn find_dynamic_range(port: i32, ranges: &[ExcludedPortRange]) -> Option<&ExcludedPortRange> {
+    ranges
+        .iter()
+        .find(|r| r.managed && port >= r.start && port <= r.end)
 }
 
 pub(crate) fn find_port_owner(port_str: &str) -> Option<PortOwner> {
@@ -262,7 +314,10 @@ pub struct ReservedPortRange {
 #[tauri::command]
 pub fn get_reserved_ports() -> Result<Vec<ReservedPortRange>, String> {
     let output = super::hidden_cmd::hidden_cmd("cmd")
-        .args(&["/c", "netsh int ipv4 show excludedportrange protocol=tcp"])
+        .args(&[
+            "/c",
+            "chcp 65001 >nul & netsh int ipv4 show excludedportrange protocol=tcp",
+        ])
         .output()
         .map_err(|e| format!("执行 netsh 失败: {}", e))?;
 
@@ -417,9 +472,13 @@ fn winnat_is_running() -> bool {
 pub struct PortProtectResult {
     pub port: i32,
     pub protocol: String,
+    /// 端口此前已经在静态排除段里，本次什么都没做
+    pub already_protected: bool,
+    /// 开始时 WinNAT 是否在运行（决定是否需要「恢复」）
+    pub winnat_was_running: bool,
     /// WinNAT 是否真的被停掉了（原本就没运行时为 false）
     pub winnat_stopped: bool,
-    /// WinNAT 是否已恢复运行
+    /// WinNAT 是否已恢复运行（原本就没运行时为 false —— 不能谎报「已恢复」）
     pub winnat_started: bool,
     /// 各步骤的原始输出，便于排查
     pub detail: String,
@@ -446,6 +505,22 @@ pub fn protect_port_from_reservation(
         );
     }
 
+    // 已经有了静态排除段：重复操作只会得到 netsh 的「已存在」报错，直接幂等返回。
+    let before = get_excluded_port_ranges();
+    if is_port_statically_excluded(port, &before) {
+        return Ok(PortProtectResult {
+            port,
+            protocol: proto.to_string(),
+            already_protected: true,
+            winnat_was_running: winnat_is_running(),
+            winnat_stopped: false,
+            winnat_started: false,
+            detail: format!("端口 {} 已在管理员排除范围内，无需重复操作", port),
+        });
+    }
+    // 记录当前压着该端口的动态段：add 怎么都成功不了时，这是唯一能解释原因的信息。
+    let blocking = find_dynamic_range(port, &before).cloned();
+
     let mut detail = String::new();
     let was_running = winnat_is_running();
     let mut stopped = false;
@@ -467,8 +542,33 @@ pub fn protect_port_from_reservation(
         detail.push_str("WinNAT 服务未运行，跳过 net stop winnat\n");
     }
 
-    // WinNAT 已停 → 它的动态预留段已释放，此时 add 才不会被"与现有排除范围重叠"挡住
-    let add_result = run_netsh_range("add", Some(proto), port, 1);
+    // WinNAT 已停 → 它的动态预留段已释放，此时 add 才不会被"与现有排除范围重叠"挡住。
+    // 但 net stop 返回≠驱动已落定：排除状态释放有秒级延迟，立刻 add 会**偶发**
+    // ERROR_SHARING_VIOLATION（「正被另一个进程使用」）——这就是本功能时灵时不灵的根因。
+    // 更坑的是 netsh 偶发「报错但实际已写入」，再重试又会报「已存在」，
+    // 因此**每一次尝试之后都以 show 的回读结果为准**，而不是只看退出码：
+    // 只认退出码会在「端口其实还压在动态段里」时谎报成功（旧的「功能没用」就是这个）。
+    let mut add_err: Option<String> = None;
+    let mut excluded = false;
+    for attempt in 0..5u8 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(700));
+        }
+        let attempt_res = run_netsh_range("add", Some(proto), port, 1);
+        if let Err(e) = &attempt_res {
+            detail.push_str(&format!("netsh add excludedportrange(第{}次) -> {}\n", attempt + 1, e));
+            add_err = Some(e.clone());
+        }
+        if is_port_statically_excluded(port, &get_excluded_port_ranges()) {
+            excluded = true;
+            detail.push_str(&format!(
+                "netsh add excludedportrange -> 回读确认已生效（第{}次，退出码{}）\n",
+                attempt + 1,
+                if attempt_res.is_ok() { "成功" } else { "报错但实际已写入" }
+            ));
+            break;
+        }
+    }
 
     let mut started = false;
     if was_running {
@@ -480,12 +580,21 @@ pub fn protect_port_from_reservation(
         started = ok || is_winnat_already_running(&msg);
     }
 
-    if let Err(e) = add_result {
+    if !excluded {
+        let blocked_hint = match &blocking {
+            Some(r) => format!(
+                "\n端口 {} 正落在系统动态保留段 {}-{} 内（Hyper-V / WSL / Docker 占用），停 WinNAT 后仍未释放。\
+                 建议先关闭 WSL / Docker 桌面端与 Hyper-V 虚拟网卡，或重启电脑后立即重试。",
+                port, r.start, r.end
+            ),
+            None => String::new(),
+        };
         return Err(format!(
-            "{}{}",
-            e,
+            "{}{}{}",
+            add_err.unwrap_or_else(|| "未能把端口加入排除范围".to_string()),
+            blocked_hint,
             if was_running && !started {
-                "（WinNAT 未能恢复运行，请手动执行 `net start winnat`）"
+                "\nWinNAT 未能恢复运行，请手动执行 `net start winnat`"
             } else {
                 ""
             }
@@ -495,8 +604,11 @@ pub fn protect_port_from_reservation(
     Ok(PortProtectResult {
         port,
         protocol: proto.to_string(),
+        already_protected: false,
+        winnat_was_running: was_running,
         winnat_stopped: stopped,
-        winnat_started: started || !was_running,
+        // 原本没在跑时不算「已恢复」——前端据此提示用户，不能谎报。
+        winnat_started: started,
         detail: detail.trim_end().to_string(),
     })
 }
@@ -508,6 +620,7 @@ pub fn check_port_status(port_str: String) -> Result<PortStatus, String> {
         port,
         free: true,
         reserved: false,
+        protected: false,
         occupied: false,
         owner: None,
     };
@@ -519,16 +632,20 @@ pub fn check_port_status(port_str: String) -> Result<PortStatus, String> {
     }
 
     let ranges = get_excluded_port_ranges();
-    if is_port_reserved(port, &ranges) {
+    // 「系统动态保留」才是真的绑不上；「管理员排除段」只是不会被动态分走，
+    // 应用仍可显式 bind。两者必须分开报，否则禁止成功后会显示成「无法使用」。
+    if find_dynamic_range(port, &ranges).is_some() {
         status.reserved = true;
         if !status.occupied {
             status.free = false;
         }
+    } else if is_port_statically_excluded(port, &ranges) {
+        status.protected = true;
     }
 
     eprintln!(
-        "[port] check_port_status({}) => free={} reserved={} occupied={} owner={:?}",
-        port_str, status.free, status.reserved, status.occupied, status.owner
+        "[port] check_port_status({}) => free={} reserved={} protected={} occupied={} owner={:?}",
+        port_str, status.free, status.reserved, status.protected, status.occupied, status.owner
     );
     Ok(status)
 }
@@ -585,7 +702,10 @@ pub fn kill_port_owner(port_str: String) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_self_pid, normalize_protocol, parse_excluded_ranges, validate_range};
+    use super::{
+        find_dynamic_range, is_port_statically_excluded, is_self_pid, normalize_protocol,
+        parse_excluded_ranges, validate_range,
+    };
 
     /// 内置服务（HTTP / 聚合）占用端口时 netstat 给出的 PID 就是本进程，
     /// 识别不出来会被「结束进程」按钮杀掉 —— 这是自杀，必须挡住。
@@ -598,9 +718,9 @@ mod tests {
         assert!(!is_self_pid("not-a-pid"));
     }
 
-    /// `netsh int ipv4 show excludedportrange` 的真实形态：`---` 分隔线之后才是数据，
-    /// 行首 `*` 表示该段由系统动态保留（Hyper-V / WSL 等）。
-    const SAMPLE: &str = "\
+    /// `netsh int ipv4 show excludedportrange` 的旧格式（Win10 早期）：
+    /// `---` 分隔线之后才是数据，行首 `*` 表示该段由系统动态保留（Hyper-V / WSL 等）。
+    const SAMPLE_LEGACY: &str = "\
 协议 tcp 端口排除范围
 
 开始端口    结束端口
@@ -610,17 +730,70 @@ mod tests {
 *     51800       51899     Hyper-V
 ";
 
+    /// 新格式（Win10 2004+ / Win11）真实输出：行尾独立 `*` 反而是**管理员手工排除**
+    /// （脚注 `* - Administered port exclusions.`），没有标记的才是动态保留。
+    const SAMPLE_MODERN: &str = "\
+Protocol tcp Port Exclusion Ranges
+
+Start Port    End Port
+----------    --------
+      1455        1455     *
+     51800       51899
+     50000       50059     *
+
+* - Administered port exclusions.
+";
+
     #[test]
     fn parses_ranges_and_flags_system_managed_ones() {
-        let ranges = parse_excluded_ranges(SAMPLE);
+        let ranges = parse_excluded_ranges(SAMPLE_LEGACY);
         assert_eq!(ranges.len(), 3, "带 * 的动态段不能被丢掉: {:?}", ranges);
         assert_eq!((ranges[0].start, ranges[0].end), (1024, 1123));
-        assert!(!ranges[0].managed, "手工添加的段不是动态的");
+        assert!(!ranges[0].managed, "旧格式无标记行 = 手工静态排除");
         assert_eq!(ranges[1].start, 5000);
-        assert!(ranges[1].managed);
+        assert!(ranges[1].managed, "旧格式行首 * = 系统动态保留");
         assert_eq!(ranges[2].start, 51800);
         assert!(ranges[2].managed);
         assert!(ranges[2].label.contains("Hyper-V"));
+    }
+
+    #[test]
+    fn modern_format_star_means_administered_not_dynamic() {
+        let ranges = parse_excluded_ranges(SAMPLE_MODERN);
+        assert_eq!(ranges.len(), 3, "脚注行不能被当成数据行: {:?}", ranges);
+        // 结果按起始端口排序：1455 / 50000 / 51800
+        assert_eq!(ranges[0].start, 1455);
+        assert!(!ranges[0].managed, "新格式行尾 * = 管理员手工排除，可删");
+        assert!(ranges[0].label.is_empty(), "行尾 * 不能漏进标签列");
+        assert_eq!(ranges[1].start, 50000);
+        assert!(!ranges[1].managed);
+        assert_eq!(ranges[2].start, 51800);
+        assert!(ranges[2].managed, "新格式无标记行 = 系统动态保留");
+        // 静态覆盖判定：动态段不算「已禁止被预留」
+        assert!(is_port_statically_excluded(1455, &ranges));
+        assert!(!is_port_statically_excluded(51850, &ranges));
+    }
+
+    /// 旧实现把「没有星」的行一律当静态段，于是**系统动态保留的端口**也被认成
+    /// 「已禁止被预留」：保护流程的失败分支一回读就以为生效了，界面报成功，
+    /// 端口其实依旧绑不上 —— 用户看到的就是「这个功能没用」。
+    /// 这条用例把两种段彻底分开：动态段只挡绑定，静态段才是受保护。
+    #[test]
+    fn only_dynamic_segments_block_binding() {
+        let ranges = parse_excluded_ranges(SAMPLE_MODERN);
+
+        let blocking = find_dynamic_range(51850, &ranges).expect("动态段必须被识别出来");
+        assert_eq!((blocking.start, blocking.end), (51800, 51899));
+        assert!(
+            !is_port_statically_excluded(51850, &ranges),
+            "动态段不能算作已禁止被预留（否则会谎报成功）"
+        );
+
+        assert!(find_dynamic_range(1455, &ranges).is_none(), "受保护端口不在动态段里");
+        assert!(is_port_statically_excluded(1455, &ranges));
+
+        assert!(find_dynamic_range(1234, &ranges).is_none(), "没被任何段覆盖");
+        assert!(!is_port_statically_excluded(1234, &ranges));
     }
 
     #[test]

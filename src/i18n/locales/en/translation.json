@@ -2544,7 +2544,7 @@
     "addRange": "Reserve range",
     "deleteRange": "Release range",
     "rangeInvalid": "Start port and count must be integers",
-    "rangeAdminHint": "Adding/removing reserved ports calls netsh and needs administrator rights; ranges marked * are reserved dynamically by the system (Hyper-V / WSL, etc.) and usually cannot be removed.",
+    "rangeAdminHint": "Adding/removing reserved ports calls netsh and needs administrator rights; in netsh output, ranges marked * are administered exclusions (removable), while unmarked ones are dynamic system reservations (Hyper-V / WSL, not removable).",
     "managedHint": "Reserved dynamically by the system (Hyper-V / WSL, etc.), not added by you - cannot be removed",
     "deleteRow": "Remove",
     "op": "Action",
@@ -2571,8 +2571,13 @@
     "protectConfirm": "Add port {{port}} to the exclusion range? WinNAT will be restarted, so WSL / Docker networking will briefly drop.",
     "protectDone": "Port {{port}} is now protected from reservation; WinNAT is running again",
     "protectDoneNoNat": "Port {{port}} was added to the exclusion range, but WinNAT did not restart - run `net start winnat` manually",
+    "protectDoneNatIdle": "Port {{port}} was added to the exclusion range (WinNAT was not running, so it was left alone)",
+    "protectAlready": "Port {{port}} is already protected from reservation - nothing to do",
+    "protectedStatus": "Protected from reservation (the system won't grab it, and it stays usable)",
+    "protectedBadge": "Protected",
+    "protectedHint": "This port is inside a Windows administered exclusion range: the system / Hyper-V / WSL won't dynamically claim it, and apps can still bind it explicitly.",
     "source": "Source",
-    "srcManual": "Exclusion (protected)",
+    "srcManual": "Protected (exclusion)",
     "srcDynamic": "Dynamic system"
   },
   "vex": {
