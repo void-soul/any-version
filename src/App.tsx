@@ -226,6 +226,12 @@ export default function App() {
           switchPage(m);
         }
       });
+      // 系统「打开方式」/ 单实例传入 .md：切到 Markdown 模块，由模块取走待打开路径
+      listen("markdown-open-file", () => {
+        if (MODULE_MAP["markdownReader"] && !appearance.disabledModules.includes("markdownReader")) {
+          switchPage("markdownReader");
+        }
+      });
       // 监听外观变更（全局设置里修改模块主题色/字体后实时生效）
       listen("appearance-updated", async () => {
         try {

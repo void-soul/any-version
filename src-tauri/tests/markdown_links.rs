@@ -4,7 +4,9 @@
 use std::fs;
 use std::path::PathBuf;
 
-use tauri_app_lib::commands::file_io::{list_sibling_markdown, resolve_markdown_link};
+use tauri_app_lib::commands::file_io::{
+    collect_markdown_args, list_sibling_markdown, read_local_image, resolve_markdown_link,
+};
 
 /// 建一个临时目录树，返回根路径。
 fn setup(tag: &str) -> PathBuf {
@@ -162,3 +164,45 @@ fn resolved_path_has_no_unc_prefix() {
     assert!(!got.starts_with(r"\\?\"), "解析结果不应带 UNC 前缀: {}", got);
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn collects_only_existing_markdown_from_args() {
+    let root = setup("args");
+    let index = root.join("index.md");
+    let flags = vec![
+        "--minimized".to_string(),
+        index.to_string_lossy().to_string(),
+        root.join("notes.txt").to_string_lossy().to_string(),
+        root.join("missing.md").to_string_lossy().to_string(),
+        // 同文件重复传入只保留一份
+        index.to_string_lossy().to_string(),
+    ];
+    let got = collect_markdown_args(flags);
+    assert_eq!(got.len(), 1, "只应收录一份存在的 markdown: {:?}", got);
+    assert!(got[0].ends_with("index.md"));
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn reads_relative_image_as_data_url() {
+    let root = setup("img");
+    let png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR";
+    fs::create_dir_all(root.join("assets")).unwrap();
+    fs::write(root.join("assets/pic.png"), png).unwrap();
+
+    let doc = root.join("guide/intro.md").to_string_lossy().to_string();
+    // 相对于文档所在目录的 ../assets/pic.png
+    let got = read_local_image(doc.clone(), "../assets/pic.png".into()).unwrap();
+    let url = got.expect("应读到相对路径图片");
+    assert!(url.starts_with("data:image/png;base64,"), "url={}", url);
+
+    // 绝对路径与 file:// 形式都要支持
+    let abs = root.join("assets/pic.png").to_string_lossy().to_string();
+    assert!(read_local_image(doc.clone(), abs.clone()).unwrap().is_some());
+    assert!(read_local_image(doc.clone(), format!("file:///{}", abs.replace('\\', "/"))).unwrap().is_some());
+
+    // 不存在的文件返回 None 而不是报错
+    assert!(read_local_image(doc, "assets/none.png".into()).unwrap().is_none());
+    let _ = fs::remove_dir_all(&root);
+}
+

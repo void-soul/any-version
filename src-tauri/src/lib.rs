@@ -268,7 +268,9 @@ pub fn run() {
     // 否则 debug 构建下单一实例插件分支被排除后 builder 未初始化，
     // 会导致 `builder.plugin(...)` 接收未初始化值而被推断为 `()`，编译失败。
     #[cfg(not(debug_assertions))]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        // 第二个实例被系统用「打开方式」拉起时，把 .md 文件转交给主实例打开。
+        crate::commands::file_io::queue_markdown_args(app, &args);
         // 主窗口可能被销毁（见 on_window_event 的 CloseRequested 处理），
         // 因此优先复用，缺失时经 tray::show_main_window 重建。
         if app.get_webview_window("main").is_some() {
@@ -305,6 +307,11 @@ pub fn run() {
                 crate::commands::utils::set_resource_dir(res_dir);
             }
             tray::build_tray(app.handle())?;
+            // 系统「打开方式」/ 命令行带 .md 启动：先入队，前端 Markdown 模块挂载后取走
+            {
+                let args: Vec<String> = std::env::args().collect();
+                commands::file_io::queue_markdown_args(app.handle(), &args);
+            }
             // 接收前端在切换顶级模块时上报的当前页面，供模块专属热键做「显示/隐藏」切换判定
             {
                 let h = app.handle().clone();
@@ -940,6 +947,8 @@ pub fn run() {
             commands::file_io::resolve_markdown_link,
             commands::file_io::markdown_assoc_status,
             commands::file_io::set_markdown_assoc,
+            commands::file_io::read_local_image,
+            commands::file_io::take_pending_markdown_files,
             commands::utils::check_bin_assets,
             commands::utils::download_bin_assets,
 

@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::Serialize;
 
 /// 把文件字节解码为文本：优先按 BOM 识别 UTF-8 / UTF-16，
@@ -297,6 +299,124 @@ pub fn resolve_markdown_link(from: String, href: String) -> Result<Option<String
 fn strip_unc(p: &Path) -> String {
     let s = p.to_string_lossy().to_string();
     s.strip_prefix(r"\\?\").map(|x| x.to_string()).unwrap_or(s)
+}
+
+// ===================== 预览图片（相对路径 → data URL） =====================
+
+/// 单张图片内联上限：超过就拒绝预览，避免大图把 WebView 内存打满。
+const MAX_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
+
+fn image_mime(path: &Path) -> Option<&'static str> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    Some(match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "avif" => "image/avif",
+        _ => return None,
+    })
+}
+
+/// 把文档里的图片 src 解析成绝对路径：支持相对路径、绝对路径与 file:// 前缀。
+fn resolve_image_path(from: &Path, src: &str) -> Option<PathBuf> {
+    let raw = src.split('#').next().unwrap_or("").split('?').next().unwrap_or("");
+    let raw = raw
+        .strip_prefix("file:///")
+        .or_else(|| raw.strip_prefix("file://"))
+        .unwrap_or(raw);
+    if raw.trim().is_empty() {
+        return None;
+    }
+    let decoded = percent_decode(raw.trim());
+    let p = PathBuf::from(&decoded);
+    let candidate = if p.is_absolute() {
+        p
+    } else {
+        from.parent()?.join(p)
+    };
+    candidate.is_file().then_some(candidate)
+}
+
+/// 读取 Markdown 引用的本地图片，返回可直接放进 `img.src` 的 data URL。
+///
+/// 找不到文件返回 None（前端显示占位），文件存在但格式不支持/过大则返回错误。
+/// 这里不用 asset 协议，是为了避开全局 CSP 与 scope 配置，只对本次预览按需读取。
+#[tauri::command]
+pub fn read_local_image(from: String, src: String) -> Result<Option<String>, String> {
+    let base = PathBuf::from(&from);
+    let path = match resolve_image_path(&base, &src) {
+        Some(p) => p,
+        None => return Ok(None),
+    };
+    let meta = fs::metadata(&path).map_err(|e| format!("读取图片失败: {}", e))?;
+    if !meta.is_file() {
+        return Ok(None);
+    }
+    if meta.len() > MAX_IMAGE_BYTES {
+        return Err(format!("图片超过 {} MB，已跳过预览", MAX_IMAGE_BYTES / 1024 / 1024));
+    }
+    let mime = image_mime(&path).unwrap_or("application/octet-stream");
+    let bytes = fs::read(&path).map_err(|e| format!("读取图片失败: {}", e))?;
+    Ok(Some(format!("data:{};base64,{}", mime, STANDARD.encode(bytes))))
+}
+
+// ===================== 从系统「打开方式」/ 命令行打开 .md =====================
+
+/// 前端尚未就绪时先攒着，等 Markdown 模块挂载后一次性取走。
+static PENDING_MARKDOWN: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+
+fn pending_markdown() -> &'static Mutex<Vec<String>> {
+    PENDING_MARKDOWN.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// 从进程参数里筛出真实存在的 markdown 文件（跳过 `--flag` 与程序自身路径）。
+pub fn collect_markdown_args<I: IntoIterator<Item = String>>(args: I) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for a in args {
+        if a.starts_with('-') {
+            continue;
+        }
+        let p = PathBuf::from(&a);
+        if !is_markdown(&p) || !p.is_file() {
+            continue;
+        }
+        let abs = strip_unc(&p.canonicalize().unwrap_or(p));
+        if !out.iter().any(|x| x == &abs) {
+            out.push(abs);
+        }
+    }
+    out
+}
+
+/// 记录待打开的 markdown 并通知前端（前端已挂载时立即响应，未挂载时靠队列兜底）。
+pub fn queue_markdown_args(app: &tauri::AppHandle, args: &[String]) -> Vec<String> {
+    use tauri::Emitter;
+    let found = collect_markdown_args(args.iter().cloned());
+    if found.is_empty() {
+        return found;
+    }
+    if let Ok(mut q) = pending_markdown().lock() {
+        for p in &found {
+            if !q.iter().any(|x| x == p) {
+                q.push(p.clone());
+            }
+        }
+    }
+    let _ = app.emit("markdown-open-file", found.clone());
+    found
+}
+
+/// 前端 Markdown 模块取走待打开文件（取走后清空，避免重复打开）。
+#[tauri::command]
+pub fn take_pending_markdown_files() -> Vec<String> {
+    pending_markdown()
+        .lock()
+        .map(|mut q| std::mem::take(&mut *q))
+        .unwrap_or_default()
 }
 
 /// 最小化的 percent-decode，只处理 %XX，无效序列原样保留。
