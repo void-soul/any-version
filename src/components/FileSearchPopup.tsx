@@ -32,6 +32,71 @@ interface IndexProgress {
   error: string | null;
 }
 
+/** 结果类型预设：exts 为空表示不限后缀；kind=dir 只出文件夹。 */
+const FILTER_PRESETS = [
+  { id: "all", kind: "all", exts: [] as string[], labelKey: "fileSearch.filterAll" },
+  { id: "dir", kind: "dir", exts: [] as string[], labelKey: "fileSearch.filterDir" },
+  {
+    id: "image",
+    kind: "file",
+    exts: ["png", "jpg", "jpeg", "gif", "bmp", "webp", "svg", "ico", "heic", "avif", "tif", "tiff", "psd"],
+    labelKey: "fileSearch.filterImage",
+  },
+  {
+    id: "video",
+    kind: "file",
+    exts: ["mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "ts", "rmvb"],
+    labelKey: "fileSearch.filterVideo",
+  },
+  {
+    id: "audio",
+    kind: "file",
+    exts: ["mp3", "flac", "wav", "aac", "ogg", "m4a", "wma", "ape", "opus"],
+    labelKey: "fileSearch.filterAudio",
+  },
+  {
+    id: "doc",
+    kind: "file",
+    exts: ["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "md", "csv", "rtf", "epub", "one"],
+    labelKey: "fileSearch.filterDoc",
+  },
+  {
+    id: "archive",
+    kind: "file",
+    exts: ["zip", "rar", "7z", "tar", "gz", "bz2", "xz", "iso", "cab"],
+    labelKey: "fileSearch.filterArchive",
+  },
+  {
+    id: "code",
+    kind: "file",
+    exts: ["rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "kt", "c", "cpp", "h", "hpp", "cs", "rb", "php", "html", "css", "scss", "json", "toml", "yaml", "yml", "xml", "sh", "ps1", "sql"],
+    labelKey: "fileSearch.filterCode",
+  },
+  {
+    id: "exec",
+    kind: "file",
+    exts: ["exe", "msi", "bat", "cmd", "com", "dll", "sys", "lnk"],
+    labelKey: "fileSearch.filterExec",
+  },
+];
+
+/** 读取本地视图偏好（失败时回退默认值）。 */
+function readPref(key: string, fallback: string): string {
+  try {
+    return localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writePref(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* 隐私模式等场景忽略 */
+  }
+}
+
 function formatSize(bytes: number): string {
   if (!bytes || bytes < 0) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB", "PB"];
@@ -76,13 +141,19 @@ export default function FileSearchPopup() {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<FileHit[]>([]);
-  const [hitsQuery, setHitsQuery] = useState("");
+  const [hitsKey, setHitsKey] = useState("");
   const [selected, setSelected] = useState(0);
   const [searching, setSearching] = useState(false);
   const [searched, setSearched] = useState(false);
+  const [filter, setFilter] = useState(() => readPref("fileSearch.filter", "all"));
+  const [customExt, setCustomExt] = useState(() => readPref("fileSearch.customExt", ""));
+  const [driveFilter, setDriveFilter] = useState(() => readPref("fileSearch.drive", ""));
 
   const [drives, setDrives] = useState<DriveIndexInfo[]>([]);
   const [drivesLoading, setDrivesLoading] = useState(true);
+  const [respectGitignore, setRespectGitignore] = useState(
+    () => readPref("fileSearch.respectGitignore", "1") === "1"
+  );
   const [managerOpen, setManagerOpen] = useState(false);
   const [progress, setProgress] = useState<IndexProgress | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -97,6 +168,36 @@ export default function FileSearchPopup() {
   const queryRef = useRef("");
   managerRef.current = managerOpen;
   queryRef.current = query;
+
+  const activeFilter = useMemo(() => {
+    const preset = FILTER_PRESETS.find((f) => f.id === filter) ?? FILTER_PRESETS[0];
+    const custom = customExt.trim().replace(/^\./, "").toLowerCase();
+    // 自定义后缀优先于预设：输入 box 有内容时只按它过滤
+    if (custom) return { kind: "file", exts: [custom] };
+    return { kind: preset.kind, exts: preset.exts };
+  }, [filter, customExt]);
+  const activeDrives = useMemo(() => (driveFilter ? [driveFilter] : []), [driveFilter]);
+  // 输入、类型筛选、盘符任一变化都会作废旧结果
+  const filterKey = `${activeFilter.kind}|${activeFilter.exts.join(",")}|${activeDrives.join(",")}`;
+  const filterRef = useRef({ kind: activeFilter.kind, exts: activeFilter.exts, drives: activeDrives });
+  filterRef.current = { kind: activeFilter.kind, exts: activeFilter.exts, drives: activeDrives };
+  const filterKeyRef = useRef(filterKey);
+  filterKeyRef.current = filterKey;
+
+  useEffect(() => {
+    writePref("fileSearch.filter", filter);
+    writePref("fileSearch.customExt", customExt);
+    writePref("fileSearch.drive", driveFilter);
+    writePref("fileSearch.respectGitignore", respectGitignore ? "1" : "0");
+  }, [filter, customExt, driveFilter, respectGitignore]);
+
+  // 被选中的盘符索引被删除后回退到「全部盘符」
+  useEffect(() => {
+    if (drivesLoading || !driveFilter) return;
+    if (!drives.some((d) => d.letter === driveFilter && d.status !== "idle")) {
+      setDriveFilter("");
+    }
+  }, [drives, driveFilter, drivesLoading]);
 
   const indexedDrives = useMemo(() => drives.filter((d) => d.status !== "idle"), [drives]);
   const anyBuilding = useMemo(() => drives.some((d) => d.status === "building"), [drives]);
@@ -161,7 +262,10 @@ export default function FileSearchPopup() {
       if (p.done && !p.error && !p.canceled) {
         setInfo(t("fileSearch.indexDone", { count: p.inserted }));
         // 索引刚更新完，若正在搜索则刷新一次结果
-        if (queryRef.current.trim()) void runSearch(queryRef.current);
+        if (queryRef.current.trim()) {
+          const q = queryRef.current.trim();
+          void runSearch(q, filterRef.current, `${q}\u0000${filterKeyRef.current}`);
+        }
       }
     }).then((u) => {
       unlisten = u;
@@ -170,52 +274,70 @@ export default function FileSearchPopup() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadDrives, t]);
 
-  // 搜索结果（150ms 防抖 + 请求代次校验）
-  const runSearch = useCallback(async (raw: string) => {
-    const q = raw.trim();
-    if (!q) {
-      setHits([]);
-      setHitsQuery("");
-      setSearched(false);
-      setSearching(false);
-      return;
-    }
-    const req = ++requestRef.current;
-    setSearching(true);
-    try {
-      const list = await invoke<FileHit[]>("file_search_query", { query: q, limit: 100 });
-      if (requestRef.current !== req) return;
-      setHits(list);
-      setHitsQuery(q);
-      setSelected(0);
-      setSearched(true);
-    } catch (e) {
-      if (requestRef.current !== req) return;
-      setHits([]);
-      setHitsQuery(q);
-      setSearched(true);
-      setError(String(e));
-    } finally {
-      if (requestRef.current === req) setSearching(false);
-    }
-  }, []);
+  // 搜索结果（150ms 防抖 + 请求代次校验 + 结果来源标记）
+  const runSearch = useCallback(
+    async (
+      raw: string,
+      opts: { kind: string; exts: string[]; drives: string[] },
+      key: string
+    ) => {
+      const q = raw.trim();
+      if (!q) {
+        setHits([]);
+        setHitsKey("");
+        setSearched(false);
+        setSearching(false);
+        return;
+      }
+      const req = ++requestRef.current;
+      setSearching(true);
+      try {
+        const list = await invoke<FileHit[]>("file_search_query", {
+          query: q,
+          limit: 100,
+          kind: opts.kind,
+          exts: opts.exts,
+          drives: opts.drives,
+        });
+        if (requestRef.current !== req) return;
+        setHits(list);
+        setHitsKey(key);
+        setSelected(0);
+        setSearched(true);
+      } catch (e) {
+        if (requestRef.current !== req) return;
+        setHits([]);
+        setHitsKey(key);
+        setSearched(true);
+        setError(String(e));
+      } finally {
+        if (requestRef.current === req) setSearching(false);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     const q = query.trim();
     if (!q) {
       setHits([]);
-      setHitsQuery("");
+      setHitsKey("");
       setSearched(false);
       setSearching(false);
       return;
     }
-    const timer = window.setTimeout(() => void runSearch(q), 150);
+    const key = `${q}\u0000${filterKey}`;
+    const timer = window.setTimeout(
+      () => void runSearch(q, { kind: activeFilter.kind, exts: activeFilter.exts, drives: activeDrives }, key),
+      150
+    );
     return () => window.clearTimeout(timer);
-  }, [query, runSearch]);
+  }, [query, filterKey, activeFilter, activeDrives, runSearch]);
 
-  // 只展示与当前输入一致的结果（防抖期间隐藏过期条目，避免回车打开错文件）
-  const effectiveHits = hitsQuery === query.trim() ? hits : [];
-  const effectiveSearched = hitsQuery === query.trim() && searched;
+  // 只展示与「当前输入 + 当前筛选」一致的结果，避免回车打开过期条目
+  const searchKey = `${query.trim()}\u0000${filterKey}`;
+  const effectiveHits = hitsKey === searchKey ? hits : [];
+  const effectiveSearched = hitsKey === searchKey && searched;
 
   // 提示信息自动消失
   useEffect(() => {
@@ -308,7 +430,11 @@ export default function FileSearchPopup() {
       error: null,
     });
     try {
-      await invoke("file_search_start_index", { drive: letter, mode });
+      await invoke("file_search_start_index", {
+        drive: letter,
+        mode,
+        respectGitignore,
+      });
       await loadDrives();
     } catch (e) {
       setProgress(null);
@@ -448,6 +574,67 @@ export default function FileSearchPopup() {
             )}
           </div>
         </div>
+        {!managerOpen && (
+          <div className="mt-2 flex flex-wrap items-center gap-1">
+            {FILTER_PRESETS.map((p) => {
+              const active = !customExt.trim() && filter === p.id;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => {
+                    setFilter(p.id);
+                    setCustomExt("");
+                  }}
+                  className={`rounded-full border px-2 py-0.5 text-micro transition ${
+                    active
+                      ? "border-[var(--module-accent)] bg-[var(--module-accent-soft)] text-[var(--module-accent)]"
+                      : "border-white/10 text-slate-400 hover:border-white/20 hover:text-slate-200"
+                  }`}
+                >
+                  {t(p.labelKey)}
+                </button>
+              );
+            })}
+            <input
+              value={customExt}
+              onChange={(e) => setCustomExt(e.target.value)}
+              placeholder={t("fileSearch.filterCustom")}
+              spellCheck={false}
+              className="ml-auto w-24 rounded-ctl border border-white/10 bg-white/5 px-2 py-0.5 text-micro text-white placeholder-slate-600 outline-none transition focus:border-[var(--module-accent)]"
+            />
+          </div>
+        )}
+        {!managerOpen && indexedDrives.length >= 1 && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+            <span className="mr-0.5 text-micro text-slate-600">{t("fileSearch.driveFilter")}</span>
+            <button
+              type="button"
+              onClick={() => setDriveFilter("")}
+              className={`rounded-full border px-2 py-0.5 text-micro transition ${
+                driveFilter
+                  ? "border-white/10 text-slate-400 hover:border-white/20 hover:text-slate-200"
+                  : "border-[var(--module-accent)] bg-[var(--module-accent-soft)] text-[var(--module-accent)]"
+              }`}
+            >
+              {t("fileSearch.allDrives")}
+            </button>
+            {indexedDrives.map((d) => (
+              <button
+                key={d.letter}
+                type="button"
+                onClick={() => setDriveFilter(d.letter)}
+                className={`rounded-full border px-2 py-0.5 font-mono text-micro transition ${
+                  driveFilter === d.letter
+                    ? "border-[var(--module-accent)] bg-[var(--module-accent-soft)] text-[var(--module-accent)]"
+                    : "border-white/10 text-slate-400 hover:border-white/20 hover:text-slate-200"
+                }`}
+              >
+                {d.letter}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 主体 */}
@@ -473,7 +660,24 @@ export default function FileSearchPopup() {
           ) : drives.length === 0 ? (
             <div className="py-10 text-center text-caption text-slate-500">{t("fileSearch.noDrives")}</div>
           ) : (
-            <div className="space-y-1.5">
+            <>
+              <label className="flex cursor-pointer items-start gap-2 rounded-card border border-white/10 bg-white/[0.03] px-3 py-2">
+                <input
+                  type="checkbox"
+                  checked={respectGitignore}
+                  onChange={(e) => setRespectGitignore(e.target.checked)}
+                  className="mt-0.5 accent-[var(--module-accent)]"
+                />
+                <span className="min-w-0">
+                  <span className="block text-caption text-slate-200">
+                    {t("fileSearch.respectGitignore")}
+                  </span>
+                  <span className="block text-micro leading-relaxed text-slate-600">
+                    {t("fileSearch.respectGitignoreHint")}
+                  </span>
+                </span>
+              </label>
+              <div className="space-y-1.5">
               {drives.map((d) => {
                 const active = progress && !progress.done && progress.drive === d.letter ? progress : null;
                 const building = d.status === "building";
@@ -501,6 +705,11 @@ export default function FileSearchPopup() {
                           >
                             {statusLabel(d)}
                           </span>
+                          {d.respectGitignore && (
+                            <span className="rounded bg-white/5 px-1.5 py-0.5 text-micro text-slate-500">
+                              .gitignore
+                            </span>
+                          )}
                         </div>
                         <div className="mt-0.5 truncate text-micro text-slate-500">
                           {t("fileSearch.driveCapacity", {
@@ -576,7 +785,8 @@ export default function FileSearchPopup() {
                   </div>
                 );
               })}
-            </div>
+              </div>
+            </>
           )}
 
           <p className="px-0.5 text-micro leading-relaxed text-slate-600">{t("fileSearch.scanningHint")}</p>

@@ -172,6 +172,8 @@ export interface DriveIndexInfo {
   itemCount: number;
   indexedAt: number;
   elapsedMs: number;
+  /** 建立索引时是否遵循 .gitignore */
+  respectGitignore: boolean;
 }
 
 export interface UrlMetadata {

@@ -24,6 +24,8 @@ use tauri::{Emitter, Manager};
 
 use crate::commands::config::get_data_dir;
 
+use super::gitignore::IgnoreStack;
+
 const POPUP_LABEL: &str = "file-search-popup";
 const POPUP_W: f64 = 780.0;
 const POPUP_H: f64 = 560.0;
@@ -55,6 +57,8 @@ pub struct DriveInfo {
     /// 最近一次索引完成时间（unix 秒）
     pub indexed_at: i64,
     pub elapsed_ms: i64,
+    /// 建立索引时是否遵循 .gitignore
+    pub respect_gitignore: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -168,11 +172,20 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
             status TEXT    NOT NULL DEFAULT 'idle',
             item_count INTEGER NOT NULL DEFAULT 0,
             indexed_at INTEGER NOT NULL DEFAULT 0,
-            elapsed_ms INTEGER NOT NULL DEFAULT 0
+            elapsed_ms INTEGER NOT NULL DEFAULT 0,
+            respect_gitignore INTEGER NOT NULL DEFAULT 0
         );
         "#,
     )
     .map_err(|e| format!("初始化索引表失败: {}", e))?;
+    // v2 之前的库缺这一列；幂等补齐，不强制重建索引。
+    if !column_exists(conn, "fs_meta", "respect_gitignore") {
+        conn.execute(
+            "ALTER TABLE fs_meta ADD COLUMN respect_gitignore INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .map_err(|e| format!("补充索引状态字段失败: {}", e))?;
+    }
     if legacy {
         conn.execute("UPDATE fs_meta SET status = 'idle', item_count = 0", [])
             .map_err(|e| format!("重置索引状态失败: {}", e))?;
@@ -231,16 +244,25 @@ fn set_meta(
     item_count: i64,
     indexed_at: i64,
     elapsed_ms: i64,
+    respect_gitignore: bool,
 ) -> Result<(), String> {
     conn.execute(
-        "INSERT INTO fs_meta (drive, status, item_count, indexed_at, elapsed_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5)
+        "INSERT INTO fs_meta (drive, status, item_count, indexed_at, elapsed_ms, respect_gitignore)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
          ON CONFLICT(drive) DO UPDATE SET
             status = excluded.status,
             item_count = excluded.item_count,
             indexed_at = excluded.indexed_at,
-            elapsed_ms = excluded.elapsed_ms",
-        params![drive, status, item_count, indexed_at, elapsed_ms],
+            elapsed_ms = excluded.elapsed_ms,
+            respect_gitignore = excluded.respect_gitignore",
+        params![
+            drive,
+            status,
+            item_count,
+            indexed_at,
+            elapsed_ms,
+            respect_gitignore as i64
+        ],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -364,8 +386,125 @@ fn windows_drives() -> Vec<(String, String, u64, u64)> {
 
 // ============================ 索引扫描 ============================
 
-/// 系统目录：无权限且无检索价值，直接跳过。
-const SKIP_DIRS: [&str; 2] = ["$Recycle.Bin", "System Volume Information"];
+/// 任意层级都跳过的目录名（小写比较）：系统目录、版本库内部与常见依赖/构建缓存。
+/// 这些内容没有检索价值，索引进来只会让索引膨胀、搜索变慢。
+const SKIP_DIR_NAMES: &[&str] = &[
+    "$recycle.bin",
+    "system volume information",
+    ".git",
+    "node_modules",
+    ".pnpm-store",
+    ".yarn",
+    ".npm",
+    ".gradle",
+    ".m2",
+    ".nuget",
+    ".next",
+    ".nuxt",
+    ".turbo",
+    ".venv",
+    // Python
+    "__pycache__",
+    ".tox",
+    ".nox",
+    // 前端框架与打包产物
+    ".webpack",
+    ".nyc_output",
+    ".angular",
+    ".svelte-kit",
+    ".astro",
+    ".docusaurus",
+    // 语言工具链
+    ".dart_tool",
+    ".pub-cache",
+    ".stack-work",
+    // 编辑器 / 笔记本的会话与索引
+    ".vs",
+    ".vscode-server",
+    ".vscode-test",
+    ".ipynb_checkpoints",
+    ".history",
+    "ipch",
+    "workspacestorage",
+    "blob_storage",
+    "service worker",
+    "crashdumps",
+];
+
+/// 只在特定位置跳过的缓存目录（相对盘根的小写路径后缀，避免误伤同名目录）。
+const SKIP_REL_SUFFIXES: &[&str] = &[
+    "appdata/local/temp",
+    "appdata/local/yarn/cache",
+    "appdata/local/npm-cache",
+    "appdata/roaming/npm-cache",
+    "appdata/local/pnpm/store",
+    "appdata/local/pip/cache",
+    "appdata/local/nuget/v3-cache",
+    "appdata/local/go-build",
+    "appdata/local/microsoft/windows/inetcache",
+    // IDE：索引 / 日志 / 临时文件集中在这里（配置在 Roaming，不受影响）
+    "appdata/local/jetbrains",
+    // 浏览器：User Data 下是各 profile 的缓存、代码缓存与 GPU 缓存
+    "appdata/local/google/chrome/user data",
+    "appdata/local/microsoft/edge/user data",
+    // 其他应用缓存
+    "appdata/local/unity/cache",
+    "appdata/local/steam/htmlcache",
+    "anaconda3/pkgs",
+    "miniconda3/pkgs",
+    "cargo/registry",
+    "windows/temp",
+    "windows/softwaredistribution",
+    "windows/installer",
+    "windows/winsxs",
+    "windows/servicing",
+];
+
+/// 路径后缀匹配，要求落在目录边界上（`.../temp` 而不是 `.../attempt`）。
+fn ends_with_path(rel: &str, suffix: &str) -> bool {
+    match rel.strip_suffix(suffix) {
+        Some(prefix) => prefix.is_empty() || prefix.ends_with('/'),
+        None => false,
+    }
+}
+
+/// 名字含 cache / session 的目录按缓存处理（含 `webpack-cache`、`sessions` 等变体）。
+fn has_cache_word(name_lower: &str) -> bool {
+    name_lower.contains("cache") || name_lower.contains("session")
+}
+
+/// GUID（8-4-4-4-12）或 ≥16 位纯十六进制串：缓存键、提交哈希这类不可读标识。
+fn is_opaque_id(name_lower: &str) -> bool {
+    let bytes = name_lower.as_bytes();
+    let guid = bytes.len() == 36
+        && bytes[8] == b'-'
+        && bytes[13] == b'-'
+        && bytes[18] == b'-'
+        && bytes[23] == b'-'
+        && name_lower
+            .chars()
+            .filter(|c| *c != '-')
+            .all(|c| c.is_ascii_hexdigit());
+    guid || (bytes.len() >= 16 && bytes.iter().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// 该目录是否需要整棵剪枝（`rel` 为相对盘根的小写路径）。
+fn is_skipped_dir(rel: &str, name_lower: &str) -> bool {
+    if SKIP_DIR_NAMES.iter().any(|s| *s == name_lower) {
+        return true;
+    }
+    if has_cache_word(name_lower) || is_opaque_id(name_lower) {
+        return true;
+    }
+    SKIP_REL_SUFFIXES.iter().any(|s| ends_with_path(rel, s))
+}
+
+/// 相对盘根的路径，统一成 `/` 分隔并转小写（.gitignore 规则按大小写不敏感匹配）。
+fn relative_slash(path: &Path, root: &Path) -> String {
+    path.strip_prefix(root)
+        .map(|p| p.to_string_lossy().replace('\\', "/").to_lowercase())
+        .unwrap_or_default()
+}
 
 fn escape_like(s: &str) -> String {
     s.replace('\\', "\\\\")
@@ -433,6 +572,7 @@ fn scan_drive(
     app: &tauri::AppHandle,
     drive: &str,
     mode: &str,
+    respect_gitignore: bool,
 ) -> Result<ScanOutcome, String> {
     let mut conn = build_connection()?;
     conn.execute("DELETE FROM fs_entry_tmp WHERE drive = ?1", params![drive])
@@ -448,24 +588,19 @@ fn scan_drive(
     }
 
     let root = format!("{}\\", drive);
+    let root_path = Path::new(&root);
     let started = Instant::now();
     let mut scanned = 0usize;
     let mut inserted = 0usize;
     let mut batch: Vec<BatchRow> = Vec::with_capacity(2048);
     let mut last_emit = Instant::now();
+    let mut ignores = IgnoreStack::new();
 
-    for entry in walkdir::WalkDir::new(&root)
+    let mut walker = walkdir::WalkDir::new(&root)
         .follow_links(false)
-        .into_iter()
-        .filter_entry(|e| {
-            if e.file_type().is_dir() {
-                let name = e.file_name().to_string_lossy();
-                return !SKIP_DIRS.iter().any(|s| name.eq_ignore_ascii_case(s));
-            }
-            true
-        })
-        .filter_map(|e| e.ok())
-    {
+        .into_iter();
+
+    while let Some(res) = walker.next() {
         if CANCEL_INDEX.load(Ordering::SeqCst) {
             let _ = flush_batch(&mut conn, drive, &mut batch);
             let _ = conn.execute(
@@ -474,15 +609,54 @@ fn scan_drive(
             );
             return Ok(ScanOutcome::Canceled { scanned });
         }
-        // 不跟随 junction / 符号链接，避免目录环与重复项。
-        if entry.depth() == 0 || entry.file_type().is_symlink() {
+        let entry = match res {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let depth = entry.depth();
+        // 离开更深的目录后，丢弃那一层装载的 .gitignore 规则
+        ignores.leave_to(depth);
+        if depth == 0 {
+            if respect_gitignore {
+                ignores.enter(0, entry.path(), "");
+            }
             continue;
         }
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.is_empty() {
+        // 不跟随 junction / 符号链接，避免目录环与重复项。
+        if entry.file_type().is_symlink() {
             continue;
         }
         let is_dir = entry.file_type().is_dir();
+        let file_name = entry.file_name().to_string_lossy();
+        if file_name.is_empty() {
+            continue;
+        }
+        let name_lower = file_name.to_ascii_lowercase();
+        // 目录要判缓存/系统路径，文件只在遵循 gitignore 时才需要相对路径
+        let rel = if is_dir || respect_gitignore {
+            relative_slash(entry.path(), root_path)
+        } else {
+            String::new()
+        };
+        if is_dir && is_skipped_dir(&rel, &name_lower) {
+            walker.skip_current_dir();
+            continue;
+        }
+        // 纯 GUID / 长哈希文件名（无扩展名的缓存键）同样没有检索价值
+        if !is_dir && is_opaque_id(&name_lower) {
+            continue;
+        }
+        if respect_gitignore && ignores.is_ignored(&rel, is_dir) {
+            if is_dir {
+                walker.skip_current_dir();
+            }
+            continue;
+        }
+        if is_dir && respect_gitignore {
+            ignores.enter(depth, entry.path(), &rel);
+        }
+
+        let name = file_name.to_string();
         let meta = entry.metadata().ok();
         let size = if is_dir {
             0
@@ -583,6 +757,7 @@ fn scan_drive(
         count,
         now_secs(),
         started.elapsed().as_millis() as i64,
+        respect_gitignore,
     )?;
 
     Ok(ScanOutcome::Done { scanned, count })
@@ -592,11 +767,14 @@ fn scan_drive(
 
 #[tauri::command]
 pub async fn file_search_list_drives() -> Result<Vec<DriveInfo>, String> {
-    let mut meta_map: std::collections::HashMap<String, (String, i64, i64, i64)> =
+    let mut meta_map: std::collections::HashMap<String, (String, i64, i64, i64, bool)> =
         std::collections::HashMap::new();
     with_conn(|conn| {
         let mut stmt = conn
-            .prepare("SELECT drive, status, item_count, indexed_at, elapsed_ms FROM fs_meta")
+            .prepare(
+                "SELECT drive, status, item_count, indexed_at, elapsed_ms, respect_gitignore
+                 FROM fs_meta",
+            )
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map([], |row| {
@@ -606,11 +784,12 @@ pub async fn file_search_list_drives() -> Result<Vec<DriveInfo>, String> {
                     row.get::<_, i64>(2)?,
                     row.get::<_, i64>(3)?,
                     row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)? != 0,
                 ))
             })
             .map_err(|e| e.to_string())?;
-        for (drive, status, count, indexed_at, elapsed) in rows.flatten() {
-            meta_map.insert(drive, (status, count, indexed_at, elapsed));
+        for (drive, status, count, indexed_at, elapsed, respect) in rows.flatten() {
+            meta_map.insert(drive, (status, count, indexed_at, elapsed, respect));
         }
         Ok(())
     })?;
@@ -623,10 +802,10 @@ pub async fn file_search_list_drives() -> Result<Vec<DriveInfo>, String> {
     let mut out: Vec<DriveInfo> = windows_drives()
         .into_iter()
         .map(|(letter, drive_type, total, free)| {
-            let (status, item_count, indexed_at, elapsed_ms) = meta_map
+            let (status, item_count, indexed_at, elapsed_ms, respect_gitignore) = meta_map
                 .get(&letter)
                 .cloned()
-                .unwrap_or_else(|| ("idle".to_string(), 0, 0, 0));
+                .unwrap_or_else(|| ("idle".to_string(), 0, 0, 0, false));
             let status = if building.as_deref() == Some(letter.as_str()) {
                 "building".to_string()
             } else {
@@ -642,6 +821,7 @@ pub async fn file_search_list_drives() -> Result<Vec<DriveInfo>, String> {
                 item_count,
                 indexed_at,
                 elapsed_ms,
+                respect_gitignore,
             }
         })
         .collect();
@@ -654,6 +834,7 @@ pub async fn file_search_start_index(
     app: tauri::AppHandle,
     drive: String,
     mode: Option<String>,
+    respect_gitignore: Option<bool>,
 ) -> Result<(), String> {
     let drive = normalize_drive(&drive)?;
     let root = format!("{}\\", drive);
@@ -661,6 +842,7 @@ pub async fn file_search_start_index(
         return Err(format!("盘符不存在: {}", root));
     }
     let mode = mode.unwrap_or_else(|| "update".to_string());
+    let respect_gitignore = respect_gitignore.unwrap_or(true);
     {
         let mut guard = BUILDING_DRIVE
             .lock()
@@ -676,7 +858,7 @@ pub async fn file_search_start_index(
     let app_for_thread = app.clone();
     let drive_for_thread = drive.clone();
     std::thread::spawn(move || {
-        let result = scan_drive(&app_for_thread, &drive_for_thread, &mode);
+        let result = scan_drive(&app_for_thread, &drive_for_thread, &mode, respect_gitignore);
         {
             if let Ok(mut guard) = BUILDING_DRIVE.lock() {
                 *guard = None;
@@ -775,10 +957,48 @@ fn map_hit(row: &rusqlite::Row<'_>) -> rusqlite::Result<HitRow> {
     ))
 }
 
+/// 结果类型过滤：文件夹 / 普通文件，以及扩展名白名单（空 = 不限）。
+///
+/// 必须下推到 SQL：前端过滤会被 100 条上限先截断，反而搜不到目标类型。
+fn push_type_filter(
+    values: &mut Vec<Value>,
+    conds: &mut Vec<String>,
+    alias: &str,
+    kind: &str,
+    exts: &[String],
+) {
+    let col = |name: &str| {
+        if alias.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}.{}", alias, name)
+        }
+    };
+    match kind {
+        "dir" => conds.push(format!("{} = 1", col("is_dir"))),
+        "file" => conds.push(format!("{} = 0", col("is_dir"))),
+        _ => {}
+    }
+    if !exts.is_empty() {
+        let mut ors = Vec::new();
+        for ext in exts {
+            values.push(Value::Text(format!("%.{}", escape_like(ext))));
+            ors.push(format!(
+                "{} LIKE ?{} ESCAPE '\\'",
+                col("name_lower"),
+                values.len()
+            ));
+        }
+        conds.push(format!("({})", ors.join(" OR ")));
+    }
+}
+
 fn search_impl(
     query: &str,
     limit: usize,
     drives: &[String],
+    kind: &str,
+    exts: &[String],
 ) -> Result<Vec<FileHit>, String> {
     let q = query.trim();
     if q.is_empty() {
@@ -795,7 +1015,7 @@ fn search_impl(
     }
     let limit = limit.clamp(1, 500);
 
-    with_conn(|conn| search_with_conn(conn, q, &tokens, limit, drives))
+    with_conn(|conn| search_with_conn(conn, q, &tokens, limit, drives, kind, exts))
 }
 
 fn search_with_conn(
@@ -804,16 +1024,18 @@ fn search_with_conn(
     tokens: &[String],
     limit: usize,
     drives: &[String],
+    kind: &str,
+    exts: &[String],
 ) -> Result<Vec<FileHit>, String> {
     // trigram 只索引 ≥3 字符的片段，短词无法命中全文索引，交给 LIKE。
     if tokens.iter().all(|t| t.chars().count() >= 3) {
-        match fts_search(conn, q, tokens, limit, drives) {
+        match fts_search(conn, q, tokens, limit, drives, kind, exts) {
             Ok(hits) => return Ok(hits),
             // 全文索引异常（缺失/损坏）时退回 LIKE：先保证搜得到，再谈搜得快。
             Err(err) => crate::exit_log!("[文件搜索] 全文检索失败，回退 LIKE: {}", err),
         }
     }
-    like_search(conn, q, tokens, limit, drives)
+    like_search(conn, q, tokens, limit, drives, kind, exts)
 }
 
 /// FTS5 查询表达式：每个词用双引号包成短语，词间 AND（即「同时包含」）。
@@ -832,6 +1054,8 @@ fn fts_search(
     tokens: &[String],
     limit: usize,
     drives: &[String],
+    kind: &str,
+    exts: &[String],
 ) -> Result<Vec<FileHit>, String> {
     let mut values: Vec<Value> = vec![Value::Text(fts_expr(tokens))];
     let mut conds: Vec<String> = vec!["fs_entry_fts MATCH ?1".to_string()];
@@ -844,6 +1068,7 @@ fn fts_search(
         }
         conds.push(format!("e.drive IN ({})", placeholders.join(",")));
     }
+    push_type_filter(&mut values, &mut conds, "e", kind, exts);
 
     let q_lower = q.to_lowercase();
     values.push(Value::Text(q_lower.clone()));
@@ -887,8 +1112,10 @@ fn like_search(
     tokens: &[String],
     limit: usize,
     drives: &[String],
+    kind: &str,
+    exts: &[String],
 ) -> Result<Vec<FileHit>, String> {
-    let mut rows = prefix_search(conn, q, limit, drives)?;
+    let mut rows = prefix_search(conn, q, limit, drives, kind, exts)?;
     if rows.len() < limit {
         let exclude: Vec<i64> = rows.iter().map(|(id, _)| *id).collect();
         rows.extend(infix_search(
@@ -896,6 +1123,8 @@ fn like_search(
             tokens,
             limit - rows.len(),
             drives,
+            kind,
+            exts,
             &exclude,
         )?);
     }
@@ -908,6 +1137,8 @@ fn prefix_search(
     q: &str,
     limit: usize,
     drives: &[String],
+    kind: &str,
+    exts: &[String],
 ) -> Result<Vec<HitRow>, String> {
     let q_lower = q.to_lowercase();
     let mut values: Vec<Value> = Vec::new();
@@ -929,6 +1160,7 @@ fn prefix_search(
         }
         conds.push(format!("drive IN ({})", placeholders.join(",")));
     }
+    push_type_filter(&mut values, &mut conds, "", kind, exts);
     values.push(Value::Integer(limit as i64));
     let limit_idx = values.len();
 
@@ -959,6 +1191,8 @@ fn infix_search(
     tokens: &[String],
     limit: usize,
     drives: &[String],
+    kind: &str,
+    exts: &[String],
     exclude_ids: &[i64],
 ) -> Result<Vec<HitRow>, String> {
     let mut values: Vec<Value> = Vec::new();
@@ -976,6 +1210,7 @@ fn infix_search(
         }
         conds.push(format!("drive IN ({})", placeholders.join(",")));
     }
+    push_type_filter(&mut values, &mut conds, "", kind, exts);
     if !exclude_ids.is_empty() {
         let mut placeholders = Vec::new();
         for id in exclude_ids {
@@ -1011,6 +1246,8 @@ pub async fn file_search_query(
     query: String,
     limit: Option<usize>,
     drives: Option<Vec<String>>,
+    kind: Option<String>,
+    exts: Option<Vec<String>>,
 ) -> Result<Vec<FileHit>, String> {
     let normalized: Vec<String> = drives
         .unwrap_or_default()
@@ -1018,9 +1255,24 @@ pub async fn file_search_query(
         .filter_map(|d| normalize_drive(d).ok())
         .collect();
     let limit = limit.unwrap_or(100);
-    tauri::async_runtime::spawn_blocking(move || search_impl(&query, limit, &normalized))
-        .await
-        .map_err(|e| format!("搜索线程失败: {}", e))?
+    let kind = match kind.as_deref() {
+        Some("dir") => "dir",
+        Some("file") => "file",
+        _ => "all",
+    }
+    .to_string();
+    let exts: Vec<String> = exts
+        .unwrap_or_default()
+        .iter()
+        .map(|e| e.trim().trim_start_matches('.').to_lowercase())
+        .filter(|e| !e.is_empty() && e.len() <= 16 && e.chars().all(|c| c.is_ascii_alphanumeric()))
+        .take(24)
+        .collect();
+    tauri::async_runtime::spawn_blocking(move || {
+        search_impl(&query, limit, &normalized, &kind, &exts)
+    })
+    .await
+    .map_err(|e| format!("搜索线程失败: {}", e))?
 }
 
 // ============================ 悬浮窗 ============================
@@ -1141,7 +1393,8 @@ pub async fn hide_file_search_popup(app: tauri::AppHandle) -> Result<(), String>
 #[cfg(test)]
 mod tests {
     use super::{
-        escape_like, fts_expr, init_schema, normalize_drive, search_with_conn, FileHit,
+        escape_like, fts_expr, init_schema, is_opaque_id, is_skipped_dir, normalize_drive,
+        search_with_conn, FileHit,
     };
     use rusqlite::{params, Connection};
 
@@ -1174,16 +1427,17 @@ mod tests {
     fn seeded_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         init_schema(&conn).unwrap();
-        for (path, name) in [
-            ("C:\\docs\\report.docx", "report.docx"),
-            ("C:\\docs\\my_report_2024.docx", "my_report_2024.docx"),
-            ("C:\\apps\\report.exe", "report.exe"),
-            ("C:\\tmp\\ab.txt", "ab.txt"),
+        for (path, name, is_dir) in [
+            ("C:\\docs", "docs", 1),
+            ("C:\\docs\\report.docx", "report.docx", 0),
+            ("C:\\docs\\my_report_2024.docx", "my_report_2024.docx", 0),
+            ("C:\\apps\\report.exe", "report.exe", 0),
+            ("C:\\tmp\\ab.txt", "ab.txt", 0),
         ] {
             conn.execute(
                 "INSERT INTO fs_entry (drive, path, name, name_lower, is_dir, size, modified)
-                 VALUES ('C:', ?1, ?2, ?3, 0, 0, 0)",
-                params![path, name, name.to_lowercase()],
+                 VALUES ('C:', ?1, ?2, ?3, ?4, 0, 0)",
+                params![path, name, name.to_lowercase(), is_dir],
             )
             .unwrap();
             let id = conn.last_insert_rowid();
@@ -1204,7 +1458,7 @@ mod tests {
     fn fts_finds_infix_and_ranks_prefix_first() {
         let conn = seeded_db();
         let tokens = vec!["report".to_string()];
-        let hits = search_with_conn(&conn, "report", &tokens, 10, &[]).unwrap();
+        let hits = search_with_conn(&conn, "report", &tokens, 10, &[], "all", &[]).unwrap();
         let got = names(&hits);
         assert!(got.contains(&"my_report_2024.docx".to_string()));
         // 前缀命中排在包含命中之前
@@ -1217,7 +1471,7 @@ mod tests {
     fn short_token_falls_back_to_like() {
         let conn = seeded_db();
         let tokens = vec!["ab".to_string()];
-        let hits = search_with_conn(&conn, "ab", &tokens, 10, &[]).unwrap();
+        let hits = search_with_conn(&conn, "ab", &tokens, 10, &[], "all", &[]).unwrap();
         assert_eq!(names(&hits), vec!["ab.txt".to_string()]);
     }
 
@@ -1225,7 +1479,7 @@ mod tests {
     fn multi_token_requires_all_terms() {
         let conn = seeded_db();
         let tokens = vec!["report".to_string(), "2024".to_string()];
-        let hits = search_with_conn(&conn, "report 2024", &tokens, 10, &[]).unwrap();
+        let hits = search_with_conn(&conn, "report 2024", &tokens, 10, &[], "all", &[]).unwrap();
         assert_eq!(names(&hits), vec!["my_report_2024.docx".to_string()]);
     }
 
@@ -1233,8 +1487,71 @@ mod tests {
     fn drive_filter_limits_results() {
         let conn = seeded_db();
         let tokens = vec!["report".to_string()];
-        let hits = search_with_conn(&conn, "report", &tokens, 10, &["D:".to_string()]).unwrap();
+        let hits =
+            search_with_conn(&conn, "report", &tokens, 10, &["D:".to_string()], "all", &[]).unwrap();
         assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn dir_only_filter_excludes_files() {
+        let conn = seeded_db();
+        let tokens = vec!["docs".to_string()];
+        let hits = search_with_conn(&conn, "docs", &tokens, 10, &[], "dir", &[]).unwrap();
+        assert_eq!(names(&hits), vec!["docs".to_string()]);
+    }
+
+    #[test]
+    fn ext_filter_matches_suffix_only() {
+        let conn = seeded_db();
+        let tokens = vec!["report".to_string()];
+        let hits =
+            search_with_conn(&conn, "report", &tokens, 10, &[], "file", &["docx".to_string()])
+                .unwrap();
+        let got = names(&hits);
+        assert_eq!(got.len(), 2);
+        assert!(got.iter().all(|n| n.ends_with(".docx")));
+    }
+
+    #[test]
+    fn ext_filter_applies_to_like_fallback() {
+        let conn = seeded_db();
+        let tokens = vec!["ab".to_string()];
+        let hits = search_with_conn(&conn, "ab", &tokens, 10, &[], "file", &["txt".to_string()])
+            .unwrap();
+        assert_eq!(names(&hits), vec!["ab.txt".to_string()]);
+    }
+
+    #[test]
+    fn cache_dirs_are_pruned() {
+        assert!(is_skipped_dir("proj/node_modules", "node_modules"));
+        assert!(is_skipped_dir("users/me/appdata/local/temp", "temp"));
+        assert!(is_skipped_dir("users/me/appdata/local/yarn/cache", "cache"));
+        assert!(is_skipped_dir("windows/winsxs", "winsxs"));
+        // 同名但不在缓存位置的目录不误伤
+        assert!(!is_skipped_dir("proj/temp", "temp"));
+        assert!(!is_skipped_dir("proj/build", "build"));
+        // 目录边界校验：`attempt` 不能被 `temp` 后缀命中
+        assert!(!is_skipped_dir("proj/attempt", "attempt"));
+        // 名字含 cache / session 一律跳过
+        assert!(is_skipped_dir("proj/src/cache", "cache"));
+        assert!(is_skipped_dir("proj/src/sessions", "sessions"));
+        assert!(is_skipped_dir("proj/webpack-cache", "webpack-cache"));
+        // GUID / 长哈希目录名
+        assert!(is_skipped_dir(
+            "files/fromc/codebuddyextension/data/1eacae31-92db-4f15-8c46-19edd7ca5276",
+            "1eacae31-92db-4f15-8c46-19edd7ca5276"
+        ));
+        assert!(is_skipped_dir("proj/.dart_tool", ".dart_tool"));
+        assert!(is_skipped_dir(
+            "users/me/appdata/local/jetbrains",
+            "jetbrains"
+        ));
+        // 普通目录不误伤
+        assert!(!is_skipped_dir("proj/src/utils", "utils"));
+        assert!(!is_skipped_dir("proj/docs/history", "history"));
+        // 带扩展名的哈希文件名不是不透明 ID
+        assert!(!is_opaque_id("a1b2c3d4e5f6a7b8.js"));
+        assert!(is_opaque_id("a3f9c81b7e2d4f60"));
     }
 
     #[test]
@@ -1252,7 +1569,7 @@ mod tests {
             .unwrap();
         assert_eq!(fts_count, 0);
         let tokens = vec!["report".to_string()];
-        assert!(search_with_conn(&conn, "report", &tokens, 10, &[])
+        assert!(search_with_conn(&conn, "report", &tokens, 10, &[], "all", &[])
             .unwrap()
             .is_empty());
     }
