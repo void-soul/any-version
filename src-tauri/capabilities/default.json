@@ -6,7 +6,8 @@
     "main",
     "translate-popup",
     "mindmap-quick-popup",
-    "mindmap-sticker-popup"
+    "mindmap-sticker-popup",
+    "file-search-popup"
   ],
   "permissions": [
     "core:default",

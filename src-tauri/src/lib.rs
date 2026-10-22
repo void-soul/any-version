@@ -474,42 +474,8 @@ pub fn run() {
             // 音乐播放器：后台巡查线程（播完自动切下一首）。
             // 必须放后端：窗口隐藏到托盘后前端定时器会被 WebView2 节流。
             commands::music::start_queue_watcher(app.handle().clone());
-            if let Ok(setting) = commands::launcher::db::get_settings() {
-                let mut hotkeys = setting.module_hotkeys.clone();
-                if !setting.selection_translate_hotkey.trim().is_empty() {
-                    hotkeys.insert(
-                        "selection-translate".to_string(),
-                        setting.selection_translate_hotkey.clone(),
-                    );
-                }
-                if !setting.mindmap_quick_hotkey.trim().is_empty() {
-                    hotkeys.insert(
-                        "mindmap-quick".to_string(),
-                        setting.mindmap_quick_hotkey.clone(),
-                    );
-                }
-                if !setting.mindmap_sticker_hotkey.trim().is_empty() {
-                    hotkeys.insert(
-                        "mindmap-sticker".to_string(),
-                        setting.mindmap_sticker_hotkey.clone(),
-                    );
-                }
-                // 音乐播放器控制热键（播放/暂停、上一首、下一首）：
-                // 直接在后端驱动播放器，因此主窗口隐藏到托盘时依然有效。
-                for (id, value) in [
-                    ("music-play-pause", &setting.music_play_pause_hotkey),
-                    ("music-prev", &setting.music_prev_hotkey),
-                    ("music-next", &setting.music_next_hotkey),
-                ] {
-                    if !value.trim().is_empty() {
-                        hotkeys.insert(id.to_string(), value.clone());
-                    }
-                }
-                let _ = commands::launcher::windows::register_global_hotkeys(
-                    app.handle().clone(),
-                    &hotkeys,
-                );
-            }
+            // 统一注册：模块热键 + 独立热键 + 启动项/分类的全局快捷键。
+            commands::launcher::commands::refresh_global_hotkeys(app.handle().clone());
 
             // 窗口在 tauri.conf.json 中设为 visible:false。
             // 带 `--minimized`（开机自启）时保持隐藏在托盘。
@@ -1279,6 +1245,17 @@ commands::node_manager::npm_init,
                 commands::launcher::commands::launcher_save_settings,
                 commands::launcher::commands::launcher_register_hotkey,
                 commands::launcher::commands::launcher_process_dropped_paths,
+                commands::launcher::commands::launcher_export_backup,
+                commands::launcher::commands::launcher_import_backup,
+                commands::launcher::commands::launcher_take_focus_category,
+                // ---- 文件搜索（Everything 式：按盘符索引 + 悬浮窗） ----
+                commands::launcher::file_search::file_search_list_drives,
+                commands::launcher::file_search::file_search_start_index,
+                commands::launcher::file_search::file_search_cancel_index,
+                commands::launcher::file_search::file_search_delete_index,
+                commands::launcher::file_search::file_search_query,
+                commands::launcher::file_search::open_file_search_popup,
+                commands::launcher::file_search::hide_file_search_popup,
 
                 // ---- 剪贴板管理器（复刻 CopyQ） ----
                 commands::clipboard::clipboard_get_items,

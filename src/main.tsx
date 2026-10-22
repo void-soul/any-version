@@ -15,7 +15,7 @@ preapplyThemeAccent();
 // 避免每次打开划词悬浮窗都要等待整包加载（否则首开要 5~6 秒才弹出）。
 const POPUP_KIND = new URLSearchParams(window.location.search).get("popup");
 
-if (POPUP_KIND === "translate" || POPUP_KIND === "mindmap-node" || POPUP_KIND === "mindmap-sticker" || POPUP_KIND === "mindmap") {
+if (POPUP_KIND === "translate" || POPUP_KIND === "mindmap-node" || POPUP_KIND === "mindmap-sticker" || POPUP_KIND === "mindmap" || POPUP_KIND === "file-search") {
   // 划词翻译悬浮窗只渲染轻量组件，不加载 App 与全局快捷键逻辑。
   // 样式：Tailwind 指令在 App.css 中，App 分支由 App.tsx 引入；
   // 悬浮窗分支必须在此一并加载，否则所有工具类样式失效。
@@ -24,6 +24,8 @@ if (POPUP_KIND === "translate" || POPUP_KIND === "mindmap-node" || POPUP_KIND ==
     ? import("./components/TranslatePopup")
     : POPUP_KIND === "mindmap-sticker"
     ? import("./components/mindmap/MindmapStickerPopup")
+    : POPUP_KIND === "file-search"
+    ? import("./components/FileSearchPopup")
     : import("./components/mindmap/MindmapNodePopup");
   // 悬浮窗同样需要 i18n：与主应用一致，先读后端语言偏好初始化，
   // 否则 useTranslation 只会返回原始 key。

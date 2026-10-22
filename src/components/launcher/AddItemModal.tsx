@@ -26,6 +26,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Item, ItemData, Classification, MultiItemEntry, ScannedProgram, AppxItem, UrlMetadata, ShortcutInfo } from "./types";
 import CategoryTreeSelect from "./CategoryTreeSelect";
+import ShortcutRecorder from "./ShortcutRecorder";
+import { isGlobalSafeCombo } from "./hotkey";
 
 interface AddItemModalProps {
   isOpen: boolean;
@@ -98,6 +100,12 @@ export default function AddItemModal({
   const [netIconLoading, setNetIconLoading] = useState(false);
   const [netIconError, setNetIconError] = useState<string | null>(null);
   const [remark, setRemark] = useState(editingItem?.data?.remark || "");
+  const [shortcutKey, setShortcutKey] = useState<string | null>(
+    editingItem?.shortcutKey || null
+  );
+  const [globalShortcut, setGlobalShortcut] = useState(
+    !!editingItem?.globalShortcutKey
+  );
   const [saving, setSaving] = useState(false);
 
   // 网页网址抓取
@@ -329,8 +337,8 @@ export default function AddItemModal({
         name: name.trim(),
         itemType: finalItemType,
         data,
-        shortcutKey: editingItem?.shortcutKey || null,
-        globalShortcutKey: !!editingItem?.globalShortcutKey,
+        shortcutKey: shortcutKey || null,
+        globalShortcutKey: shortcutKey ? globalShortcut : false,
         order: editingItem?.order || 0,
       };
 
@@ -966,6 +974,37 @@ export default function AddItemModal({
                 placeholder={t("additem.remarkPlaceholder")}
                 className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-1.5 text-body text-white focus:outline-none focus:border-[var(--module-accent)] select-text"
               />
+            </div>
+          </div>
+
+          {/* 快捷键 */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+            <div>
+              <label className="block text-body font-medium text-slate-400 mb-1.5">
+                {t("launcher.hotkeyLabel")}
+              </label>
+              <ShortcutRecorder value={shortcutKey} onChange={setShortcutKey} />
+            </div>
+            <div className="space-y-1">
+              <label className="flex items-center gap-2 cursor-pointer text-body text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={globalShortcut}
+                  disabled={!shortcutKey}
+                  onChange={(e) => setGlobalShortcut(e.target.checked)}
+                  className="rounded border-white/10 bg-white/5 text-[var(--module-accent)] focus:ring-0 disabled:opacity-40"
+                />
+                <span>{t("launcher.hotkeyGlobal")}</span>
+              </label>
+              <p className="text-tiny text-slate-500 leading-relaxed">
+                {!shortcutKey
+                  ? t("launcher.hotkeyHint")
+                  : globalShortcut && !isGlobalSafeCombo(shortcutKey)
+                    ? t("launcher.hotkeyShiftOnlyWarning")
+                    : globalShortcut
+                      ? t("launcher.hotkeyGlobalHint")
+                      : t("launcher.hotkeyLocalHint")}
+              </p>
             </div>
           </div>
 

@@ -31,6 +31,8 @@ export interface ClassificationData {
   fixed?: boolean;
   excludeSearch?: boolean;
   defaultCollapsed?: boolean;
+  aggregateItemCount?: number | null;
+  aggregateSort?: "openNumber" | "lastOpen" | "name" | null;
 }
 
 export interface Item {
@@ -77,6 +79,7 @@ export interface LauncherSetting {
   selectionTranslateHotkey?: string; // 独立「划词翻译」热键：任意程序选中文本后按下 → 悬浮翻译
   mindmapQuickHotkey?: string; // 独立「思维导图节点速记」热键：呼出节点悬浮窗随手记录，默认 Shift+F3
   mindmapStickerHotkey?: string; // 独立「思维导图贴纸」热键：呼出贴纸悬浮窗，默认 Shift+F4
+  fileSearchHotkey?: string; // 独立「文件搜索」热键：呼出 Everything 式文件搜索悬浮窗，默认 Ctrl+Alt+Space
   musicPlayPauseHotkey?: string; // 音乐播放器：播放/暂停（全局热键，托盘状态同样生效）
   musicPrevHotkey?: string; // 音乐播放器：上一首
   musicNextHotkey?: string; // 音乐播放器：下一首
@@ -93,6 +96,16 @@ export interface LauncherSetting {
   categoryFontSize?: number; // 分类文字大小 (px)，默认 12
   categoryGap?: number; // 分类（分组）之间的垂直间距 (px)，默认 24
   externalEditor?: string; // 全局外部编辑器（路径或 PATH 命令，如 "code"；支持 {file} 占位符；空 = 未配置，回退资源管理器定位）
+  webSearchSources?: WebSearchSource[]; // 快捷搜索的网页搜索引擎（输入「bd 关键词」直接搜索）
+}
+
+/** 网页搜索源 */
+export interface WebSearchSource {
+  id: string;
+  keyword: string;
+  name: string;
+  url: string; // 用 %s 占位关键词
+  description?: string | null;
 }
 
 export interface ItemCheckResult {
@@ -133,6 +146,32 @@ export interface ShortcutInfo {
   iconPath?: string | null;
   isDir: boolean;
   iconBase64?: string | null;
+}
+
+/** 文件索引搜索结果（Everything 式全盘搜索） */
+export interface FileHit {
+  drive: string;
+  path: string;
+  name: string;
+  isDir: boolean;
+  size: number;
+  /** 修改时间（unix 秒） */
+  modified: number;
+}
+
+/** 可索引驱动器状态 */
+export interface DriveIndexInfo {
+  letter: string;
+  root: string;
+  /** fixed / removable / network / cdrom / ramdisk / unknown */
+  driveType: string;
+  totalBytes: number;
+  freeBytes: number;
+  /** idle / building / ready */
+  status: string;
+  itemCount: number;
+  indexedAt: number;
+  elapsedMs: number;
 }
 
 export interface UrlMetadata {

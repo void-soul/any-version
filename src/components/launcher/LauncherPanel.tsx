@@ -24,6 +24,13 @@ import {
   BarChart3,
   Loader2,
   ArrowRightLeft,
+  RefreshCw,
+  Download,
+  Upload,
+  Link2,
+  ArrowUpRight,
+  Clock,
+  Database,
 } from "lucide-react";
 import {
   DndContext,
@@ -54,12 +61,16 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useTranslation } from "react-i18next";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   Classification,
   DeleteClassificationResult,
+  FileHit,
   Item,
   ItemCheckResult,
   LauncherSetting,
+  ScannedProgram,
+  WebSearchSource,
 } from "./types";
 import CategoryTreeSelect from "./CategoryTreeSelect";
 import { matchPinyin } from "./pinyin";
@@ -72,6 +83,7 @@ import VexEmptyState from "../VexEmptyState";
 import VexBusy from "../VexBusy";
 import VexGreeting from "../VexGreeting";
 import { theamedConfirm } from "../shared/ThemedAlert";
+import { comboFromKeyboardEvent, normalizeCombo } from "./hotkey";
 
 // ---------- dnd-kit 辅助组件（模块级，避免渲染期内重新挂载破坏排序动画） ----------
 
@@ -258,6 +270,43 @@ function SortableItem(props: {
 /// 迁移目标里「新建一个分类」的哨兵值（分类 id 都是正整数，不会撞）。
 const NEW_CATEGORY_VALUE = "__new__";
 
+/** 后端默认搜索引擎的兜底副本（设置里缺失时使用）。 */
+const DEFAULT_WEB_SOURCES: WebSearchSource[] = [
+  { id: "1", keyword: "bd", name: "百度", url: "https://www.baidu.com/s?wd=%s", description: "百度搜索" },
+  { id: "2", keyword: "gg", name: "Google", url: "https://www.google.com/search?q=%s", description: "Google 搜索" },
+  { id: "3", keyword: "gh", name: "GitHub", url: "https://github.com/search?q=%s", description: "GitHub 搜索" },
+  { id: "4", keyword: "bing", name: "必应", url: "https://cn.bing.com/search?q=%s", description: "微软必应搜索" },
+  { id: "5", keyword: "bili", name: "哔哩哔哩", url: "https://search.bilibili.com/all?keyword=%s", description: "B站视频搜索" },
+];
+
+/** 判断输入是否像一个可直达的网址（带协议，或包含域名点号且不含空格）。 */
+function looksLikeUrl(input: string): boolean {
+  const s = input.trim();
+  if (!s || /\s/.test(s)) return false;
+  if (/^https?:\/\//i.test(s)) return true;
+  // 要求最后一段是至少 2 位的字母顶级域，避免把「3.5」这类数字误判成网址
+  return /^[\w-]+(\.[\w-]+)*\.[a-z]{2,}(:\d+)?([/?#].*)?$/i.test(s);
+}
+
+/** 补全协议（用于直达网址）。 */
+function normalizeUrl(input: string): string {
+  const s = input.trim();
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : `https://${s}`;
+}
+
+/** 找到某个分类最顶层的祖先 id（分类快捷键指向子分类时，先切到其顶级分类）。 */
+function topAncestorId(list: Classification[], id: number): number {
+  let cursor = list.find((c) => c.id === id);
+  let guard = 0;
+  while (cursor?.parentId != null && guard < 100) {
+    const parent = list.find((c) => c.id === cursor!.parentId);
+    if (!parent) break;
+    cursor = parent;
+    guard++;
+  }
+  return cursor?.id ?? id;
+}
+
 /** 把分类树摊平成一维（默认迁移目标候选用）。 */
 function flattenCategories(list: Classification[]): Classification[] {
   const out: Classification[] = [];
@@ -288,6 +337,11 @@ export default function LauncherPanel() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchSelectedIndex, setSearchSelectedIndex] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  // 全盘文件索引搜索结果（与启动项一起参与统一搜索）
+  const [fileHits, setFileHits] = useState<FileHit[]>([]);
+  // 这批结果对应的关键词：与当前输入不一致时视为过期，避免回车打开错文件
+  const [fileHitsQuery, setFileHitsQuery] = useState("");
+  const fileSearchReqRef = useRef(0);
 
   // Settings
   const [settings, setSettings] = useState<LauncherSetting>({
@@ -314,6 +368,20 @@ export default function LauncherPanel() {
   // 视图设置面板开关
   const [viewSettingsOpen, setViewSettingsOpen] = useState(false);
   const [usageStatsOpen, setUsageStatsOpen] = useState(false);
+
+  // 关联文件夹分类：实时扫描出来的「虚拟项目」（不落库）
+  const [folderItems, setFolderItems] = useState<ScannedProgram[]>([]);
+  const [folderLoading, setFolderLoading] = useState(false);
+  const [folderError, setFolderError] = useState<string | null>(null);
+  const [folderReloadKey, setFolderReloadKey] = useState(0);
+  const [folderContextMenu, setFolderContextMenu] = useState<{
+    x: number;
+    y: number;
+    item: ScannedProgram;
+  } | null>(null);
+
+  // 备份导入/导出进行中
+  const [backupBusy, setBackupBusy] = useState(false);
 
   const viewSettingsRef = useRef<HTMLDivElement>(null);
 
@@ -472,6 +540,15 @@ export default function LauncherPanel() {
     return classifications.filter((c) => c.parentId === activeTopCategory.id);
   }, [classifications, activeTopCategory]);
 
+  // 当前分类的特殊类型（1=关联文件夹，2=聚合分类）
+  const isFolderCategory = activeTopCategory?.classificationType === 1;
+  const isAggregateCategory = activeTopCategory?.classificationType === 2;
+  const activeFolderPath = activeTopCategory?.data?.associateFolderPath?.trim() || "";
+  const webSources =
+    settings.webSearchSources && settings.webSearchSources.length > 0
+      ? settings.webSearchSources
+      : DEFAULT_WEB_SOURCES;
+
   // 当前大分类下的所有子分组 id（含嵌套递归），用于「收缩/展开全部」
   const activeSubIds = useMemo(() => {
     if (!activeTopCategory) return [];
@@ -526,6 +603,51 @@ export default function LauncherPanel() {
     return map;
   }, [visibleItems]);
 
+  // 聚合分类：跨全部分类挑选项目，按启动次数 / 最近启动 / 名称排序后取前 N 个
+  const aggregateItems = useMemo(() => {
+    if (!isAggregateCategory) return [] as Item[];
+    const limit = Math.max(1, activeTopCategory?.data?.aggregateItemCount ?? 20);
+    const sort = activeTopCategory?.data?.aggregateSort || "openNumber";
+    // 「最常打开 / 最近启动」只聚合真正启动过的项目；按名称排序时展示全部
+    const list = visibleItems.filter(
+      (it) =>
+        sort === "name" ||
+        (it.data.openNumber ?? 0) > 0 ||
+        (it.data.lastOpen ?? 0) > 0
+    );
+    if (sort === "name") {
+      list.sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN"));
+    } else if (sort === "lastOpen") {
+      list.sort((a, b) => (b.data.lastOpen ?? 0) - (a.data.lastOpen ?? 0));
+    } else {
+      list.sort(
+        (a, b) =>
+          (b.data.openNumber ?? 0) - (a.data.openNumber ?? 0) ||
+          (b.data.lastOpen ?? 0) - (a.data.lastOpen ?? 0)
+      );
+    }
+    return list.slice(0, limit);
+  }, [isAggregateCategory, visibleItems, activeTopCategory]);
+
+  // 关联文件夹分类：扫描结果转成只读卡片（id 为负数，仅用于渲染 key）
+  const folderVirtualItems = useMemo<Item[]>(() => {
+    if (!isFolderCategory) return [];
+    return folderItems.map((p, idx) => ({
+      id: -(idx + 1),
+      classificationId: activeTopCategory?.id ?? 0,
+      name: p.name,
+      itemType: p.isDir ? 1 : 0,
+      data: {
+        target: p.target,
+        params: p.params ?? undefined,
+        icon: p.icon ?? undefined,
+      },
+      shortcutKey: null,
+      globalShortcutKey: false,
+      order: idx,
+    }));
+  }, [isFolderCategory, folderItems, activeTopCategory]);
+
   // Classification lookup map for name resolution
   const classificationMap = useMemo(() => {
     const map = new Map<number, Classification>();
@@ -551,6 +673,226 @@ export default function LauncherPanel() {
       }
     } catch (e) {
       showToast(t("launcher.launchFail", { err: String(e) }));
+    }
+  };
+
+  /** 切到某个分类所在的顶级分类（分类快捷键 / 聚合分类跳转共用）。 */
+  const focusCategoryById = useCallback(
+    (id: number) => {
+      if (!classificationMap.has(id)) return;
+      setActiveParentId(topAncestorId(classifications, id));
+      setIsSearchOpen(false);
+      setSearchQuery("");
+    },
+    [classificationMap, classifications]
+  );
+
+  // 关联文件夹：进入分类时扫描目录；刷新按钮通过 folderReloadKey 重新触发
+  useEffect(() => {
+    if (!isFolderCategory || !activeFolderPath) {
+      setFolderItems([]);
+      setFolderError(null);
+      setFolderLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setFolderLoading(true);
+    setFolderError(null);
+    invoke<ScannedProgram[]>("launcher_scan_folder", {
+      path: activeFolderPath,
+      hiddenItems: activeTopCategory?.data?.associateFolderHiddenItems ?? null,
+      showOnly: activeTopCategory?.data?.itemShowOnly ?? "default",
+    })
+      .then((list) => {
+        if (!cancelled) setFolderItems(list);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setFolderItems([]);
+          setFolderError(String(e));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setFolderLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isFolderCategory,
+    activeFolderPath,
+    activeTopCategory?.id,
+    activeTopCategory?.data?.associateFolderHiddenItems,
+    activeTopCategory?.data?.itemShowOnly,
+    folderReloadKey,
+  ]);
+
+  // 分类全局快捷键：后端唤起窗口后通知前端定位；面板重挂载时再取一次 pending 兜底
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    const setup = async () => {
+      try {
+        const pending = await invoke<number | null>("launcher_take_focus_category");
+        if (!cancelled && pending != null) focusCategoryById(pending);
+      } catch {
+        /* 忽略：没有 pending 分类 */
+      }
+      unlisten = await listen<number>("launcher-focus-category", (event) => {
+        const id = Number(event.payload);
+        if (Number.isFinite(id)) focusCategoryById(id);
+      });
+    };
+    setup().catch((e) => console.error("监听分类快捷键失败:", e));
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [focusCategoryById]);
+
+  // 窗口内快捷键（未勾选「全局」的项目/分类快捷键）
+  const executeItemRef = useRef(handleExecuteItem);
+  useEffect(() => {
+    executeItemRef.current = handleExecuteItem;
+  });
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (isSearchOpen || e.repeat || e.defaultPrevented) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      const combo = comboFromKeyboardEvent(e);
+      if (!combo) return;
+      const item = allItems.find(
+        (it) =>
+          it.shortcutKey &&
+          !it.globalShortcutKey &&
+          normalizeCombo(it.shortcutKey) === combo
+      );
+      if (item) {
+        e.preventDefault();
+        executeItemRef.current(item);
+        return;
+      }
+      const cat = classifications.find(
+        (c) =>
+          c.shortcutKey &&
+          !c.globalShortcutKey &&
+          normalizeCombo(c.shortcutKey) === combo
+      );
+      if (cat) {
+        e.preventDefault();
+        focusCategoryById(cat.id);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [allItems, classifications, isSearchOpen, focusCategoryById]);
+
+  /** 启动一个「虚拟项目」（关联文件夹里的文件、搜索直达的网址）。 */
+  const launchVirtual = async (
+    name: string,
+    target: string,
+    itemType: number,
+    params?: string | null,
+    icon?: string | null
+  ) => {
+    try {
+      const item: Item = {
+        id: 0,
+        classificationId: activeTopCategory?.id ?? 0,
+        name,
+        itemType,
+        data: { target, params: params || undefined, icon: icon || undefined },
+        shortcutKey: null,
+        globalShortcutKey: false,
+        order: 0,
+      };
+      await invoke("launcher_execute_item", { itemId: null, item });
+      try {
+        await getCurrentWindow().hide();
+      } catch {
+        /* 忽略隐藏失败 */
+      }
+    } catch (e) {
+      showToast(t("launcher.launchFail", { err: String(e) }));
+    }
+  };
+
+  /** 把关联文件夹里的某个条目保存为当前分类下的正式项目。 */
+  const addFolderItemToClassification = async (p: ScannedProgram) => {
+    if (!activeTopCategory) return;
+    try {
+      await invoke("launcher_save_item", {
+        item: {
+          id: 0,
+          classificationId: activeTopCategory.id,
+          name: p.name,
+          itemType: p.isDir ? 1 : 0,
+          data: {
+            target: p.target,
+            params: p.params || undefined,
+            icon: p.icon || undefined,
+          },
+          shortcutKey: null,
+          globalShortcutKey: false,
+          order: 0,
+        },
+      });
+      showToast(t("launcher.itemSaved"));
+      await loadData();
+    } catch (e) {
+      showToast(t("launcher.addFail", { err: String(e) }));
+    }
+  };
+
+  // 导出 / 导入整套启动器数据
+  const handleExportBackup = async () => {
+    if (backupBusy) return;
+    try {
+      const path = await saveDialog({
+        title: t("launcher.exportBackupTitle"),
+        defaultPath: `kira-launcher-${new Date().toISOString().slice(0, 10)}.json`,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!path || typeof path !== "string") return;
+      setBackupBusy(true);
+      await invoke("launcher_export_backup", { path });
+      showToast(t("launcher.exportBackupOk"));
+    } catch (e) {
+      showToast(t("launcher.exportBackupFail", { err: String(e) }));
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const handleImportBackup = async () => {
+    if (backupBusy) return;
+    try {
+      const selected = await openDialog({
+        title: t("launcher.importBackupTitle"),
+        multiple: false,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      const path = Array.isArray(selected) ? selected[0] : selected;
+      if (!path || typeof path !== "string") return;
+      const ok = await theamedConfirm(t("launcher.importBackupConfirm"), { danger: true });
+      if (!ok) return;
+      setBackupBusy(true);
+      await invoke("launcher_import_backup", { path });
+      await loadData();
+      showToast(t("launcher.importBackupOk"));
+    } catch (e) {
+      showToast(t("launcher.importBackupFail", { err: String(e) }));
+    } finally {
+      setBackupBusy(false);
     }
   };
 
@@ -1097,6 +1439,64 @@ export default function LauncherPanel() {
     if (moved) await loadData();
   };
 
+  /** 分类（含祖先）是否在「全局快速搜索」中被排除。 */
+  const isExcludedFromSearch = useCallback(
+    (classificationId: number) => {
+      let node = classificationMap.get(classificationId);
+      let guard = 0;
+      while (node && guard++ < 100) {
+        if (node.data?.excludeSearch) return true;
+        node = node.parentId != null ? classificationMap.get(node.parentId) : undefined;
+      }
+      return false;
+    },
+    [classificationMap]
+  );
+
+  type SearchQuickAction = {
+    key: string;
+    title: string;
+    subtitle: string;
+    url: string;
+    kind: "url" | "engine";
+  };
+
+  // 搜索快捷动作：网址直达 + 搜索引擎前缀（如「bd 关键词」）
+  const searchQuickActions = useMemo<SearchQuickAction[]>(() => {
+    const raw = searchQuery.trim();
+    if (!raw) return [];
+    const actions: SearchQuickAction[] = [];
+    if (looksLikeUrl(raw)) {
+      const url = normalizeUrl(raw);
+      actions.push({
+        key: `url:${url}`,
+        title: url,
+        subtitle: t("launcher.searchOpenUrl"),
+        url,
+        kind: "url",
+      });
+    }
+    const space = raw.search(/\s/);
+    if (space > 0) {
+      const prefix = raw.slice(0, space).toLowerCase();
+      const term = raw.slice(space + 1).trim();
+      const source = webSources.find((s) => s.keyword.toLowerCase() === prefix);
+      if (source && term) {
+        const url = source.url.includes("%s")
+          ? source.url.replace("%s", encodeURIComponent(term))
+          : `${source.url}${encodeURIComponent(term)}`;
+        actions.push({
+          key: `engine:${source.id}:${term}`,
+          title: t("launcher.searchWithEngine", { engine: source.name, query: term }),
+          subtitle: source.url,
+          url,
+          kind: "engine",
+        });
+      }
+    }
+    return actions;
+  }, [searchQuery, webSources, t]);
+
   // Unified Search Filtering (Figure 2)
   // 支持：子串匹配（名称/目标/备注）+ 拼音首字母匹配（如 vsc → Visual Studio Code）
   const searchResults = useMemo(() => {
@@ -1104,11 +1504,54 @@ export default function LauncherPanel() {
     const q = searchQuery.trim().toLowerCase();
     return visibleItems.filter(
       (it) =>
-        matchPinyin(it.name, q) ||
-        (it.data.target || "").toLowerCase().includes(q) ||
-        matchPinyin(it.data.remark || "", q)
+        !isExcludedFromSearch(it.classificationId) &&
+        (matchPinyin(it.name, q) ||
+          (it.data.target || "").toLowerCase().includes(q) ||
+          matchPinyin(it.data.remark || "", q))
     );
-  }, [visibleItems, searchQuery]);
+  }, [visibleItems, searchQuery, isExcludedFromSearch]);
+
+  // 全盘文件索引搜索（与启动项统一展示）：200ms 防抖 + 请求代次校验。
+  // 未建立索引时后端直接返回空数组，不影响原有快捷方式搜索体验。
+  useEffect(() => {
+    if (!isSearchOpen) return;
+    const q = searchQuery.trim();
+    if (!q) {
+      fileSearchReqRef.current++;
+      setFileHits([]);
+      setFileHitsQuery("");
+      return;
+    }
+    const req = ++fileSearchReqRef.current;
+    const timer = window.setTimeout(() => {
+      invoke<FileHit[]>("file_search_query", { query: q, limit: 30 })
+        .then((list) => {
+          if (fileSearchReqRef.current !== req) return;
+          setFileHits(list);
+          setFileHitsQuery(q);
+        })
+        .catch(() => {
+          if (fileSearchReqRef.current !== req) return;
+          setFileHits([]);
+          setFileHitsQuery(q);
+        });
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery, isSearchOpen]);
+
+  const openFileHit = (hit: FileHit) => {
+    invoke("launcher_execute_raw", {
+      file: hit.path,
+      params: null,
+      runAsAdmin: false,
+      startLocation: null,
+    }).catch(() => {});
+  };
+
+  // 只展示与当前关键词一致的结果（防抖期间不显示过期条目）
+  const effectiveFileHits = fileHitsQuery === searchQuery.trim() ? fileHits : [];
+
+  const searchTotal = searchQuickActions.length + searchResults.length + effectiveFileHits.length;
 
   const usageStats = useMemo(() => sortLauncherItemsByUsage(allItems), [allItems]);
 
@@ -1134,6 +1577,7 @@ export default function LauncherPanel() {
     const closeMenu = () => {
       setItemContextMenu(null);
       setCategoryContextMenu(null);
+      setFolderContextMenu(null);
     };
     const onClickOutside = (e: MouseEvent) => {
       if (viewSettingsRef.current && !viewSettingsRef.current.contains(e.target as Node)) {
@@ -1482,6 +1926,18 @@ export default function LauncherPanel() {
             <span className="text-caption">{t("launcher.search")}</span>
           </button>
 
+          {/* 全盘文件搜索悬浮窗（Everything 式，索引管理入口） */}
+          <button
+            onClick={() => {
+              invoke("open_file_search_popup").catch(() => {});
+            }}
+            className="ui-btn px-2.5 py-1 rounded-ctl text-body flex items-center gap-1.5 border transition cursor-pointer"
+            title={t("launcher.fileSearchTitle")}
+          >
+            <Database className="w-3 h-3" />
+            <span className="text-caption">{t("launcher.fileSearch")}</span>
+          </button>
+
           {/* 浏览器收藏夹导入已删除：该能力现在归收藏模块（favorites） */}
 
           {/* 检测 */}
@@ -1775,18 +2231,50 @@ export default function LauncherPanel() {
             )}
           </div>
 
-          {/* Add Item */}
+          {/* 关联文件夹刷新 */}
+          {isFolderCategory && (
+            <button
+              onClick={() => setFolderReloadKey((k) => k + 1)}
+              disabled={folderLoading || !activeFolderPath}
+              className="px-2.5 py-1 rounded-ctl text-body flex items-center gap-1.5 border ui-btn transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              title={t("launcher.folderRefreshTitle")}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-cyan-400 ${folderLoading ? "animate-spin" : ""}`} />
+            </button>
+          )}
+
+          {/* 备份导出 / 导入（图标按钮，避免顶栏拥挤） */}
           <button
-            onClick={() => {
-              setEditingItem(null);
-              setTargetClassificationId(activeTopCategory ? activeTopCategory.id : 1);
-              setItemModalOpen(true);
-            }}
-            className="px-3 py-1 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white rounded-ctl text-body font-medium transition cursor-pointer shadow-md shadow-[var(--module-accent-ring)] flex items-center gap-1"
+            onClick={handleExportBackup}
+            disabled={backupBusy}
+            className="p-1.5 rounded-ctl border ui-btn transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            title={t("launcher.exportBackupTitle")}
           >
-            <Plus className="w-3 h-3" />
-            <span className="text-caption">{t("launcher.addItem")}</span>
+            <Download className="w-3.5 h-3.5 text-emerald-400" />
           </button>
+          <button
+            onClick={handleImportBackup}
+            disabled={backupBusy}
+            className="p-1.5 rounded-ctl border ui-btn transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            title={t("launcher.importBackupTitle")}
+          >
+            <Upload className="w-3.5 h-3.5 text-cyan-400" />
+          </button>
+
+          {/* Add Item（聚合分类只读，不提供手动添加） */}
+          {!isAggregateCategory && (
+            <button
+              onClick={() => {
+                setEditingItem(null);
+                setTargetClassificationId(activeTopCategory ? activeTopCategory.id : 1);
+                setItemModalOpen(true);
+              }}
+              className="px-3 py-1 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white rounded-ctl text-body font-medium transition cursor-pointer shadow-md shadow-[var(--module-accent-ring)] flex items-center gap-1"
+            >
+              <Plus className="w-3 h-3" />
+              <span className="text-caption">{t("launcher.addItem")}</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -1919,10 +2407,133 @@ export default function LauncherPanel() {
           className="flex-1 overflow-y-auto p-5 bg-white/[0.01] flex flex-col"
           style={{ gap: view.categoryGap }}
         >
+          {/* 聚合分类：跨分类聚合项目（只读，不支持拖动排序） */}
+          {isAggregateCategory ? (
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-caption text-slate-400">
+                  <Clock className="w-3.5 h-3.5 text-[var(--module-accent)]" />
+                  <span>
+                    {activeTopCategory?.data?.aggregateSort === "lastOpen"
+                      ? t("launcher.aggregateByRecent")
+                      : activeTopCategory?.data?.aggregateSort === "name"
+                        ? t("launcher.aggregateByName")
+                        : t("launcher.aggregateByCount")}
+                  </span>
+                  <span className="text-slate-600">·</span>
+                  <span>{t("launcher.aggregateTotal", { count: aggregateItems.length })}</span>
+                </div>
+              </div>
+              {aggregateItems.length > 0 ? (
+                <div className={`${gridClass} ${densityGap}`} style={gridStyle}>
+                  {aggregateItems.map((item) => (
+                    <div
+                      key={item.id}
+                      className={cardClass(item, itemView, checkResults)}
+                      style={{ borderRadius: view.itemRadius }}
+                      title={item.name}
+                      onClick={() => handleExecuteItem(item)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setItemContextMenu({ x: e.clientX, y: e.clientY, item });
+                      }}
+                    >
+                      <ItemCardBody item={item} view={itemView} checkResults={checkResults} />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <VexEmptyState
+                  title={t("launcher.aggregateEmpty")}
+                  desc={t("launcher.aggregateEmptyHint")}
+                  avatarSize={46}
+                  className="!py-16"
+                />
+              )}
+            </div>
+          ) : (
+          <>
           {/* 1. If Category has Sub-Categories (recursively rendered) */}
           {subCategories.length > 0 ? (
             subCategories.map((sub) => renderGroup(sub))
           ) : null}
+
+          {/* 关联文件夹分类：实时镜像目录内容（虚拟项目，不落库） */}
+          {isFolderCategory && (
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-caption text-slate-400 min-w-0">
+                  <FolderOpen className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+                  <span className="truncate" title={activeFolderPath}>
+                    {activeFolderPath || t("launcher.folderNotSet")}
+                  </span>
+                  {activeFolderPath && (
+                    <span className="text-slate-600 flex-shrink-0">
+                      {t("launcher.folderItemCount", { count: folderItems.length })}
+                    </span>
+                  )}
+                </div>
+                {folderLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--module-accent)]" />}
+              </div>
+
+              {folderError ? (
+                <div className="rounded-card border border-red-500/30 bg-red-500/10 px-3 py-2 text-caption text-red-300 break-all">
+                  {t("launcher.folderScanFail", { err: folderError })}
+                </div>
+              ) : !activeFolderPath ? (
+                <VexEmptyState
+                  title={t("launcher.folderNotSetTitle")}
+                  desc={t("launcher.folderNotSetHint")}
+                  avatarSize={44}
+                  className="!py-12"
+                  action={{
+                    label: t("launcher.editCategory"),
+                    onClick: () => {
+                      setEditingCategory(activeTopCategory || null);
+                      setCategoryParentId(activeTopCategory?.parentId ?? null);
+                      setCategoryModalOpen(true);
+                    },
+                  }}
+                />
+              ) : folderVirtualItems.length === 0 && !folderLoading ? (
+                <VexEmptyState
+                  title={t("launcher.folderEmpty")}
+                  desc={t("launcher.folderEmptyHint")}
+                  avatarSize={44}
+                  className="!py-12"
+                />
+              ) : (
+                <div className={`${gridClass} ${densityGap}`} style={gridStyle}>
+                  {folderVirtualItems.map((item) => (
+                    <div
+                      key={item.id}
+                      className={cardClass(item, itemView, {})}
+                      style={{ borderRadius: view.itemRadius }}
+                      title={`${item.name}\n${item.data.target || ""}`}
+                      onClick={() =>
+                        launchVirtual(
+                          item.name,
+                          item.data.target || "",
+                          item.itemType,
+                          item.data.params,
+                          item.data.icon
+                        )
+                      }
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        const program = folderItems[-item.id - 1];
+                        if (program) {
+                          setFolderContextMenu({ x: e.clientX, y: e.clientY, item: program });
+                        }
+                      }}
+                    >
+                      <ItemCardBody item={item} view={itemView} checkResults={{}} />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* 2. Direct items under active category */}
           {(() => {
@@ -1994,7 +2605,7 @@ export default function LauncherPanel() {
                       ))}
                     </div>
                   </SortableContext>
-                ) : subCategories.length === 0 ? (
+                ) : subCategories.length === 0 && !isFolderCategory ? (
                   <VexEmptyState
                     title={t("launcher.emptyCategory")}
                     desc={
@@ -2035,6 +2646,8 @@ export default function LauncherPanel() {
               </Droppable>
             );
           })()}
+          </>
+          )}
         </div>
 
         {usageStatsOpen && (
@@ -2102,16 +2715,34 @@ export default function LauncherPanel() {
                     e.stopPropagation();
                     if (e.key === "ArrowDown") {
                       e.preventDefault();
-                      setSearchSelectedIndex((prev) => (prev + 1) % (searchResults.length || 1));
+                      setSearchSelectedIndex((prev) => (prev + 1) % (searchTotal || 1));
                     } else if (e.key === "ArrowUp") {
                       e.preventDefault();
-                      setSearchSelectedIndex((prev) => (prev - 1 + (searchResults.length || 1)) % (searchResults.length || 1));
+                      setSearchSelectedIndex(
+                        (prev) => (prev - 1 + (searchTotal || 1)) % (searchTotal || 1)
+                      );
                     } else if (e.key === "Enter") {
                       e.preventDefault();
-                      const target = searchResults[searchSelectedIndex];
-                      if (target) {
-                        handleExecuteItem(target);
+                      const selected = Math.min(
+                        searchSelectedIndex,
+                        Math.max(0, searchTotal - 1)
+                      );
+                      const action = searchQuickActions[selected];
+                      if (action) {
+                        launchVirtual(action.title, action.url, 2);
                         closeSearch();
+                      } else {
+                        const target = searchResults[selected - searchQuickActions.length];
+                        if (target) {
+                          handleExecuteItem(target);
+                          closeSearch();
+                        } else {
+                          const hit = effectiveFileHits[selected - searchQuickActions.length - searchResults.length];
+                          if (hit) {
+                            openFileHit(hit);
+                            closeSearch();
+                          }
+                        }
                       }
                     } else if (e.key === "Escape") {
                       e.preventDefault();
@@ -2130,11 +2761,68 @@ export default function LauncherPanel() {
                 </button>
               </div>
 
+              {/* 搜索引擎快捷入口（输入「关键词 + 空格 + 词」直接搜索） */}
+              <div className="flex flex-wrap items-center gap-1.5 mb-2 px-0.5">
+                {webSources.map((src) => (
+                  <button
+                    key={src.id}
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery(`${src.keyword} `);
+                      setSearchSelectedIndex(0);
+                      searchInputRef.current?.focus();
+                    }}
+                    title={src.description || src.url}
+                    className="px-2 py-0.5 rounded-ctl text-tiny border border-white/10 bg-white/[0.03] text-slate-400 hover:text-white hover:border-[var(--module-accent-ring)] transition cursor-pointer"
+                  >
+                    <span className="font-mono text-[var(--module-accent)]">{src.keyword}</span>
+                    <span className="mx-1 opacity-40">·</span>
+                    <span>{src.name}</span>
+                  </button>
+                ))}
+              </div>
+
               {/* Search Results List */}
               <div className="flex-1 overflow-y-auto space-y-1 pr-1">
-              {searchResults.length > 0 ? (
-                searchResults.map((item, idx) => {
-                  const isSelected = idx === searchSelectedIndex;
+              {searchQuickActions.map((action, idx) => {
+                const isSelected = idx === searchSelectedIndex;
+                return (
+                  <button
+                    type="button"
+                    key={action.key}
+                    onClick={() => {
+                      launchVirtual(action.title, action.url, 2);
+                      closeSearch();
+                    }}
+                    className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-card text-body text-left transition cursor-pointer ${
+                      isSelected
+                        ? "bg-[var(--module-accent)] text-white font-medium shadow-md shadow-[var(--module-accent-ring)]"
+                        : "bg-white/[0.03] text-slate-200 hover:bg-white/5"
+                    }`}
+                  >
+                    <div className={`w-6 h-6 rounded-ctl flex items-center justify-center flex-shrink-0 overflow-hidden ${
+                      isSelected ? "bg-black/20 text-white" : "bg-white/10 text-blue-400"
+                    }`}>
+                      {action.kind === "engine" ? (
+                        <Search className="w-3.5 h-3.5" />
+                      ) : (
+                        <Link2 className="w-3.5 h-3.5" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm">{action.title}</div>
+                      <div className={`truncate text-tiny ${isSelected ? "text-white/70" : "text-slate-500"}`}>
+                        {action.subtitle}
+                      </div>
+                    </div>
+                    <ArrowUpRight className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? "text-white" : "text-slate-500"}`} />
+                  </button>
+                );
+              })}
+              {(searchResults.length > 0 || effectiveFileHits.length > 0) ? (
+                <>
+              {searchResults.length > 0 && searchResults.map((item, idx) => {
+                  const isSelected = searchQuickActions.length + idx === searchSelectedIndex;
                   const parentCategory = classificationMap.get(item.classificationId);
                   const parentName = parentCategory ? parentCategory.name : "";
 
@@ -2185,8 +2873,52 @@ export default function LauncherPanel() {
                       )}
                     </div>
                   );
-                })
-              ) : searchQuery.trim() ? (
+                })}
+              {effectiveFileHits.length > 0 && (
+                <>
+                  <div className="px-3.5 pb-1 pt-2 text-micro font-medium text-slate-500">
+                    {t("launcher.searchFiles")}
+                  </div>
+                  {effectiveFileHits.map((hit, idx) => {
+                    const fileIndex = searchQuickActions.length + searchResults.length + idx;
+                    const isSelected = fileIndex === searchSelectedIndex;
+                    const dir = hit.path.slice(0, Math.max(0, hit.path.length - hit.name.length));
+                    return (
+                      <div
+                        key={hit.path}
+                        onClick={() => {
+                          openFileHit(hit);
+                          closeSearch();
+                        }}
+                        className={`flex items-center gap-3 px-3.5 py-2 rounded-card text-body transition cursor-pointer ${
+                          isSelected
+                            ? "bg-[var(--module-accent)] text-white font-medium shadow-md shadow-[var(--module-accent-ring)]"
+                            : "text-slate-200 hover:bg-white/5"
+                        }`}
+                      >
+                        <div className={`w-6 h-6 rounded-ctl flex items-center justify-center flex-shrink-0 overflow-hidden ${isSelected ? "bg-black/20" : "bg-white/10"}`}>
+                          {hit.isDir ? (
+                            <Folder className={`w-4 h-4 ${isSelected ? "text-white" : "text-amber-400"}`} />
+                          ) : (
+                            <FileText className={`w-4 h-4 ${isSelected ? "text-white" : "text-[var(--module-accent)]"}`} />
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm">{hit.name}</div>
+                          <div className={`truncate text-micro ${isSelected ? "text-white/70" : "text-slate-500"}`}>
+                            {dir}
+                          </div>
+                        </div>
+                        <span className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-micro ${isSelected ? "bg-black/20 text-white/80" : "bg-white/5 text-slate-500"}`}>
+                          {hit.drive}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+                </>
+              ) : searchQuery.trim() && searchTotal === 0 ? (
                 <VexEmptyState
                   title={t("launcher.searchNoResult", { query: searchQuery })}
                   desc={t("launcher.searchNoResultHint")}
@@ -2297,6 +3029,88 @@ export default function LauncherPanel() {
           >
             <Trash2 className="w-3.5 h-3.5" />
             <span>{t("launcher.deleteItem")}</span>
+          </button>
+        </div>
+      )}
+
+      {/* 关联文件夹条目右键菜单 */}
+      {folderContextMenu && (
+        <div
+          style={{
+            left: folderContextMenu.x,
+            ...(folderContextMenu.y > (typeof window !== "undefined" ? window.innerHeight : 0) - 240
+              ? { bottom: (typeof window !== "undefined" ? window.innerHeight : 0) - folderContextMenu.y, top: "auto" }
+              : { top: folderContextMenu.y }),
+          }}
+          className="fixed z-[200] bg-surface-panel border border-white/15 rounded-card shadow-2xl p-1.5 min-w-[170px] text-body space-y-0.5 animate-in fade-in zoom-in-95 duration-100"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={() => {
+              const p = folderContextMenu.item;
+              launchVirtual(p.name, p.target, p.isDir ? 1 : 0, p.params, p.icon);
+              setFolderContextMenu(null);
+            }}
+            className="w-full px-3 py-1.5 rounded-ctl text-left text-slate-200 hover:bg-[var(--module-accent)] hover:text-white flex items-center gap-2 cursor-pointer"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            <span>{t("launcher.open")}</span>
+          </button>
+          {!folderContextMenu.item.isDir && (
+            <button
+              onClick={async () => {
+                const p = folderContextMenu.item;
+                try {
+                  await invoke("launcher_execute_raw", {
+                    file: p.target,
+                    params: p.params || null,
+                    runAsAdmin: true,
+                    startLocation: null,
+                  });
+                  setFolderContextMenu(null);
+                } catch (e) {
+                  showToast(t("launcher.launchFail", { err: String(e) }));
+                }
+              }}
+              className="w-full px-3 py-1.5 rounded-ctl text-left text-amber-300 hover:bg-amber-600 hover:text-white flex items-center gap-2 cursor-pointer"
+            >
+              <Shield className="w-3.5 h-3.5" />
+              <span>{t("launcher.runAsAdmin")}</span>
+            </button>
+          )}
+          <button
+            onClick={() => {
+              invoke("launcher_open_file_location", { path: folderContextMenu.item.target }).catch(
+                (e) => showToast(t("launcher.launchFail", { err: String(e) }))
+              );
+              setFolderContextMenu(null);
+            }}
+            className="w-full px-3 py-1.5 rounded-ctl text-left text-slate-300 hover:bg-white/10 flex items-center gap-2 cursor-pointer"
+          >
+            <FolderOpen className="w-3.5 h-3.5" />
+            <span>{t("launcher.openFileLocation")}</span>
+          </button>
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(folderContextMenu.item.target);
+              showToast(t("launcher.copiedPath"));
+              setFolderContextMenu(null);
+            }}
+            className="w-full px-3 py-1.5 rounded-ctl text-left text-slate-300 hover:bg-white/10 flex items-center gap-2 cursor-pointer"
+          >
+            <Copy className="w-3.5 h-3.5" />
+            <span>{t("launcher.copyPath")}</span>
+          </button>
+          <div className="h-px bg-white/10 my-1" />
+          <button
+            onClick={() => {
+              addFolderItemToClassification(folderContextMenu.item);
+              setFolderContextMenu(null);
+            }}
+            className="w-full px-3 py-1.5 rounded-ctl text-left text-[var(--module-accent)] hover:bg-[var(--module-accent)] hover:text-white flex items-center gap-2 cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>{t("launcher.addAsItem")}</span>
           </button>
         </div>
       )}

@@ -20,8 +20,13 @@ pub async fn launcher_get_classifications() -> Result<Vec<Classification>, Strin
 }
 
 #[tauri::command]
-pub async fn launcher_save_classification(classification: Classification) -> Result<i64, String> {
-    db::save_classification(&classification)
+pub async fn launcher_save_classification(
+    app: AppHandle,
+    classification: Classification,
+) -> Result<i64, String> {
+    let id = db::save_classification(&classification)?;
+    refresh_global_hotkeys(app);
+    Ok(id)
 }
 
 /// 删除分类：`cascade = true` 连同子分类与项目一起删；
@@ -29,6 +34,7 @@ pub async fn launcher_save_classification(classification: Classification) -> Res
 /// 子分类与项目会被迁过去，避免出现「看不见也删不掉」的孤儿项目。
 #[tauri::command]
 pub async fn launcher_delete_classification(
+    app: AppHandle,
     id: i64,
     cascade: bool,
     new_parent_id: Option<i64>,
@@ -40,7 +46,9 @@ pub async fn launcher_delete_classification(
             new_parent_id: new_parent_id.ok_or("选择保留内容时必须指定新的上级分类")?,
         }
     };
-    db::delete_classification(id, mode)
+    let result = db::delete_classification(id, mode)?;
+    refresh_global_hotkeys(app);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -59,8 +67,10 @@ pub async fn launcher_get_all_items() -> Result<Vec<Item>, String> {
 }
 
 #[tauri::command]
-pub async fn launcher_save_item(item: Item) -> Result<i64, String> {
-    db::save_item(&item)
+pub async fn launcher_save_item(app: AppHandle, item: Item) -> Result<i64, String> {
+    let id = db::save_item(&item)?;
+    refresh_global_hotkeys(app);
+    Ok(id)
 }
 
 #[tauri::command]
@@ -69,15 +79,19 @@ pub async fn launcher_batch_add_items(items: Vec<Item>) -> Result<Vec<i64>, Stri
 }
 
 #[tauri::command]
-pub async fn launcher_delete_item(id: i64) -> Result<(), String> {
-    db::delete_item(id)
+pub async fn launcher_delete_item(app: AppHandle, id: i64) -> Result<(), String> {
+    db::delete_item(id)?;
+    refresh_global_hotkeys(app);
+    Ok(())
 }
 
 /// 一键清理所有检测为「不存在」的项目（data.exists == false），返回删除数量。
 /// 调用方（前端）应先在 UI 上询问用户确认。
 #[tauri::command]
-pub async fn launcher_delete_invalid_items() -> Result<usize, String> {
-    db::delete_invalid_items()
+pub async fn launcher_delete_invalid_items(app: AppHandle) -> Result<usize, String> {
+    let deleted = db::delete_invalid_items()?;
+    refresh_global_hotkeys(app);
+    Ok(deleted)
 }
 
 #[tauri::command]
@@ -91,6 +105,15 @@ pub async fn launcher_execute_item(
     item_id: Option<i64>,
     item: Item,
 ) -> Result<(), String> {
+    execute_item_inner(&app, item_id, &item)
+}
+
+/// 真正执行一个启动项（命令与全局快捷键共用）。
+pub(crate) fn execute_item_inner(
+    app: &AppHandle,
+    item_id: Option<i64>,
+    item: &Item,
+) -> Result<(), String> {
     let run_admin = item.data.run_as_admin;
     let op = if run_admin { "runas" } else { "open" };
     crate::exit_log::exit_log(&format!("launcher_execute_item: op = {:?}, run_admin = {}", op, run_admin));
@@ -98,29 +121,29 @@ pub async fn launcher_execute_item(
     match item.item_type {
         0 => {
             // 文件 / 可执行程序
-            let target = item.data.target.unwrap_or_default();
-            let params = item.data.params.unwrap_or_default();
+            let target = item.data.target.clone().unwrap_or_default();
+            let params = item.data.params.clone().unwrap_or_default();
             let start_loc = item.data.start_location.as_deref();
             shell_execute(op, &target, &params, start_loc)?;
         }
         1 => {
             // 文件夹
-            let target = item.data.target.unwrap_or_default();
+            let target = item.data.target.clone().unwrap_or_default();
             shell_execute("explore", &target, "", None)?;
         }
         2 => {
             // 网址
-            let target = item.data.target.unwrap_or_default();
+            let target = item.data.target.clone().unwrap_or_default();
             shell_execute("open", &target, "", None)?;
         }
         3 => {
             // 系统指令
-            let target = item.data.target.unwrap_or_default();
+            let target = item.data.target.clone().unwrap_or_default();
             system_item_execute(&target, item.data.params.as_deref())?;
         }
         4 => {
             // Appx 应用
-            let target = item.data.target.unwrap_or_default();
+            let target = item.data.target.clone().unwrap_or_default();
             let app_target = if target.starts_with("shell:AppsFolder") {
                 target
             } else {
@@ -130,7 +153,7 @@ pub async fn launcher_execute_item(
         }
         5 => {
             // 多项目连环启动
-            if let Some(multi) = item.data.multi_items {
+            if let Some(multi) = item.data.multi_items.clone() {
                 thread::spawn(move || {
                     for sub in multi {
                         let sub_op = if sub.run_as_admin { "runas" } else { "open" };
@@ -143,7 +166,7 @@ pub async fn launcher_execute_item(
             }
         }
         _ => {
-            let target = item.data.target.unwrap_or_default();
+            let target = item.data.target.clone().unwrap_or_default();
             shell_execute(op, &target, "", None)?;
         }
     }
@@ -157,6 +180,63 @@ pub async fn launcher_execute_item(
     }
 
     Ok(())
+}
+
+/// 重新注册所有全局热键：模块热键 + 独立热键 + 启动项/分类的全局快捷键。
+///
+/// `register_global_hotkeys` 每次调用都会整体替换已注册的集合，因此任何会改变
+/// 快捷键的操作（保存设置、增删/修改启动项与分类、导入备份）都必须走这里，
+/// 否则会出现「刚录的快捷键不生效」或「删掉的快捷键还在响应」。
+pub(crate) fn refresh_global_hotkeys(app: AppHandle) {
+    let setting = match db::get_settings() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let mut hotkeys = setting.module_hotkeys.clone();
+    if !setting.selection_translate_hotkey.trim().is_empty() {
+        hotkeys.insert(
+            "selection-translate".to_string(),
+            setting.selection_translate_hotkey.clone(),
+        );
+    }
+    if !setting.mindmap_quick_hotkey.trim().is_empty() {
+        hotkeys.insert(
+            "mindmap-quick".to_string(),
+            setting.mindmap_quick_hotkey.clone(),
+        );
+    }
+    if !setting.mindmap_sticker_hotkey.trim().is_empty() {
+        hotkeys.insert(
+            "mindmap-sticker".to_string(),
+            setting.mindmap_sticker_hotkey.clone(),
+        );
+    }
+    if !setting.file_search_hotkey.trim().is_empty() {
+        hotkeys.insert(
+            "file-search".to_string(),
+            setting.file_search_hotkey.clone(),
+        );
+    }
+    for (id, value) in [
+        ("music-play-pause", &setting.music_play_pause_hotkey),
+        ("music-prev", &setting.music_prev_hotkey),
+        ("music-next", &setting.music_next_hotkey),
+    ] {
+        if !value.trim().is_empty() {
+            hotkeys.insert(id.to_string(), value.clone());
+        }
+    }
+    if let Ok(items) = db::list_items_with_global_hotkey() {
+        for (id, hk) in items {
+            hotkeys.insert(format!("launcher-item:{}", id), hk);
+        }
+    }
+    if let Ok(cats) = db::list_classifications_with_global_hotkey() {
+        for (id, hk) in cats {
+            hotkeys.insert(format!("launcher-cat:{}", id), hk);
+        }
+    }
+    let _ = super::windows::register_global_hotkeys(app, &hotkeys);
 }
 
 #[tauri::command]
@@ -626,36 +706,7 @@ pub async fn launcher_save_settings(
     settings: LauncherSetting,
 ) -> Result<(), String> {
     db::save_settings(&settings)?;
-    let mut hotkeys = settings.module_hotkeys.clone();
-    if !settings.selection_translate_hotkey.trim().is_empty() {
-        hotkeys.insert(
-            "selection-translate".to_string(),
-            settings.selection_translate_hotkey.clone(),
-        );
-    }
-    if !settings.mindmap_quick_hotkey.trim().is_empty() {
-        hotkeys.insert(
-            "mindmap-quick".to_string(),
-            settings.mindmap_quick_hotkey.clone(),
-        );
-    }
-    if !settings.mindmap_sticker_hotkey.trim().is_empty() {
-        hotkeys.insert(
-            "mindmap-sticker".to_string(),
-            settings.mindmap_sticker_hotkey.clone(),
-        );
-    }
-    // 音乐播放器控制热键（后端直接驱动播放器，托盘隐藏时同样生效）
-    for (id, value) in [
-        ("music-play-pause", &settings.music_play_pause_hotkey),
-        ("music-prev", &settings.music_prev_hotkey),
-        ("music-next", &settings.music_next_hotkey),
-    ] {
-        if !value.trim().is_empty() {
-            hotkeys.insert(id.to_string(), value.clone());
-        }
-    }
-    let _ = super::windows::register_global_hotkeys(app, &hotkeys);
+    refresh_global_hotkeys(app);
     Ok(())
 }
 
@@ -672,6 +723,37 @@ pub async fn launcher_process_dropped_paths(
     classification_id: i64,
 ) -> Result<Vec<Item>, String> {
     super::windows::process_dropped_paths(paths, classification_id)
+}
+
+/// 导出整套启动器数据（设置 + 分类 + 项目）到指定 JSON 文件。
+#[tauri::command]
+pub async fn launcher_export_backup(path: String) -> Result<usize, String> {
+    let json = db::export_backup()?;
+    let p = Path::new(&path);
+    if let Some(parent) = p.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("创建导出目录失败: {}", e))?;
+        }
+    }
+    std::fs::write(p, json.as_bytes()).map_err(|e| format!("写入备份文件失败: {}", e))?;
+    Ok(json.len())
+}
+
+/// 从指定 JSON 文件导入整套启动器数据（会覆盖当前分类与项目）。
+#[tauri::command]
+pub async fn launcher_import_backup(app: AppHandle, path: String) -> Result<(), String> {
+    let json = std::fs::read_to_string(&path).map_err(|e| format!("读取备份文件失败: {}", e))?;
+    db::import_backup(&json)?;
+    refresh_global_hotkeys(app);
+    Ok(())
+}
+
+/// 取走「由分类全局快捷键请求的待聚焦分类」。
+/// 面板可能刚被唤起（事件早于监听注册），因此用一次性 pending 值兜底。
+#[tauri::command]
+pub fn launcher_take_focus_category() -> Option<i64> {
+    super::windows::take_pending_focus_category()
 }
 
 // 浏览器收藏夹导入已移除：该能力归收藏模块（favorites）负责，启动模块不再维护。

@@ -586,6 +586,93 @@ pub fn list_all_items() -> Result<Vec<Item>, String> {
     })
 }
 
+/// 按 id 读取单个项目（全局快捷键直接启动时使用）。
+pub fn get_item(id: i64) -> Result<Option<Item>, String> {
+    with_conn(|conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, classification_id, name, item_type, data, shortcut_key, global_shortcut_key, sort_order, open_number, last_open
+                 FROM launcher_item WHERE id = ?1",
+            )
+            .map_err(|e| e.to_string())?;
+        let mut rows = stmt.query_map([id], |row| {
+            let id: i64 = row.get(0)?;
+            let classification_id: i64 = row.get(1)?;
+            let name: String = row.get(2)?;
+            let item_type: i32 = row.get(3)?;
+            let data_str: String = row.get(4)?;
+            let shortcut_key: Option<String> = row.get(5)?;
+            let global_shortcut_key_int: i32 = row.get(6)?;
+            let sort_order: i32 = row.get(7)?;
+            let open_number: i64 = row.get(8)?;
+            let last_open: i64 = row.get(9)?;
+            let mut data: ItemData = serde_json::from_str(&data_str).unwrap_or_default();
+            data.open_number = open_number;
+            data.last_open = last_open;
+            Ok(Item {
+                id,
+                classification_id,
+                name,
+                item_type,
+                data,
+                shortcut_key,
+                global_shortcut_key: global_shortcut_key_int != 0,
+                order: sort_order,
+            })
+        }).map_err(|e| e.to_string())?;
+
+        match rows.next() {
+            Some(Ok(item)) => Ok(Some(item)),
+            Some(Err(e)) => Err(e.to_string()),
+            None => Ok(None),
+        }
+    })
+}
+
+/// 所有配置了「全局快捷键」的项目：(id, 快捷键)
+pub fn list_items_with_global_hotkey() -> Result<Vec<(i64, String)>, String> {
+    with_conn(|conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, shortcut_key FROM launcher_item
+                 WHERE global_shortcut_key = 1 AND shortcut_key IS NOT NULL AND TRIM(shortcut_key) <> ''",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?;
+        let mut out = Vec::new();
+        for r in rows.flatten() {
+            out.push(r);
+        }
+        Ok(out)
+    })
+}
+
+/// 所有配置了「全局快捷键」的分类：(id, 快捷键)
+pub fn list_classifications_with_global_hotkey() -> Result<Vec<(i64, String)>, String> {
+    with_conn(|conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, shortcut_key FROM launcher_classification
+                 WHERE global_shortcut_key = 1 AND shortcut_key IS NOT NULL AND TRIM(shortcut_key) <> ''",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?;
+        let mut out = Vec::new();
+        for r in rows.flatten() {
+            out.push(r);
+        }
+        Ok(out)
+    })
+}
+
 pub fn save_item(item: &Item) -> Result<i64, String> {
     with_conn(|conn| {
         let now = Local::now().to_rfc3339();

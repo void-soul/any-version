@@ -4,6 +4,7 @@ import { X, Folder, Check, Eraser } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Classification, ClassificationData } from "./types";
 import CategoryTreeSelect from "./CategoryTreeSelect";
+import ShortcutRecorder from "./ShortcutRecorder";
 
 interface CategoryModalProps {
   isOpen: boolean;
@@ -52,6 +53,20 @@ export default function CategoryModal({
   );
   const [defaultCollapsed, setDefaultCollapsed] = useState(
     !!editingCategory?.data?.defaultCollapsed
+  );
+  // 聚合分类：展示数量与排序方式
+  const [aggregateItemCount, setAggregateItemCount] = useState<number>(
+    editingCategory?.data?.aggregateItemCount ?? 20
+  );
+  const [aggregateSort, setAggregateSort] = useState<"openNumber" | "lastOpen" | "name">(
+    editingCategory?.data?.aggregateSort || "openNumber"
+  );
+  // 分类快捷键
+  const [shortcutKey, setShortcutKey] = useState<string | null>(
+    editingCategory?.shortcutKey || null
+  );
+  const [globalShortcut, setGlobalShortcut] = useState(
+    !!editingCategory?.globalShortcutKey
   );
   const [saving, setSaving] = useState(false);
 
@@ -106,6 +121,9 @@ export default function CategoryModal({
         itemShowOnly: classificationType === 1 ? itemShowOnly : "default",
         excludeSearch,
         defaultCollapsed,
+        aggregateItemCount:
+          classificationType === 2 ? Math.max(1, Math.min(999, aggregateItemCount || 20)) : undefined,
+        aggregateSort: classificationType === 2 ? aggregateSort : undefined,
       };
 
       const category: Classification = {
@@ -114,8 +132,8 @@ export default function CategoryModal({
         name: name.trim(),
         classificationType,
         data,
-        shortcutKey: editingCategory ? editingCategory.shortcutKey : null,
-        globalShortcutKey: editingCategory ? editingCategory.globalShortcutKey : false,
+        shortcutKey: shortcutKey || null,
+        globalShortcutKey: shortcutKey ? globalShortcut : false,
         order: editingCategory ? editingCategory.order : 0,
       };
 
@@ -158,10 +176,11 @@ export default function CategoryModal({
           {/* Classification Type Selector */}
           <div>
             <label className="block text-body font-medium text-slate-400 mb-1.5">{t("category.typeLabel")}</label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               {[
                 { type: 0, label: t("category.typeNormal"), desc: t("category.typeNormalDesc") },
                 { type: 1, label: t("category.typeFolder"), desc: t("category.typeFolderDesc") },
+                { type: 2, label: t("category.typeAggregate"), desc: t("category.typeAggregateDesc") },
               ].map((opt) => (
                 <button
                   type="button"
@@ -169,6 +188,7 @@ export default function CategoryModal({
                   onClick={() => {
                     setClassificationType(opt.type);
                     if (opt.type === 1 && icon === "📁") setIcon("📂");
+                    if (opt.type === 2 && icon === "📁") setIcon("🔥");
                   }}
                   className={`p-2.5 rounded-card border text-left transition cursor-pointer flex flex-col ${
                     classificationType === opt.type
@@ -318,6 +338,71 @@ export default function CategoryModal({
               </div>
             </div>
           )}
+
+          {/* Type 2: Aggregate Options */}
+          {classificationType === 2 && (
+            <div className="p-3.5 rounded-card bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] space-y-3">
+              <p className="text-tiny text-slate-400 leading-relaxed">
+                {t("category.aggregateHint")}
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-body font-medium text-slate-300 mb-1">
+                    {t("category.aggregateSortLabel")}
+                  </label>
+                  <select
+                    value={aggregateSort}
+                    onChange={(e: any) => setAggregateSort(e.target.value)}
+                    className="w-full bg-surface-inset border border-white/10 rounded-card px-3 py-1.5 text-body text-white focus:outline-none"
+                  >
+                    <option value="openNumber">{t("category.aggregateSortOpen")}</option>
+                    <option value="lastOpen">{t("category.aggregateSortRecent")}</option>
+                    <option value="name">{t("category.aggregateSortName")}</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-body font-medium text-slate-300 mb-1">
+                    {t("category.aggregateCountLabel")}
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={999}
+                    value={aggregateItemCount}
+                    onChange={(e) => setAggregateItemCount(Number(e.target.value))}
+                    className="ui-input w-full px-3 py-1.5 select-text"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Shortcut */}
+          <div>
+            <label className="block text-body font-medium text-slate-400 mb-1.5">
+              {t("launcher.hotkeyLabel")}
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+              <ShortcutRecorder value={shortcutKey} onChange={setShortcutKey} />
+              <label className="flex items-center gap-2 cursor-pointer text-body text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={globalShortcut}
+                  disabled={!shortcutKey}
+                  onChange={(e) => setGlobalShortcut(e.target.checked)}
+                  className="rounded border-white/10 bg-white/5 text-[var(--module-accent)] focus:ring-0 disabled:opacity-40"
+                />
+                <span>{t("launcher.hotkeyGlobal")}</span>
+              </label>
+            </div>
+            <p className="text-tiny text-slate-500 mt-1.5 leading-relaxed">
+              {shortcutKey
+                ? globalShortcut
+                  ? t("launcher.hotkeyCategoryGlobalHint")
+                  : t("launcher.hotkeyLocalHint")
+                : t("launcher.hotkeyCategoryHint")}
+            </p>
+          </div>
 
           {/* Additional switches */}
           <div className="pt-2 space-y-2.5">

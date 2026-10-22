@@ -55,6 +55,12 @@ pub struct ClassificationData {
     /// 默认收缩全部子分组（true 时打开启动器后该分类下的所有子分组默认折叠）
     #[serde(default)]
     pub default_collapsed: bool,
+    /// 聚合分类（classification_type = 2）展示的项目数量上限，默认 20
+    #[serde(default)]
+    pub aggregate_item_count: Option<i32>,
+    /// 聚合分类的排序方式：openNumber（启动次数）/ lastOpen（最近启动）/ name（名称）
+    #[serde(default)]
+    pub aggregate_sort: Option<String>,
 }
 
 fn default_layout() -> String { "default".to_string() }
@@ -183,6 +189,10 @@ pub struct LauncherSetting {
     /// 默认 Shift+F4。
     #[serde(default = "default_mindmap_sticker_hotkey")]
     pub mindmap_sticker_hotkey: String,
+    /// 独立「文件搜索」热键：全局呼出 Everything 式文件搜索悬浮窗。默认 Ctrl+Alt+Space。
+    /// 空串 = 不注册（用户主动清除后可禁用）。
+    #[serde(default = "default_file_search_hotkey")]
+    pub file_search_hotkey: String,
     /// 音乐播放器「播放/暂停」热键：直接驱动后端播放器，主窗口隐藏/托盘状态下同样生效。
     /// 未设置时为空串（不注册）。默认留空，由用户在音乐播放器设置里录制。
     #[serde(default)]
@@ -233,6 +243,10 @@ pub struct LauncherSetting {
     /// 空串 = 未配置，回退资源管理器定位（launcher_reveal_file）。
     #[serde(default)]
     pub external_editor: String,
+    /// 快捷搜索的网页搜索引擎（搜索框输入「bd 关键词」即可直接搜索）。
+    /// 老配置缺失该字段时自动回退到内置默认源。
+    #[serde(default = "default_web_search_sources")]
+    pub web_search_sources: Vec<WebSearchSource>,
 }
 
 fn default_module_hotkeys() -> HashMap<String, String> {
@@ -248,6 +262,9 @@ pub fn default_mindmap_quick_hotkey() -> String {
 }
 pub fn default_mindmap_sticker_hotkey() -> String {
     "Shift+F4".to_string()
+}
+pub fn default_file_search_hotkey() -> String {
+    "Ctrl+Alt+Space".to_string()
 }
 fn default_item_icon_size() -> i32 {
     32
@@ -282,6 +299,7 @@ impl Default for LauncherSetting {
             selection_translate_hotkey: default_selection_translate_hotkey(),
             mindmap_quick_hotkey: default_mindmap_quick_hotkey(),
             mindmap_sticker_hotkey: default_mindmap_sticker_hotkey(),
+            file_search_hotkey: default_file_search_hotkey(),
             music_play_pause_hotkey: String::new(),
             music_prev_hotkey: String::new(),
             music_next_hotkey: String::new(),
@@ -297,6 +315,7 @@ impl Default for LauncherSetting {
             category_font_size: default_category_font_size(),
             category_gap: default_category_gap(),
             external_editor: String::new(),
+            web_search_sources: default_web_search_sources(),
         }
     }
 }

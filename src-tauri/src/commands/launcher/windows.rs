@@ -1321,6 +1321,18 @@ pub fn parse_hotkey(hotkey: &str) -> Option<(u32, u32)> {
 static CURRENT_PAGE: LazyLock<Mutex<String>> =
     LazyLock::new(|| Mutex::new(String::from("launcher")));
 
+/// 分类全局快捷键请求聚焦的分类 id（一次性）。面板唤起后取走并定位。
+static PENDING_FOCUS_CATEGORY: LazyLock<Mutex<Option<i64>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+/// 取走待聚焦的分类 id（取后清空）。
+pub(crate) fn take_pending_focus_category() -> Option<i64> {
+    let mut guard = PENDING_FOCUS_CATEGORY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    guard.take()
+}
+
 /// 热键命令通道：向单一持久热键线程发送「重新注册」命令。
 /// 热键的注册与注销必须在同一线程进行（Windows 限制），否则旧热键无法被可靠
 /// 注销，导致「换成新快捷键后新旧都生效」。因此用单一常驻线程统一处理注册/注销。
@@ -1345,7 +1357,19 @@ pub fn register_global_hotkeys(
     // 构造 (id, 目标模块id, (mod, key)) 列表。所有模块（含 launcher）平等，从 0x9000 起顺序分配 id。
     let mut entries: Vec<(i32, Option<String>, (u32, u32))> = Vec::new();
     let mut mid = 0x9000;
-    for (mod_id, hk) in module_hotkeys.iter() {
+    // 排序保证确定性：模块热键优先于项目/分类快捷键，避免同一组合键被启动项抢占。
+    let mut pairs: Vec<(&String, &String)> = module_hotkeys.iter().collect();
+    pairs.sort_by(|a, b| {
+        let rank = |id: &str| {
+            if id.starts_with("launcher-item:") || id.starts_with("launcher-cat:") {
+                1
+            } else {
+                0
+            }
+        };
+        rank(a.0).cmp(&rank(b.0)).then_with(|| a.0.cmp(b.0))
+    });
+    for (mod_id, hk) in pairs {
         if let Some(mk) = parse_hotkey(hk) {
             if !mod_id.is_empty() {
                 entries.push((mid, Some(mod_id.clone()), mk));
@@ -1491,6 +1515,44 @@ fn settle_hotkey(
 }
 
 fn handle_hotkey_action(app: &AppHandle, module: &str) {
+    // 启动项全局快捷键：直接执行对应项目，不依赖前端。
+    if let Some(raw_id) = module.strip_prefix("launcher-item:") {
+        if let Ok(id) = raw_id.parse::<i64>() {
+            match crate::commands::launcher::db::get_item(id) {
+                Ok(Some(item)) => {
+                    let app = app.clone();
+                    thread::spawn(move || {
+                        if let Err(e) = crate::commands::launcher::commands::execute_item_inner(
+                            &app,
+                            Some(id),
+                            &item,
+                        ) {
+                            crate::exit_log!("[启动项热键] 执行失败 id={}: {}", id, e);
+                        }
+                    });
+                }
+                Ok(None) => crate::exit_log!("[启动项热键] 项目不存在 id={}", id),
+                Err(e) => crate::exit_log!("[启动项热键] 读取项目失败 id={}: {}", id, e),
+            }
+        }
+        return;
+    }
+    // 分类全局快捷键：唤起窗口并切换到「启动」模块，同时定位到该分类。
+    if let Some(raw_id) = module.strip_prefix("launcher-cat:") {
+        if let Ok(id) = raw_id.parse::<i64>() {
+            *PENDING_FOCUS_CATEGORY
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(id);
+            let app_for_ui = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                if let Some(window) = app_for_ui.get_webview_window("main") {
+                    crate::tray::show_and_open_module(&window, "launcher");
+                    let _ = window.emit("launcher-focus-category", id);
+                }
+            });
+        }
+        return;
+    }
     // 音乐播放器控制热键：播放/暂停、上一首、下一首。
     // 直接驱动后端播放器（不依赖前端），因此主窗口隐藏到托盘时依然可用。
     if matches!(module, "music-play-pause" | "music-prev" | "music-next") {
@@ -1536,6 +1598,16 @@ fn handle_hotkey_action(app: &AppHandle, module: &str) {
         tauri::async_runtime::spawn(async move {
             let res = crate::commands::mindmap::quick_popup::open_mindmap_sticker_popup(app);
             crate::exit_log!("[思维导图贴纸] open_mindmap_sticker_popup 结果: {:?}", res);
+        });
+        return;
+    }
+    // 独立「文件搜索」热键：呼出 / 收起 Everything 式文件搜索悬浮窗。
+    if module == "file-search" {
+        crate::exit_log!("[文件搜索] 热键触发 file-search");
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let res = crate::commands::launcher::file_search::open_search_popup(app);
+            crate::exit_log!("[文件搜索] open_search_popup 结果: {:?}", res);
         });
         return;
     }
