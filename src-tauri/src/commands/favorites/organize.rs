@@ -21,8 +21,8 @@ pub const MAX_DEPTH: usize = 3;
 const MAX_PROMPT_CATEGORIES: usize = 400;
 
 pub const SYSTEM_PROMPT: &str = "你是收藏分类整理助手。用户会给出当前的分类列表，每行格式：\n\
-`ID|名称|上级ID|直属条目数|完整路径|示例条目`\n\
-请判断哪些分类放错了层级，并把它们移动到合适的父分类下。\n\
+`ID|名称|上级ID`\n\
+请只依据分类名与上下级关系判断哪些分类放错了层级，并把它们移动到合适的父分类下。\n\
 如果缺少一个合适的父分类，你可以新建分组（只建分组，不删除、不改名、不改已有 ID）。\n\
 硬规则（必须全部遵守）：\n\
 1. moves 里只能使用列表里已有的分类 ID；新建分组放在 groups 里；\n\
@@ -134,13 +134,14 @@ enum RawParent {
 }
 
 /// 把分类概览压成 prompt（关注分组不参与整理，已在调用方过滤）。
+///
+/// 每行只有 `ID|名称|上级ID`：整理只改父子关系，条目数 / 路径 / 示例都不发，
+/// 分类再多也不会把上下文撑爆（路径由前端预览用，不参与模型判断）。
 pub fn build_prompt(cats: &[CategoryBrief]) -> String {
     let mut selected: Vec<&CategoryBrief> = cats.iter().filter(|c| c.kind != "follow").collect();
     if selected.len() > MAX_PROMPT_CATEGORIES {
-        // 分类特别多时优先保留条目多的，再按路径排回来，保证输出稳定
-        selected.sort_by(|a, b| b.count.cmp(&a.count).then(a.id.cmp(&b.id)));
-        selected.truncate(MAX_PROMPT_CATEGORIES);
         selected.sort_by(|a, b| a.path.cmp(&b.path));
+        selected.truncate(MAX_PROMPT_CATEGORIES);
     }
 
     let mut lines = Vec::with_capacity(selected.len() + 2);
@@ -148,28 +149,13 @@ pub fn build_prompt(cats: &[CategoryBrief]) -> String {
         "共 {} 个分类，请整理层级（只输出 JSON）：",
         selected.len()
     ));
-    lines.push("ID|名称|上级ID|直属条目数|完整路径|示例条目".to_string());
+    lines.push("ID|名称|上级ID".to_string());
     for c in selected {
         let parent = c
             .parent_id
             .map(|p| p.to_string())
             .unwrap_or_else(|| "(根)".to_string());
-        let samples = c
-            .samples
-            .iter()
-            .take(3)
-            .map(|s| clamp(s, 32))
-            .collect::<Vec<_>>()
-            .join("；");
-        lines.push(format!(
-            "{}|{}|{}|{}|{}|{}",
-            c.id,
-            clamp(&c.name, 30),
-            parent,
-            c.count,
-            clamp(&c.path, 80),
-            samples
-        ));
+        lines.push(format!("{}|{}|{}", c.id, clamp(&c.name, 30), parent));
     }
     lines.join("\n")
 }
@@ -805,9 +791,7 @@ mod tests {
             parent_id,
             name: name.to_string(),
             kind: kind.to_string(),
-            count: 0,
             path: name.to_string(),
-            samples: vec![],
         }
     }
 
@@ -829,15 +813,18 @@ mod tests {
         }
     }
 
+    /// prompt 只带 ID / 名称 / 上级 ID：上下文要小，路径与示例不发给模型。
     #[test]
-    fn prompt_lists_id_path_and_samples() {
-        let mut rust = cat(2, None, "Rust", "topic");
-        rust.path = "Rust".to_string();
-        rust.count = 12;
-        rust.samples = vec!["tokio".into(), "serde".into()];
-        let prompt = build_prompt(&[cat(1, None, "编程语言", "topic"), rust]);
-        assert!(prompt.contains("ID|名称|上级ID|直属条目数|完整路径|示例条目"));
-        assert!(prompt.contains("2|Rust|(根)|12|Rust|tokio；serde"));
+    fn prompt_lists_only_id_name_and_parent() {
+        let prompt = build_prompt(&[
+            cat(1, None, "编程语言", "topic"),
+            cat(2, Some(1), "Rust", "topic"),
+        ]);
+        assert!(prompt.contains("ID|名称|上级ID"));
+        assert!(prompt.contains("1|编程语言|(根)"));
+        assert!(prompt.contains("2|Rust|1"));
+        assert!(!prompt.contains("示例"));
+        assert!(!prompt.contains("条目数"));
     }
 
     #[test]

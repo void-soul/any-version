@@ -1376,6 +1376,38 @@ export default function FavoritesPanel() {
           className="shrink-0 overflow-y-auto glass-panel p-2 space-y-0.5"
           style={{ width: leftWidth }}
         >
+          {/* 顶部操作：新建分类 / 整理类目。分类多时这两个入口也不该被滚到底部 */}
+          <div className="flex items-center gap-1 pb-1 mb-0.5 border-b border-white/5">
+            <button
+              onClick={() => void createCat(null)}
+              className="flex-1 min-w-0 inline-flex items-center justify-center gap-1 px-1 py-1 rounded-ctl text-tiny text-slate-400 hover:text-slate-200 hover:bg-white/5 cursor-pointer"
+              title={t("favorites.newCategory")}
+            >
+              <Plus className="w-3 h-3 shrink-0" />
+              <span className="truncate">{t("favorites.newCategory")}</span>
+            </button>
+            {/* 整理类目：AI 检查「该做子类却建成平级」的分类，可补建缺失父级 */}
+            <button
+              onClick={openOrganize}
+              disabled={!organizeReady}
+              title={
+                !providerId || !modelId
+                  ? t("favorites.organizeNeedProvider")
+                  : running.length > 0
+                    ? t("favorites.organizeBlocked")
+                    : t("favorites.organizeHint")
+              }
+              className="flex-1 min-w-0 inline-flex items-center justify-center gap-1 px-1 py-1 rounded-ctl text-tiny text-slate-400 hover:text-slate-200 hover:bg-white/5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {organizeBusy ? (
+                <Loader2 className="w-3 h-3 shrink-0 animate-spin" />
+              ) : (
+                <Sparkles className="w-3 h-3 shrink-0" />
+              )}
+              <span className="truncate">{t("favorites.organize")}</span>
+            </button>
+          </div>
+
           <button
             onClick={() => { setCategoryId(null); setCategoryName(null); }}
             className={`w-full text-left px-2 py-1 rounded text-caption cursor-pointer transition-colors ${
@@ -1419,35 +1451,6 @@ export default function FavoritesPanel() {
             onContextMenu={(id, name, x, y) => setCatMenu({ id, name, x, y })}
           />
 
-          <button
-            onClick={() => void createCat(null)}
-            className="w-full text-left px-2 py-1 mt-1 rounded text-tiny text-slate-500 hover:text-slate-200 hover:bg-white/5 cursor-pointer"
-            title={t("favorites.newCategory")}
-          >
-            <Plus className="w-3 h-3 inline mr-1" />
-            {t("favorites.newCategory")}
-          </button>
-
-          {/* 整理类目：AI 检查「该做子类却建成平级」的分类，只改上下级关系 */}
-          <button
-            onClick={openOrganize}
-            disabled={!organizeReady}
-            title={
-              !providerId || !modelId
-                ? t("favorites.organizeNeedProvider")
-                : running.length > 0
-                  ? t("favorites.organizeBlocked")
-                  : t("favorites.organizeHint")
-            }
-            className="w-full text-left px-2 py-1 rounded text-tiny text-slate-500 hover:text-slate-200 hover:bg-white/5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {organizeBusy ? (
-              <Loader2 className="w-3 h-3 inline mr-1 animate-spin" />
-            ) : (
-              <Sparkles className="w-3 h-3 inline mr-1" />
-            )}
-            {t("favorites.organize")}
-          </button>
           {/* 原先这里还有一个「+ 关注分组」（kind=follow）。已删除：它建完之后没有任何入口
               能把收藏项归进去——真正在用的机制一直是星标（侧栏「星标」筛选 + 行内星标按钮）。
               已存在的 follow 分组不删数据，按普通分类照样显示与筛选。 */}
