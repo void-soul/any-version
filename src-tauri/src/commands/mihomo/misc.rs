@@ -95,10 +95,15 @@ pub fn mihomo_open_path(state: State<'_, MihomoState>, kind: String) -> Result<(
     let target = match kind.as_str() {
         "core" => crate::commands::mihomo::manager::core_dir(&app_config),
         "log" => state.log_file.clone(),
+        "substore" => state.data_dir.join("substore"),
         _ => state.data_dir.clone(),
     };
     if let Some(p) = target.parent() {
         std::fs::create_dir_all(p).ok();
+    }
+    // substore 目录可能尚未创建（未下载过），先建出来让资源管理器能打开
+    if kind == "substore" {
+        std::fs::create_dir_all(&target).ok();
     }
     let arg = target.to_string_lossy().to_string();
     std::process::Command::new("explorer")

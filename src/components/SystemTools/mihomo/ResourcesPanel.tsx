@@ -5,7 +5,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { RefreshCw } from "lucide-react";
 import { mihomoApi } from "../mihomoApi";
-import { proxyProviders as apiProxyProviders, ruleProviders as apiRuleProviders, updateProxyProvider, updateRuleProvider } from "./ctrl";
+import { proxyProviders as apiProxyProviders, ruleProviders as apiRuleProviders, updateProxyProvider, updateRuleProvider, healthcheckProxyProvider } from "./ctrl";
 import { cardCls, SettingItem, Toggle, btnSec, btnPrimary, inputCls, tagCls, calcTraffic } from "./ui";
 
 const DEFAULT_GEOX = {
@@ -26,6 +26,7 @@ export default function ResourcesPanel({ running }: { running: boolean }) {
   const [pp, setPp] = useState<Record<string, any>>({});
   const [rp, setRp] = useState<Record<string, any>>({});
   const [updating, setUpdating] = useState<Record<string, boolean>>({});
+  const [checking, setChecking] = useState<Record<string, boolean>>({});
 
   const geoxUrl = { ...DEFAULT_GEOX, ...(c?.["geox-url"] || {}) };
   const geoMode = !!c?.["geodata-mode"];
@@ -68,6 +69,16 @@ export default function ResourcesPanel({ running }: { running: boolean }) {
       await load();
     } catch (e: any) { setMsg(String(e)); }
     finally { setUpdating((s) => ({ ...s, [key]: false })); }
+  };
+
+  // 代理集合健康检查：内核会对该 provider 下所有节点测速并写回 history
+  const doHealthcheck = async (name: string) => {
+    setChecking((s) => ({ ...s, [name]: true }));
+    try {
+      await healthcheckProxyProvider(name);
+      await load();
+    } catch (e: any) { setMsg(String(e)); }
+    finally { setChecking((s) => ({ ...s, [name]: false })); }
   };
 
   const fromNow = (iso?: string): string => {
@@ -149,6 +160,9 @@ export default function ResourcesPanel({ running }: { running: boolean }) {
                 <div className="flex items-center gap-2 text-caption text-slate-400">
                   <span>{fromNow(p.updatedAt)}</span>
                   <span className={tagCls}>{p.vehicleType}</span>
+                  <button className={btnSec} title={t("resources.healthcheck")} onClick={() => doHealthcheck(name)}>
+                    <RefreshCw className={`w-3 h-3 ${checking[name] ? "animate-spin" : ""}`} />
+                  </button>
                   <button className={btnSec} title={t("resources.update")} onClick={() => doUpdate("proxy", name)}>
                     <RefreshCw className={`w-3 h-3 ${updating[`proxy:${name}`] ? "animate-spin" : ""}`} />
                   </button>

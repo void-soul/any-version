@@ -173,7 +173,7 @@ export const mihomoApi = {
   copyEnv: (kind: "cmd" | "powershell" | "bash") =>
     invoke<string>("mihomo_copy_env", { kind }),
   clearLogs: () => invoke("mihomo_clear_logs"),
-  openPath: (kind: "data" | "core" | "log") =>
+  openPath: (kind: "data" | "core" | "log" | "substore") =>
     invoke("mihomo_open_path", { kind }),
   cleanupLogs: () => invoke<number>("mihomo_cleanup_logs"),
 
