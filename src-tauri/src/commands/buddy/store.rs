@@ -132,21 +132,6 @@ pub fn write_atomic_if_hash_matches(
     Ok(true)
 }
 
-/// 仅当文件哈希匹配时删除（清理登出标记）。
-pub fn remove_file_if_hash_matches(path: &PathBuf, expected_hash: &[u8; 32]) -> Result<bool, String> {
-    use sha2::{Digest, Sha256};
-    if !path.exists() {
-        return Ok(false);
-    }
-    let current = fs::read(path).map_err(|e| format!("读取文件失败: {}", e))?;
-    let current_hash: [u8; 32] = Sha256::digest(&current).into();
-    if current_hash != *expected_hash {
-        return Ok(false);
-    }
-    fs::remove_file(path).map_err(|e| format!("删除文件失败: {}", e))?;
-    Ok(true)
-}
-
 /// 列表账号（按 last_used 倒序）
 pub fn list_accounts(platform: BuddyPlatform) -> Vec<BuddyAccount> {
     let _lock = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());

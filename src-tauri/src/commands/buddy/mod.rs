@@ -88,11 +88,23 @@ impl Drop for SwitchGuard {
 /// - `Ok(None)`       = 登录态已不存在（客户端登出 / 被删）
 /// - `Err(e)`         = **探测本身失败**（取不到官方密钥、库被占用…）→ 不判定切号失败，
 ///   否则会把"环境问题"报成"切号没生效"，误导用户去排查错方向。
+///
+/// `logged_out` = 客户端的「已登出」标记仍然存在。**这一条必须先判**：
+/// 标记在时 WorkBuddy 根本不读登录文件（WorkDaddy `retireLogoutMarker` 的注释原话），
+/// 此时 token 读起来完全正确，但用户打开客户端看到的是登录页 —— 只看 token 会把
+/// 「切了号却要我重新登录」这种最典型的失败判成成功。
 pub(crate) fn diagnose_switch_landing(
     probe: Result<Option<String>, String>,
     expected: &str,
     display: &str,
+    logged_out: bool,
 ) -> Option<String> {
+    if logged_out {
+        return Some(format!(
+            "{display} 仍带着「已登出」标记，客户端会忽略刚写回的登录态并提示登录，\
+             请完全退出客户端（含托盘）后重试"
+        ));
+    }
     match probe {
         Ok(Some(token)) if token == expected => None,
         Ok(Some(_)) => Some(format!(
@@ -120,7 +132,12 @@ fn confirm_switch_landed(platform: BuddyPlatform, expected_token: &str) -> Optio
         BuddyPlatform::Workbuddy => workbuddy::read_session_access_token(),
         BuddyPlatform::CodebuddyCn => codebuddy_cn::read_session_access_token(),
     };
-    diagnose_switch_landing(probe, expected_token, display)
+    // CN 用 state.vscdb，没有 `.logged-out` 标记这个概念
+    let logged_out = match platform {
+        BuddyPlatform::Workbuddy => workbuddy::logout_marker_present(),
+        BuddyPlatform::CodebuddyCn => false,
+    };
+    diagnose_switch_landing(probe, expected_token, display, logged_out)
 }
 
 // ─── 切换进度事件（前端展示：关闭 → 合并 → 写入 → 启动 → 完成） ───
@@ -726,8 +743,16 @@ pub async fn buddy_refresh_tokens(platform: String, account_ids: Vec<String>) ->
     let mut success = 0;
     for account in accounts {
         match api::refresh_payload_for_account(platform, &account).await {
-            Ok((refreshed, _)) => {
-                let _ = store::upsert_account(platform, refreshed);
+            Ok((refreshed, quota_err)) => {
+                let mut saved = store::upsert_account(platform, refreshed)?;
+                // 与 buddy_query_usage / buddy_query_all_usage 一致：失败原因必须落盘。
+                // 这条路径就是面板的「刷新选中/刷新全部」，以前把 quota_err 丢掉，
+                // 于是「为什么这个号没数据 / 为什么它要重新登录」在界面上永远查不到。
+                if let Some(err) = quota_err {
+                    saved.quota_query_last_error = Some(err);
+                    saved.quota_query_last_error_at = Some(chrono::Utc::now().timestamp_millis());
+                    saved = store::upsert_account(platform, saved)?;
+                }
                 success += 1;
             }
             Err(e) => {
@@ -760,11 +785,28 @@ pub async fn buddy_query_usage(
 pub async fn buddy_query_all_usage(platform: String) -> Result<i32, String> {
     let platform = platform_from_str(&platform)?;
     let accounts = store::list_accounts(platform);
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    // 已判吊销的账号在冷却期内跳过：面板每次打开都会自动同步一次，
+    // 不设冷却等于每次打开都把死号打成一轮 401 风暴（也正是 2026-10-23 的教训之一）。
+    const REVOKED_COOLDOWN_MS: i64 = 60 * 60 * 1000;
     let mut success = 0;
     for account in accounts {
+        if account.status.as_deref() == Some(api::STATUS_AUTH_REVOKED) {
+            if let Some(at) = account.quota_query_last_error_at {
+                if now_ms.saturating_sub(at) < REVOKED_COOLDOWN_MS {
+                    continue;
+                }
+            }
+        }
         match api::refresh_payload_for_account(platform, &account).await {
-            Ok((refreshed, _)) => {
-                let _ = store::upsert_account(platform, refreshed);
+            Ok((refreshed, quota_err)) => {
+                let mut saved = store::upsert_account(platform, refreshed)?;
+                // 批量路径也要把失败原因落盘：否则「为什么这个号没数据」在界面上永远查不到
+                if let Some(err) = quota_err {
+                    saved.quota_query_last_error = Some(err);
+                    saved.quota_query_last_error_at = Some(now_ms);
+                    saved = store::upsert_account(platform, saved)?;
+                }
                 success += 1;
             }
             Err(e) => {
@@ -1226,17 +1268,17 @@ mod switch_guard_tests {
 
     #[test]
     fn landing_is_ok_only_when_token_matches() {
-        assert!(diagnose_switch_landing(Ok(Some("tok-a".into())), "tok-a", "WorkBuddy").is_none());
+        assert!(diagnose_switch_landing(Ok(Some("tok-a".into())), "tok-a", "WorkBuddy", false).is_none());
     }
 
     #[test]
     fn landing_reports_missing_and_overwritten_states() {
-        let missing = diagnose_switch_landing(Ok(None), "tok-a", "WorkBuddy")
+        let missing = diagnose_switch_landing(Ok(None), "tok-a", "WorkBuddy", false)
             .expect("登录态消失必须报错，不能静默成功");
         assert!(missing.contains("已不存在"), "{}", missing);
         assert!(missing.contains("完全退出"), "要给可操作提示: {}", missing);
 
-        let overwritten = diagnose_switch_landing(Ok(Some("tok-b".into())), "tok-a", "WorkBuddy")
+        let overwritten = diagnose_switch_landing(Ok(Some("tok-b".into())), "tok-a", "WorkBuddy", false)
             .expect("被回写成别人必须报错");
         assert!(overwritten.contains("改回另一个账号"), "{}", overwritten);
     }
@@ -1244,7 +1286,17 @@ mod switch_guard_tests {
     #[test]
     fn landing_probe_failure_does_not_fail_the_switch() {
         // 探测本身失败（取不到官方密钥 / 库被占用）不能报成"切号没生效"
-        assert!(diagnose_switch_landing(Err("取密钥失败".into()), "tok-a", "WorkBuddy").is_none());
+        assert!(diagnose_switch_landing(Err("取密钥失败".into()), "tok-a", "WorkBuddy", false).is_none());
+    }
+
+    #[test]
+    fn landing_fails_when_logout_marker_survives_even_if_token_matches() {
+        // 标记在 → 客户端不读登录文件：token 读起来完全正确也必须判失败，
+        // 否则用户看到的是"切好了"却在客户端被要求重新登录
+        let problem = diagnose_switch_landing(Ok(Some("tok-a".into())), "tok-a", "WorkBuddy", true)
+            .expect("标记仍在必须报错");
+        assert!(problem.contains("已登出"), "{}", problem);
+        assert!(problem.contains("完全退出"), "要给可操作提示: {}", problem);
     }
 
     #[test]

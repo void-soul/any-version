@@ -86,6 +86,68 @@ fn logout_marker_path(auth_file: &PathBuf) -> PathBuf {
     PathBuf::from(format!("{}.logged-out", auth_file.to_string_lossy()))
 }
 
+/// 客户端是否仍带着「已登出」标记（`<AUTH_FILE>.logged-out`）。
+///
+/// 标记在时 WorkBuddy **完全不读登录文件**（= 打开客户端就是登录页），
+/// 所以它既让导入/识别失效，也能让一次写回成功的切号"看起来没生效"。
+pub fn logout_marker_present() -> bool {
+    default_auth_file_path(BuddyPlatform::Workbuddy)
+        .map(|file| logout_marker_path(&file).exists())
+        .unwrap_or(false)
+}
+
+/// 切号写回成功后"退休"登录退出标记（对齐 WorkDaddy `retireLogoutMarker`）。
+///
+/// 语义与参考实现一致的两点：
+/// 1. 标记在 → 客户端忽略登录文件，所以写回成功后**必须**清掉，否则用户看到"切了号却要我重新登录"；
+/// 2. 清不掉要**明确报错**（参考侧 rename/删除失败也是 throw），不能 `let _ =` 静默成功 ——
+///    静默成功比失败更糟：用户以为切好了，实际客户端根本不认这份登录态。
+///
+/// 与参考侧的差异（我们有"客户端必须已退出"这个前提）：按标记**来源**分两种
+/// - `existed_before = true`：上次登出的遗留标记，内容变了也无所谓（能走到这里说明登录文件
+///   是我们刚写好的，任何残留标记都只会让客户端不认它）→ 直接删；
+/// - `existed_before = false`：写回之后才冒出来的标记 = 客户端在切号窗口里又登出了
+///   （说明它其实没退干净）→ **保留**并报错，不吞掉用户/客户端的登出动作。
+fn retire_logout_marker(
+    marker_path: &std::path::Path,
+    existed_before: bool,
+) -> Result<(), String> {
+    if !marker_path.exists() {
+        return Ok(());
+    }
+    if !existed_before {
+        return Err(format!(
+            "登录态已写入，但客户端在切号期间重新生成了登录退出标记（{}）：\
+             客户端只在完全退出后才不会覆盖登录态，请彻底退出（含托盘）后重试",
+            marker_path.display()
+        ));
+    }
+    match fs::remove_file(marker_path) {
+        Ok(()) => {}
+        Err(first) => {
+            // 客户端托盘/杀软偶发占用 → 小睡后重试一次，仍失败就如实报错
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            fs::remove_file(marker_path).map_err(|second| {
+                format!(
+                    "登录态已写入，但清理登录退出标记失败（{}）：先 {} 后 {}；\
+                     该标记存在时客户端会忽略登录态，会提示重新登录，请彻底退出客户端后重试",
+                    marker_path.display(),
+                    first,
+                    second
+                )
+            })?;
+        }
+    }
+    if marker_path.exists() {
+        return Err(format!(
+            "登录态已写入，但登录退出标记仍然存在（{}）：客户端会忽略登录态并提示重新登录，\
+             请彻底退出客户端后重试",
+            marker_path.display()
+        ));
+    }
+    Ok(())
+}
+
 fn json_string_field(obj: &serde_json::Map<String, serde_json::Value>, keys: &[&str]) -> Option<String> {
     for key in keys {
         if let Some(v) = obj.get(*key).and_then(|v| v.as_str()) {
@@ -643,7 +705,7 @@ fn write_encrypted_session(
     existing: &serde_json::Value,
     expected_hash: &[u8; 32],
     marker_path: &std::path::PathBuf,
-    marker_hash_before: Option<[u8; 32]>,
+    marker_existed_before: bool,
 ) -> Result<String, String> {
     use super::twoapi::atrest;
     let secret = atrest::fetch_secret().map_err(|e| {
@@ -669,9 +731,7 @@ fn write_encrypted_session(
     if !contains_encrypted_wrapper(&written) {
         return Err("写回结果丢失了官方加密包装，WorkBuddy 登录态可能已损坏，请重新登录 WorkBuddy".to_string());
     }
-    if let Some(hash) = marker_hash_before {
-        let _ = store::remove_file_if_hash_matches(marker_path, &hash);
-    }
+    retire_logout_marker(marker_path, marker_existed_before)?;
     Ok(format!(
         "已切换到 {}（{}，官方加密字段已原样保留）",
         account.display_name(),
@@ -717,8 +777,8 @@ pub fn write_account_to_default_client(
         .ok_or_else(|| "无法定位默认 WorkBuddy 登录信息路径".to_string())?;
 
     let marker_path = logout_marker_path(&auth_file);
-    let marker_hash_before: Option<[u8; 32]> =
-        fs::read(&marker_path).ok().map(|bytes| Sha256::digest(&bytes).into());
+    // 只记「写回前标记在不在」：内容变化不阻止退休（见 retire_logout_marker 的分支说明）
+    let marker_existed_before = marker_path.exists();
 
     if auth_file.exists() {
         let existing = fs::read(&auth_file)
@@ -738,7 +798,7 @@ pub fn write_account_to_default_client(
                 &existing_json,
                 &expected_hash,
                 &marker_path,
-                marker_hash_before,
+                marker_existed_before,
             );
         }
         // 原文件是 5.6 之前的明文遗留文件：同样必须写成加密态。
@@ -751,7 +811,7 @@ pub fn write_account_to_default_client(
             &session,
             Some(&expected_hash),
             &marker_path,
-            marker_hash_before,
+            marker_existed_before,
         );
     }
 
@@ -765,7 +825,7 @@ pub fn write_account_to_default_client(
         &session,
         None,
         &marker_path,
-        marker_hash_before,
+        marker_existed_before,
     )
 }
 
@@ -794,7 +854,7 @@ fn write_session_as_encrypted(
     session: &serde_json::Value,
     expected_hash: Option<&[u8; 32]>,
     marker_path: &std::path::PathBuf,
-    marker_hash_before: Option<[u8; 32]>,
+    marker_existed_before: bool,
 ) -> Result<String, String> {
     use super::twoapi::atrest;
 
@@ -844,9 +904,7 @@ fn write_session_as_encrypted(
         ));
     }
 
-    if let Some(hash) = marker_hash_before {
-        let _ = store::remove_file_if_hash_matches(marker_path, &hash);
-    }
+    retire_logout_marker(marker_path, marker_existed_before)?;
     Ok(format!(
         "已切换到 {}（{}，已按官方加密格式写回）",
         account.display_name(),
@@ -995,5 +1053,53 @@ mod tests {
         let token = format!("eyJhbGciOiJIUzI1NiJ9.{}.sig", payload);
         assert_eq!(extract_uid_from_jwt(&token).unwrap(), "u999");
         assert_eq!(extract_uid_from_jwt("not-a-jwt"), None);
+    }
+
+    fn temp_marker_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "kira-logout-marker-{}-{}-{}",
+            tag,
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn retire_marker_removes_stale_logout_marker_even_if_content_drifted() {
+        // 遗留标记（写回前就存在）必须清掉：标记在时客户端**不读登录文件**，
+        // 不清就是"切了号却提示重新登录"。内容在写回期间被刷新过也必须清
+        // （旧实现按 hash 比对，内容一变就漏删）。
+        let dir = temp_marker_dir("stale");
+        let marker = dir.join("workbuddy-desktop.info.logged-out");
+        fs::write(&marker, br#"{"at":1}"#).unwrap();
+        fs::write(&marker, br#"{"at":2}"#).unwrap();
+        retire_logout_marker(&marker, true).expect("遗留标记必须被清掉");
+        assert!(!marker.exists(), "遗留标记未删除 → 客户端会忽略登录态");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn retire_marker_is_noop_when_marker_absent() {
+        let dir = temp_marker_dir("absent");
+        let marker = dir.join("workbuddy-desktop.info.logged-out");
+        retire_logout_marker(&marker, false).expect("本来就没有标记时不该报错");
+        retire_logout_marker(&marker, true).expect("标记已被删掉时也不该报错");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn retire_marker_keeps_marker_that_appeared_after_write() {
+        // 写回后才出现的标记 = 客户端在切号窗口里又登出了（它没退干净）：
+        // 保留标记并报错，不能把它当成遗留标记吞掉
+        let dir = temp_marker_dir("late");
+        let marker = dir.join("workbuddy-desktop.info.logged-out");
+        fs::write(&marker, b"fresh").unwrap();
+        let err = retire_logout_marker(&marker, false).expect_err("必须报错而不是静默成功");
+        assert!(err.contains("切号期间"), "{}", err);
+        assert!(err.contains("完全退出"), "要给可操作提示: {}", err);
+        assert!(marker.exists(), "不能吞掉客户端的登出动作");
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -629,6 +629,11 @@ pub async fn run_auto_checkin_cycle_if_needed(
         accounts
             .iter()
             .filter(|account| {
+                // 登录态已被吊销的账号不参与自动签到：refresh 都救不回来，
+                // 每轮去撞一次 401 只会刷满失败日志（2026-10-23 起）。
+                if account.status.as_deref() == Some(api::STATUS_AUTH_REVOKED) {
+                    return false;
+                }
                 let sch = config
                     .account_schedules
                     .as_ref()

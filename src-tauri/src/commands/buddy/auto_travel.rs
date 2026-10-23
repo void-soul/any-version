@@ -531,6 +531,10 @@ pub async fn run_auto_travel_cycle_if_needed(
         if sch.scheduled_date != today_str {
             continue;
         }
+        // 登录态已被吊销：refresh 救不回来，自动派出只会撞 401（与签到侧同构）
+        if !force && account.status.as_deref() == Some(super::api::STATUS_AUTH_REVOKED) {
+            continue;
+        }
         if sch.last_done_date.as_deref() == Some(&today_str) {
             continue; // 当日流程已完成
         }
