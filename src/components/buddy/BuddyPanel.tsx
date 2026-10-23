@@ -1069,6 +1069,29 @@ export default function BuddyPanel() {
     void load();
   }, [platform, load]);
 
+  // 打开面板 / 切平台时若数据已陈旧，自动同步一次用量。
+  // 为什么必须自动：账号状态（含「需重新登录」徽标）只有在跑过一次刷新后被写入，
+  // 只靠手点「刷新」的结果就是——面板上看着一片正常，实际令牌早就 401 了（2026-10-23 真机）。
+  const autoSyncRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (platformLoading || accounts.length === 0) return;
+    if (autoSyncRef.current.has(platform)) return;
+    // usageUpdatedAt 是**秒**，与 quotaQueryLastErrorAt（毫秒）不同，别混用
+    const latestSec = Math.max(0, ...accounts.map((a) => a.usageUpdatedAt ?? 0));
+    const stale = latestSec === 0 || Date.now() - latestSec * 1000 > 10 * 60 * 1000;
+    if (!stale) return;
+    autoSyncRef.current.add(platform);
+    const epoch = platformEpochRef.current;
+    void (async () => {
+      try {
+        await invoke<number>("buddy_query_all_usage", { platform });
+      } catch {
+        // 静默：这一步只是让状态/积分变新，失败不影响列表可用
+      }
+      if (platformEpochRef.current === epoch) await load();
+    })();
+  }, [platform, platformLoading, accounts, load]);
+
   // 会话加载（关键字防抖 300ms，与参考实现一致）
   const loadSessions = useCallback(async () => {
     const epoch = platformEpochRef.current;
@@ -1538,15 +1561,15 @@ export default function BuddyPanel() {
     const currentQuota = summarizeQuota(parseQuotaItems(current.quotaRaw));
     // 不限量 / 还有剩余 / 还没查到额度 → 不提示
     if (currentQuota.unlimited || !currentQuota.hasData || currentQuota.remain > 0) return null;
-    const others: RotationAccount[] = accounts
-      .filter((a) => a.id !== currentId)
-      .map((a) => ({
-        accountId: a.id,
-        uid: a.uid ?? null,
-        label: a.email || a.id,
-        segments: accountCreditSegments(a),
-      }));
-    return selectRotationCandidate(others, current.uid ?? null, Date.now());
+    // 传**含当前账号**的完整列表：`selectRotationCandidate` 自己排除当前账号，
+    // 同时要用"当前账号自己的最近到期段"判断换过去到底有没有价值（参考 §7 规则）。
+    const list: RotationAccount[] = accounts.map((a) => ({
+      accountId: a.id,
+      uid: a.uid ?? null,
+      label: a.email || a.id,
+      segments: accountCreditSegments(a),
+    }));
+    return selectRotationCandidate(list, current.uid ?? null, Date.now());
   }, [accounts, currentId]);
 
   // ─── 过期时间列（两平台共享）：列 schema 全局一份，同邮箱账号的时间值互通 ───
@@ -2753,6 +2776,18 @@ export default function BuddyPanel() {
                                 acc.authOriginMatches === false ? "bg-amber-400" : "bg-emerald-400"
                               }`}
                             />
+                          </span>
+                        )}
+                        {/* 登录态被服务端吊销：刷新救不回来，只能重新登录/重新导入。
+                            给一个短徽标 + 悬停说明，避免用户把它当成网络抖动的 401。 */}
+                        {acc.status === "auth_revoked" && (
+                          <span
+                            title={t("buddy.loginRevokedTip", {
+                              reason: acc.statusReason ?? "-",
+                            })}
+                            className="flex-shrink-0 rounded bg-amber-500/15 px-1 py-0.5 text-[10px] leading-none text-amber-300 border border-amber-400/30 cursor-help"
+                          >
+                            {t("buddy.loginRevoked")}
                           </span>
                         )}
                         <span className="font-semibold text-white truncate max-w-[150px]" title={acc.email}>{displayName(acc)}</span>

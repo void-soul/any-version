@@ -6137,7 +6137,9 @@
       "cleared": "Auto-detection restored"
     },
     "authOriginMatchTip": "Token issuer {origin} matches {client}.",
-    "authOriginMismatchTip": "Cross-issuer account (token issuer {origin}). Switching to {client} aligns the client domain automatically — verified working."
+    "authOriginMismatchTip": "Cross-issuer account (token issuer {origin}). Switching to {client} aligns the client domain automatically — verified working.",
+    "loginRevoked": "Sign-in required",
+    "loginRevokedTip": "This account's session was revoked by the server and refresh cannot recover it: {reason}\nSign in to this account in the client and use \"Import local\", or add it again via \"Add account\"."
   },
   "mihomobackup": {
     "localTitle": "Local Backup",

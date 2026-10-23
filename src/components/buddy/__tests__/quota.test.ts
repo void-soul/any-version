@@ -223,9 +223,10 @@ describe("selectRotationCandidate", () => {
   it("skips the current account and accounts without credits", () => {
     const candidate = selectRotationCandidate(
       [
-        account("current", "u1", [segment({ remaining: 100, expiresAt: NOW + 1000 })]),
+        account("current", "u1", [segment({ remaining: 100, expiresAt: NOW + 9000 })]),
         account("empty", "u2", [segment({ remaining: 0, expiresAt: NOW + 1000 })]),
-        account("ok", "u3", [segment({ remaining: 50, expiresAt: NOW + 9000 })]),
+        // 候选必须比当前账号**更早**到期，否则按参考语义"没有轮换价值"
+        account("ok", "u3", [segment({ remaining: 50, expiresAt: NOW + 1000 })]),
       ],
       "u1",
       NOW
@@ -249,6 +250,51 @@ describe("selectRotationCandidate", () => {
 
   it("returns null when nobody has credits", () => {
     expect(selectRotationCandidate([account("a", "u2", [])], "u1", NOW)).toBeNull();
+  });
+
+  it("never suggests a candidate whose credits never expire", () => {
+    // 参考 §7：`只保留 expiresAt !== null 的候选` —— 永不外过期段不算可轮换
+    const candidate = selectRotationCandidate(
+      [account("forever", "u2", [segment({ remaining: 9999, expiresAt: null })])],
+      "u1",
+      NOW
+    );
+    expect(candidate).toBeNull();
+  });
+
+  it("returns null when the current account's own segment expires earlier or at the same time", () => {
+    // 参考 §7：`currentSegment.expiresAt <= nearest.expiresAt` → 没有轮换价值
+    const sameTime = selectRotationCandidate(
+      [
+        account("current", "u1", [segment({ remaining: 5, expiresAt: NOW + 1000 })]),
+        account("other", "u2", [segment({ remaining: 500, expiresAt: NOW + 1000 })]),
+      ],
+      "u1",
+      NOW
+    );
+    expect(sameTime).toBeNull();
+
+    const currentEarlier = selectRotationCandidate(
+      [
+        account("current", "u1", [segment({ remaining: 5, expiresAt: NOW + 500 })]),
+        account("other", "u2", [segment({ remaining: 500, expiresAt: NOW + 9000 })]),
+      ],
+      "u1",
+      NOW
+    );
+    expect(currentEarlier).toBeNull();
+  });
+
+  it("still suggests when the candidate expires earlier than the current account", () => {
+    const candidate = selectRotationCandidate(
+      [
+        account("current", "u1", [segment({ remaining: 0, expiresAt: NOW + 9000 })]),
+        account("other", "u2", [segment({ remaining: 500, expiresAt: NOW + 1000 })]),
+      ],
+      "u1",
+      NOW
+    );
+    expect(candidate?.accountId).toBe("other");
   });
 
   it("falls back to uid matching when the current account has no uid", () => {

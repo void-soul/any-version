@@ -6065,7 +6065,9 @@
       "cleared": "已恢复自动检测"
     },
     "authOriginMatchTip": "令牌签发域 {origin}，与 {client} 一致。",
-    "authOriginMismatchTip": "跨域账号（令牌签发域 {origin}）。切换到 {client} 时会自动把客户端域对齐，实测可用。"
+    "authOriginMismatchTip": "跨域账号（令牌签发域 {origin}）。切换到 {client} 时会自动把客户端域对齐，实测可用。",
+    "loginRevoked": "需重新登录",
+    "loginRevokedTip": "该账号登录态已被服务端吊销，刷新救不回来：{reason}\n请在对应客户端登录该账号后用「本地导入」重新导入，或用「新增账号」重新授权。"
   },
   "mihomobackup": {
     "localTitle": "本地备份",

@@ -391,8 +391,14 @@ export function nearestExpiringSegment(
 }
 
 /**
- * 积分不足时的换号建议：排除当前账号与无剩余账号，
- * 最早到期优先，同到期时间取剩余多的。
+ * 积分不足时的换号建议：排除当前账号与无剩余账号，最早到期优先，同到期时间取剩余多的。
+ *
+ * 两条与 WorkDaddy `credit-rotation.js::selectRotationCandidate`（1.2.76 语义）对齐的边界：
+ * 1. **永不外过期段不算可轮换** —— 候选必须 `expiresAt !== null`，否则排在最后也没意义；
+ * 2. **没有轮换价值就不建议** —— 若当前账号自己的最近到期段更早或同时到期
+ *    （或干脆永不过期），换过去只会更差，返回 `null`。
+ *    注意：调用方必须把**含当前账号的完整列表**传进来（本函数自己负责排除），
+ *    只传"其它账号"的话这里就拿不到当前账号的段，规则 2 会失效。
  */
 export function selectRotationCandidate(
   accounts: RotationAccount[],
@@ -400,13 +406,16 @@ export function selectRotationCandidate(
   now: number = Date.now()
 ): RotationCandidate | null {
   const current = String(currentUid ?? "");
-  const candidates = (accounts ?? [])
+  const list = accounts ?? [];
+  const candidates = list
     .filter((account) => String(account.uid ?? "") !== current)
     .map((account) => ({
       account,
       segment: nearestExpiringSegment(account.segments, now),
     }))
     .filter((entry) => entry.segment && entry.segment.remaining > 0)
+    // 永不外过期段不算可轮换（参考 §7：`只保留 expiresAt !== null 的候选`）
+    .filter((entry) => entry.segment!.expiresAt !== null)
     .sort((a, b) => {
       const left = a.segment!.expiresAt ?? Number.MAX_SAFE_INTEGER;
       const right = b.segment!.expiresAt ?? Number.MAX_SAFE_INTEGER;
@@ -416,6 +425,21 @@ export function selectRotationCandidate(
 
   const best = candidates[0];
   if (!best) return null;
+
+  // 规则 2：当前账号自己更早到期（或永不过期）→ 没有轮换价值
+  if (current) {
+    const currentAccount = list.find((account) => String(account.uid ?? "") === current);
+    const currentSegment = nearestExpiringSegment(currentAccount?.segments ?? [], now);
+    if (
+      currentSegment &&
+      currentSegment.remaining > 0 &&
+      (currentSegment.expiresAt === null ||
+        currentSegment.expiresAt <= (best.segment!.expiresAt ?? Number.MAX_SAFE_INTEGER))
+    ) {
+      return null;
+    }
+  }
+
   return {
     accountId: best.account.accountId,
     label: best.account.label,
