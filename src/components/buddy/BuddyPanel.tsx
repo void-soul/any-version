@@ -33,6 +33,7 @@ import {
   Loader2,
   Users,
   AlertTriangle,
+  CircleAlert,
   CircleCheck,
   Plus,
   KeyRound,
@@ -2779,15 +2780,19 @@ export default function BuddyPanel() {
                           </span>
                         )}
                         {/* 登录态被服务端吊销：刷新救不回来，只能重新登录/重新导入。
-                            给一个短徽标 + 悬停说明，避免用户把它当成网络抖动的 401。 */}
+                            只留一个红色感叹号，悬停看原因，避免占账号列的宽度。 */}
                         {acc.status === "auth_revoked" && (
                           <span
                             title={t("buddy.loginRevokedTip", {
                               reason: acc.statusReason ?? "-",
                             })}
-                            className="flex-shrink-0 rounded bg-amber-500/15 px-1 py-0.5 text-[10px] leading-none text-amber-300 border border-amber-400/30 cursor-help"
+                            role="img"
+                            aria-label={t("buddy.loginRevokedTip", {
+                              reason: acc.statusReason ?? "-",
+                            })}
+                            className="inline-flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center text-rose-400 cursor-help"
                           >
-                            {t("buddy.loginRevoked")}
+                            <CircleAlert className="h-3.5 w-3.5" />
                           </span>
                         )}
                         <span className="font-semibold text-white truncate max-w-[150px]" title={acc.email}>{displayName(acc)}</span>
