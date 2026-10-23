@@ -4,18 +4,26 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTranslation } from "react-i18next";
 import {
+  AppWindow,
+  Archive,
   Check,
+  ChevronDown,
+  Code2,
   Copy,
   Database,
   FileText,
   Folder,
   FolderOpen,
   HardDrive,
+  Image,
+  Layers,
   Loader2,
+  Music,
   RefreshCw,
   Search,
   Square,
   Trash2,
+  Video,
   X,
 } from "lucide-react";
 import ShortcutRecorder from "./launcher/ShortcutRecorder";
@@ -34,49 +42,56 @@ interface IndexProgress {
 
 /** 结果类型预设：exts 为空表示不限后缀；kind=dir 只出文件夹。 */
 const FILTER_PRESETS = [
-  { id: "all", kind: "all", exts: [] as string[], labelKey: "fileSearch.filterAll" },
-  { id: "dir", kind: "dir", exts: [] as string[], labelKey: "fileSearch.filterDir" },
+  { id: "all", kind: "all", exts: [] as string[], labelKey: "fileSearch.filterAll", icon: Layers },
+  { id: "dir", kind: "dir", exts: [] as string[], labelKey: "fileSearch.filterDir", icon: Folder },
   {
     id: "image",
     kind: "file",
     exts: ["png", "jpg", "jpeg", "gif", "bmp", "webp", "svg", "ico", "heic", "avif", "tif", "tiff", "psd"],
     labelKey: "fileSearch.filterImage",
+    icon: Image,
   },
   {
     id: "video",
     kind: "file",
     exts: ["mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "ts", "rmvb"],
     labelKey: "fileSearch.filterVideo",
+    icon: Video,
   },
   {
     id: "audio",
     kind: "file",
     exts: ["mp3", "flac", "wav", "aac", "ogg", "m4a", "wma", "ape", "opus"],
     labelKey: "fileSearch.filterAudio",
+    icon: Music,
   },
   {
     id: "doc",
     kind: "file",
     exts: ["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "md", "csv", "rtf", "epub", "one"],
     labelKey: "fileSearch.filterDoc",
+    icon: FileText,
   },
   {
     id: "archive",
     kind: "file",
     exts: ["zip", "rar", "7z", "tar", "gz", "bz2", "xz", "iso", "cab"],
     labelKey: "fileSearch.filterArchive",
+    icon: Archive,
   },
   {
     id: "code",
     kind: "file",
     exts: ["rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "kt", "c", "cpp", "h", "hpp", "cs", "rb", "php", "html", "css", "scss", "json", "toml", "yaml", "yml", "xml", "sh", "ps1", "sql"],
     labelKey: "fileSearch.filterCode",
+    icon: Code2,
   },
   {
     id: "exec",
     kind: "file",
     exts: ["exe", "msi", "bat", "cmd", "com", "dll", "sys", "lnk"],
     labelKey: "fileSearch.filterExec",
+    icon: AppWindow,
   },
 ];
 
@@ -120,19 +135,28 @@ function dirOf(path: string, name: string): string {
   return cut > 0 ? path.slice(0, cut) : path;
 }
 
-/** 首个关键词高亮。 */
-function highlight(text: string, query: string) {
-  const first = query.trim().split(/\s+/)[0];
-  if (!first) return text;
-  const idx = text.toLowerCase().indexOf(first.toLowerCase());
+/** 关键词高亮：取输入里最后一个词。
+ *  前面的词可能是盘符/目录（如 `e pro gld 1234`），高亮它们没有意义。
+ *  选中行的背景就是主题色，高亮文字必须换成对比色，否则会和背景同色看不清。 */
+function highlight(text: string, query: string, selected: boolean) {
+  const tokens = query.trim().split(/\s+/);
+  const keyword = tokens[tokens.length - 1] ?? "";
+  if (!keyword) return text;
+  const idx = text.toLowerCase().indexOf(keyword.toLowerCase());
   if (idx < 0) return text;
   return (
     <>
       {text.slice(0, idx)}
-      <span className="font-semibold text-[var(--module-accent)]">
-        {text.slice(idx, idx + first.length)}
+      <span
+        className={`rounded-[3px] px-0.5 font-semibold ${
+          selected
+            ? "bg-black/25 text-white"
+            : "bg-[var(--module-accent-soft)] text-[var(--module-accent)]"
+        }`}
+      >
+        {text.slice(idx, idx + keyword.length)}
       </span>
-      {text.slice(idx + first.length)}
+      {text.slice(idx + keyword.length)}
     </>
   );
 }
@@ -148,6 +172,8 @@ export default function FileSearchPopup() {
   const [filter, setFilter] = useState(() => readPref("fileSearch.filter", "all"));
   const [customExt, setCustomExt] = useState(() => readPref("fileSearch.customExt", ""));
   const [driveFilter, setDriveFilter] = useState(() => readPref("fileSearch.drive", ""));
+  // 搜索框左侧的盘符下拉（替代原来的放大镜图标）
+  const [driveMenuOpen, setDriveMenuOpen] = useState(false);
 
   const [drives, setDrives] = useState<DriveIndexInfo[]>([]);
   const [drivesLoading, setDrivesLoading] = useState(true);
@@ -163,11 +189,37 @@ export default function FileSearchPopup() {
   const [copiedPath, setCopiedPath] = useState("");
 
   const inputRef = useRef<HTMLInputElement>(null);
+  const driveMenuRef = useRef<HTMLDivElement | null>(null);
   const requestRef = useRef(0);
   const managerRef = useRef(false);
   const queryRef = useRef("");
   managerRef.current = managerOpen;
   queryRef.current = query;
+
+  // 盘符下拉：点外部或 Esc 关闭（Esc 拦在这里，避免顺手把整个搜索窗关掉）
+  useEffect(() => {
+    if (!driveMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!driveMenuRef.current?.contains(e.target as Node)) setDriveMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setDriveMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [driveMenuOpen]);
+
+  // 进入索引管理或盘符列表变化时，收起下拉，避免悬浮菜单留在界面上
+  useEffect(() => {
+    setDriveMenuOpen(false);
+  }, [managerOpen, drives]);
 
   const activeFilter = useMemo(() => {
     const preset = FILTER_PRESETS.find((f) => f.id === filter) ?? FILTER_PRESETS[0];
@@ -543,8 +595,67 @@ export default function FileSearchPopup() {
 
       {/* 搜索框 */}
       <div className="shrink-0 px-3 pb-2 pt-3">
-        <div className="relative flex items-center">
-          <Search className="pointer-events-none absolute left-3 h-4 w-4 text-[var(--module-accent)]" />
+        <div className="flex items-center gap-2 rounded-card border border-[var(--module-accent-ring)] bg-white/5 py-0.5 pl-1.5 pr-2 transition focus-within:border-[var(--module-accent)]">
+          {/* 原来的放大镜换成盘符下拉：选盘和搜索在同一个控件里，少一行 */}
+          {!managerOpen && indexedDrives.length > 0 && (
+            <>
+              <div ref={driveMenuRef} className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setDriveMenuOpen((v) => !v)}
+                  title={t("fileSearch.driveFilter")}
+                  aria-haspopup="menu"
+                  aria-expanded={driveMenuOpen}
+                  className={`inline-flex h-7 max-w-[150px] items-center gap-1 rounded-full border px-2 text-micro transition ${
+                    driveMenuOpen
+                      ? "border-[var(--module-accent)] bg-[var(--module-accent-soft)] text-[var(--module-accent)]"
+                      : "border-white/10 bg-white/[0.06] text-slate-300 hover:border-white/20 hover:text-white"
+                  }`}
+                >
+                  <HardDrive className="h-3 w-3 shrink-0" />
+                  <span className={`truncate ${driveFilter ? "font-mono" : ""}`}>
+                    {driveFilter || t("fileSearch.allDrives")}
+                  </span>
+                  <ChevronDown
+                    className={`h-3 w-3 shrink-0 transition-transform ${driveMenuOpen ? "rotate-180" : ""}`}
+                  />
+                </button>
+                {driveMenuOpen && (
+                  <div
+                    role="menu"
+                    className="absolute left-0 top-full z-[260] mt-1 max-h-60 min-w-[160px] overflow-y-auto rounded-ctl border border-white/10 bg-surface-panel py-1 shadow-2xl"
+                  >
+                    {[
+                      { letter: "", label: t("fileSearch.allDrives") },
+                      ...indexedDrives.map((d) => ({ letter: d.letter, label: d.letter })),
+                    ].map((opt) => {
+                      const active = driveFilter === opt.letter;
+                      return (
+                        <button
+                          key={opt.letter || "all"}
+                          role="menuitem"
+                          type="button"
+                          onClick={() => {
+                            setDriveFilter(opt.letter);
+                            setDriveMenuOpen(false);
+                            inputRef.current?.focus();
+                          }}
+                          className={`flex w-full items-center gap-2 px-2 py-1 text-left text-caption transition-colors hover:bg-white/10 ${
+                            active ? "text-[var(--module-accent)]" : "text-slate-300"
+                          }`}
+                        >
+                          <HardDrive className="h-3 w-3 shrink-0" />
+                          <span className={`truncate ${opt.letter ? "font-mono" : ""}`}>{opt.label}</span>
+                          {active && <Check className="ml-auto h-3 w-3 shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              <span className="h-4 w-px shrink-0 bg-white/10" />
+            </>
+          )}
           <input
             ref={inputRef}
             value={query}
@@ -552,9 +663,9 @@ export default function FileSearchPopup() {
             onKeyDown={onInputKeyDown}
             placeholder={t("fileSearch.placeholder")}
             spellCheck={false}
-            className="w-full rounded-card border border-[var(--module-accent-ring)] bg-white/5 py-2.5 pl-10 pr-10 text-sm text-white placeholder-slate-500 outline-none transition focus:border-[var(--module-accent)]"
+            className="min-w-0 flex-1 bg-transparent px-1 py-2 text-sm text-white placeholder-slate-500 outline-none"
           />
-          <div className="absolute right-3 flex items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             {searching ? (
               <Loader2 className="h-4 w-4 animate-spin text-slate-500" />
             ) : (
@@ -586,12 +697,13 @@ export default function FileSearchPopup() {
                     setFilter(p.id);
                     setCustomExt("");
                   }}
-                  className={`rounded-full border px-2 py-0.5 text-micro transition ${
+                  className={`inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-micro transition ${
                     active
-                      ? "border-[var(--module-accent)] bg-[var(--module-accent-soft)] text-[var(--module-accent)]"
-                      : "border-white/10 text-slate-400 hover:border-white/20 hover:text-slate-200"
+                      ? "border-[var(--module-accent)] bg-[var(--module-accent-soft)] font-medium text-[var(--module-accent)]"
+                      : "border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/20 hover:bg-white/[0.07] hover:text-slate-200"
                   }`}
                 >
+                  <p.icon className="h-3 w-3 shrink-0" />
                   {t(p.labelKey)}
                 </button>
               );
@@ -601,38 +713,8 @@ export default function FileSearchPopup() {
               onChange={(e) => setCustomExt(e.target.value)}
               placeholder={t("fileSearch.filterCustom")}
               spellCheck={false}
-              className="ml-auto w-24 rounded-ctl border border-white/10 bg-white/5 px-2 py-0.5 text-micro text-white placeholder-slate-600 outline-none transition focus:border-[var(--module-accent)]"
+              className="ml-auto h-6 w-24 rounded-full border border-white/10 bg-white/[0.03] px-2.5 text-micro text-white placeholder-slate-600 outline-none transition focus:border-[var(--module-accent)]"
             />
-          </div>
-        )}
-        {!managerOpen && indexedDrives.length >= 1 && (
-          <div className="mt-1.5 flex flex-wrap items-center gap-1">
-            <span className="mr-0.5 text-micro text-slate-600">{t("fileSearch.driveFilter")}</span>
-            <button
-              type="button"
-              onClick={() => setDriveFilter("")}
-              className={`rounded-full border px-2 py-0.5 text-micro transition ${
-                driveFilter
-                  ? "border-white/10 text-slate-400 hover:border-white/20 hover:text-slate-200"
-                  : "border-[var(--module-accent)] bg-[var(--module-accent-soft)] text-[var(--module-accent)]"
-              }`}
-            >
-              {t("fileSearch.allDrives")}
-            </button>
-            {indexedDrives.map((d) => (
-              <button
-                key={d.letter}
-                type="button"
-                onClick={() => setDriveFilter(d.letter)}
-                className={`rounded-full border px-2 py-0.5 font-mono text-micro transition ${
-                  driveFilter === d.letter
-                    ? "border-[var(--module-accent)] bg-[var(--module-accent-soft)] text-[var(--module-accent)]"
-                    : "border-white/10 text-slate-400 hover:border-white/20 hover:text-slate-200"
-                }`}
-              >
-                {d.letter}
-              </button>
-            ))}
           </div>
         )}
       </div>
@@ -852,7 +934,7 @@ export default function FileSearchPopup() {
                       )}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-body">{highlight(hit.name, query)}</div>
+                      <div className="truncate text-body">{highlight(hit.name, query, isSelected)}</div>
                       <div
                         className={`truncate text-micro ${isSelected ? "text-white/70" : "text-slate-500"}`}
                       >

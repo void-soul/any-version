@@ -18,7 +18,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rusqlite::types::Value;
-use rusqlite::{params, params_from_iter, Connection};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 
@@ -993,6 +993,113 @@ fn push_type_filter(
     }
 }
 
+/// 输入解析结果：盘符 / 目录前缀 / 关键词。
+///
+/// 支持 `e pro gld 1234` 这类写法：首词是盘符，随后连续的词只要能在索引里
+/// 逐级命中目录，就当作目录前缀，剩下的词才是关键词。
+#[derive(Debug, Default, PartialEq)]
+struct QueryScope {
+    drive: Option<String>,
+    /// 已解析出的目录，如 `E:\pro\gld`（不含结尾反斜杠）
+    path_prefix: Option<String>,
+    tokens: Vec<String>,
+}
+
+/// 首词是否形如盘符：`e`、`e:`、`e:\`。
+fn token_drive(tok: &str) -> Option<String> {
+    let t = tok.trim_end_matches(|c| c == '\\' || c == '/');
+    let bytes = t.as_bytes();
+    let letter = match bytes.len() {
+        1 if bytes[0].is_ascii_alphabetic() => bytes[0],
+        2 if bytes[0].is_ascii_alphabetic() && bytes[1] == b':' => bytes[0],
+        _ => return None,
+    };
+    Some(format!("{}:", (letter as char).to_ascii_uppercase()))
+}
+
+/// 取命名目录作为 `parent` 的直接子目录（大小写不敏感）。
+fn find_child_dir(
+    conn: &Connection,
+    drive: &str,
+    parent: &str,
+    name: &str,
+) -> Result<Option<String>, String> {
+    let base = parent.trim_end_matches('\\');
+    let pattern = format!("{}\\\\%", escape_like(base));
+    let len = base.chars().count() + 1 + name.chars().count();
+    conn.query_row(
+        "SELECT path FROM fs_entry
+         WHERE drive = ?1 AND is_dir = 1 AND name_lower = ?2
+           AND path LIKE ?3 ESCAPE '\\' AND length(path) = ?4
+         LIMIT 1",
+        params![drive, name, pattern, len as i64],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .map_err(|e| format!("解析搜索目录失败: {}", e))
+}
+
+/// 把原始输入拆成盘符 + 目录前缀 + 关键词。
+///
+/// 只有拿到确定的盘符时才解析目录：否则 `pro` 既可能是目录名也可能是关键词，
+/// 贸然吞掉会让普通搜索搜不到东西。目录解析至少留一个词作关键词。
+fn resolve_scope(conn: &Connection, raw: &str, drives: &[String]) -> QueryScope {
+    let parts: Vec<String> = raw
+        .split_whitespace()
+        .take(8)
+        .map(|t| t.to_lowercase())
+        .filter(|t| !t.is_empty())
+        .collect();
+    if parts.is_empty() {
+        return QueryScope::default();
+    }
+    let (typed, start) = match token_drive(&parts[0]) {
+        Some(d) => (Some(d), 1),
+        None => (None, 0),
+    };
+    let drive = typed.clone().or_else(|| {
+        if drives.len() == 1 {
+            Some(drives[0].clone())
+        } else {
+            None
+        }
+    });
+    let Some(drive) = drive else {
+        return QueryScope {
+            drive: None,
+            path_prefix: None,
+            tokens: parts,
+        };
+    };
+
+    let mut prefix = format!("{}\\", drive);
+    let mut consumed = 0usize;
+    // 至少留一个词当关键词；`e pro gld` 最后一个词仍是关键词
+    while start + consumed + 1 < parts.len() {
+        let token = &parts[start + consumed];
+        match find_child_dir(conn, &drive, &prefix, token) {
+            Ok(Some(path)) => {
+                prefix = path;
+                consumed += 1;
+            }
+            Ok(None) => break,
+            // 索引读取异常不阻塞搜索，按普通关键词处理
+            Err(_) => break,
+        }
+    }
+    let tokens = parts[start + consumed..].to_vec();
+    let path_prefix = if consumed > 0 {
+        Some(prefix.trim_end_matches('\\').to_string())
+    } else {
+        None
+    };
+    QueryScope {
+        drive: Some(drive),
+        path_prefix,
+        tokens,
+    }
+}
+
 fn search_impl(
     query: &str,
     limit: usize,
@@ -1004,18 +1111,31 @@ fn search_impl(
     if q.is_empty() {
         return Ok(Vec::new());
     }
-    let tokens: Vec<String> = q
-        .split_whitespace()
-        .take(5)
-        .map(|t| t.to_lowercase())
-        .filter(|t| !t.is_empty())
-        .collect();
-    if tokens.is_empty() {
-        return Ok(Vec::new());
-    }
     let limit = limit.clamp(1, 500);
 
-    with_conn(|conn| search_with_conn(conn, q, &tokens, limit, drives, kind, exts))
+    with_conn(|conn| {
+        let scope = resolve_scope(conn, q, drives);
+        if scope.tokens.is_empty() {
+            return Ok(Vec::new());
+        }
+        // 输入里写了盘符就以它为准（优先于下拉选择）
+        let scoped_drives: Vec<String> = match &scope.drive {
+            Some(d) => vec![d.clone()],
+            None => drives.to_vec(),
+        };
+        // 排序用的「整体词」不包含盘符/目录，否则永远命不中前缀
+        let q_lower = scope.tokens.join(" ");
+        search_with_conn(
+            conn,
+            &q_lower,
+            &scope.tokens,
+            limit,
+            &scoped_drives,
+            kind,
+            exts,
+            scope.path_prefix.as_deref(),
+        )
+    })
 }
 
 fn search_with_conn(
@@ -1026,16 +1146,46 @@ fn search_with_conn(
     drives: &[String],
     kind: &str,
     exts: &[String],
+    path_prefix: Option<&str>,
 ) -> Result<Vec<FileHit>, String> {
     // trigram 只索引 ≥3 字符的片段，短词无法命中全文索引，交给 LIKE。
     if tokens.iter().all(|t| t.chars().count() >= 3) {
-        match fts_search(conn, q, tokens, limit, drives, kind, exts) {
+        match fts_search(conn, q, tokens, limit, drives, kind, exts, path_prefix) {
             Ok(hits) => return Ok(hits),
             // 全文索引异常（缺失/损坏）时退回 LIKE：先保证搜得到，再谈搜得快。
             Err(err) => crate::exit_log!("[文件搜索] 全文检索失败，回退 LIKE: {}", err),
         }
     }
-    like_search(conn, q, tokens, limit, drives, kind, exts)
+    like_search(conn, q, tokens, limit, drives, kind, exts, path_prefix)
+}
+
+/// 目录范围下推到 SQL：只要该前缀下（含更深层级）的条目。
+fn push_path_filter(
+    values: &mut Vec<Value>,
+    conds: &mut Vec<String>,
+    alias: &str,
+    path_prefix: Option<&str>,
+) {
+    let Some(prefix) = path_prefix else {
+        return;
+    };
+    let base = prefix.trim_end_matches('\\');
+    if base.is_empty() {
+        return;
+    }
+    let col = |name: &str| {
+        if alias.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}.{}", alias, name)
+        }
+    };
+    values.push(Value::Text(format!("{}\\\\%", escape_like(base))));
+    conds.push(format!(
+        "{} LIKE ?{} ESCAPE '\\'",
+        col("path"),
+        values.len()
+    ));
 }
 
 /// FTS5 查询表达式：每个词用双引号包成短语，词间 AND（即「同时包含」）。
@@ -1056,6 +1206,7 @@ fn fts_search(
     drives: &[String],
     kind: &str,
     exts: &[String],
+    path_prefix: Option<&str>,
 ) -> Result<Vec<FileHit>, String> {
     let mut values: Vec<Value> = vec![Value::Text(fts_expr(tokens))];
     let mut conds: Vec<String> = vec!["fs_entry_fts MATCH ?1".to_string()];
@@ -1068,6 +1219,7 @@ fn fts_search(
         }
         conds.push(format!("e.drive IN ({})", placeholders.join(",")));
     }
+    push_path_filter(&mut values, &mut conds, "e", path_prefix);
     push_type_filter(&mut values, &mut conds, "e", kind, exts);
 
     let q_lower = q.to_lowercase();
@@ -1114,8 +1266,9 @@ fn like_search(
     drives: &[String],
     kind: &str,
     exts: &[String],
+    path_prefix: Option<&str>,
 ) -> Result<Vec<FileHit>, String> {
-    let mut rows = prefix_search(conn, q, limit, drives, kind, exts)?;
+    let mut rows = prefix_search(conn, q, limit, drives, kind, exts, path_prefix)?;
     if rows.len() < limit {
         let exclude: Vec<i64> = rows.iter().map(|(id, _)| *id).collect();
         rows.extend(infix_search(
@@ -1125,6 +1278,7 @@ fn like_search(
             drives,
             kind,
             exts,
+            path_prefix,
             &exclude,
         )?);
     }
@@ -1139,6 +1293,7 @@ fn prefix_search(
     drives: &[String],
     kind: &str,
     exts: &[String],
+    path_prefix: Option<&str>,
 ) -> Result<Vec<HitRow>, String> {
     let q_lower = q.to_lowercase();
     let mut values: Vec<Value> = Vec::new();
@@ -1160,6 +1315,7 @@ fn prefix_search(
         }
         conds.push(format!("drive IN ({})", placeholders.join(",")));
     }
+    push_path_filter(&mut values, &mut conds, "", path_prefix);
     push_type_filter(&mut values, &mut conds, "", kind, exts);
     values.push(Value::Integer(limit as i64));
     let limit_idx = values.len();
@@ -1193,6 +1349,7 @@ fn infix_search(
     drives: &[String],
     kind: &str,
     exts: &[String],
+    path_prefix: Option<&str>,
     exclude_ids: &[i64],
 ) -> Result<Vec<HitRow>, String> {
     let mut values: Vec<Value> = Vec::new();
@@ -1210,6 +1367,7 @@ fn infix_search(
         }
         conds.push(format!("drive IN ({})", placeholders.join(",")));
     }
+    push_path_filter(&mut values, &mut conds, "", path_prefix);
     push_type_filter(&mut values, &mut conds, "", kind, exts);
     if !exclude_ids.is_empty() {
         let mut placeholders = Vec::new();
@@ -1394,7 +1552,7 @@ pub async fn hide_file_search_popup(app: tauri::AppHandle) -> Result<(), String>
 mod tests {
     use super::{
         escape_like, fts_expr, init_schema, is_opaque_id, is_skipped_dir, normalize_drive,
-        search_with_conn, FileHit,
+        resolve_scope, search_with_conn, token_drive, FileHit, QueryScope,
     };
     use rusqlite::{params, Connection};
 
@@ -1458,7 +1616,7 @@ mod tests {
     fn fts_finds_infix_and_ranks_prefix_first() {
         let conn = seeded_db();
         let tokens = vec!["report".to_string()];
-        let hits = search_with_conn(&conn, "report", &tokens, 10, &[], "all", &[]).unwrap();
+        let hits = search_with_conn(&conn, "report", &tokens, 10, &[], "all", &[], None).unwrap();
         let got = names(&hits);
         assert!(got.contains(&"my_report_2024.docx".to_string()));
         // 前缀命中排在包含命中之前
@@ -1471,7 +1629,7 @@ mod tests {
     fn short_token_falls_back_to_like() {
         let conn = seeded_db();
         let tokens = vec!["ab".to_string()];
-        let hits = search_with_conn(&conn, "ab", &tokens, 10, &[], "all", &[]).unwrap();
+        let hits = search_with_conn(&conn, "ab", &tokens, 10, &[], "all", &[], None).unwrap();
         assert_eq!(names(&hits), vec!["ab.txt".to_string()]);
     }
 
@@ -1479,7 +1637,8 @@ mod tests {
     fn multi_token_requires_all_terms() {
         let conn = seeded_db();
         let tokens = vec!["report".to_string(), "2024".to_string()];
-        let hits = search_with_conn(&conn, "report 2024", &tokens, 10, &[], "all", &[]).unwrap();
+        let hits =
+            search_with_conn(&conn, "report 2024", &tokens, 10, &[], "all", &[], None).unwrap();
         assert_eq!(names(&hits), vec!["my_report_2024.docx".to_string()]);
     }
 
@@ -1488,7 +1647,8 @@ mod tests {
         let conn = seeded_db();
         let tokens = vec!["report".to_string()];
         let hits =
-            search_with_conn(&conn, "report", &tokens, 10, &["D:".to_string()], "all", &[]).unwrap();
+            search_with_conn(&conn, "report", &tokens, 10, &["D:".to_string()], "all", &[], None)
+                .unwrap();
         assert!(hits.is_empty());
     }
 
@@ -1496,7 +1656,7 @@ mod tests {
     fn dir_only_filter_excludes_files() {
         let conn = seeded_db();
         let tokens = vec!["docs".to_string()];
-        let hits = search_with_conn(&conn, "docs", &tokens, 10, &[], "dir", &[]).unwrap();
+        let hits = search_with_conn(&conn, "docs", &tokens, 10, &[], "dir", &[], None).unwrap();
         assert_eq!(names(&hits), vec!["docs".to_string()]);
     }
 
@@ -1505,7 +1665,7 @@ mod tests {
         let conn = seeded_db();
         let tokens = vec!["report".to_string()];
         let hits =
-            search_with_conn(&conn, "report", &tokens, 10, &[], "file", &["docx".to_string()])
+            search_with_conn(&conn, "report", &tokens, 10, &[], "file", &["docx".to_string()], None)
                 .unwrap();
         let got = names(&hits);
         assert_eq!(got.len(), 2);
@@ -1516,9 +1676,133 @@ mod tests {
     fn ext_filter_applies_to_like_fallback() {
         let conn = seeded_db();
         let tokens = vec!["ab".to_string()];
-        let hits = search_with_conn(&conn, "ab", &tokens, 10, &[], "file", &["txt".to_string()])
-            .unwrap();
+        let hits =
+            search_with_conn(&conn, "ab", &tokens, 10, &[], "file", &["txt".to_string()], None)
+                .unwrap();
         assert_eq!(names(&hits), vec!["ab.txt".to_string()]);
+    }
+
+    fn insert_entry(conn: &Connection, drive: &str, path: &str, name: &str, is_dir: bool) {
+        conn.execute(
+            "INSERT INTO fs_entry (drive, path, name, name_lower, is_dir, size, modified)
+             VALUES (?1, ?2, ?3, ?4, ?5, 0, 0)",
+            params![drive, path, name, name.to_lowercase(), is_dir],
+        )
+        .unwrap();
+        let id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO fs_entry_fts (rowid, name) VALUES (?1, ?2)",
+            params![id, name],
+        )
+        .unwrap();
+    }
+
+    /// 目录范围测试用：E:/D: 各有一组同名目录，确保前缀比较不是全局命中。
+    fn seeded_scope_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        for (drive, path, name, is_dir) in [
+            ("E:", "E:\\pro", "pro", true),
+            ("E:", "E:\\pro\\gld", "gld", true),
+            ("E:", "E:\\pro\\gld\\a1234.txt", "a1234.txt", false),
+            ("E:", "E:\\pro\\gld\\b.txt", "b.txt", false),
+            ("E:", "E:\\pro\\other", "other", true),
+            ("E:", "E:\\pro\\other\\c1234.txt", "c1234.txt", false),
+            ("E:", "E:\\work\\gld", "gld", true),
+            ("E:", "E:\\work\\gld\\d1234.txt", "d1234.txt", false),
+            ("D:", "D:\\pro\\gld", "gld", true),
+            ("D:", "D:\\pro\\gld\\e1234.txt", "e1234.txt", false),
+        ] {
+            insert_entry(&conn, drive, path, name, is_dir);
+        }
+        conn
+    }
+
+    #[test]
+    fn drive_token_is_recognized() {
+        assert_eq!(token_drive("e").as_deref(), Some("E:"));
+        assert_eq!(token_drive("E:").as_deref(), Some("E:"));
+        assert_eq!(token_drive("e:\\").as_deref(), Some("E:"));
+        assert_eq!(token_drive("c:/").as_deref(), Some("C:"));
+        assert!(token_drive("pro").is_none());
+        assert!(token_drive("1").is_none());
+    }
+
+    #[test]
+    fn scope_parses_drive_directories_and_keyword() {
+        let conn = seeded_scope_db();
+        // e pro gld 1234 → E:\pro\gld 下搜索 1234
+        let scope = resolve_scope(&conn, "e pro gld 1234", &[]);
+        assert_eq!(
+            scope,
+            QueryScope {
+                drive: Some("E:".to_string()),
+                path_prefix: Some("E:\\pro\\gld".to_string()),
+                tokens: vec!["1234".to_string()],
+            }
+        );
+        // 大小写与 `E:` 写法都等价
+        let scope = resolve_scope(&conn, "E: PRO GLD 1234", &[]);
+        assert_eq!(scope.drive.as_deref(), Some("E:"));
+        assert_eq!(scope.path_prefix.as_deref(), Some("E:\\pro\\gld"));
+        assert_eq!(scope.tokens, vec!["1234".to_string()]);
+    }
+
+    #[test]
+    fn scope_keeps_unknown_directory_as_keyword() {
+        let conn = seeded_scope_db();
+        // 不存在的目录不吞词，退回普通多关键词搜索
+        let scope = resolve_scope(&conn, "e pro nope 1234", &[]);
+        assert_eq!(scope.path_prefix.as_deref(), Some("E:\\pro"));
+        assert_eq!(
+            scope.tokens,
+            vec!["nope".to_string(), "1234".to_string()]
+        );
+    }
+
+    #[test]
+    fn scope_uses_drive_dropdown_when_typed_drive_absent() {
+        let conn = seeded_scope_db();
+        let scope = resolve_scope(&conn, "pro gld 1234", &["E:".to_string()]);
+        assert_eq!(scope.path_prefix.as_deref(), Some("E:\\pro\\gld"));
+        assert_eq!(scope.tokens, vec!["1234".to_string()]);
+        // 没有盘符也没选盘时，词全部按关键词处理
+        let scope = resolve_scope(&conn, "pro gld 1234", &[]);
+        assert_eq!(scope.drive, None);
+        assert_eq!(scope.path_prefix, None);
+        assert_eq!(scope.tokens.len(), 3);
+    }
+
+    #[test]
+    fn path_prefix_limits_both_fts_and_like_paths() {
+        let conn = seeded_scope_db();
+        // 全文索引路径：同名文件在 E:\pro\other、E:\work\gld、D: 下都不应出现
+        let hits = search_with_conn(
+            &conn,
+            "1234",
+            &["1234".to_string()],
+            10,
+            &["E:".to_string()],
+            "all",
+            &[],
+            Some("E:\\pro\\gld"),
+        )
+        .unwrap();
+        assert_eq!(names(&hits), vec!["a1234.txt".to_string()]);
+
+        // 短词退化 LIKE 路径同样受目录范围限制
+        let hits = search_with_conn(
+            &conn,
+            "b",
+            &["b".to_string()],
+            10,
+            &["E:".to_string()],
+            "all",
+            &[],
+            Some("E:\\pro\\gld"),
+        )
+        .unwrap();
+        assert_eq!(names(&hits), vec!["b.txt".to_string()]);
     }
 
     #[test]
@@ -1569,8 +1853,10 @@ mod tests {
             .unwrap();
         assert_eq!(fts_count, 0);
         let tokens = vec!["report".to_string()];
-        assert!(search_with_conn(&conn, "report", &tokens, 10, &[], "all", &[])
-            .unwrap()
-            .is_empty());
+        assert!(
+            search_with_conn(&conn, "report", &tokens, 10, &[], "all", &[], None)
+                .unwrap()
+                .is_empty()
+        );
     }
 }
