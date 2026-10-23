@@ -1,10 +1,10 @@
-//! 分类层级整理：让 AI 检查「该做子类的分类被建成了平级」的问题。
+//! 分类层级整体整理：让 AI 通盘设计分类树，而不是只修明显放错的分类。
 //!
 //! 能力边界（与用户诉求一致）：
 //! - **可以新建缺失的分组**（例如平级出现 `Rust`/`Python`，但缺少 `编程语言` 这个父级）；
 //! - **不删除、不改名、不改已有分类 ID**；条目关联全部挂在 `category_id` 上，
 //!   已有 ID 不变，条目就不会成为孤儿；
-//! - 只调整已有分类的 `parent_id`。
+//! - 调整已有分类的 `parent_id`：只要目标层级更合理，即使当前层级「能用」也可以移动。
 //!
 //! 流程：读分类概览 → 喂给模型 → 解析「新建分组 + 移动建议」→ 本地校验
 //! （成环 / 深度 / 同级重名）→ 前端预览勾选 → 只应用通过的改动。
@@ -20,22 +20,26 @@ pub const MAX_DEPTH: usize = 3;
 /// 单次最多把多少个分类喂给模型（太多会挤爆上下文）。
 const MAX_PROMPT_CATEGORIES: usize = 400;
 
-pub const SYSTEM_PROMPT: &str = "你是收藏分类整理助手。用户会给出当前的分类列表，每行格式：\n\
-`ID|名称|上级ID`\n\
-请只依据分类名与上下级关系判断哪些分类放错了层级，并把它们移动到合适的父分类下。\n\
-如果缺少一个合适的父分类，你可以新建分组（只建分组，不删除、不改名、不改已有 ID）。\n\
+pub const SYSTEM_PROMPT: &str = "你是收藏分类整理助手。用户会给出当前全部分类，每行格式：\n\
+`ID|名称|上级ID`，其中上级ID 为 (根) 表示根级。\n\
+请做**整体分层整理**：先通盘设计一套清晰的层级（根级主题大类 + 必要的子类），\n\
+再为每个分类判断最合适的父级，并输出需要改变的父子关系。\n\
+不要只挑明显放错的分类：当前层级虽然能用、但换到更合适的父级下会让整体结构更清晰的，也要移动。\n\
+如果缺少合适的父分类/主题分组，可以新建分组（只建分组，不删除、不改名、不改已有 ID）。\n\
+输出要精简：按「目标父级」分组列出分类 ID，不要逐条写理由或解释。\n\
 硬规则（必须全部遵守）：\n\
-1. moves 里只能使用列表里已有的分类 ID；新建分组放在 groups 里；\n\
+1. placements 里的 ids 只能使用列表里已有的分类 ID；每个 ID 最多出现一次；不要输出 reason；\n\
 2. 禁止删除、重命名、合并已有分类；已有分类 ID 永远不变；\n\
 3. groups 中的 parentId 只能是 null（根级）或列表里已有的分类 ID；新建分组最多一层，不要嵌套新建；\n\
-4. 如果目标父级下已有同名分类，不要再新建同名分组，直接把条目/分类移到那个已有分类下；\n\
+4. 如果目标父级下已有同名分类，不要再新建同名分组，直接把分类移到那个已有分类下；\n\
 5. 不能形成环：移动后的分类不能落在它自己或它的子孙下面；整理后层级最多 3 级；\n\
-6. 不能制造同级重名；已经处于合理层级的分类不要动；\n\
-7. 只输出严格 JSON，不要任何解释文字：\n\
+6. 不能制造同级重名；\n\
+7. 从整体结构出发：根级尽量收敛为少量并列主题，避免大量分类平铺在根级；同一父级下按主题归类；\n\
+   已经在最合适父级下的分类不要列出，避免无意义的层级变动；\n\
+8. 只输出严格 JSON，不要任何解释文字；placements.parentId 可以是 null / 已有分类 ID / groups 里某个 key：\n\
 {\"groups\":[{\"key\":\"lang\",\"name\":\"编程语言\",\"parentId\":null}],\n\
- \"moves\":[{\"id\":2,\"parentId\":\"lang\",\"reason\":\"Rust 属于编程语言\"},{\"id\":3,\"parentId\":1,\"reason\":\"...\"}]}\n\
-8. moves.parentId 可以是 null / 已有分类 ID / groups 里某个 key；没有需要调整时输出\n\
-{\"groups\":[],\"moves\":[]}。";
+ \"placements\":[{\"parentId\":\"lang\",\"ids\":[2,3]},{\"parentId\":1,\"ids\":[4,5]},{\"parentId\":null,\"ids\":[6]}]}\n\
+9. 没有需要调整时输出 {\"groups\":[],\"placements\":[]}。";
 
 /// 方案里的新建分组（`tempId` 为负数占位，真正落库时才分配真实 ID）。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -114,14 +118,16 @@ struct RawGroup {
     parent_id: Option<RawParent>,
 }
 
+/// 一组「要移到同一个父级下」的分类 ID。
+/// 相比逐条 `{id,parentId,reason}`，按目标父级聚合能把输出体积压到原来的 1/3 左右，
+/// 400 个分类时不会因为输出过长而超时。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct RawMove {
-    id: i64,
+struct RawPlacement {
     #[serde(default)]
     parent_id: Option<RawParent>,
     #[serde(default)]
-    reason: String,
+    ids: Vec<i64>,
 }
 
 /// 模型输出里的父级引用：数字 = 已有分类 ID，字符串 = 新建分组的 key。
@@ -146,7 +152,7 @@ pub fn build_prompt(cats: &[CategoryBrief]) -> String {
 
     let mut lines = Vec::with_capacity(selected.len() + 2);
     lines.push(format!(
-        "共 {} 个分类，请整理层级（只输出 JSON）：",
+        "共 {} 个分类，请做整体分层整理（上级ID 为 (根) 表示根级；只输出 JSON）：",
         selected.len()
     ));
     lines.push("ID|名称|上级ID".to_string());
@@ -182,13 +188,17 @@ pub fn parse_plan(raw: &str) -> Result<(Vec<PlannedGroup>, Vec<CategoryMove>), S
         Some(v) => serde_json::from_value(v.clone())
             .map_err(|e| format!("模型输出的 groups 无法解析: {}", e))?,
     };
-    let raw_moves: Vec<RawMove> = match value.get("moves") {
+    let raw_placements: Vec<RawPlacement> = match value.get("placements") {
         None => Vec::new(),
         Some(v) => serde_json::from_value(v.clone())
-            .map_err(|e| format!("模型输出的 moves 无法解析: {}", e))?,
+            .map_err(|e| format!("模型输出的 placements 无法解析: {}", e))?,
     };
-    if value.get("groups").is_none() && value.get("moves").is_none() {
-        return Err("模型输出缺少 groups / moves 数组".to_string());
+    if value.get("groups").is_none() && value.get("placements").is_none() {
+        return Err("模型输出缺少 groups / placements 数组".to_string());
+    }
+    // 旧版逐条 moves 格式已废弃：静默忽略会得到「无需整理」的假结果，宁可明确报错
+    if value.get("placements").is_none() && value.get("moves").is_some() {
+        return Err("模型输出使用了旧版 moves 格式，请重新生成".to_string());
     }
 
     // key → 负数占位 ID
@@ -221,13 +231,18 @@ pub fn parse_plan(raw: &str) -> Result<(Vec<PlannedGroup>, Vec<CategoryMove>), S
         group.parent_id = resolve_parent(&raw_group.parent_id, &key_to_temp)?;
     }
 
-    let mut moves = Vec::with_capacity(raw_moves.len());
-    for m in raw_moves {
-        moves.push(CategoryMove {
-            id: m.id,
-            parent_id: resolve_parent(&m.parent_id, &key_to_temp)?,
-            reason: m.reason.trim().to_string(),
-        });
+    // 同一目标父级下的一批 ID → 多条 CategoryMove（reason 留空，预览里不展示）
+    let total: usize = raw_placements.iter().map(|p| p.ids.len()).sum();
+    let mut moves = Vec::with_capacity(total);
+    for p in raw_placements {
+        let parent_id = resolve_parent(&p.parent_id, &key_to_temp)?;
+        for id in p.ids {
+            moves.push(CategoryMove {
+                id,
+                parent_id,
+                reason: String::new(),
+            });
+        }
     }
     Ok((groups, moves))
 }
@@ -781,7 +796,7 @@ pub fn apply(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply, build_plan, build_prompt, parse_plan, PlannedGroup, MAX_DEPTH,
+        apply, build_plan, build_prompt, parse_plan, PlannedGroup, MAX_DEPTH, SYSTEM_PROMPT,
     };
     use crate::commands::favorites::db::{self, CategoryBrief, CategoryMove};
 
@@ -823,8 +838,18 @@ mod tests {
         assert!(prompt.contains("ID|名称|上级ID"));
         assert!(prompt.contains("1|编程语言|(根)"));
         assert!(prompt.contains("2|Rust|1"));
+        assert!(prompt.contains("整体分层整理"));
         assert!(!prompt.contains("示例"));
         assert!(!prompt.contains("条目数"));
+    }
+
+    /// 整理要求覆盖整棵树：不能只让模型挑「明显放错」的分类。
+    #[test]
+    fn system_prompt_requires_whole_tree_organization() {
+        assert!(SYSTEM_PROMPT.contains("整体分层整理"));
+        assert!(SYSTEM_PROMPT.contains("不要只挑明显放错的分类"));
+        assert!(SYSTEM_PROMPT.contains("根级尽量收敛"));
+        assert!(!SYSTEM_PROMPT.contains("只判断哪些分类放错了层级"));
     }
 
     #[test]
@@ -835,26 +860,32 @@ mod tests {
     }
 
     #[test]
-    fn parses_groups_and_moves_with_key_references() {
+    fn parses_grouped_placements_with_key_references() {
         let raw = r#"{"groups":[{"key":"lang","name":"编程语言","parentId":null}],
-                      "moves":[{"id":2,"parentId":"lang","reason":"Rust 属于编程语言"}]}"#;
+                      "placements":[{"parentId":"lang","ids":[2,3]}]}"#;
         let (groups, moves) = parse_plan(raw).unwrap();
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].temp_id, -1);
         assert_eq!(groups[0].name, "编程语言");
         assert_eq!(groups[0].parent_id, None);
-        assert_eq!(moves.len(), 1);
+        // 一组 placement 展开成多条移动，reason 由本地留空
+        assert_eq!(moves.len(), 2);
         assert_eq!(moves[0].id, 2);
         assert_eq!(moves[0].parent_id, Some(-1));
+        assert_eq!(moves[1].id, 3);
+        assert_eq!(moves[1].parent_id, Some(-1));
+        assert!(moves[0].reason.is_empty());
     }
 
     #[test]
     fn parses_plain_and_fenced_with_empty_arrays() {
-        let (groups, moves) = parse_plan(r#"{"groups":[],"moves":[]}"#).unwrap();
+        let (groups, moves) = parse_plan(r#"{"groups":[],"placements":[]}"#).unwrap();
         assert!(groups.is_empty() && moves.is_empty());
 
-        let (_, moves) = parse_plan("```json\n{\"groups\":[],\"moves\":[{\"id\":3,\"parentId\":null}]}\n```")
-            .unwrap();
+        let (_, moves) = parse_plan(
+            "```json\n{\"groups\":[],\"placements\":[{\"parentId\":null,\"ids\":[3]}]}\n```",
+        )
+        .unwrap();
         assert_eq!(moves[0].parent_id, None);
     }
 
@@ -862,8 +893,10 @@ mod tests {
     fn parse_rejects_garbage_and_unknown_keys() {
         assert!(parse_plan("抱歉").is_err());
         assert!(parse_plan(r#"{"foo":1}"#).is_err());
-        assert!(parse_plan(r#"{"groups":[],"moves":[{"id":2,"parentId":"nope"}]}"#).is_err());
-        assert!(parse_plan(r#"{"groups":[{"key":"a","name":"A"},{"key":"a","name":"B"}],"moves":[]}"#).is_err());
+        // 旧版逐条 moves 格式已不再接受，避免提示词与解析器格式不一致
+        assert!(parse_plan(r#"{"groups":[],"moves":[{"id":2,"parentId":1}]}"#).is_err());
+        assert!(parse_plan(r#"{"groups":[],"placements":[{"parentId":"nope","ids":[2]}]}"#).is_err());
+        assert!(parse_plan(r#"{"groups":[{"key":"a","name":"A"},{"key":"a","name":"B"}],"placements":[]}"#).is_err());
     }
 
     #[test]

@@ -370,10 +370,11 @@ pub async fn fav_classify(
     out
 }
 
-/// 让 AI 给出「分类层级整理」方案（只生成、不落库）。
+/// 让 AI 给出「分类层级整体整理」方案（只生成、不落库）。
 ///
-/// 只输出「把哪个分类移到哪个父级下」；不新建 / 不删除 / 不改名 / 不改 ID，
-/// 因此条目的分类关联不受影响。前端先预览勾选，再调 [`fav_apply_category_moves`]。
+/// 输出「新建缺失分组 + 把分类移到更合适的父级下」，从整体结构出发重排，
+/// 而不是只修明显放错的分类；不删除 / 不改名 / 不改已有 ID，条目关联不受影响。
+/// 前端先预览勾选，再调 [`fav_apply_category_moves`]。
 #[tauri::command]
 pub async fn fav_plan_category_moves(
     provider_id: Option<String>,
@@ -395,20 +396,49 @@ pub async fn fav_plan_category_moves(
     }
 
     let prompt = organize::build_prompt(&cats);
-    let outcome = crate::commands::ai::channel::complete_chat(
+    let started = std::time::Instant::now();
+    // 必须走流式：400 个分类的方案输出可能要几分钟，非流式要等整段生成完才返回响应头，
+    // 会直接撞上 180s 的 TTFB 上限。流式只要首块到达就拿到响应头，后续多少块都收得下。
+    let outcome = crate::commands::ai::channel::stream_chat_with_resume(
         &crate::commands::ai::channel::NoHooks,
         &provider,
         &model,
         organize::SYSTEM_PROMPT,
         &prompt,
         0.2,
-        None,
-        crate::commands::ai::usage::tool_ids::FAVORITES,
+        |_, _| {},
     )
     .await
     .map_err(|e| format!("{}（供应商: {}，模型: {}）", e, provider.name, model))?;
+    if let Some(usage) = &outcome.usage {
+        crate::commands::ai::usage::log_usage_from_json_timed(
+            crate::commands::ai::usage::tool_ids::FAVORITES,
+            &model,
+            Some(&provider.id),
+            usage,
+            started.elapsed().as_millis() as u64,
+        );
+    }
+    // 个别网关不认 stream:true（回普通 JSON），SSE 会读到空文本；退回非流式再取一次
+    let text = if outcome.text.trim().is_empty() {
+        crate::commands::ai::channel::complete_chat(
+            &crate::commands::ai::channel::NoHooks,
+            &provider,
+            &model,
+            organize::SYSTEM_PROMPT,
+            &prompt,
+            0.2,
+            None,
+            crate::commands::ai::usage::tool_ids::FAVORITES,
+        )
+        .await
+        .map_err(|e| format!("{}（供应商: {}，模型: {}）", e, provider.name, model))?
+        .text
+    } else {
+        outcome.text
+    };
 
-    let (groups, raw_moves) = organize::parse_plan(&outcome.text)?;
+    let (groups, raw_moves) = organize::parse_plan(&text)?;
     let plan = organize::build_plan(&cats, &groups, &raw_moves);
     crate::exit_log!(
         "[收藏] 整理类目方案: model={}, considered={}, groups={}, moves={}, skipped={}",
