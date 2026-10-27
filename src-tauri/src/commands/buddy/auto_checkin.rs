@@ -41,6 +41,16 @@ const MAX_RETRY_DELAY: Duration = Duration::from_secs(60 * 60);
 /// 才算「错过」，据此重排——避免把正常的小延迟误判成错过。
 pub const MISSED_PLAN_GRACE_MIN: i32 = 5;
 
+/// 相邻账号之间的签到间隔（秒）。
+///
+/// 上游对「同一秒内多个账号签到」会直接回 `500 {"code":10001,"msg":"签到失败，请稍后重试"}`
+/// （参考实现的事故记录：12 个账号里 3 个落在 3 秒窗口内 → 全部 500，而当天手动逐个点全部成功）。
+/// 只作用于**自动调度**；用户点「立即执行」（`force`）时不加等待，否则 N 个账号要干等 3N 秒。
+pub const CHECKIN_ACCOUNT_GAP_SECS: u64 = 3;
+
+/// 失败退避序列（秒）：第 N 次失败后等这么久再重试，用尽后固定末位。
+pub const CHECKIN_RETRY_DELAYS_SECS: [u64; 3] = [5, 15, 60];
+
 struct CheckinGuard;
 impl Drop for CheckinGuard {
     fn drop(&mut self) {
@@ -58,6 +68,14 @@ pub struct BuddyAccountScheduleState {
     /// 实际签到时刻（HH:MM:SS，当日成功/已签时记录）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_checked_time: Option<String>,
+    /// 连续失败次数：决定下次重试的退避（5s / 15s / 60s，用尽后固定 60s）。
+    /// 成功、已签到、跨天重规划都会清零。
+    #[serde(default)]
+    pub retry_count: u32,
+    /// 下次允许重试的时刻（Unix 秒）。到点前调度跳过该账号 ——
+    /// 退避的落地点在这里：`scheduled_minute` 是分钟粒度，表达不了秒级退避。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_at_epoch: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -276,6 +294,38 @@ pub fn remaining_window(start_min: i32, end_min: i32, current_minute: i32) -> Op
     }
 }
 
+/// 第 `attempt` 次失败（从 1 起）之后应等待的秒数。
+pub fn checkin_retry_delay_secs(attempt: u32) -> u64 {
+    let idx = (attempt.max(1) - 1) as usize;
+    CHECKIN_RETRY_DELAYS_SECS[idx.min(CHECKIN_RETRY_DELAYS_SECS.len() - 1)]
+}
+
+/// 签到失败是否值得「过一会儿再试」。
+///
+/// 只认上游的**瞬时**拒绝：
+/// - 5xx / 408 / 无状态码（网络、超时、读取中断）→ 可重试；
+/// - 4xx（含 401/403 登录态问题）→ 不可重试，重试只会把失败日志刷满。
+///
+/// 业务码 `10001`（含「今天已签到」）**不在这里判**：它早在
+/// `api::classify_checkin_result` 被分成 `Already` / `Inactive`，走不到失败分支。
+pub fn checkin_error_is_retryable(err: &str) -> bool {
+    if err.starts_with(api::AUTH_EXPIRED_PREFIX) || err.starts_with(api::AUTH_REVOKED_PREFIX) {
+        return false;
+    }
+    match parse_http_status(err) {
+        Some(s) => (500..=599).contains(&s) || s == 408,
+        // 没有状态码 = 网络层/超时/解析中断，过一会儿再试是合理的
+        None => true,
+    }
+}
+
+/// 从 `请求 daily-checkin 失败 (http=500): ...` 里解析状态码。
+fn parse_http_status(err: &str) -> Option<u16> {
+    let rest = &err[err.find("(http=")? + 6..];
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
 /// 计划是否到了该执行的时候：到点、错过不超过宽限、且仍在今天的窗口内。
 ///
 /// 三个条件缺一不可：
@@ -386,6 +436,9 @@ pub fn ensure_account_schedules(
                 scheduled_minute,
                 last_checked_date: last_checked,
                 last_checked_time: None,
+                // 跨天/首次生成 = 全新的一轮，失败退避状态一并清掉
+                retry_count: 0,
+                retry_at_epoch: None,
             },
         );
         changed = true;
@@ -427,6 +480,8 @@ fn reschedule_missed_plans(
         if schedule.scheduled_date != today
             || schedule.last_checked_date.as_deref() == Some(today.as_str())
             || !is_plan_missed(schedule.scheduled_minute, current_minute)
+            // 失败退避中的账号由重试闸接管：这里再挪计划会把它推得更远
+            || schedule.retry_at_epoch.is_some()
         {
             continue;
         }
@@ -457,34 +512,53 @@ fn reschedule_missed_plans(
     (changed, entries)
 }
 
-/// 把本轮「尝试过但没成功」的账号的计划挪到窗口内的新随机时间（失败的重试时机）。
+/// 把本轮「尝试过但没成功」的账号标记成「过一会儿再试」。
 ///
-/// 为什么不能只靠 `reschedule_missed_plans`：那条路要等「错过超过宽限」才动手，
-/// 而计划在宽限内仍算「到点」，下一个轮询会立刻把同一个失败账号再打一遍。
+/// **退避是秒级的**（5s / 15s / 60s，用尽后固定 60s），落在 `retry_at_epoch` 上，
+/// `scheduled_minute` 保持不动。原实现是把计划重抽到「窗口内随机分钟」（`from = now+1`），
+/// 效果是**一分钟内无限重打**同一个账号 —— 上游对此的回敬是
+/// `500 {"code":10001,"msg":"签到失败，请稍后重试"}`（参考实现的事故记录）。
 ///
-/// 窗口已全部过去时不改（今天放弃；失败状态保留在归档与行为日志里）。
-/// 返回是否有账号被挪动。
+/// - 不可重试的失败（4xx / 登录态问题）：不排重试，清空退避状态；
+/// - 退避点落在当天窗口之外：今天放弃，等跨天重规划。
+///
+/// `attempted` 是 `(账号 id, 是否值得重试)`。
+/// 返回是否有账号的计划状态被改动（需要落盘）。
 fn reschedule_failed_plans(
     schedules: &mut HashMap<String, BuddyAccountScheduleState>,
-    attempted: &[String],
+    attempted: &[(String, bool)],
     today: &str,
     current_minute: i32,
     start_min: i32,
     end_min: i32,
+    now_epoch: i64,
 ) -> bool {
-    let Some((from, to)) = remaining_window(start_min, end_min, current_minute) else {
+    if remaining_window(start_min, end_min, current_minute).is_none() {
         return false;
-    };
+    }
     let mut changed = false;
-    for account_id in attempted {
+    for (account_id, retryable) in attempted {
         let Some(state) = schedules.get_mut(account_id) else {
             continue;
         };
-        // 成功签到会把 last_checked_date 置为今天：没置上的就是本轮失败的
+        // 成功签到会把 last_checked_date 置为今天：没置上的才是真失败
         if state.scheduled_date != today || state.last_checked_date.as_deref() == Some(today) {
             continue;
         }
-        state.scheduled_minute = draw_plan_minute(from, to, current_minute);
+        if !*retryable {
+            state.retry_count = 0;
+            state.retry_at_epoch = None;
+            changed = true;
+            continue;
+        }
+        state.retry_count = state.retry_count.saturating_add(1);
+        let delay = checkin_retry_delay_secs(state.retry_count) as i32;
+        // 退避点换算成分钟判窗口（不足 1 分钟按 1 分钟算）
+        if current_minute + (delay + 59) / 60 > end_min {
+            state.retry_at_epoch = None;
+        } else {
+            state.retry_at_epoch = Some(now_epoch + delay as i64);
+        }
         changed = true;
     }
     changed
@@ -503,9 +577,14 @@ fn mark_schedule_checked(
             scheduled_minute: current_minute,
             last_checked_date: None,
             last_checked_time: None,
+            retry_count: 0,
+            retry_at_epoch: None,
         });
     schedule.last_checked_date = Some(today.to_string());
     schedule.last_checked_time = Some(Local::now().format("%H:%M:%S").to_string());
+    // 成功/已签到：退避状态清零，明天从「第一次」重新算
+    schedule.retry_count = 0;
+    schedule.retry_at_epoch = None;
 }
 
 /// 把一条签到结果写进每日归档（失败只打日志，绝不影响签到主流程）。
@@ -622,6 +701,8 @@ pub async fn run_auto_checkin_cycle_if_needed(
     }
 
     let today_str = get_today_date_string();
+    // 退避闸用的当前时刻（秒）。force（立即执行）不走它 —— 用户主动点就该马上跑。
+    let now_epoch = Local::now().timestamp();
 
     let target_accounts: Vec<&BuddyAccount> = if force {
         accounts.iter().collect()
@@ -641,6 +722,10 @@ pub async fn run_auto_checkin_cycle_if_needed(
                 match sch {
                     Some(s) => {
                         if s.last_checked_date.as_deref() == Some(&today_str) {
+                            return false;
+                        }
+                        // 退避未到点：本轮跳过（失败后的 5s / 15s / 60s 等待）
+                        if s.retry_at_epoch.is_some_and(|at| at > now_epoch) {
                             return false;
                         }
                         s.scheduled_date == today_str
@@ -673,10 +758,17 @@ pub async fn run_auto_checkin_cycle_if_needed(
     let mut entries: Vec<action_log::BuddyActionLogEntry> = reschedule_entries;
     let retry_before_schedules = config.account_schedules.clone().unwrap_or_default();
     let mut new_schedules = retry_before_schedules.clone();
-    // 本轮尝试过的账号（失败者要把重试时机挪到新的随机时刻）
-    let target_ids: Vec<String> = target_accounts.iter().map(|a| a.id.clone()).collect();
+    // 本轮失败的账号 + 该失败是否值得退避重试（4xx/登录态问题重试只是刷日志）
+    let mut failed_ids: Vec<(String, bool)> = Vec::new();
+    // 自动调度时账号之间留间隔：上游对「同一秒多个账号签到」会回 500/10001。
+    // 「立即执行」（force）不加等待，否则 N 个账号要干等 3N 秒。
+    let mut first_account = true;
 
     for account in target_accounts {
+        if !force && !first_account {
+            tokio::time::sleep(Duration::from_secs(CHECKIN_ACCOUNT_GAP_SECS)).await;
+        }
+        first_account = false;
         let email_display = if !account.email.trim().is_empty() {
             account.email.clone()
         } else {
@@ -847,6 +939,8 @@ pub async fn run_auto_checkin_cycle_if_needed(
                         }
                         _ => {
                             retry_needed = true;
+                            // 业务层说「没签上」（活动未开启之类）：重试没有意义
+                            failed_ids.push((account.id.clone(), false));
                             let message = res
                                 .message
                                 .clone()
@@ -874,6 +968,8 @@ pub async fn run_auto_checkin_cycle_if_needed(
                         auth_expired = true;
                     }
                     retry_needed = true;
+                    // 只有 5xx / 网络层错误才值得 5s 后重试；400/401/403 重试只是刷日志
+                    failed_ids.push((account.id.clone(), checkin_error_is_retryable(&err)));
                     entries.push(action_log::make_entry(
                         "checkin",
                         &account.id,
@@ -893,6 +989,7 @@ pub async fn run_auto_checkin_cycle_if_needed(
             Err(err) => {
                 eprintln!("[BuddyAutoCheckin] 账号 {} 签到状态检查异常: {}", account.id, err);
                 retry_needed = true;
+                failed_ids.push((account.id.clone(), checkin_error_is_retryable(&err)));
                 entries.push(action_log::make_entry(
                     "checkin",
                     &account.id,
@@ -911,15 +1008,16 @@ pub async fn run_auto_checkin_cycle_if_needed(
         }
     }
 
-    // 失败账号的重试时机也改成「窗口内新随机时间」：否则下一个轮询（30 秒后）会以
-    // 「已到点」立刻重打同一个失败账号，同一分钟内反复打官方接口。
+    // 失败账号按退避重试（5s/15s/60s，之后固定 60s）。不做退避的话，下一个轮询
+    //（30 秒后）会以「已到点」立刻重打同一个失败账号 —— 上游对此回 500/10001。
     let retry_moved = reschedule_failed_plans(
         &mut new_schedules,
-        &target_ids,
+        &failed_ids,
         &today_str,
         current_minute,
         start_min,
         end_min,
+        now_epoch,
     );
 
     config.account_schedules = Some(new_schedules);
@@ -1204,6 +1302,8 @@ mod tests {
             scheduled_minute: minute,
             last_checked_date: None,
             last_checked_time: None,
+            retry_count: 0,
+            retry_at_epoch: None,
         }
     }
 
@@ -1305,7 +1405,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reschedule_failed_plans_moves_retry_time_and_skips_checked() {
+    fn test_reschedule_failed_plans_backs_off_and_skips_checked() {
         let today = get_today_date_string();
         let mut checked = schedule_state(&today, 600);
         checked.last_checked_date = Some(today.clone());
@@ -1313,22 +1413,106 @@ mod tests {
             ("acc_failed".to_string(), schedule_state(&today, 600)),
             ("acc_done".to_string(), checked),
         ]);
-        let attempted = vec!["acc_failed".to_string(), "acc_done".to_string()];
+        let attempted = vec![
+            ("acc_failed".to_string(), true),
+            ("acc_done".to_string(), true),
+        ];
+        let now = 1_700_000_000_i64;
 
-        // 窗口 06:00~12:00，现在 10:00 → 失败账号挪到窗口内未来时间，已签到的不动
+        // 首次失败：计划分钟不动（不再「一分钟内重打」），改为 5 秒后允许重试
         assert!(reschedule_failed_plans(
-            &mut schedules, &attempted, &today, 600, 360, 720
+            &mut schedules, &attempted, &today, 600, 360, 720, now
         ));
-        assert!((601..=720).contains(&schedules["acc_failed"].scheduled_minute));
-        assert_eq!(schedules["acc_done"].scheduled_minute, 600);
+        assert_eq!(schedules["acc_failed"].scheduled_minute, 600);
+        assert_eq!(schedules["acc_failed"].retry_count, 1);
+        assert_eq!(schedules["acc_failed"].retry_at_epoch, Some(now + 5));
+        // 已签到的账号不受影响
+        assert_eq!(schedules["acc_done"].retry_at_epoch, None);
 
-        // 窗口已全部过去 → 不挪（今天放弃）
+        // 第二次失败 → 15 秒（退避逐次加长）
+        assert!(reschedule_failed_plans(
+            &mut schedules,
+            &attempted,
+            &today,
+            600,
+            360,
+            720,
+            now + 5
+        ));
+        assert_eq!(schedules["acc_failed"].retry_count, 2);
+        assert_eq!(schedules["acc_failed"].retry_at_epoch, Some(now + 5 + 15));
+
+        // 窗口已全部过去 → 不改动（今天放弃）
         let mut schedules =
             HashMap::from([("acc_failed".to_string(), schedule_state(&today, 600))]);
         assert!(!reschedule_failed_plans(
-            &mut schedules, &attempted, &today, 800, 360, 720
+            &mut schedules, &attempted, &today, 800, 360, 720, now
         ));
-        assert_eq!(schedules["acc_failed"].scheduled_minute, 600);
+        assert_eq!(schedules["acc_failed"].retry_at_epoch, None);
+    }
+
+    #[test]
+    fn test_reschedule_failed_plans_clears_state_for_non_retryable() {
+        let today = get_today_date_string();
+        let mut state = schedule_state(&today, 600);
+        state.retry_count = 3;
+        state.retry_at_epoch = Some(1);
+        let mut schedules = HashMap::from([("acc_failed".to_string(), state)]);
+        let attempted = vec![("acc_failed".to_string(), false)];
+
+        assert!(reschedule_failed_plans(
+            &mut schedules,
+            &attempted,
+            &today,
+            600,
+            360,
+            720,
+            1_700_000_000
+        ));
+        // 4xx / 登录态问题：不排重试，退避状态清空（重试只会刷日志）
+        assert_eq!(schedules["acc_failed"].retry_count, 0);
+        assert_eq!(schedules["acc_failed"].retry_at_epoch, None);
+    }
+
+    #[test]
+    fn test_checkin_retry_delay_sequence_and_cap() {
+        assert_eq!(checkin_retry_delay_secs(0), 5);
+        assert_eq!(checkin_retry_delay_secs(1), 5);
+        assert_eq!(checkin_retry_delay_secs(2), 15);
+        assert_eq!(checkin_retry_delay_secs(3), 60);
+        // 用尽后固定末位，不无限增长
+        assert_eq!(checkin_retry_delay_secs(9), 60);
+    }
+
+    #[test]
+    fn test_checkin_error_is_retryable() {
+        // 5xx / 408 / 网络层 → 值得等一会儿重试
+        assert!(checkin_error_is_retryable(&api::checkin_http_error(
+            500, "boom"
+        )));
+        assert!(checkin_error_is_retryable(&api::checkin_http_error(
+            502,
+            "bad gateway"
+        )));
+        assert!(checkin_error_is_retryable(&api::checkin_http_error(
+            408, "timeout"
+        )));
+        assert!(checkin_error_is_retryable(
+            "请求 daily-checkin 失败: connection reset"
+        ));
+        // 4xx（含登录态问题）→ 不重试
+        assert!(!checkin_error_is_retryable(&api::checkin_http_error(
+            400,
+            "bad request"
+        )));
+        assert!(!checkin_error_is_retryable(&api::checkin_http_error(
+            401,
+            "unauthorized"
+        )));
+        assert!(!checkin_error_is_retryable(&format!(
+            "{}dead",
+            api::AUTH_REVOKED_PREFIX
+        )));
     }
 
     #[test]
@@ -1384,6 +1568,8 @@ mod tests {
                     scheduled_minute: 400,
                     last_checked_date: Some("2020-01-01".to_string()),
                     last_checked_time: Some("06:40:00".to_string()),
+                    retry_count: 0,
+                    retry_at_epoch: None,
                 },
             )])),
         };
@@ -1489,6 +1675,8 @@ mod tests {
                 scheduled_minute: 1440,
                 last_checked_date: None,
                 last_checked_time: None,
+                retry_count: 0,
+                retry_at_epoch: None,
             },
         )]));
         assert!(validate_config(&config).is_err());
