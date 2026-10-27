@@ -3602,7 +3602,7 @@
     "httpWildcard": "HTTP validation does not support wildcard domains. Use DNS authorization instead.",
     "deployLinkHint": "Deploy methods hold connection and credentials only. Link methods to domains here and fill the target domain when needed.",
     "targetPh": "Target domain (empty = first domain)",
-    "receiverHint": "Windows deployment is handled by the standalone cert-receiver.exe; certificate directory and Nginx reload are configured in cert-receiver.toml.",
+    "receiverHint": "Windows deployment is handled by the standalone cert-receiver.exe: port, token and certificate directory are configured in its own window (still stored in cert-receiver.toml); closing it only hides it to the tray.",
     "colNodes": "Deploy Methods",
     "colDomain": "Domain",
     "colDns": "DNS Plugin",

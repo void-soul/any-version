@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>证书接收端</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <span class="logo"></span>
+        <span>证书接收端</span>
+        <span class="ver" id="ver"></span>
+      </div>
+      <div class="status" id="status">
+        <span class="dot"></span>
+        <span id="status-text">加载中…</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="card">
+        <div class="card-title">服务配置</div>
+
+        <div class="grid">
+          <label>
+            监听端口
+            <input id="port" type="number" min="1" max="65535" step="1" />
+          </label>
+
+          <label>
+            落盘布局
+            <select id="layout">
+              <option value="cert">cert — 按证书 ID</option>
+              <option value="domain">domain — 按域名</option>
+              <option value="both">both — 两者都写</option>
+              <option value="flat">flat — 旧版平铺</option>
+            </select>
+          </label>
+
+          <label class="span2">
+            共享 Token（Kira 的「Windows 接收端」节点里要填同一个）
+            <span class="row">
+              <input id="token" type="password" spellcheck="false" />
+              <button id="gen-token" type="button">生成</button>
+              <button id="toggle-token" type="button">显示</button>
+            </span>
+          </label>
+
+          <label class="span2">
+            API 密钥（留空则关闭 /api/open/getCertificate 拉取接口）
+            <span class="row">
+              <input id="api_key" type="password" spellcheck="false" />
+              <button id="gen-api" type="button">生成</button>
+            </span>
+          </label>
+
+          <label class="span2">
+            证书输出目录
+            <span class="row">
+              <input id="output_dir" spellcheck="false" />
+              <button id="pick" type="button">选择…</button>
+              <button id="open" type="button">打开</button>
+            </span>
+          </label>
+
+          <label>
+            重载方式
+            <select id="reload_mode">
+              <option value="none">none — 不做重载</option>
+              <option value="nginx">nginx — 调 nginx -s reload</option>
+              <option value="command">command — 执行自定义命令</option>
+              <option value="service">service — 重启 Windows 服务</option>
+            </select>
+          </label>
+
+          <div class="span2 grid hidden" id="reload-extra"></div>
+        </div>
+
+        <div class="actions">
+          <button id="save" class="primary" type="button">保存并应用</button>
+          <button id="toggle" type="button">启动</button>
+          <button id="quit" class="danger" type="button">退出</button>
+          <span class="hint" id="hint"></span>
+        </div>
+        <div class="path" id="cfg-path"></div>
+      </section>
+
+      <section class="card grow">
+        <div class="card-title">
+          日志
+          <span class="spacer"></span>
+          <button id="toggle-scroll" type="button">自动滚动：开</button>
+          <button id="clear" type="button">清空</button>
+        </div>
+        <pre id="logs"></pre>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
