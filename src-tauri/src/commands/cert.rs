@@ -821,6 +821,14 @@ fn run_lego(
             if !envs.iter().any(|(k, _)| k == "LEGO_DNS_RESOLVERS") {
                 cmd.arg("--dns.resolvers").arg("223.5.5.5:53,114.114.114.114:53,8.8.8.8:53");
             }
+            // 不要用「递归解析器能不能查到」当传播判据：
+            // 国内权威 DNS（如阿里云 hichina）SOA 默认 TTL 是 600s —— 记录刚写入时，
+            // 递归解析器只要有一次查到 NXDOMAIN 就会缓存 10 分钟，而 lego 等传播只等
+            // 约 2 分钟（provider 自带超时），于是整个窗口都命中缓存，最后必然报
+            // `time limit exceeded: ... NS 223.5.5.5:53 returned NXDOMAIN`。
+            // 保留权威 NS 校验（那几台是实时同步的，几秒内就能查到）——真实校验本来就是
+            // Let's Encrypt 从多个视角直连权威服务器做的，本地这项只是提前自查。
+            cmd.arg("--dns.propagation.disable-rns");
         }
     }
     for dom in &cert.domains {
