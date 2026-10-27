@@ -418,6 +418,14 @@ pub(crate) async fn start_tool_proxy_with_collab(
                         upstream_base_url: upstream_base_url.clone(),
                         fallback_base_url: fallback_base_url.clone(),
                         fallback_api_key: fallback_api_key.clone(),
+                        // 渠道校验兜底是 WorkBuddy 后端专用能力，通用 AI 代理不启用
+                        channel_check_alt_base_url: None,
+                        // 截断流检测对通用代理同样有意义（默认开）
+                        stream_truncation_guard: true,
+                        // 纯思考轮次把思考当正文下发（默认开，与 ProxyConfig::default 一致）
+                        reasoning_as_content: true,
+                        // 会话头族是 WorkBuddy 后端专用能力，通用 AI 代理不启用
+                        workbuddy_session_headers: false,
                         model_routes,
                         upstream_headers: main_headers,
                         upstream_include_v1: provider_include_v1(p, &chosen_outbound),
@@ -437,6 +445,7 @@ pub(crate) async fn start_tool_proxy_with_collab(
                         rectifier_media_fallback: req.rectifier_media_fallback.unwrap_or(config.rectifier.media_fallback),
                         rectifier_media_heuristic: req.rectifier_media_heuristic.unwrap_or(config.rectifier.media_heuristic),
                         rectifier_protocol_mismatch: req.rectifier_protocol_mismatch.unwrap_or(config.rectifier.protocol_mismatch),
+                        rectifier_tool_enum_type: true,
                         rectifier_toolcall_dialect: req.rectifier_toolcall_dialect.unwrap_or(config.rectifier.toolcall_dialect),
                         optimizer_enabled: optimizer_on,
                         optimizer_cache_injection: req.optimizer_cache_injection.unwrap_or(config.optimizer.cache_injection),

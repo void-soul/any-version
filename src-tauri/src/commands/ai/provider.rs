@@ -248,6 +248,14 @@ pub async fn start_proxy(port: u16) -> Result<(), String> {
         upstream_base_url: provider.url_for(&outbound_protocol),
         fallback_base_url: String::new(),
         fallback_api_key: String::new(),
+        // 渠道校验兜底是 WorkBuddy 后端专用能力，通用 AI 代理不启用
+        channel_check_alt_base_url: None,
+        // 截断流检测对通用代理同样有意义（默认开，与 ProxyConfig::default 一致）
+        stream_truncation_guard: true,
+        // 纯思考轮次把思考当正文下发（默认开）
+        reasoning_as_content: true,
+        // 会话头族是 WorkBuddy 后端专用能力，通用 AI 代理不启用
+        workbuddy_session_headers: false,
         target_model: String::new(),
         timeout_secs: 300,
         source: "ai".to_string(),
@@ -261,6 +269,8 @@ pub async fn start_proxy(port: u16) -> Result<(), String> {
         rectifier_media_fallback: config.rectifier.media_fallback,
         rectifier_media_heuristic: config.rectifier.media_heuristic,
         rectifier_protocol_mismatch: config.rectifier.protocol_mismatch,
+        // 工具 schema 的 enum 补类型是纯增量修正，对所有供应商都安全
+        rectifier_tool_enum_type: true,
         rectifier_toolcall_dialect: config.rectifier.toolcall_dialect,
         optimizer_enabled: config.optimizer.enabled,
         optimizer_cache_injection: config.optimizer.cache_injection,

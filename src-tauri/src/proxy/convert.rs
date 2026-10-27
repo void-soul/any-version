@@ -180,15 +180,28 @@ fn strip_data_url_prefix(url: &str) -> Option<String> {
 /// 标识非聊天模型的 tag（图像/视频生成，客户端拿去聊天会被上游拒）
 pub const NON_CHAT_MODEL_TAGS: &[&str] = &["text-to-image", "image-to-image", "text-to-video"];
 
-/// 名称里出现这些片段的是补全/改写/跳转等内部功能，不作为聊天模型暴露
-pub const INTERNAL_MODEL_KEYWORDS: &[&str] = &["completion", "rewrite", "jump", "codewise"];
+/// 名称以这些**前缀**开头的不是聊天模型（嵌入 / 补全 / 代码专用，选了报 `11102`）。
+///
+/// 必须是**前缀**而不是子串：`x-completion-turbo` 这类正常聊天模型不该被误杀
+/// （参考侧 `startswith('nes-' | 'completion-' | 'codewise-')`）。
+pub const NON_CHAT_MODEL_PREFIXES: &[&str] = &["nes-", "completion-", "codewise-"];
+
+/// 名称里出现这些片段的是改写/跳转等内部功能，不作为聊天模型暴露
+pub const INTERNAL_MODEL_KEYWORDS: &[&str] = &["rewrite", "jump"];
+
+/// 输出窗口不超过这个值的是补全 / 内联提示类模型，不在聊天可用列表里。
+///
+/// 判据是 `0 < maxOutputTokens <= 256`：**缺失或 0 不算**（0 表示未知，不是"零输出"）。
+pub const TINY_OUTPUT_MAX_TOKENS: u64 = 256;
 
 /// 判断一条模型目录项是不是「可聊天的模型」。
 ///
-/// 规则来自 WorkBuddy 后端 `/v2/enterprises/personal/models` 的实际结构，三条：
+/// 规则来自 WorkBuddy 后端 `/v2/enterprises/personal/models` 的实际结构：
 /// 1. `tags` 命中图像/视频 → 不是聊天模型
 /// 2. `vendor == "tencent"` → 内部模型（补全/跳转等）
-/// 3. id 含内部功能关键词 → 不是聊天模型
+/// 3. id 以 `nes-` / `completion-` / `codewise-` 开头 → 不是聊天模型
+/// 4. id 含 `rewrite` / `jump` → 内部功能
+/// 5. `0 < maxOutputTokens <= 256` → tiny 输出（补全/内联），选了会调不通
 ///
 /// **这是唯一一份过滤规则**：`proxy` 的 `/v1/models` 与 Buddy 2API 的 preflight
 /// 都调它，避免两处漂移（镜像 Python 版 `_filter_chat_models` 的规则）。
@@ -217,7 +230,91 @@ pub fn is_chat_model(model: &Value) -> bool {
         return false;
     }
     let lower = id.to_ascii_lowercase();
-    !INTERNAL_MODEL_KEYWORDS.iter().any(|k| lower.contains(k))
+    if NON_CHAT_MODEL_PREFIXES
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+    {
+        return false;
+    }
+    if INTERNAL_MODEL_KEYWORDS.iter().any(|k| lower.contains(k)) {
+        return false;
+    }
+    // tiny 输出窗口：补全 / 内联提示类，上游会回 11102。缺失或 0 表示未知，不剔。
+    if let Some(n) = model.get("maxOutputTokens").and_then(|v| v.as_u64()) {
+        if n > 0 && n <= TINY_OUTPUT_MAX_TOKENS {
+            return false;
+        }
+    }
+    true
+}
+
+/// 给一条模型目录项补「客户端能力字段」：**只增不改**。
+///
+/// 客户端（Claude Code / Codex / 各家 UI）靠这些字段决定行为：
+/// - `modalities.input` 不含 `image` → 不允许贴图；
+/// - 没有 `supported_reasoning_levels` → 不上送 reasoning effort；
+/// - 没有 `context_length` 之外的上下文信息 → 按默认值保守截断。
+///
+/// 三条规则（照参考实现）：
+/// 1. `modalities` **缺键**才补（值为 `null` 也算已有，不覆盖）→ `{"input":["text"]}`，
+///    `supportsImages == true` 再追加 `"image"`；
+/// 2. `supported_reasoning_levels` 缺键 **且** `reasoning_supported_efforts` 是数组 →
+///    派生 `[{"effort": e}]`（只取非空字符串）；派生结果非空才写；
+/// 3. `supports_reasoning` 只在第 2 条真的写了 levels 时补 `true`（已有 `false` 不改）。
+///
+/// 非对象 / 缺 `id` 的条目**原样返回**（不猜、不丢）。
+fn compat_model_fields(model: Value) -> Value {
+    use serde_json::json;
+    let mut model = model;
+    let Some(obj) = model.as_object_mut() else {
+        return model;
+    };
+    let has_id = obj
+        .get("id")
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.is_empty());
+    if !has_id {
+        return model;
+    }
+    obj.entry("object").or_insert(json!("model"));
+    obj.entry("created").or_insert(json!(1700000000));
+    obj.entry("owned_by").or_insert(json!("upstream"));
+
+    // ① modalities：缺键才补（`null` 视为已有）
+    if !obj.contains_key("modalities") {
+        let supports_images = obj
+            .get("supportsImages")
+            .and_then(|v| v.as_bool())
+            .or_else(|| obj.get("supports_images").and_then(|v| v.as_bool()))
+            == Some(true);
+        let mut input = vec![json!("text")];
+        if supports_images {
+            input.push(json!("image"));
+        }
+        obj.insert("modalities".into(), json!({ "input": input }));
+    }
+
+    // ② supported_reasoning_levels：缺键且有远端档位才派生
+    if !obj.contains_key("supported_reasoning_levels") {
+        let levels: Vec<Value> = obj
+            .get("reasoning_supported_efforts")
+            .and_then(|v| v.as_array())
+            .map(|efforts| {
+                efforts
+                    .iter()
+                    .filter_map(|e| e.as_str())
+                    .filter(|e| !e.trim().is_empty())
+                    .map(|e| json!({ "effort": e }))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !levels.is_empty() {
+            obj.insert("supported_reasoning_levels".into(), Value::Array(levels));
+            // ③ 只有真的补出档位时才声明支持推理（已有 false 不覆盖）
+            obj.entry("supports_reasoning").or_insert(json!(true));
+        }
+    }
+    model
 }
 
 /// 把非 OpenAI 形状的模型目录响应规范化成 OpenAI 的 `{object:"list", data:[...]}`。
@@ -233,8 +330,16 @@ pub fn is_chat_model(model: &Value) -> bool {
 /// 形状的供应商）不需要；WorkBuddy 这类把图像模型也混在目录里的后端要开。
 pub fn normalize_models_response(body: Value, filter_non_chat: bool) -> Value {
     use serde_json::json;
-    if body.get("data").map(|d| d.is_array()).unwrap_or(false) {
-        return body;
+    // OpenAI 形状（`data` 已是数组）：只有 2API 场景（`filter_non_chat`）才补能力字段，
+    // 其余原样返回 —— 别让通用代理的响应多出我们自己的字段。
+    if let Some(data) = body.get("data").and_then(|d| d.as_array()) {
+        if !filter_non_chat {
+            return body;
+        }
+        let patched: Vec<Value> = data.iter().cloned().map(compat_model_fields).collect();
+        let mut out = body.clone();
+        out["data"] = Value::Array(patched);
+        return out;
     }
     let Some(models) = body
         .get("data")
@@ -243,19 +348,21 @@ pub fn normalize_models_response(body: Value, filter_non_chat: bool) -> Value {
     else {
         return body;
     };
+    // **保留上游条目原样**：`tags` / `maxOutputTokens` / `supportsImages` /
+    // `reasoning_supported_efforts` / `context_length` 都是客户端判断「能不能贴图、
+    // 要不要上送推理档位」的依据。旧实现把它们压成 id + 三个占位字段，等于把这些
+    // 能力全部丢弃。这里只增不改地补三条（见 `compat_model_fields`）。
     let data: Vec<Value> = models
         .iter()
         .filter(|m| !filter_non_chat || is_chat_model(m))
-        .filter_map(|m| m.get("id").and_then(|v| v.as_str()))
-        .filter(|id| !id.is_empty())
-        .map(|id| {
-            json!({
-                "id": id,
-                "object": "model",
-                "created": 1700000000,
-                "owned_by": "upstream",
-            })
+        // 没有 id 的条目无法作为模型使用（形状归一化后不该保留空壳）
+        .filter(|m| {
+            m.get("id")
+                .and_then(|v| v.as_str())
+                .is_some_and(|id| !id.is_empty())
         })
+        .cloned()
+        .map(compat_model_fields)
         .collect();
     json!({ "object": "list", "data": data })
 }
@@ -306,6 +413,57 @@ mod model_normalize_tests {
         assert_eq!(out["data"].as_array().unwrap().len(), 1);
         assert_eq!(out["data"][0]["id"], "ok");
     }
+
+    #[test]
+    fn capability_fields_are_filled_without_touching_existing_ones() {
+        let body = json!({"code":0,"data":{"models":[
+            {"id":"hy3","supportsImages":true,"reasoning_supported_efforts":["low","high"],
+             "maxInputTokens":200000,"context_length":180000},
+            {"id":"glm-5.2","reasoning_supported_efforts":[]},
+            {"id":"keep","modalities":{"input":["text","audio"]},
+             "supports_reasoning":false,"supported_reasoning_levels":[{"effort":"x"}]}
+        ]}});
+        let out = normalize_models_response(body, true);
+        let data = out["data"].as_array().unwrap();
+
+        // ① 多模态 + 推理档位：能力字段按远端信息派生
+        assert_eq!(data[0]["modalities"], json!({"input":["text","image"]}));
+        assert_eq!(
+            data[0]["supported_reasoning_levels"],
+            json!([{"effort":"low"},{"effort":"high"}])
+        );
+        assert_eq!(data[0]["supports_reasoning"], json!(true));
+        // 原有能力字段必须保留（旧实现会压成 id + 3 个占位字段）
+        assert_eq!(data[0]["maxInputTokens"], json!(200000));
+        assert_eq!(data[0]["context_length"], json!(180000));
+
+        // ② 纯文本：只补 modalities，不凭空造推理档位
+        assert_eq!(data[1]["modalities"], json!({"input":["text"]}));
+        assert!(data[1].get("supported_reasoning_levels").is_none());
+        assert!(data[1].get("supports_reasoning").is_none());
+
+        // ③ 已有字段一律不覆盖（含 supports_reasoning:false 与自定义 modalities）
+        assert_eq!(data[2]["modalities"], json!({"input":["text","audio"]}));
+        assert_eq!(
+            data[2]["supported_reasoning_levels"],
+            json!([{"effort":"x"}])
+        );
+        assert_eq!(data[2]["supports_reasoning"], json!(false));
+    }
+
+    #[test]
+    fn openai_shape_gets_capability_fields_only_for_2api() {
+        let body = json!({"object":"list","data":[{"id":"a","reasoning_supported_efforts":["high"]}]});
+        // 通用代理：一字节都不动
+        assert_eq!(normalize_models_response(body.clone(), false), body);
+        // 2API：只增不改
+        let out = normalize_models_response(body, true);
+        assert_eq!(out["data"][0]["id"], "a");
+        assert_eq!(
+            out["data"][0]["supported_reasoning_levels"],
+            json!([{"effort":"high"}])
+        );
+    }
 }
 
 #[cfg(test)]
@@ -333,6 +491,27 @@ mod chat_model_filter_tests {
         assert!(!is_chat_model(&json!({"id":"codewise-Completion"})));
         assert!(!is_chat_model(&json!({"id":"foo-REWRITE-bar"})));
         assert!(!is_chat_model(&json!({"id":"jump-node"})));
+    }
+
+    #[test]
+    fn tiny_output_models_are_excluded() {
+        // 补全 / 内联提示类：`0 < maxOutputTokens <= 256`
+        assert!(!is_chat_model(&json!({"id":"x","maxOutputTokens":256})));
+        assert!(!is_chat_model(&json!({"id":"x","maxOutputTokens":1})));
+        // 边界：257 保留；0 与缺失表示「未知」，不剔
+        assert!(is_chat_model(&json!({"id":"x","maxOutputTokens":257})));
+        assert!(is_chat_model(&json!({"id":"x","maxOutputTokens":0})));
+        assert!(is_chat_model(&json!({"id":"x"})));
+    }
+
+    #[test]
+    fn internal_prefixes_are_prefix_not_substring() {
+        // 前缀命中 → 剔（嵌入 / 补全 / 代码专用，选了报 11102）
+        assert!(!is_chat_model(&json!({"id":"completion-x"})));
+        assert!(!is_chat_model(&json!({"id":"nes-embed-v2"})));
+        // 子串出现但不在开头 → 保留（旧实现用 contains，会误杀这类正常聊天模型）
+        assert!(is_chat_model(&json!({"id":"x-completion-turbo"})));
+        assert!(is_chat_model(&json!({"id":"my-codewise-wrapper"})));
     }
 
     #[test]
@@ -467,8 +646,43 @@ mod developer_role_tests {
 
 #[cfg(test)]
 mod system_collapse_tests {
-    use super::collapse_system_messages_to_head;
+    use super::{collapse_system_messages_to_head, normalize_openai_message_roles};
     use serde_json::json;
+
+    /// 插件把 notice 插在 `assistant(tool_calls)` 与 `tool` 结果之间时，
+    /// 上游会回 `11148 tool calls and tool results do not match`（参考侧专门打了个
+    /// `tool-result-pairing` 补丁来搬 notice）。
+    ///
+    /// 我们没抄那个补丁：`collapse_system_messages_to_head` 会把**所有** `system` /
+    /// `developer` 合并到头部，notice 自然离开 tool 组，配对恢复连续。这条用例钉住
+    /// 该规避效果 —— 将来谁改 collapse 都必须保证 tool 结果仍紧跟 assistant。
+    #[test]
+    fn interleaved_notice_does_not_break_tool_pairing() {
+        let mut body = json!({"messages": [
+            {"role": "assistant", "content": null, "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "f", "arguments": "{}"}}
+            ]},
+            {"role": "developer", "content": "URI guard"},
+            {"role": "tool", "tool_call_id": "c1", "content": "ok"},
+            {"role": "user", "content": "next"}
+        ]});
+        normalize_openai_message_roles(&mut body);
+        collapse_system_messages_to_head(&mut body);
+        let msgs = body["messages"].as_array().unwrap();
+
+        // notice 内容不丢：并进头部 system
+        assert_eq!(msgs[0]["role"], json!("system"));
+        assert!(msgs[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("URI guard"));
+        // 关键：tool 结果紧跟 assistant，中间不再有 notice
+        assert_eq!(msgs[1]["role"], json!("assistant"));
+        assert_eq!(msgs[2]["role"], json!("tool"));
+        assert_eq!(msgs[2]["tool_call_id"], json!("c1"));
+        assert_eq!(msgs[3]["role"], json!("user"));
+        assert_eq!(msgs.len(), 4);
+    }
 
     /// 多条散落的 system（字符串 content）收拢到头部合成一条。
     #[test]

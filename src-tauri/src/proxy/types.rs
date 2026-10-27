@@ -53,6 +53,15 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub fallback_api_key: String,
 
+    /// **渠道校验兜底 base**：上游用「渠道强校验」拒绝（业务码 `11-128` / `11128`）时，
+    /// 换到该 base 下的同一端点重发一次。
+    ///
+    /// 只有 WorkBuddy 后端用得上（它把 `/v2` 的调用按渠道校验拦下，但 `/console` 放行），
+    /// 由 2API 的 `build_proxy_config` 填 `https://copilot.tencent.com/console`。
+    /// `None` = 该能力完全关闭 —— 通用 AI 代理与聚合**逐字节不受影响**。
+    #[serde(default)]
+    pub channel_check_alt_base_url: Option<String>,
+
     /// 跨供应商路由：实际模型名 B → 该模型所属供应商的上游端点 + key。
     /// 命中时用其端点/key，否则回退到全局 upstream_base_url / upstream_api_key。
     /// 用于支持「大模型」与「辅助模型」分属不同供应商的场景。
@@ -93,6 +102,32 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub force_upstream_stream: bool,
 
+    /// **截断流检测**：上游返回 200、已转发内容帧，却既没有 `finish_reason` 也没有
+    /// `[DONE]` 就结束 —— 此时必须让客户端看到失败，不能补一个「正常说完」的收尾，
+    /// 否则半截回答会被当成完整答案（Anthropic 客户端且会永久等 `message_stop`）。
+    ///
+    /// 默认开。个别供应商确实不发这两个标记时可关掉，恢复「循环结束即完成」的旧行为。
+    #[serde(default = "proxy_default_true")]
+    pub stream_truncation_guard: bool,
+
+    /// **纯思考轮次兜底**：整轮只有思考、没有正文也没有工具调用时，把思考原文
+    /// 同时作为正文下发（`reasoning_content` 原样保留）。
+    ///
+    /// 思考型模型「只想不答」的轮次里，OpenAI 形态客户端会把空白正文渲染成
+    /// 「什么都没输出」。流式补帧插在 `finish_reason` **之前**（客户端见 finish 就停累积）。
+    /// 默认开；关掉时逐字节恢复旧行为。
+    #[serde(default = "proxy_default_true")]
+    pub reasoning_as_content: bool,
+
+    /// **WorkBuddy 会话头族**：给上游补 `X-Conversation-ID` / `X-Conversation-Request-ID`
+    /// / `X-Conversation-Message-ID` / `X-Trace-ID`（会话级与轮级全轮恒定，消息级与 trace
+    /// 每次出站尝试新生成）。
+    ///
+    /// 后端按「会话」聚合与灰度，缺这些头会让每个请求在它眼里都是匿名一次性会话
+    ///（参考实现称旧行为「会把被灰度的账号判死刑」）。只有 2API 需要，默认关。
+    #[serde(default)]
+    pub workbuddy_session_headers: bool,
+
     /// 目标模型 ID（请求体写入的"实际模型 B"）
     pub target_model: String,
     /// 请求超时（秒）
@@ -127,6 +162,13 @@ pub struct ProxyConfig {
     /// 协议不匹配整流：剥离转换后仍残留的协议专有字段（如 Anthropic thinking 落到 OpenAI 上游）
     #[serde(default = "proxy_default_true")]
     pub rectifier_protocol_mismatch: bool,
+    /// 工具 schema 的 `enum` 缺 `type` 时按枚举值补类型。
+    ///
+    /// 严格上游（Kimi 系）对省略 `type` 的枚举节点回 `11133 Invalid request parameters`；
+    /// 补上不影响语义（枚举值的类型本来就唯一）。推不出来的（混合类型 / 含 null / 空枚举）
+    /// 一律不动，交给上游原样报错。默认开。
+    #[serde(default = "proxy_default_true")]
+    pub rectifier_tool_enum_type: bool,
     /// 工具调用方言优化 —— 见 `proxy::xml_tools`。上游不把工具调用翻回标准 `tool_calls` 时
     /// （模型把调用当正文文本吐回来），自动还原成客户端能执行的结构；内部自动试全部方言。
     ///
@@ -202,6 +244,7 @@ impl Default for ProxyConfig {
             upstream_base_url: "https://api.openai.com/v1".to_string(),
             fallback_base_url: String::new(),
             fallback_api_key: String::new(),
+            channel_check_alt_base_url: None,
             model_routes: HashMap::new(),
             upstream_headers: Vec::new(),
             upstream_include_v1: None,
@@ -209,6 +252,9 @@ impl Default for ProxyConfig {
             models_path: default_models_path(),
             models_filter_non_chat: false,
             force_upstream_stream: false,
+            stream_truncation_guard: true,
+            reasoning_as_content: true,
+            workbuddy_session_headers: false,
             target_model: "gpt-4o".to_string(),
             timeout_secs: 300,
             model_aliases: HashMap::new(),
@@ -221,6 +267,7 @@ impl Default for ProxyConfig {
             rectifier_media_fallback: true,
             rectifier_media_heuristic: true,
             rectifier_protocol_mismatch: true,
+            rectifier_tool_enum_type: true,
             rectifier_toolcall_dialect: true,
             optimizer_enabled: true,
             optimizer_cache_injection: true,

@@ -3,12 +3,17 @@ pub mod google;
 pub mod headers;
 pub mod inline_think;
 pub mod optimizers;
+pub mod reasoning_fallback;
 pub mod responses;
+pub mod schema_fix;
 pub mod server;
+pub mod session_headers;
 pub mod sse;
+pub mod stream_guard;
 pub mod transform;
 pub mod types;
 pub mod upstream;
+pub mod upstream_error;
 pub mod xml_tools;
 
 /// 归一化函数参数的 JSON Schema，确保 `type` 始终为 "object"。
@@ -24,6 +29,9 @@ pub fn normalize_function_parameters(params: Option<&serde_json::Value>) -> serd
     // 先递归剥掉嵌套的 `type: null`：它只在根节点被下面的分支兜住，
     // 嵌套节点原样透传会触发严格供应商的 400（抄自 CodexPlusPlus a3286e9）。
     strip_null_type(&mut params);
+    // 有 `enum` 无 `type` 的节点按枚举值补类型（严格上游会回 11133）。
+    // 跨协议转换走这里；同协议 clone 路径由 `optimizers::apply_preventive_rectifiers` 覆盖。
+    schema_fix::fill_enum_type(&mut params);
     if let Some(obj) = params.as_object_mut() {
         match obj.get("type").and_then(|v| v.as_str()) {
             Some("object") => {}

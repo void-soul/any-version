@@ -124,6 +124,13 @@ pub fn build_proxy_config(port: u16, account: &credentials::Account) -> ProxyCon
     // 后端目录里混着图像模型（hunyuan-image-alpha 等），不滤的话客户端会枚举到
     // 却调不通（上游对图像模型走 vclm，直接 400）。规则与 preflight 共用 is_chat_model。
     cfg.models_filter_non_chat = true;
+    // 渠道校验兜底：后端会把 /v2 的调用按「渠道强校验」（业务码 11-128）拦下，
+    // 但同一套请求走 /console 前缀就放行。只换路径、不换 body 与认证
+    // （参考 Go 版 workbuddy2api 的 console-fallback 补丁实测语义）。
+    cfg.channel_check_alt_base_url = Some(format!("{}/console", upstream::BACKEND_BASE));
+    // 会话头族：后端按头识别「同一会话」，缺了就等于每个请求都是匿名一次性会话
+    //（参考侧称这会把被灰度的账号判死刑）。只补头，不往 body 塞 conversationId。
+    cfg.workbuddy_session_headers = true;
     cfg.timeout_secs = 600;
     cfg.upstream_headers = workbuddy_headers(account);
     // WorkBuddy 后端只收流式：非流式请求会被拒（Non-stream chat request is currently

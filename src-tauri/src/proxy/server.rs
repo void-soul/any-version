@@ -11,7 +11,9 @@
 //! ⑨ 模型伪装回填 C → ⑩ 统计落库(强制)
 
 use super::{
-    convert, google, optimizers, sse, transform,
+    convert, google, optimizers, reasoning_fallback, session_headers::SessionIds, sse,
+    stream_guard, transform, upstream_error,
+    upstream_error::UpstreamErrorKind,
     types::{ProxyConfig, UpstreamHeader},
 };
 use axum::{
@@ -786,10 +788,13 @@ async fn responses_handler(
         .to_string();
     let chat_body = crate::proxy::responses::responses_to_chat(&body);
     // 工具调用方言还原的开关来自整流器配置（与「协议整流器」分组里的两个勾选对应）
-    let dialects = {
+    let (dialects, truncation_guard) = {
         let cfg = state.config.read().await;
-        crate::proxy::xml_tools::dialects_from(
-            cfg.rectifier_enabled && cfg.rectifier_toolcall_dialect,
+        (
+            crate::proxy::xml_tools::dialects_from(
+                cfg.rectifier_enabled && cfg.rectifier_toolcall_dialect,
+            ),
+            cfg.stream_truncation_guard,
         )
     };
     let upstream = process_request(&state, &headers, "openai", claimed, false, chat_body).await;
@@ -800,7 +805,7 @@ async fn responses_handler(
         return upstream;
     }
     if is_stream {
-        wrap_chat_stream_as_responses(upstream, &body, &dialects)
+        wrap_chat_stream_as_responses(upstream, &body, &dialects, truncation_guard)
     } else {
         wrap_chat_json_as_responses(upstream, &body, &dialects).await
     }
@@ -846,6 +851,7 @@ fn wrap_chat_stream_as_responses(
     upstream: Response,
     request: &Value,
     dialects: &[crate::proxy::xml_tools::Dialect],
+    truncation_guard: bool,
 ) -> Response {
     use axum::body::Bytes;
     use futures_util::StreamExt;
@@ -862,6 +868,8 @@ fn wrap_chat_stream_as_responses(
         let mut conv =
             crate::proxy::responses::ResponsesStreamConverter::with_dialects(&model, &dialects);
         let mut buffer = String::new();
+        // 收尾判定：有内容但没 finish_reason / [DONE] = 截断（不能补 response.completed）
+        let mut progress = stream_guard::StreamProgress::new();
         while let Some(item) = stream.next().await {
             let bytes = match item {
                 Ok(b) => b,
@@ -880,6 +888,7 @@ fn wrap_chat_stream_as_responses(
             while let Some(idx) = buffer.find("\n\n") {
                 let frame: String = buffer.drain(..idx + 2).collect();
                 if let Some(chunk) = parse_sse_json(&frame) {
+                    progress.observe_value("openai", &chunk);
                     for ev in conv.push_chunk(&chunk) {
                         yield Ok::<_, std::convert::Infallible>(Bytes::from(ev));
                     }
@@ -889,13 +898,24 @@ fn wrap_chat_stream_as_responses(
         // 末帧可能没以空行收尾，别把最后一段 delta 丢掉
         if !buffer.trim().is_empty() {
             if let Some(chunk) = parse_sse_json(&buffer) {
+                progress.observe_value("openai", &chunk);
                 for ev in conv.push_chunk(&chunk) {
                     yield Ok::<_, std::convert::Infallible>(Bytes::from(ev));
                 }
             }
         }
-        for ev in conv.finish() {
-            yield Ok::<_, std::convert::Infallible>(Bytes::from(ev));
+        if truncation_guard && progress.is_truncated() {
+            // 上游 200、已转出内容，但既没有 finish_reason 也没有 [DONE]：
+            // 按失败收尾（response.failed），不能补 response.completed —— 那会让
+            // Codex 把半截答案当完整结果收下、不再续跑。
+            log_proxy("  ✗ Responses 上游流被截断，按失败收尾");
+            for ev in conv.fail("upstream stream ended before completion (truncated)") {
+                yield Ok::<_, std::convert::Infallible>(Bytes::from(ev));
+            }
+        } else {
+            for ev in conv.finish() {
+                yield Ok::<_, std::convert::Infallible>(Bytes::from(ev));
+            }
         }
         // 「模型只吐计划就停」这类问题要分清是上游没给工具调用、还是给了被我们丢了
         if proxy_debug_enabled() {
@@ -993,6 +1013,15 @@ async fn process_request(
         "stream": is_stream,
     }));
 
+    // 会话头族（WorkBuddy 专用）：**必须在 body 被改写之前**算 ——
+    // 轮级锚点是「入站原始 messages 里最后一条 user 消息」，伪装/转换后就不再是它了。
+    // 会话级与轮级全轮恒定（含整流、协议回退、渠道校验换路径），消息级与 trace 每次出站新生成。
+    let session = if config.workbuddy_session_headers {
+        Some(SessionIds::from_request(&body, headers))
+    } else {
+        None
+    };
+
     // ② 模型伪装：C → B（替换 body.model，google 入站不写 body）
     let actual_model = apply_masquerade(inbound, &mut body, &claimed_model, aliases.as_ref());
 
@@ -1049,7 +1078,7 @@ async fn process_request(
         log_proxy_json_full("  出站完整请求体(P_out)", &out_body);
     }
 
-    let req = build_upstream_request(&state.client, headers, &upstream_url, &auth_name, &route_api_key, &route_headers, &out_body);
+    let req = build_upstream_request(&state.client, headers, &upstream_url, &auth_name, &route_api_key, &route_headers, &out_body, session.as_ref());
     let upstream_resp = match req.send().await {
         Ok(r) => r,
         Err(e) => {
@@ -1065,7 +1094,7 @@ async fn process_request(
         }
     };
 
-    let status = upstream_resp.status();
+    let mut status = upstream_resp.status();
     log_proxy(&format!("← UPSTREAM {}  ({}ms)", status.as_u16(), start.elapsed().as_millis()));
     push_request_log(&log_source, format!("← 上游 {} ({}ms)", status.as_u16(), start.elapsed().as_millis()));
 
@@ -1076,12 +1105,19 @@ async fn process_request(
     }));
 
     if !status.is_success() {
-        let error_body = upstream_resp.text().await.unwrap_or_default();
+        let mut error_body = upstream_resp.text().await.unwrap_or_default();
+        let mut kind = upstream_error::classify(status.as_u16(), &error_body);
+        let mut err_label = upstream_error::label(kind, status.as_u16(), &error_body);
         log_proxy(&format!(
-            "✗ UPSTREAM {} error: {}",
+            "✗ UPSTREAM {} [{}] error: {}",
             status.as_u16(),
+            err_label,
             error_body.chars().take(300).collect::<String>()
         ));
+        push_request_log(
+            &log_source,
+            format!("✗ 上游 {} {}", status.as_u16(), err_label),
+        );
 
         // ─── emit collab:proxy-error ───
         emit_proxy_event(&state, "collab:proxy-error", json!({
@@ -1089,11 +1125,89 @@ async fn process_request(
             "error": error_body.chars().take(500).collect::<String>(),
         }));
 
+        // ⑦-0 渠道校验：换路径重发。**只换 URL**，body 与认证一律不动
+        //（实测校验对象是 URL + 会话头族，往 body 塞 conversationId 无效）。
+        // 只有 2API 填了 `channel_check_alt_base_url` 才启用 —— 通用代理与聚合不受影响。
+        // 换路径失败就接着走下面的整流/协议回退，不新增硬失败点。
+        if kind == UpstreamErrorKind::ChannelCheck && !config.upstream_is_aggregate {
+            if let Some(alt) = config
+                .channel_check_alt_base_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                let (alt_url, alt_auth) = super::upstream::resolve_url(
+                    &outbound,
+                    alt,
+                    &actual_model,
+                    upstream_stream,
+                    Some(false),
+                );
+                if !alt_url.is_empty() && alt_url != upstream_url {
+                    log_proxy(&format!(
+                        "↻ 渠道校验 → 换路径: POST {} auth={}",
+                        alt_url, alt_auth
+                    ));
+                    push_request_log(&log_source, format!("↻ 渠道校验命中，换路径重试 {alt_url}"));
+                    let alt_req = build_upstream_request(
+                        &state.client,
+                        headers,
+                        &alt_url,
+                        alt_auth,
+                        &route_api_key,
+                        &route_headers,
+                        &out_body,
+                        session.as_ref(),
+                    );
+                    match alt_req.send().await {
+                        Ok(alt_resp) if alt_resp.status().is_success() => {
+                            log_proxy(&format!(
+                                "✓ 换路径成功  ({}ms)",
+                                start.elapsed().as_millis()
+                            ));
+                            push_request_log(&log_source, "✓ 渠道校验兜底成功".to_string());
+                            return process_response(
+                                state, alt_resp, &config, inbound, &outbound,
+                                &claimed_model, &actual_model, is_stream, upstream_stream,
+                            )
+                            .await;
+                        }
+                        Ok(alt_resp) => {
+                            status = alt_resp.status();
+                            error_body = alt_resp.text().await.unwrap_or_default();
+                            kind = upstream_error::classify(status.as_u16(), &error_body);
+                            // 回退路径上的 11102 只说明「这条路没这个模型」，不是模型真不存在：
+                            // 既不能对外宣称模型不可用，也不值得再整流/再回退。
+                            if kind == UpstreamErrorKind::ModelMissing {
+                                kind = UpstreamErrorKind::FallbackModelMissing;
+                            }
+                            err_label =
+                                upstream_error::label(kind, status.as_u16(), &error_body);
+                            log_proxy(&format!(
+                                "✗ 换路径也失败: {} [{}]",
+                                status.as_u16(),
+                                err_label
+                            ));
+                            push_request_log(
+                                &log_source,
+                                format!("✗ 换路径失败 {} {}", status.as_u16(), err_label),
+                            );
+                        }
+                        Err(e) => {
+                            log_proxy(&format!("✗ 换路径请求失败: {e}"));
+                            push_request_log(&log_source, format!("✗ 换路径请求失败: {e}"));
+                        }
+                    }
+                }
+            }
+        }
+
         // ⑦ 反应式整流：修正后重试一次
         // 上游是聚合时跳过：聚合自己会按失败类别重试/切换/冷却，代理再整流重试是重复放大。
-        if !config.upstream_is_aggregate {
+        // 业务码已定性为「不是字段问题」时同样跳过（401/11148/渠道校验…重发只是多打一次上游）。
+        if !config.upstream_is_aggregate && kind.worth_rectify() {
             if let Some(rectified) = optimizers::try_reactive_rectify(status.as_u16(), &error_body, &out_body, &config, &outbound) {
-                let retry_req = build_upstream_request(&state.client, headers, &upstream_url, &auth_name, &route_api_key, &route_headers, &rectified);
+                let retry_req = build_upstream_request(&state.client, headers, &upstream_url, &auth_name, &route_api_key, &route_headers, &rectified, session.as_ref());
                 if let Ok(retry_resp) = retry_req.send().await {
                     if retry_resp.status().is_success() {
                         log_proxy(&format!("↻ retry succeeded after rectify  ({}ms)", start.elapsed().as_millis()));
@@ -1135,7 +1249,7 @@ async fn process_request(
                     "↻ protocol fallback anthropic→openai: POST {} auth={}",
                     fb_url, fb_auth
                 ));
-                let fb_req = build_upstream_request(&state.client, headers, &fb_url, &fb_auth, &fb_key, &fb_headers, &fb_body);
+                let fb_req = build_upstream_request(&state.client, headers, &fb_url, &fb_auth, &fb_key, &fb_headers, &fb_body, session.as_ref());
                 if let Ok(fb_resp) = fb_req.send().await {
                     if fb_resp.status().is_success() {
                         log_proxy(&format!("↻ fallback succeeded  ({}ms)", start.elapsed().as_millis()));
@@ -1152,10 +1266,9 @@ async fn process_request(
         }
         // 失败落账（整流/回退都失败后才到这里）：按模型的成功率靠它做分母，
         // 也顺带把失败类别记下来，便于在用量统计里看出「哪个供应商在报什么错」。
-        let failure_class = crate::commands::ai::aggregate::classify_failure(
-            Some(status.as_u16()),
-            &error_body,
-        );
+        // 业务码优先：11102 → model_unavailable、14018 → billing、11128 → transient…
+        // 业务码不明时才退回按状态码判（保持 AI 模块的既有统计口径）。
+        let failure_class = upstream_error::to_failure_class(kind, status.as_u16(), &error_body);
         let _ = crate::commands::ai::usage::log_usage_failure(
             &config.tool_id,
             &actual_model,
@@ -1223,6 +1336,14 @@ async fn process_response(
         {
             log_proxy("  ↩ 已把正文里的工具调用还原成 tool_calls（方言适配层）");
         }
+    }
+    // 纯思考轮次：把思考原文补成正文（`reasoning_content` 原样保留）。
+    // 放在 xml_tools **之后** —— 先把正文里的方言工具调用还原成 tool_calls，
+    // 才能正确判断「这轮到底有没有工具调用」。转换器会把补出的 content 变成对应协议形态。
+    if config.reasoning_as_content
+        && reasoning_fallback::patch_chat_response(&mut resp_json) > 0
+    {
+        log_proxy("  ↩ 纯思考轮次：已把思考原文作为正文补发");
     }
     let mut in_resp = convert_response(outbound, inbound, &resp_json, claimed_model);
 
@@ -1356,6 +1477,12 @@ async fn aggregate_upstream_stream(
         );
         crate::proxy::xml_tools::apply_tool_calls(&mut aggregated, &dialects);
     }
+    // 纯思考轮次兜底（聚合路径同非流式）
+    if config.reasoning_as_content
+        && reasoning_fallback::patch_chat_response(&mut aggregated) > 0
+    {
+        log_proxy("  ↩ 纯思考轮次：已把思考原文作为正文补发");
+    }
     let mut in_resp = convert_response(outbound, inbound, &aggregated, claimed_model);
     set_response_model(&mut in_resp, claimed_model, inbound);
 
@@ -1416,6 +1543,9 @@ async fn stream_response(
         let pid = provider_id.clone();
         let act = actual.clone();
         let proto = inbound.to_string();
+        let guard = config.stream_truncation_guard;
+        let reasoning_guard = config.reasoning_as_content;
+        let ls = config.source.clone();
         let stream = upstream_resp.bytes_stream();
         // 协同上下文（用于 emit 事件）
         let collab_ctx = (state.app_handle.clone(), state.collab_room_id.clone());
@@ -1428,6 +1558,16 @@ async fn stream_response(
             let mut acc_out: u64 = 0;
             let mut acc_text = String::new();
             let mut chunk_count: u64 = 0;
+            // 收尾判定：有内容 / 有 finish_reason / 有 [DONE]
+            let mut progress = stream_guard::StreamProgress::new();
+            // 传输层是否出过错（`yield Err` 之后 break 的情况）
+            let mut transport_failed = false;
+            // 纯思考轮次兜底：需要把补帧插到 finish 之前，所以见到 finish 后先把原始
+            // 字节缓冲起来，流结束时按需「补帧 → 原样吐出」。
+            let mut fb = reasoning_fallback::ReasoningTracker::new();
+            let mut tailing = false;
+            let mut tail: Vec<axum::body::Bytes> = Vec::new();
+            let mut first_id: Option<String> = None;
             // 首个文本增量到达的时刻：t/s 统计要从生成窗口中扣掉首字等待（抄自 cc-switch dc0febe5）
             let mut first_token_ms: u64 = 0;
             let stream_start = Instant::now();
@@ -1435,6 +1575,7 @@ async fn stream_response(
                 let chunk = match r {
                     Ok(c) => c,
                     Err(e) => {
+                        transport_failed = true;
                         yield Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
                         break;
                     }
@@ -1446,6 +1587,14 @@ async fn stream_response(
                     if let Some(data_str) = sse::extract_sse_data(&block) {
                         if data_str != "[DONE]" {
                             if let Ok(cj) = serde_json::from_str::<Value>(&data_str) {
+                                progress.observe_value(&proto, &cj);
+                                fb.observe(&cj);
+                                if first_id.is_none() {
+                                    first_id = cj
+                                        .get("id")
+                                        .and_then(|v| v.as_str())
+                                        .map(str::to_string);
+                                }
                                 let (i, o) = extract_stream_usage(&proto, &cj);
                                 if i > 0 { acc_in = i; }
                                 if o > 0 { acc_out = o; }
@@ -1473,14 +1622,65 @@ async fn stream_response(
                                 }
                             }
                         } else {
+                            progress.observe_done();
                             log_proxy("  ▸ SSE [DONE]");
                         }
                     }
                 }
+                // 纯思考轮次兜底：只要还有可能补正文（没出现过正文/工具），
+                // 一旦见到 finish_reason 就把后续原始字节攒住，等确认后再插帧。
+                // 不需要补时这些字节会**原样**吐出，客户端看到的字节与上游一致。
+                if reasoning_guard && fb.may_backfill() && (tailing || progress.saw_finish()) {
+                    tailing = true;
+                    tail.push(chunk);
+                    continue;
+                }
                 yield Ok::<_, std::io::Error>(chunk);
             }
-            log_proxy(&format!("✓ 流式完成: {} chunks, {} chars text, {}ms",
-                chunk_count, acc_text.len(), stream_start.elapsed().as_millis()));
+            // 截断判定：已转发内容、但既无 finish_reason 也无 [DONE]。
+            // 这是「上游 200 之后被掐断」，不是「模型说完」——见 stream_guard 模块头。
+            let truncated = guard && !transport_failed && progress.is_truncated();
+            if truncated {
+                log_proxy(&format!(
+                    "✗ 流被截断（{} chunks 后无 finish_reason/[DONE]），已补 error 帧",
+                    chunk_count
+                ));
+                if !ls.is_empty() {
+                    push_request_log(&ls, "✗ 上游流被截断，已补 error 帧".to_string());
+                }
+                yield Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
+                    stream_guard::TRUNCATED_STREAM_FRAME.as_bytes(),
+                ));
+            } else {
+                // 纯思考轮次：把思考原文补成一帧正文。
+                // **必须在这里**（缓冲的 finish 帧吐出之前）—— 客户端见到 finish_reason
+                // 就停止累积，补在它后面等于没发。
+                if tailing {
+                    if let Some(text) = fb.take_backfill_text() {
+                        log_proxy(&format!(
+                            "  ↩ 纯思考轮次：已把思考作为正文补发（{} 字）",
+                            text.chars().count()
+                        ));
+                        if !ls.is_empty() {
+                            push_request_log(&ls, "↩ 纯思考轮次：已把思考作为正文补发".to_string());
+                        }
+                        let id = first_id.take().unwrap_or_else(|| "chatcmpl-kira".to_string());
+                        yield Ok::<_, std::io::Error>(axum::body::Bytes::from(
+                            reasoning_fallback::build_frame(
+                                &id,
+                                chrono::Local::now().timestamp(),
+                                &text,
+                            ),
+                        ));
+                    }
+                }
+                log_proxy(&format!("✓ 流式完成: {} chunks, {} chars text, {}ms",
+                    chunk_count, acc_text.len(), stream_start.elapsed().as_millis()));
+            }
+            // 缓冲的收尾字节原样吐出（截断时同样要吐：里面有 finish_reason）
+            for buffered in tail.drain(..) {
+                yield Ok::<_, std::io::Error>(buffered);
+            }
             if proxy_debug_enabled() {
                 log_proxy_raw("  流式完整文本", &acc_text);
             }
@@ -1510,7 +1710,13 @@ async fn stream_response(
                 );
             }
             let mut s = stats.write().await;
-            s.success_requests += 1;
+            if transport_failed || truncated {
+                // 截断/断流不计成功：否则日志里只剩一条 tok 正常的假成功
+                //（参考侧原话：这正是这类问题长期查不出来的原因）
+                s.failed_requests += 1;
+            } else {
+                s.success_requests += 1;
+            }
         };
         let mut out = Response::new(Body::from_stream(sse));
         *out.status_mut() = StatusCode::OK;
@@ -1525,6 +1731,8 @@ async fn stream_response(
         ($conv:expr) => {{
             let mut conv = $conv;
             let stats = state.stats.clone();
+            let guard = config.stream_truncation_guard;
+            let ls = config.source.clone();
             let (tid, pid, cm) = (tool_id.clone(), provider_id.clone(), actual.clone());
             // 协同上下文（用于 emit 事件）
             let collab_ctx = (state.app_handle.clone(), state.collab_room_id.clone());
@@ -1540,6 +1748,9 @@ async fn stream_response(
                 // 上游是否已发过 [DONE]：OpenAI/Google 出站下它就是完整终止标记，
                 // 补收尾会重复发一次；Anthropic 出站下它不算终止，仍需补 message_stop
                 let mut sent_done = false;
+                // 收尾判定：有内容 / 有终止标记（finish_reason、message_stop…）/ 有 [DONE]
+                let mut progress = stream_guard::StreamProgress::new();
+                let mut transport_failed = false;
                 // 首个文本增量到达的时刻：t/s 统计要从生成窗口中扣掉首字等待
                 let mut first_token_ms: u64 = 0;
                 let stream_start = Instant::now();
@@ -1547,6 +1758,7 @@ async fn stream_response(
                     let chunk = match r {
                         Ok(c) => c,
                         Err(e) => {
+                            transport_failed = true;
                             // 上游断流：先把已打开的 content block 闭合，**不要**发
                             // message_stop（那等于声称正常结束），随后补一条 error 事件。
                             // 若流已终止（终止事件已发出），只记日志不再写任何事件 ——
@@ -1580,6 +1792,7 @@ async fn stream_response(
                         };
                         if data_str == "[DONE]" {
                             sent_done = true;
+                            progress.observe_done();
                             yield Ok::<_, Infallible>(Event::default().data("[DONE]"));
                             // 部分上游只发 [DONE] 而不带 finish_reason：Anthropic 出站
                             // 在这里补收尾，否则客户端永远等不到 message_stop（会挂住）
@@ -1599,6 +1812,7 @@ async fn stream_response(
                             continue;
                         }
                         if let Ok(cj) = serde_json::from_str::<Value>(&data_str) {
+                            progress.observe_value(&out_proto, &cj);
                             // 从出站协议形态的 chunk 提取文本
                             if let Some(text) = extract_inbound_delta_text(&out_proto, &cj) {
                                 if !text.is_empty() {
@@ -1635,9 +1849,36 @@ async fn stream_response(
                         }
                     }
                 }
-                // 循环自然结束（上游没发 finish_reason 就断了）：补收尾，
-                // 否则客户端拿到的是未闭合的 content block（Anthropic 客户端会报错/挂住）
-                if !sent_done {
+                // 循环结束。两种可能必须分开：
+                // ① 上游已经发了终止标记 → 正常收尾；
+                // ② 转发过内容、却没有任何终止标记 → **截断**：只能闭合块 + 补 error 事件，
+                //    绝不能调 finish()（那是 end_turn + message_stop，等于声称「模型说完了」）。
+                let truncated = guard && !transport_failed && progress.is_truncated();
+                if truncated {
+                    for ev in conv.close_open_blocks() {
+                        let mut event = Event::default();
+                        for line in ev.lines() {
+                            if let Some(rest) = line.strip_prefix("event:") {
+                                event = event.event(rest.trim());
+                            } else if let Some(rest) = line.strip_prefix("data:") {
+                                event = event.data(rest.trim());
+                            }
+                        }
+                        yield Ok::<_, Infallible>(event);
+                    }
+                    log_proxy(&format!(
+                        "  ✗ 跨协议流被截断（{} chunks 后无终止标记），已补 error 事件",
+                        chunk_count
+                    ));
+                    if !ls.is_empty() {
+                        push_request_log(&ls, "✗ 上游流被截断，已补 error 事件".to_string());
+                    }
+                    yield Ok::<_, Infallible>(Event::default().data(
+                        "{\"error\":{\"message\":\"upstream stream ended before completion (truncated)\",\"type\":\"upstream_error\",\"code\":\"upstream_parse\"}}",
+                    ));
+                } else if !sent_done {
+                    // 已终止但没见到 [DONE]（部分上游如此）：补收尾，
+                    // 否则客户端拿到的是未闭合的 content block
                     for ev in conv.finish() {
                         let mut event = Event::default();
                         for line in ev.lines() {
@@ -1650,8 +1891,10 @@ async fn stream_response(
                         yield Ok::<_, Infallible>(event);
                     }
                 }
-                log_proxy(&format!("✓ 跨协议流式完成: {} chunks, {} chars text, {}ms",
-                    chunk_count, acc_text.len(), stream_start.elapsed().as_millis()));
+                if !truncated {
+                    log_proxy(&format!("✓ 跨协议流式完成: {} chunks, {} chars text, {}ms",
+                        chunk_count, acc_text.len(), stream_start.elapsed().as_millis()));
+                }
                 if proxy_debug_enabled() {
                     log_proxy_raw("  跨协议流式完整文本", &acc_text);
                 }
@@ -1682,7 +1925,11 @@ async fn stream_response(
                     );
                 }
                 let mut s = stats.write().await;
-                s.success_requests += 1;
+                if truncated || transport_failed {
+                    s.failed_requests += 1;
+                } else {
+                    s.success_requests += 1;
+                }
             };
             return Sse::new(sse).into_response();
         }};
@@ -1931,11 +2178,21 @@ fn build_upstream_request(
     api_key: &str,
     custom_headers: &[UpstreamHeader],
     body: &Value,
+    session: Option<&SessionIds>,
 ) -> reqwest::RequestBuilder {
     let mut req = super::upstream::inject_auth(client.post(upstream_url), auth_name, api_key, custom_headers);
     if let Some(beta) = headers.get("anthropic-beta") {
         if let Ok(val) = beta.to_str() {
             req = req.header("anthropic-beta", val);
+        }
+    }
+    // 会话头族：每次调用都重生成消息级 / trace（一次调用 = 一次出站尝试）。
+    // 用户显式配置了同名头时跳过，避免 reqwest 的 append 语义把同一个头发两遍。
+    if let Some(session) = session {
+        for h in session.attempt_headers() {
+            if !super::headers::overrides(custom_headers, &h.key) {
+                req = req.header(h.key.as_str(), h.value);
+            }
         }
     }
     req.json(body)

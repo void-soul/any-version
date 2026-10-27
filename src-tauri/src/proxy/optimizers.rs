@@ -719,6 +719,15 @@ pub fn apply_preventive_rectifiers(body: &mut Value, outbound_protocol: &str, co
         return;
     }
 
+    // 工具 schema 的 `enum` 缺 `type`：严格上游（Kimi 系）会回 11133。
+    // 放在最前面且与协议无关 —— **同协议 clone 路径只有这里能碰到请求体**。
+    if config.rectifier_tool_enum_type {
+        let n = super::schema_fix::fill_tool_enum_types(body);
+        if n > 0 {
+            eprintln!("[rectifier] 工具 schema 补齐 enum 类型：{n} 个节点");
+        }
+    }
+
     // 纯文本模型预判（与协议无关，先于协议分支执行）：确定不接受图片的模型，
     // 发送前就把图片块降级成文本标记，省掉一次必然失败的往返。
     // 与「上游报错后降级（media_fallback）」是两条独立路径 —— 关掉这项只停用
