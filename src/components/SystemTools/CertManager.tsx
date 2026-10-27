@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { theamedAlert, alertError } from "../shared/ThemedAlert";
+import { theamedAlert, alertError, theamedConfirm } from "../shared/ThemedAlert";
+import { toast } from "../shared/Toast";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -62,6 +63,20 @@ interface CertDetail {
   daysLeft?: number | null;
   san: string[];
   pems: Record<string, string>;
+}
+
+/**
+ * `cert_issue_now` 的返回（后端 `IssueResult`）。
+ *
+ * `renewed` 必须看：lego 在「还没到续期时间」时会**跳过**签发但仍以退出码 0 结束，
+ * 后端过去把这种情况当成签发成功，前端刷新后又看不出任何变化 —— 就是「点申请没反应」。
+ */
+interface IssueResult {
+  cert: Certificate;
+  /** 本次是否真的重新签发了证书 */
+  renewed: boolean;
+  /** 证书剩余有效期（天，负数表示已过期） */
+  days_left?: number | null;
 }
 
 // ⚠️ 字段名按 Rust **序列化后的**名字写，不是 Rust 的源码字段名。
@@ -419,6 +434,14 @@ function fmtDate(s?: string | null): string {
   return s.replace("T", " ").slice(0, 19);
 }
 
+/** 距某时间点还有多少天（向下取整，负数表示已过期）；无法解析返回 null。 */
+function daysUntil(s?: string | null): number | null {
+  if (!s) return null;
+  const t = Date.parse(s);
+  if (Number.isNaN(t)) return null;
+  return Math.floor((t - Date.now()) / 86_400_000);
+}
+
 // ---------------------------------------------------------------------------
 // 组件
 // ---------------------------------------------------------------------------
@@ -497,10 +520,31 @@ function CertList() {
 
   const issue = async (id: string) => {
     if (issuing.has(id)) return;
+    const target = certs.find((c) => c.id === id);
+    const threshold = target?.renew_before_days ?? 30;
+    const left = daysUntil(target?.not_after);
+    // 手动「申请」= 强制重签。证书还没到续期阈值时先说清代价：
+    // 同一组域名对 Let's Encrypt 每周只有 5 次重复签发额度，白跑几次当天就签不出来了。
+    if (target?.status === "issued" && left !== null && left > threshold) {
+      const ok = await theamedConfirm(
+        t("certmgr.forceRenewConfirm", { days: left, threshold }),
+        { danger: true, confirmText: t("certmgr.apply") },
+      );
+      if (!ok) return;
+    }
     markIssuing(id, true);
     try {
-      await invoke("cert_issue_now", { id });
+      const res = await invoke<IssueResult>("cert_issue_now", { id });
       await refresh();
+      if (res.renewed) {
+        toast(t("certmgr.applyDone", { time: fmtDate(res.cert?.not_after) }));
+      } else {
+        // 后端如实回报「没签」：说清楚原因，别让用户以为按钮坏了
+        theamedAlert(
+          t("certmgr.applySkipped", { days: res.days_left ?? 0, threshold }),
+          "info",
+        );
+      }
     } catch (e) {
       alertError(t("certmgr.applyFail", { err: String(e) }));
     } finally {

@@ -723,7 +723,58 @@ fn read_lego_pems(cert_dir: &PathBuf, prefer_domain: Option<&str>) -> Option<Leg
     None
 }
 
-fn run_lego(cert: &Certificate, cred: Option<&Credential>, renew: bool) -> Result<(String, String, String), String> {
+/// 证书存储目录里现有证书文件的指纹（路径 + 大小 + 修改时间）。
+///
+/// 用来判断一次 lego 调用到底有没有签发新证书：lego 在「还没到续期时间」时会
+/// 跳过续期并以退出码 0 结束（v5.3.1 实测），此时磁盘上一个文件都不会变。
+fn cert_store_fingerprint(cert_dir: &PathBuf) -> Vec<(String, u64, u128)> {
+    let mut out: Vec<(String, u64, u128)> = Vec::new();
+    for store in lego_cert_dirs(cert_dir) {
+        let entries = match std::fs::read_dir(&store) {
+            Ok(rd) => rd,
+            Err(_) => continue,
+        };
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if !(name.ends_with(".crt") || name.ends_with(".key")) {
+                continue;
+            }
+            let meta = e.metadata().ok();
+            let len = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            let mtime = meta
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            out.push((format!("{}/{}", store.display(), name), len, mtime));
+        }
+    }
+    out.sort();
+    out
+}
+
+/// 证书目录里是否已有可用证书 —— 决定 lego 走「首次签发」还是「续期」语义。
+///
+/// 之前用 `last_issue_at.is_some()` 判断，但「跳过续期」也会写 last_issue_at，
+/// 跳过一次之后判定就永远偏了；只看磁盘上有没有证书才可靠。
+fn has_existing_cert(cert_dir: &PathBuf) -> bool {
+    lego_cert_dirs(cert_dir).iter().any(|dir| {
+        std::fs::read_dir(dir)
+            .map(|rd| {
+                rd.flatten()
+                    .any(|e| e.file_name().to_string_lossy().ends_with(".crt"))
+            })
+            .unwrap_or(false)
+    })
+}
+
+/// `force` = 手动「申请」：即使还没到续期时间也要求 lego 重签。
+fn run_lego(
+    cert: &Certificate,
+    cred: Option<&Credential>,
+    renew: bool,
+    force: bool,
+) -> Result<(String, String, String), String> {
     let lego = find_lego();
     let cert_dir = ensure_dir().join(&cert.id);
     let _ = std::fs::create_dir_all(&cert_dir);
@@ -777,6 +828,13 @@ fn run_lego(cert: &Certificate, cred: Option<&Credential>, renew: bool) -> Resul
     }
     if renew {
         cmd.arg("--renew-days").arg(cert.renew_before_days.to_string());
+    }
+    if force {
+        // lego 在「剩余天数 > --renew-days」时会直接跳过续期，且**退出码仍是 0**
+        // （v5.3.1 实测：`INFO Skip renewal: ...` + `EXIT=0`）。后端过去把它当成
+        // 签发成功，于是刷新后数据毫无变化 —— 用户看到的就是「点申请没反应」。
+        // 手动申请要走真实续期，必须加 --renew-force 绕过到期判断。
+        cmd.arg("--renew-force");
     }
 
     // 打印完整命令行，便于在终端排查
@@ -3202,8 +3260,25 @@ async fn deploy_aliyun_fc(
 // 申请 / 续期 + 部署编排
 // ---------------------------------------------------------------------------
 
+/// 一次「申请 / 续期」的结果。
+///
+/// 为什么不直接回 `Certificate`：lego 在证书还没到续期时间时会**跳过**签发却
+/// 仍以退出码 0 结束，只回 Certificate 的话前端无从分辨「真的签了」和「什么都没做」，
+/// 表现就是「点了申请没反应」。`renewed == false` 即表示后者。
+#[derive(serde::Serialize)]
+pub struct IssueResult {
+    pub cert: Certificate,
+    /// 本次是否真的重新签发了证书（false = 未到续期时间，被 lego 跳过）
+    pub renewed: bool,
+    /// 证书剩余有效期（天，负数表示已过期）
+    pub days_left: Option<i64>,
+}
+
 /// 申请（或续期）指定证书，并部署到其所有关联节点。
-pub async fn issue_and_deploy(cert_id: &str) -> Result<Certificate, String> {
+///
+/// `force`：用户手动点「申请」时为 true —— 立刻重签，不看续期阈值；
+/// 定时任务传 false，交给 lego 按 `renew_before_days` 自己判断该不该续。
+pub async fn issue_and_deploy(cert_id: &str, force: bool) -> Result<IssueResult, String> {
     let mut certs = load_certs();
     let mut nodes = load_json::<DeployNode>("deploy_nodes.json");
     let creds = load_json::<Credential>("credentials.json");
@@ -3220,8 +3295,10 @@ pub async fn issue_and_deploy(cert_id: &str) -> Result<Certificate, String> {
         .find(|c| c.id == cert.credential_id)
         .map(decrypt_credential);
 
-    let renew = cert.last_issue_at.is_some();
-    let pems = match run_lego(&cert, cred.as_ref(), renew) {
+    let cert_dir = ensure_dir().join(&cert.id);
+    let fingerprint_before = cert_store_fingerprint(&cert_dir);
+    let renew = has_existing_cert(&cert_dir);
+    let pems = match run_lego(&cert, cred.as_ref(), renew, force) {
         Ok(v) => v,
         Err(e) => {
             certs[idx].status = "error".to_string();
@@ -3230,15 +3307,26 @@ pub async fn issue_and_deploy(cert_id: &str) -> Result<Certificate, String> {
             return Err(e);
         }
     };
+    // lego 跳过续期时退出码仍是 0，只能靠「文件有没有变」判断这次到底签没签
+    let renewed = fingerprint_before != cert_store_fingerprint(&cert_dir);
 
     // 更新有效期（从证书 DER 解析 notBefore / notAfter）
     let (not_before, not_after) = extract_validity(&pems.0);
     let now = Utc::now().to_rfc3339();
-    certs[idx].last_issue_at = Some(now.clone());
     certs[idx].not_before = not_before;
     certs[idx].not_after = not_after;
-    certs[idx].status = "issued".to_string();
-    certs[idx].last_error = None;
+    if renewed {
+        certs[idx].last_issue_at = Some(now.clone());
+        certs[idx].status = "issued".to_string();
+        certs[idx].last_error = None;
+    }
+    // 被跳过时不动 last_issue_at / status：证书还是旧的那张，
+    // 写成「刚刚签发」会让界面的签发时间失真（这正是一直以来的假象来源）。
+    let days_left = certs[idx]
+        .not_after
+        .as_ref()
+        .and_then(|na| DateTime::parse_from_rfc3339(na).ok())
+        .map(|d| (d.with_timezone(&Utc) - Utc::now()).num_days());
 
     // 域名列表 → 部署方式关联；target 用于 CDN / 负载均衡等需要目标域名的节点
     let links: Vec<DeployLink> = if cert.deploy_links.is_empty() {
@@ -3280,7 +3368,23 @@ pub async fn issue_and_deploy(cert_id: &str) -> Result<Certificate, String> {
     let updated = certs[idx].clone();
     save_json("certificates.json", &certs);
     save_json("deploy_nodes.json", &nodes);
-    Ok(updated)
+    eprintln!(
+        "[cert] {} {}（剩余 {} 天）",
+        cert_id,
+        if renewed {
+            "已重新签发"
+        } else {
+            "未到续期时间，已跳过"
+        },
+        days_left
+            .map(|d| d.to_string())
+            .unwrap_or_else(|| "-".to_string())
+    );
+    Ok(IssueResult {
+        cert: updated,
+        renewed,
+        days_left,
+    })
 }
 
 /// 极简 DER TLV 读取器（仅用于解析 X.509 证书有效期）。
@@ -4115,9 +4219,14 @@ pub fn start_scheduler(app: tauri::AppHandle) {
             };
 
             for id in due_certs {
-                let result = issue_and_deploy(&id).await;
+                // 定时任务不强制：到没到期由 lego 按 renew_before_days 判断
+                let result = issue_and_deploy(&id, false).await;
                 let (ok, message) = match &result {
-                    Ok(_) => (true, "已续期".to_string()),
+                    Ok(r) if r.renewed => (true, "已续期".to_string()),
+                    Ok(r) => (
+                        true,
+                        format!("未到续期时间，已跳过（剩余 {} 天）", r.days_left.unwrap_or(0)),
+                    ),
                     Err(e) => (false, e.clone()),
                 };
                 {
@@ -4335,8 +4444,9 @@ pub fn cert_delete(id: String) {
 }
 
 #[tauri::command]
-pub async fn cert_issue_now(id: String) -> Result<Certificate, String> {
-    issue_and_deploy(&id).await
+pub async fn cert_issue_now(id: String) -> Result<IssueResult, String> {
+    // 手动点「申请」= 立刻重签，不受续期阈值限制（否则 lego 会静默跳过）
+    issue_and_deploy(&id, true).await
 }
 
 #[tauri::command]
@@ -4530,10 +4640,28 @@ pub fn cert_scheduler_set(enabled: bool, interval_minutes: Option<u64>, state: t
 #[tauri::command]
 pub async fn cert_scheduler_run_now() -> Result<Vec<String>, String> {
     let certs = load_certs();
+    let now = Utc::now();
     let mut results = Vec::new();
     for c in &certs {
-        match issue_and_deploy(&c.id).await {
-            Ok(_) => results.push(format!("{}: ok", c.id)),
+        // 与后台调度同一口径：只有到期（或从未签发、没有有效期）的证书才需要动作。
+        // 以前这里无条件全量调用，未到期的也会「跑一遍」，结果全是 lego 静默跳过。
+        let due = c
+            .not_after
+            .as_ref()
+            .and_then(|na| DateTime::parse_from_rfc3339(na).ok())
+            .map(|d| now + Duration::days(c.renew_before_days) >= d.with_timezone(&Utc))
+            .unwrap_or(true);
+        if !due {
+            results.push(format!("{}: 未到续期时间，已跳过", c.id));
+            continue;
+        }
+        match issue_and_deploy(&c.id, false).await {
+            Ok(r) if r.renewed => results.push(format!("{}: ok", c.id)),
+            Ok(r) => results.push(format!(
+                "{}: 未到续期时间，已跳过（剩余 {} 天）",
+                c.id,
+                r.days_left.unwrap_or(0)
+            )),
             Err(e) => results.push(format!("{}: {}", c.id, e)),
         }
     }
@@ -4947,6 +5075,40 @@ mod tests {
         assert_eq!(got.crt, "L");
         assert_eq!(got.key, "K");
 
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 「跳过续期」必须能被认出来：lego 未到续期时间时仍然以退出码 0 结束（v5.3.1 实测），
+    /// 只能靠证书文件有没有变来判断。认不出来的话，后端就会把「什么都没做」记成一次成功签发——
+    /// 界面上的表现正是「点了申请没反应」。
+    #[test]
+    fn lego_skip_detected_by_unchanged_cert_files() {
+        let base = unique_tmp("anyver_lego_skip");
+        let store = base.join("certificates");
+        std::fs::create_dir_all(&store).unwrap();
+        std::fs::write(store.join("a.com.crt"), "LEAF").unwrap();
+        std::fs::write(store.join("a.com.key"), "KEY").unwrap();
+
+        // 已有证书 → 之后按「续期」语义调用 lego
+        assert!(has_existing_cert(&base));
+
+        // 被跳过：文件一个都不变
+        let before = cert_store_fingerprint(&base);
+        assert_eq!(before, cert_store_fingerprint(&base));
+
+        // 真正重签：cert 文件变化
+        std::fs::write(store.join("a.com.crt"), "NEW-LEAF").unwrap();
+        assert_ne!(before, cert_store_fingerprint(&base));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 空的证书目录不算「已有证书」，否则首次申请会被当成续期。
+    #[test]
+    fn empty_cert_dir_has_no_existing_cert() {
+        let base = unique_tmp("anyver_lego_empty");
+        assert!(!has_existing_cert(&base));
+        assert!(cert_store_fingerprint(&base).is_empty());
         let _ = std::fs::remove_dir_all(&base);
     }
 
