@@ -133,6 +133,109 @@ fn testsrc_audio_source(kind: &str) -> (Vec<String>, Option<String>) {
     (args, af)
 }
 
+/// 把子进程输出逐行并入实例日志（内存环形 + 供状态查询的快照）。
+///
+/// 必须持续读取：子进程的 stdout/stderr 被管道接管后，若无人读取，
+/// 管道缓冲写满会导致子进程永久阻塞（MediaMTX 会因此停止响应新连接）。
+fn spawn_output_reader<R: std::io::Read + Send + 'static>(
+    stream: R,
+    logs: Arc<Mutex<Vec<String>>>,
+    last_logs: Arc<Mutex<HashMap<String, Vec<String>>>>,
+    instance_id: String,
+    prefix: &'static str,
+) {
+    std::thread::spawn(move || {
+        for line in BufReader::new(stream).lines().map_while(Result::ok) {
+            let line = format!("{}{}", prefix, line);
+            {
+                let mut l = logs.lock();
+                if l.len() > 300 {
+                    l.remove(0);
+                }
+                l.push(line.clone());
+            }
+            let mut last_map = last_logs.lock();
+            let ll = last_map.entry(instance_id.clone()).or_insert_with(Vec::new);
+            if ll.len() > 300 {
+                ll.remove(0);
+            }
+            ll.push(line);
+        }
+    });
+}
+
+/// 等待回环 TCP 端口进入监听状态（最多 timeout）。
+///
+/// MediaMTX 若因配置/端口错误瞬间退出，FFmpeg 会静默卡在 RTSP 连接上——
+/// 既不报错也不退出，界面显示运行中、日志正常，但播放器永远连不上。
+fn wait_rtsp_listening(port: u16, timeout: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    while std::time::Instant::now() < deadline {
+        if std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(200)).is_ok()
+        {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(80));
+    }
+    false
+}
+
+/// Windows 保留（排除）的 TCP 端口范围，由 Hyper-V / WinNAT / Docker / WSL
+/// 动态申请。落在这些范围的端口在 netstat 里看不到占用者，但 bind 会返回
+/// WSAEACCES(10013)，即“以访问权限不允许的方式做了一个访问套接字的尝试”。
+fn excluded_tcp_ranges() -> Vec<(u16, u16)> {
+    #[cfg(windows)]
+    {
+        let mut cmd = crate::commands::hidden_cmd::hidden_cmd("netsh");
+        cmd.args(["int", "ipv4", "show", "excludedportrange", "protocol=tcp"]);
+        if let Ok(output) =
+            crate::commands::hidden_cmd::output_capped(cmd, crate::commands::hidden_cmd::DEFAULT_OUTPUT_CAP)
+        {
+            let mut ranges = Vec::new();
+            for line in output.stdout.lines() {
+                let nums: Vec<u16> = line
+                    .split_whitespace()
+                    .filter_map(|t| t.trim_end_matches('*').parse::<u16>().ok())
+                    .collect();
+                if nums.len() == 2 && nums[0] <= nums[1] {
+                    ranges.push((nums[0], nums[1]));
+                }
+            }
+            return ranges;
+        }
+    }
+    Vec::new()
+}
+
+/// 启动前确认端口真的可绑定。系统保留端口不在 netstat 占用列表里，
+/// 只靠 LISTENING 检查拦不住，MediaMTX 会 bind 失败并退出。
+fn check_port_bindable(port: u16, allow_lan: bool) -> Result<(), String> {
+    let host = if allow_lan { "0.0.0.0" } else { "127.0.0.1" };
+    if std::net::TcpListener::bind((host, port)).is_ok() {
+        return Ok(());
+    }
+
+    let reserved = excluded_tcp_ranges()
+        .into_iter()
+        .find(|(start, end)| (*start..=*end).contains(&port));
+    let suggestion = (port.saturating_add(1)..=port.saturating_add(200).min(65535))
+        .find(|p| std::net::TcpListener::bind((host, *p)).is_ok());
+
+    let mut err = match reserved {
+        Some((start, end)) => format!(
+            "端口 {} 落在 Windows 保留的端口范围内（{}-{}，通常由 Hyper-V/WinNAT/Docker/WSL 动态占用），无法绑定",
+            port, start, end
+        ),
+        None => format!("端口 {} 无法绑定（{}）", port, host),
+    };
+    if let Some(free) = suggestion {
+        err.push_str(&format!("；建议改用 {} 端口", free));
+    }
+    err.push_str("。可运行 `netsh int ipv4 show excludedportrange protocol=tcp` 查看保留范围。");
+    Err(err)
+}
+
 /// 获取本机的局域网 IP
 fn get_local_ip() -> String {
     if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
@@ -287,6 +390,16 @@ pub fn start_rtsp_server(
         return Err(err);
     }
 
+    // 系统保留端口（Hyper-V/WinNAT 等）不会出现在 netstat 里，必须实际试绑一次。
+    if let Err(err) = check_port_bindable(config.port, config.allow_lan) {
+        logs.lock().push(format!("[SERVER ERROR] {}", err));
+        if let Some(l) = state.last_logs.lock().get_mut(&instance_id) {
+            l.push(format!("[SERVER ERROR] {}", err));
+        }
+        state.last_errors.lock().insert(instance_id.clone(), Some(err.clone()));
+        return Err(err);
+    }
+
     if has_mediamtx {
         let bind_addr = if config.allow_lan {
             format!("0.0.0.0:{}", config.port)
@@ -304,6 +417,17 @@ pub fn start_rtsp_server(
         let rtcp_port = rtp_port + 1;
 
         let mut mtx_cmd = Command::new(&mediamtx_path);
+        // MediaMTX 只会从「当前工作目录」查找 mediamtx.yml。应用进程的 cwd 不可控
+        // （开发时是 src-tauri，安装后是快捷方式的工作目录），一旦恰好存在同版本
+        // 配置文件，MTX_PATHS_ALL_OTHERS 会与文件里的 all_others 冲突并以
+        // `ERR: all_others, all and '~^.*$' are aliases` 直接退出。
+        // 固定 cwd 到 bin 根目录（不含 mediamtx.yml），保证配置只来自下面的环境变量。
+        let mtx_cwd = crate::commands::utils::get_bin_dir();
+        if mtx_cwd.is_dir() {
+            mtx_cmd.current_dir(&mtx_cwd);
+        }
+        // 空配置下必须显式声明 paths.all_others，否则发布任意路径会返回 400
+        // "path 'xxx' is not configured"。
         mtx_cmd.env("MTX_PATHS_ALL_OTHERS", "{}");
         mtx_cmd.env("MTX_RTPADDRESS", format!(":{}", rtp_port));
         mtx_cmd.env("MTX_RTCPADDRESS", format!(":{}", rtcp_port));
@@ -324,9 +448,26 @@ pub fn start_rtsp_server(
         }
 
         match mtx_cmd.spawn() {
-            Ok(child) => {
+            Ok(mut child) => {
+                if let Some(out) = child.stdout.take() {
+                    spawn_output_reader(
+                        out,
+                        Arc::clone(&logs),
+                        Arc::clone(&state.last_logs),
+                        instance_id.clone(),
+                        "[MEDIAMTX] ",
+                    );
+                }
+                if let Some(err) = child.stderr.take() {
+                    spawn_output_reader(
+                        err,
+                        Arc::clone(&logs),
+                        Arc::clone(&state.last_logs),
+                        instance_id.clone(),
+                        "[MEDIAMTX] ",
+                    );
+                }
                 mediamtx_child = Some(child);
-                std::thread::sleep(std::time::Duration::from_millis(300));
             }
             Err(e) => {
                 let mtx_err = format!("[SERVER WARN] 启动 MediaMTX 失败: {}，回退到 FFmpeg 监听模式", e);
@@ -334,6 +475,32 @@ pub fn start_rtsp_server(
                 if let Some(l) = state.last_logs.lock().get_mut(&instance_id) {
                     l.push(mtx_err);
                 }
+            }
+        }
+
+        // 确认 MediaMTX 真的在监听后再拉 FFmpeg：否则 FFmpeg 会静默挂在连接上，
+        // 形成「显示运行中 + 无异常日志 + 播放器连不上」的假运行状态。
+        if let Some(ref mut mtx) = mediamtx_child {
+            let exited = matches!(mtx.try_wait(), Ok(Some(_)));
+            let listening = !exited && wait_rtsp_listening(config.port, std::time::Duration::from_secs(3));
+            if exited || !listening {
+                // 等日志读取线程把 MediaMTX 的报错搬进缓冲
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                let captured = logs.lock().join("\n");
+                let _ = mtx.kill();
+                let err = if exited {
+                    format!(
+                        "MediaMTX 启动即退出，RTSP 服务未就绪。\n{}\n请检查端口 {} 是否被占用、配置是否与 MediaMTX 版本匹配",
+                        captured, config.port
+                    )
+                } else {
+                    format!(
+                        "MediaMTX 未能在端口 {} 上监听 RTSP（等待超时）。\n{}",
+                        config.port, captured
+                    )
+                };
+                state.last_errors.lock().insert(instance_id.clone(), Some(err.clone()));
+                return Err(err);
             }
         }
     } else {
@@ -560,29 +727,13 @@ pub fn start_rtsp_server(
 
     // 捕获 stderr 日志
     if let Some(stderr) = child.stderr.take() {
-        let logs_clone = Arc::clone(&logs);
-        let last_logs_arc = Arc::clone(&state.last_logs);
-        let inst_id = instance_id.clone();
-        std::thread::spawn(move || {
-            let reader = BufReader::new(stderr);
-            for line in reader.lines().flatten() {
-                {
-                    let mut l = logs_clone.lock();
-                    if l.len() > 300 {
-                        l.remove(0);
-                    }
-                    l.push(line.clone());
-                }
-                {
-                    let mut last_map = last_logs_arc.lock();
-                    let ll = last_map.entry(inst_id.clone()).or_insert_with(Vec::new);
-                    if ll.len() > 300 {
-                        ll.remove(0);
-                    }
-                    ll.push(line);
-                }
-            }
-        });
+        spawn_output_reader(
+            stderr,
+            Arc::clone(&logs),
+            Arc::clone(&state.last_logs),
+            instance_id.clone(),
+            "",
+        );
     }
 
     // 延迟 400ms 检测进程是否启动即崩溃
@@ -595,8 +746,24 @@ pub fn start_rtsp_server(
             format!("FFmpeg 启动失败 (退出码: {}):\n{}\n命令: {}", exit_status, captured, full_cmd_line)
         };
 
+        if let Some(ref mut mtx) = mediamtx_child {
+            let _ = mtx.kill();
+        }
         state.last_errors.lock().insert(instance_id.clone(), Some(err_msg.clone()));
         return Err(err_msg);
+    }
+
+    // MediaMTX 在上面的竞态窗口里退出的话，FFmpeg 会一直卡在推流连接上不报错，
+    // 这里再确认一次，避免把「假运行」状态写进实例表。
+    if let Some(ref mut mtx) = mediamtx_child {
+        if matches!(mtx.try_wait(), Ok(Some(_))) {
+            let _ = child.kill();
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            let captured = logs.lock().join("\n");
+            let err_msg = format!("MediaMTX 在 FFmpeg 推流前退出，RTSP 服务不可用。\n{}", captured);
+            state.last_errors.lock().insert(instance_id.clone(), Some(err_msg.clone()));
+            return Err(err_msg);
+        }
     }
 
     let local_url = format!("rtsp://127.0.0.1:{}/{}", config.port, path_clean);
@@ -699,11 +866,18 @@ pub fn get_rtsp_server_status(
     let mut lan_url = None;
 
     if let Some(inner) = guard.get_mut(&id) {
+        // MediaMTX 退出后 FFmpeg 会永久卡在推流连接上（不退出、不报错），
+        // 只看 FFmpeg 存活会把死掉的实例误报为「运行中」。
+        let mtx_exited = match inner.mediamtx_child.as_mut() {
+            Some(mtx) => matches!(mtx.try_wait(), Ok(Some(_))),
+            None => false,
+        };
+
         match inner.ffmpeg_child.try_wait() {
             Ok(Some(_code)) => {
                 is_running = false;
             }
-            Ok(None) => {
+            Ok(None) if !mtx_exited => {
                 is_running = true;
                 pid = Some(inner.ffmpeg_child.id());
                 ffmpeg_pid = Some(inner.ffmpeg_child.id());
@@ -717,6 +891,9 @@ pub fn get_rtsp_server_status(
                     None
                 };
             }
+            Ok(None) => {
+                is_running = false;
+            }
             Err(_) => {
                 is_running = false;
             }
@@ -724,10 +901,20 @@ pub fn get_rtsp_server_status(
 
         config = Some(inner.config.clone());
         logs = inner.logs.lock().clone();
+
+        if !is_running && mtx_exited {
+            let captured = logs.join("\n");
+            let err = format!(
+                "MediaMTX 已退出，RTSP 服务不可用（推流进程会卡在连接上），请重新启动该实例。\n{}",
+                captured
+            );
+            state.last_errors.lock().insert(id.clone(), Some(err));
+        }
     }
 
     if !is_running {
         if let Some(mut inner) = guard.remove(&id) {
+            let _ = inner.ffmpeg_child.kill();
             if let Some(ref mut mtx) = inner.mediamtx_child {
                 let _ = mtx.kill();
             }
