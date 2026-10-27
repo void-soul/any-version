@@ -24,6 +24,7 @@ use std::process::Command;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::sync::Mutex;
+use tauri::Emitter;
 use tauri::Manager;
 
 #[allow(dead_code)]
@@ -768,12 +769,105 @@ fn has_existing_cert(cert_dir: &PathBuf) -> bool {
     })
 }
 
+/// 申请日志事件名（逐行推送，前端 `listen` 同名事件）。
+pub const CERT_ISSUE_LOG_EVENT: &str = "cert-issue-log";
+
+#[derive(Clone, serde::Serialize)]
+struct IssueLogEvent {
+    cert_id: String,
+    line: String,
+}
+
+/// 申请 / 续期的日志出口：落盘到 `certs/logs/<证书 id>.log`，同时逐行推给前端。
+///
+/// 为什么要有：lego 一次签发常要 30s~2min（DNS 传播 + ACME 轮询），以前用
+/// `cmd.output()` 一次收全量输出、只在失败时拼进弹窗，用户全程看不到进度，
+/// 排查还得去跑 app 的终端翻 eprintln。
+struct IssueLog {
+    cert_id: String,
+    file: Option<std::fs::File>,
+    app: Option<tauri::AppHandle>,
+}
+
+/// 单个证书的日志文件路径。
+fn issue_log_path(cert_id: &str) -> PathBuf {
+    ensure_dir().join("logs").join(format!("{}.log", cert_id))
+}
+
+/// 超过这个大小就把旧日志轮转成 `.log.1`，避免无限增长。
+const ISSUE_LOG_MAX_BYTES: u64 = 2 * 1024 * 1024;
+
+impl IssueLog {
+    fn new(app: Option<tauri::AppHandle>, cert_id: &str) -> Self {
+        Self::open(app, cert_id, issue_log_path(cert_id))
+    }
+
+    fn open(app: Option<tauri::AppHandle>, cert_id: &str, path: PathBuf) -> Self {
+        let file = (|| {
+            let dir = path.parent()?;
+            std::fs::create_dir_all(dir).ok()?;
+            let too_big = std::fs::metadata(&path)
+                .map(|m| m.len() > ISSUE_LOG_MAX_BYTES)
+                .unwrap_or(false);
+            if too_big {
+                let _ = std::fs::rename(&path, path.with_extension("log.1"));
+            }
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .ok()
+        })();
+        Self {
+            cert_id: cert_id.to_string(),
+            file,
+            app,
+        }
+    }
+
+    /// 写一行：终端 + 日志文件 + 前端（任何一路失败都不影响签发本身）。
+    fn line(&mut self, s: impl AsRef<str>) {
+        let line = s.as_ref();
+        eprintln!("[cert:{}] {}", self.cert_id, line);
+        if let Some(f) = self.file.as_mut() {
+            use std::io::Write;
+            let _ = writeln!(f, "{}", line);
+            // 逐行 flush：用户可能正在盯实时日志，缓一行就白等了
+            let _ = f.flush();
+        }
+        if let Some(app) = self.app.as_ref() {
+            let _ = app.emit(
+                CERT_ISSUE_LOG_EVENT,
+                IssueLogEvent {
+                    cert_id: self.cert_id.clone(),
+                    line: line.to_string(),
+                },
+            );
+        }
+    }
+}
+
+/// 读一路子进程管道并逐行送进 mpsc；写日志由 `run_lego` 的主线程统一做。
+fn read_pipe_lines(
+    pipe: impl std::io::Read,
+    is_stderr: bool,
+    tx: std::sync::mpsc::Sender<(bool, String)>,
+) {
+    use std::io::BufRead;
+    for line in std::io::BufReader::new(pipe).lines().map_while(Result::ok) {
+        if tx.send((is_stderr, line)).is_err() {
+            break; // 接收端已经结束（例如主线程提前返回），别再读了
+        }
+    }
+}
+
 /// `force` = 手动「申请」：即使还没到续期时间也要求 lego 重签。
 fn run_lego(
     cert: &Certificate,
     cred: Option<&Credential>,
     renew: bool,
     force: bool,
+    log: &mut IssueLog,
 ) -> Result<(String, String, String), String> {
     let lego = find_lego();
     let cert_dir = ensure_dir().join(&cert.id);
@@ -787,6 +881,8 @@ fn run_lego(
     #[cfg(windows)]
     cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     cmd.arg("run");
+    // 纯文本日志：默认的 colored 格式带 ANSI 控制符，在前端日志面板里是乱码
+    cmd.arg("--log.format").arg("text");
     cmd.arg("--email").arg(&cert.email);
     cmd.arg("--accept-tos");
     cmd.arg("--key-type").arg("rsa4096");
@@ -854,26 +950,71 @@ fn run_lego(
         }
         s
     };
-    eprintln!("[cert] lego 命令: {}{} run",
-        if renew { "(renew) " } else { "" }, cmd_dbg);
+    log.line(format!(
+        "$ {}{}",
+        if renew { "(续期) " } else { "(首次签发) " },
+        cmd_dbg
+    ));
 
-    let out = cmd.output().map_err(|e| format!(
-        "启动 lego 失败: {}（lego 路径={}；请确认 lego 在 bin/ 版本化目录、PATH 或数据目录的 bin/ 中，且架构匹配当前系统）",
-        e, lego
-    ))?;
-    if !out.status.success() {
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        // 同时打印到控制台，方便在运行 app 的终端查看完整错误
-        eprintln!("[cert] lego 执行失败 ({})\n--- stdout ---\n{}\n--- stderr ---\n{}",
-            out.status, stdout, stderr);
+    // 流式读取：两路管道必须**同时**读，否则子进程写满管道缓冲区就会卡死在那儿。
+    // 这里 stdout / stderr 各起一个读线程，行统一经 mpsc 回到本线程写日志/汇总，
+    // 保证日志顺序稳定且只有单写者。
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| {
+        let msg = format!(
+            "启动 lego 失败: {}（lego 路径={}；请确认 lego 在 bin/ 版本化目录、PATH 或数据目录的 bin/ 中，且架构匹配当前系统）",
+            e, lego
+        );
+        log.line(&msg);
+        msg
+    })?;
+
+    let (tx, rx) = std::sync::mpsc::channel::<(bool, String)>();
+    let mut readers = Vec::new();
+    if let Some(out) = child.stdout.take() {
+        let tx = tx.clone();
+        readers.push(std::thread::spawn(move || {
+            read_pipe_lines(out, false, tx);
+        }));
+    }
+    if let Some(err) = child.stderr.take() {
+        let tx = tx.clone();
+        readers.push(std::thread::spawn(move || {
+            read_pipe_lines(err, true, tx);
+        }));
+    }
+    drop(tx);
+
+    let mut stdout_all = String::new();
+    let mut stderr_all = String::new();
+    for (is_err, line) in rx {
+        if is_err {
+            stderr_all.push_str(&line);
+            stderr_all.push('\n');
+        } else {
+            stdout_all.push_str(&line);
+            stdout_all.push('\n');
+        }
+        log.line(&line);
+    }
+    for h in readers {
+        let _ = h.join();
+    }
+    let status = child
+        .wait()
+        .map_err(|e| format!("等待 lego 结束失败: {}", e))?;
+    if !status.success() {
+        log.line(format!("lego 执行失败（退出码 {}）", status));
         return Err(format!(
             "lego 执行失败 ({}):\n{}\n{}",
-            out.status, stdout, stderr
+            status, stdout_all, stderr_all
         ));
     }
-    eprintln!("[cert] lego 执行成功 ({}): {}",
-        if renew { "renew" } else { "issue" }, cert_dir.display());
+    log.line(format!(
+        "lego 执行成功（{}）",
+        if renew { "续期" } else { "签发" }
+    ));
     let prefer = cert.domains.first().map(|s| s.as_str());
     let stores = lego_cert_dirs(&cert_dir);
     let pems = read_lego_pems(&cert_dir, prefer).ok_or_else(|| {
@@ -3286,7 +3427,13 @@ pub struct IssueResult {
 ///
 /// `force`：用户手动点「申请」时为 true —— 立刻重签，不看续期阈值；
 /// 定时任务传 false，交给 lego 按 `renew_before_days` 自己判断该不该续。
-pub async fn issue_and_deploy(cert_id: &str, force: bool) -> Result<IssueResult, String> {
+/// `app`：用于把整个过程（lego 输出 + 部署结果）实时推给前端；没有也能跑，只是没有实时日志。
+pub async fn issue_and_deploy(
+    app: Option<tauri::AppHandle>,
+    cert_id: &str,
+    force: bool,
+) -> Result<IssueResult, String> {
+    let mut log = IssueLog::new(app, cert_id);
     let mut certs = load_certs();
     let mut nodes = load_json::<DeployNode>("deploy_nodes.json");
     let creds = load_json::<Credential>("credentials.json");
@@ -3296,6 +3443,13 @@ pub async fn issue_and_deploy(cert_id: &str, force: bool) -> Result<IssueResult,
         .position(|c| c.id == cert_id)
         .ok_or_else(|| "证书不存在".to_string())?;
     let cert = certs[idx].clone();
+    log.line(format!(
+        "===== {} | {} | {} | 域名：{} =====",
+        Utc::now().format("%Y-%m-%d %H:%M:%S"),
+        if force { "强制重签" } else { "按阈值续期" },
+        if cert.ca.is_empty() { "letsencrypt" } else { cert.ca.as_str() },
+        cert.domains.join(", ")
+    ));
 
     // HTTP 验证不需要 DNS 授权凭据；DNS 验证必须有
     let cred = creds
@@ -3306,9 +3460,10 @@ pub async fn issue_and_deploy(cert_id: &str, force: bool) -> Result<IssueResult,
     let cert_dir = ensure_dir().join(&cert.id);
     let fingerprint_before = cert_store_fingerprint(&cert_dir);
     let renew = has_existing_cert(&cert_dir);
-    let pems = match run_lego(&cert, cred.as_ref(), renew, force) {
+    let pems = match run_lego(&cert, cred.as_ref(), renew, force, &mut log) {
         Ok(v) => v,
         Err(e) => {
+            log.line(format!("✗ 申请失败：{}", e));
             certs[idx].status = "error".to_string();
             certs[idx].last_error = Some(e.clone());
             save_json("certificates.json", &certs);
@@ -3317,6 +3472,9 @@ pub async fn issue_and_deploy(cert_id: &str, force: bool) -> Result<IssueResult,
     };
     // lego 跳过续期时退出码仍是 0，只能靠「文件有没有变」判断这次到底签没签
     let renewed = fingerprint_before != cert_store_fingerprint(&cert_dir);
+    if !renewed {
+        log.line("未到续期时间：lego 跳过了续期，磁盘上的证书没有变化（退出码 0）");
+    }
 
     // 更新有效期（从证书 DER 解析 notBefore / notAfter）
     let (not_before, not_after) = extract_validity(&pems.0);
@@ -3335,6 +3493,14 @@ pub async fn issue_and_deploy(cert_id: &str, force: bool) -> Result<IssueResult,
         .as_ref()
         .and_then(|na| DateTime::parse_from_rfc3339(na).ok())
         .map(|d| (d.with_timezone(&Utc) - Utc::now()).num_days());
+    log.line(format!(
+        "证书有效期：{} → {}（剩余 {} 天）",
+        certs[idx].not_before.clone().unwrap_or_else(|| "-".into()),
+        certs[idx].not_after.clone().unwrap_or_else(|| "-".into()),
+        days_left
+            .map(|d| d.to_string())
+            .unwrap_or_else(|| "-".to_string())
+    ));
 
     // 域名列表 → 部署方式关联；target 用于 CDN / 负载均衡等需要目标域名的节点
     let links: Vec<DeployLink> = if cert.deploy_links.is_empty() {
@@ -3357,14 +3523,21 @@ pub async fn issue_and_deploy(cert_id: &str, force: bool) -> Result<IssueResult,
             } else {
                 link.target.trim().to_string()
             };
+            log.line(format!(
+                "→ 部署到「{}」（{}）…",
+                node.name,
+                if target.is_empty() { "默认域名" } else { target.as_str() }
+            ));
             match deploy_to_node(&node, &cert, &pems, &target).await {
                 Ok(()) => {
+                    log.line("  部署成功");
                     if let Some(n) = nodes.iter_mut().find(|n| n.id == link.node_id) {
                         n.last_deploy_at = Some(now.clone());
                         n.last_deploy_error = None;
                     }
                 }
                 Err(e) => {
+                    log.line(format!("  部署失败：{}", e));
                     if let Some(n) = nodes.iter_mut().find(|n| n.id == link.node_id) {
                         n.last_deploy_error = Some(e.clone());
                     }
@@ -3373,21 +3546,21 @@ pub async fn issue_and_deploy(cert_id: &str, force: bool) -> Result<IssueResult,
         }
     }
 
+    if links.is_empty() {
+        log.line("（未关联任何部署方式，跳过部署）");
+    }
+
     let updated = certs[idx].clone();
     save_json("certificates.json", &certs);
     save_json("deploy_nodes.json", &nodes);
-    eprintln!(
-        "[cert] {} {}（剩余 {} 天）",
-        cert_id,
+    log.line(format!(
+        "===== 结束：{} =====",
         if renewed {
             "已重新签发"
         } else {
-            "未到续期时间，已跳过"
-        },
-        days_left
-            .map(|d| d.to_string())
-            .unwrap_or_else(|| "-".to_string())
-    );
+            "未到续期时间，证书未变化"
+        }
+    ));
     Ok(IssueResult {
         cert: updated,
         renewed,
@@ -4228,7 +4401,7 @@ pub fn start_scheduler(app: tauri::AppHandle) {
 
             for id in due_certs {
                 // 定时任务不强制：到没到期由 lego 按 renew_before_days 判断
-                let result = issue_and_deploy(&id, false).await;
+                let result = issue_and_deploy(Some(app.clone()), &id, false).await;
                 let (ok, message) = match &result {
                     Ok(r) if r.renewed => (true, "已续期".to_string()),
                     Ok(r) => (
@@ -4452,9 +4625,23 @@ pub fn cert_delete(id: String) {
 }
 
 #[tauri::command]
-pub async fn cert_issue_now(id: String) -> Result<IssueResult, String> {
+pub async fn cert_issue_now(app: tauri::AppHandle, id: String) -> Result<IssueResult, String> {
     // 手动点「申请」= 立刻重签，不受续期阈值限制（否则 lego 会静默跳过）
-    issue_and_deploy(&id, true).await
+    issue_and_deploy(Some(app), &id, true).await
+}
+
+/// 读取某证书的申请日志（最近 200KB，前端「日志」按钮用；没有日志时返回空串）。
+#[tauri::command]
+pub fn cert_issue_log(id: String) -> Result<String, String> {
+    const MAX_READ: usize = 200 * 1024;
+    match std::fs::read(issue_log_path(&id)) {
+        Ok(bytes) => {
+            let start = bytes.len().saturating_sub(MAX_READ);
+            Ok(String::from_utf8_lossy(&bytes[start..]).to_string())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(format!("读取申请日志失败: {}", e)),
+    }
 }
 
 #[tauri::command]
@@ -4646,7 +4833,7 @@ pub fn cert_scheduler_set(enabled: bool, interval_minutes: Option<u64>, state: t
 }
 
 #[tauri::command]
-pub async fn cert_scheduler_run_now() -> Result<Vec<String>, String> {
+pub async fn cert_scheduler_run_now(app: tauri::AppHandle) -> Result<Vec<String>, String> {
     let certs = load_certs();
     let now = Utc::now();
     let mut results = Vec::new();
@@ -4663,7 +4850,7 @@ pub async fn cert_scheduler_run_now() -> Result<Vec<String>, String> {
             results.push(format!("{}: 未到续期时间，已跳过", c.id));
             continue;
         }
-        match issue_and_deploy(&c.id, false).await {
+        match issue_and_deploy(Some(app.clone()), &c.id, false).await {
             Ok(r) if r.renewed => results.push(format!("{}: ok", c.id)),
             Ok(r) => results.push(format!(
                 "{}: 未到续期时间，已跳过（剩余 {} 天）",
@@ -5108,6 +5295,20 @@ mod tests {
         std::fs::write(store.join("a.com.crt"), "NEW-LEAF").unwrap();
         assert_ne!(before, cert_store_fingerprint(&base));
 
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 申请日志要真的落盘：实时面板关掉之后，用户还能从这里回看。
+    #[test]
+    fn issue_log_writes_lines_to_file() {
+        let base = unique_tmp("anyver_issue_log");
+        let path = base.join("logs").join("cert-1.log");
+        let mut log = IssueLog::open(None, "cert-1", path.clone());
+        log.line("first line");
+        log.line("第二行");
+        let text = std::fs::read_to_string(&path).expect("日志应已落盘");
+        assert!(text.contains("first line"));
+        assert!(text.contains("第二行"));
         let _ = std::fs::remove_dir_all(&base);
     }
 

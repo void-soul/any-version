@@ -875,6 +875,7 @@ pub fn run() {
             commands::cert::cert_update_links,
             commands::cert::cert_delete,
             commands::cert::cert_issue_now,
+            commands::cert::cert_issue_log,
             commands::cert::cert_get_pem,
             commands::cert::cert_detail,
             commands::cert::cert_export_zip,

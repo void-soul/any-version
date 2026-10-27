@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { theamedAlert, alertError, theamedConfirm } from "../shared/ThemedAlert";
 import { toast } from "../shared/Toast";
+import { SharedModal } from "../shared/Modal";
+import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -434,12 +436,101 @@ function fmtDate(s?: string | null): string {
   return s.replace("T", " ").slice(0, 19);
 }
 
+/** 申请日志事件（与后端 cert.rs `CERT_ISSUE_LOG_EVENT` 对齐） */
+const CERT_ISSUE_LOG_EVENT = "cert-issue-log";
+
+interface IssueLogPayload {
+  cert_id: string;
+  line: string;
+}
+
 /** 距某时间点还有多少天（向下取整，负数表示已过期）；无法解析返回 null。 */
 function daysUntil(s?: string | null): number | null {
   if (!s) return null;
   const t = Date.parse(s);
   if (Number.isNaN(t)) return null;
   return Math.floor((t - Date.now()) / 86_400_000);
+}
+
+/**
+ * 申请日志弹窗：live 模式逐行追加并自动滚到底，历史模式直接展示落盘内容。
+ *
+ * 两种模式共用同一个组件，是为了让「正在跑」和「回看」看到的东西完全一致 ——
+ * 申请途中关掉面板，再点行内「日志」看到的就是同一份内容（后端同时落盘）。
+ */
+function IssueLogModal({
+  open,
+  title,
+  lines,
+  summary,
+  onClose,
+}: {
+  open: boolean;
+  title: string;
+  lines: string[];
+  summary?: string;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  // 新行进来就贴底：签发过程几十秒，用户不该边看边手动滚
+  useEffect(() => {
+    const el = boxRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [lines.length, open]);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // 复制失败不影响查看
+    }
+  };
+
+  return (
+    <SharedModal
+      open={open}
+      onClose={onClose}
+      title={title}
+      width={780}
+      footer={
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={copy}
+            className="px-3 py-1.5 rounded-ctl bg-white/10 text-slate-300 text-caption cursor-pointer"
+          >
+            {copied ? t("certmgr.copied") : t("certmgr.copy")}
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-caption font-semibold cursor-pointer"
+          >
+            {t("certmgr.close")}
+          </button>
+        </div>
+      }
+    >
+      {summary && <div className="mb-2 text-caption text-slate-300">{summary}</div>}
+      <div
+        ref={boxRef}
+        className="max-h-[55vh] overflow-y-auto rounded-ctl border border-white/10 bg-black/40 p-2"
+      >
+        {lines.length === 0 ? (
+          <div className="text-caption text-slate-500">{t("certmgr.issueLogEmpty")}</div>
+        ) : (
+          <pre className="text-micro font-mono whitespace-pre-wrap break-all text-slate-300">
+            {lines.join("\n")}
+          </pre>
+        )}
+      </div>
+    </SharedModal>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -508,6 +599,16 @@ function CertList() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [copiedName, setCopiedName] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
+  // 申请日志：live 是正在跑的那一次（实时流），history 是手动打开的历史
+  const [liveLog, setLiveLog] = useState<{
+    id: string;
+    domain: string;
+    lines: string[];
+    summary?: string;
+  } | null>(null);
+  const [historyLog, setHistoryLog] = useState<{ domain: string; lines: string[] } | null>(null);
+  // 日志面板是否还开着：用户中途关掉后失败才需要额外弹一个阻塞提示
+  const liveLogOpenRef = useRef(false);
 
   const refresh = useCallback(async () => {
     setCerts(await invoke<Certificate[]>("cert_list"));
@@ -532,23 +633,59 @@ function CertList() {
       );
       if (!ok) return;
     }
+    const domain = target?.domains.join(", ") || id;
     markIssuing(id, true);
+    liveLogOpenRef.current = true;
+    setLiveLog({ id, domain, lines: [] });
+    let unlisten: (() => void) | undefined;
     try {
+      // 先订阅再 invoke：否则 lego 最早的几行（命令行、账号复用）会在订阅前就推完
+      unlisten = await listen<IssueLogPayload>(CERT_ISSUE_LOG_EVENT, (e) => {
+        if (e.payload.cert_id !== id) return;
+        const line = e.payload.line;
+        setLiveLog((prev) =>
+          prev && prev.id === id ? { ...prev, lines: [...prev.lines, line] } : prev,
+        );
+      });
       const res = await invoke<IssueResult>("cert_issue_now", { id });
       await refresh();
       if (res.renewed) {
-        toast(t("certmgr.applyDone", { time: fmtDate(res.cert?.not_after) }));
+        const summary = t("certmgr.applyDone", { time: fmtDate(res.cert?.not_after) });
+        toast(summary);
+        setLiveLog((p) => (p && p.id === id ? { ...p, summary } : p));
       } else {
         // 后端如实回报「没签」：说清楚原因，别让用户以为按钮坏了
-        theamedAlert(
-          t("certmgr.applySkipped", { days: res.days_left ?? 0, threshold }),
-          "info",
-        );
+        const summary = t("certmgr.applySkipped", { days: res.days_left ?? 0, threshold });
+        setLiveLog((p) => (p && p.id === id ? { ...p, summary } : p));
       }
     } catch (e) {
-      alertError(t("certmgr.applyFail", { err: String(e) }));
+      const msg = String(e);
+      setLiveLog((p) =>
+        p && p.id === id
+          ? { ...p, lines: [...p.lines, "", `✗ ${msg}`], summary: t("certmgr.applyFail", { err: msg }) }
+          : p,
+      );
+      // 日志面板还开着就已经把错误摆在最上面了；只有用户中途关掉时才额外弹提示
+      if (!liveLogOpenRef.current) alertError(t("certmgr.applyFail", { err: msg }));
     } finally {
+      unlisten?.();
       markIssuing(id, false);
+    }
+  };
+
+  const closeLiveLog = () => {
+    liveLogOpenRef.current = false;
+    setLiveLog(null);
+  };
+
+  /** 打开某证书的历史申请日志（后端落盘在 certs/logs/<id>.log） */
+  const openLog = async (c: Certificate) => {
+    const domain = c.domains.join(", ") || c.id;
+    try {
+      const text = await invoke<string>("cert_issue_log", { id: c.id });
+      setHistoryLog({ domain, lines: text ? text.replace(/\n+$/, "").split("\n") : [] });
+    } catch (e) {
+      theamedAlert(String(e), "err");
     }
   };
   const del = async (id: string) => {
@@ -719,6 +856,13 @@ function CertList() {
                   >
                     {t("certmgr.view")}
                   </button>
+                  <button
+                    onClick={() => openLog(c)}
+                    className="text-slate-400 hover:text-slate-200 mr-2"
+                    title={t("certmgr.issueLogHint")}
+                  >
+                    {t("certmgr.log")}
+                  </button>
                   <button onClick={() => del(c.id)} className="text-rose-400 hover:text-rose-300">
                     <Trash2 className="w-3.5 h-3.5 inline" />
                   </button>
@@ -842,6 +986,22 @@ function CertList() {
           </div>
         </div>
       )}
+
+      {/* 申请过程实时日志（关掉面板不影响后端继续跑，内容同时落盘） */}
+      <IssueLogModal
+        open={!!liveLog}
+        title={t("certmgr.issueLogTitle", { domain: liveLog?.domain ?? "" })}
+        lines={liveLog?.lines ?? []}
+        summary={liveLog ? liveLog.summary ?? t("certmgr.issueLogRunning") : undefined}
+        onClose={closeLiveLog}
+      />
+      {/* 历史日志（certs/logs/<证书>.log） */}
+      <IssueLogModal
+        open={!!historyLog}
+        title={t("certmgr.issueLogTitle", { domain: historyLog?.domain ?? "" })}
+        lines={historyLog?.lines ?? []}
+        onClose={() => setHistoryLog(null)}
+      />
     </div>
   );
 }
