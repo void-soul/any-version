@@ -847,6 +847,30 @@ impl IssueLog {
     }
 }
 
+/// 把 lego 的「连不上」类错误翻译成人话 —— 原始输出里 `no such host` 对用户
+/// 没有任何信息量，只会让人以为证书模块坏了。
+fn lego_network_hint(stdout: &str, stderr: &str) -> Option<String> {
+    let all = format!("{}\n{}", stdout, stderr);
+    if all.contains("no such host") {
+        // 实测：本机 DNS（如移动的 211.136.112.50）解析不了阿里云 GDS 那条
+        // `alidns.cn-hangzhou.aliyuncs.com → …alibabadns.com → popunify-…` 的 CNAME 链，
+        // Go 的解析器就报 no such host；换成 223.5.5.5 立刻正常。
+        return Some(
+            "lego 解析不了上面报错里的域名（DNS 返回 no such host）。这通常是本机 DNS 或代理的问题：\
+             把网卡 DNS 换成 223.5.5.5 / 119.29.29.29，或让代理放行 *.aliyuncs.com 后重试。"
+                .to_string(),
+        );
+    }
+    if all.contains("Client.Timeout exceeded")
+        || all.contains("i/o timeout")
+        || all.contains("context deadline exceeded")
+        || all.contains("connection reset")
+    {
+        return Some("连接上游超时/被重置。确认网络或代理稳定后重试。".to_string());
+    }
+    None
+}
+
 /// 读一路子进程管道并逐行送进 mpsc；写日志由 `run_lego` 的主线程统一做。
 fn read_pipe_lines(
     pipe: impl std::io::Read,
@@ -939,6 +963,9 @@ fn run_lego(
         // 签发成功，于是刷新后数据毫无变化 —— 用户看到的就是「点申请没反应」。
         // 手动申请要走真实续期，必须加 --renew-force 绕过到期判断。
         cmd.arg("--renew-force");
+        // 续期前 lego 会随机 sleep（实测有 2m50s 的），本意是分散 CA 尖峰、只对
+        // 自动化续期有意义；用户手动点「申请」时这 3 分钟纯属干等，跳过它。
+        cmd.arg("--no-random-sleep");
     }
 
     // 打印完整命令行，便于在终端排查
@@ -1006,10 +1033,16 @@ fn run_lego(
         .map_err(|e| format!("等待 lego 结束失败: {}", e))?;
     if !status.success() {
         log.line(format!("lego 执行失败（退出码 {}）", status));
-        return Err(format!(
+        let mut msg = format!(
             "lego 执行失败 ({}):\n{}\n{}",
             status, stdout_all, stderr_all
-        ));
+        );
+        if let Some(hint) = lego_network_hint(&stdout_all, &stderr_all) {
+            log.line(format!("提示：{}", hint));
+            msg.push_str("\n\n提示：");
+            msg.push_str(&hint);
+        }
+        return Err(msg);
     }
     log.line(format!(
         "lego 执行成功（{}）",
@@ -5310,6 +5343,26 @@ mod tests {
         assert!(text.contains("first line"));
         assert!(text.contains("第二行"));
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 网络类失败要翻译成人话，否则用户只看到 `no such host` 一脸懵。
+    #[test]
+    fn network_hint_explains_dns_and_timeout() {
+        let dns = lego_network_hint(
+            "",
+            "alicloud: API call failed: dial tcp: lookup alidns.cn-hangzhou.aliyuncs.com: no such host",
+        )
+        .expect("应识别 DNS 解析失败");
+        assert!(dns.contains("223.5.5.5"));
+
+        let timeout = lego_network_hint(
+            "",
+            "context deadline exceeded (Client.Timeout exceeded while awaiting headers)",
+        )
+        .expect("应识别超时");
+        assert!(timeout.contains("超时"));
+
+        assert!(lego_network_hint("", "INFO everything is fine").is_none());
     }
 
     /// 空的证书目录不算「已有证书」，否则首次申请会被当成续期。
