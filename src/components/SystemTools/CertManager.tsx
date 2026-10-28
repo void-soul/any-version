@@ -199,7 +199,14 @@ const NODE_FIELDS: Record<string, FieldSpec[]> = {
   api: [
     { key: "url", label: "接收端地址", type: "text", placeholder: "http://127.0.0.1:9000" },
     { key: "token", label: "共享 Token", type: "password" },
-    { key: "api_key", label: "客户端 API 密钥", type: "password", placeholder: "与 cert-receiver.toml 的 api_key 一致" },
+    {
+      key: "api_key",
+      label: "客户端 API 密钥（仅拉取用）",
+      type: "password",
+      // 推送只用上面的 Token；这个值只给「取证书的客户端」算 /api/open/getCertificate 的签名用，
+      // 接收端留空即关闭拉取接口。此前提示写成“与接收端一致”，容易被当成推送凭据。
+      placeholder: "可选：与接收端 api_key 一致，供客户端拉取接口签名；推送不校验",
+    },
   ],
   docker: [
     { key: "url", label: "接收端地址", type: "text", placeholder: "http://127.0.0.1:9000" },

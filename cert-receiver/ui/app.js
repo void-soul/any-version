@@ -15,6 +15,8 @@ let running = false;
 let autoScroll = true;
 let logs = [];
 let logCounter = 0;
+/** 上一次刷新状态时的成功推送次数，用来判断「收到新证书了」 */
+let lastPushes = -1;
 
 /* ── 渲染 ── */
 
@@ -30,6 +32,93 @@ function hint(text, kind = "") {
   }, 6000);
 }
 
+/** 复制到剪贴板：剪贴板 API 被拒时退回 execCommand（WebView 里偶发权限失败）。 */
+async function copyText(text) {
+  if (!text) return false;
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch {
+      /* 放弃 */
+    }
+    ta.remove();
+    return ok;
+  }
+}
+
+/* ── 拉取示例 ── */
+
+let pullTimer = 0;
+
+async function refreshPullList() {
+  const sel = $("pull_cert");
+  const prev = sel.value;
+  let list = [];
+  try {
+    list = await invoke("list_stored_certs");
+  } catch {
+    /* 读不到就按空处理 */
+  }
+  sel.innerHTML = "";
+  if (!list || list.length === 0) {
+    const o = document.createElement("option");
+    o.value = "";
+    o.textContent = "（还没有收到证书）";
+    sel.appendChild(o);
+  } else {
+    for (const c of list) {
+      const o = document.createElement("option");
+      o.value = c.certificate_id;
+      const dom = (c.domains || []).slice(0, 2).join(", ");
+      const exp = (c.expired_time || "").slice(0, 10);
+      o.textContent = [c.certificate_id, dom, exp].filter(Boolean).join(" · ");
+      sel.appendChild(o);
+    }
+    if (prev && list.some((c) => c.certificate_id === prev)) sel.value = prev;
+  }
+  await rebuildPull();
+}
+
+async function rebuildPull() {
+  const curlInput = $("pull_curl");
+  const note = $("pull-note");
+  if (!$("api_key").value.trim()) {
+    curlInput.value = "";
+    note.textContent = "上面还没填 API 密钥：生成/填写后点「保存并应用」，拉取接口才会启用。";
+    return;
+  }
+  try {
+    const ex = await invoke("pull_example", {
+      apiId: $("pull_api_id").value,
+      certificateId: $("pull_cert").value,
+    });
+    curlInput.value = ex.curl;
+    const hosts = (ex.hosts || []).filter(Boolean);
+    if (ex.listen_is_any) {
+      note.textContent =
+        "监听 0.0.0.0：示例里写的是 127.0.0.1，请换成服务器实际地址" +
+        (hosts.length ? `（本机网卡：${hosts.join(" / ")}）` : "") +
+        "；timestamp 5 分钟内有效。";
+    } else {
+      note.textContent =
+        "当前只监听本机，只有同机能访问；要给容器或其它机器用，把「监听地址」改成 0.0.0.0。timestamp 5 分钟内有效。";
+    }
+  } catch (e) {
+    curlInput.value = "";
+    note.textContent = String(e);
+  }
+}
+
 function renderStatus(st) {
   running = !!st.running;
   const badge = $("status");
@@ -37,6 +126,12 @@ function renderStatus(st) {
   $("status-text").textContent = running ? `运行中 ${st.addr}` : "未启动";
   $("toggle").textContent = running ? "停止" : "启动";
   $("toggle").disabled = false;
+
+  // 收到新证书就刷新一次可选列表（拉取示例依赖它）
+  if (st.pushes !== lastPushes) {
+    lastPushes = st.pushes;
+    refreshPullList().catch(() => {});
+  }
 
   if (st.pushes > 0 || st.fails > 0) {
     const result = st.last_push_ok ? "成功" : "失败";
@@ -126,6 +221,11 @@ function renderReloadExtra() {
   box.classList.toggle("hidden", mode === "none" || mode === "");
 }
 
+/** 监听 0.0.0.0 时把风险提示亮出来（只提示，不阻止 —— 服务器上就是要这么配）。 */
+function renderHostWarn() {
+  $("host-warn").classList.toggle("hidden", $("host").value !== "0.0.0.0");
+}
+
 /** 选完 Nginx 目录后顺手补全 conf 路径（只填空的，不覆盖用户手写的值）。 */
 function guessNginxConf(prefix) {
   const input = $("f_nginx_conf");
@@ -145,6 +245,16 @@ function fillForm(cfg) {
   const idx = addr.lastIndexOf(":");
   if (idx > 0) host = addr.slice(0, idx);
   $("port").value = addr.slice(idx + 1).replace(/[^0-9]/g, "") || "9000";
+  // 配置里如果是别的地址（比如指定了某块网卡），补一个选项进来，别让用户的值被悄悄改掉
+  const hostSelect = $("host");
+  if (!Array.from(hostSelect.options).some((o) => o.value === host)) {
+    const o = document.createElement("option");
+    o.value = host;
+    o.textContent = host;
+    hostSelect.appendChild(o);
+  }
+  hostSelect.value = host;
+  renderHostWarn();
   $("token").value = cfg.token || "";
   $("api_key").value = cfg.api_key || "";
   $("output_dir").value = cfg.output_dir || "";
@@ -160,7 +270,7 @@ function collectConfig() {
   }
   return {
     ...form,
-    listen_addr: `${host}:${port}`,
+    listen_addr: `${$("host").value || host}:${port}`,
     token: $("token").value.trim(),
     api_key: $("api_key").value.trim(),
     output_dir: $("output_dir").value.trim(),
@@ -179,6 +289,7 @@ function randomHex(bytes) {
 
 function bindUi() {
   $("reload_mode").addEventListener("change", renderReloadExtra);
+  $("host").addEventListener("change", renderHostWarn);
 
   $("gen-token").addEventListener("click", () => {
     $("token").value = randomHex(16);
@@ -221,12 +332,39 @@ function bindUi() {
       const st = await invoke("save_config", { config: cfg });
       form = { ...cfg };
       renderStatus(st);
+      await rebuildPull(); // api_key / 端口可能变了，签名示例要跟着更新
       hint("已保存并应用", "ok");
     } catch (e) {
       hint(String(e), "err");
     } finally {
       $("save").disabled = false;
     }
+  });
+
+  $("toggle-api").addEventListener("click", () => {
+    const el = $("api_key");
+    const show = el.type === "password";
+    el.type = show ? "text" : "password";
+    $("toggle-api").textContent = show ? "隐藏" : "显示";
+  });
+
+  $("copy-api").addEventListener("click", async () => {
+    const ok = await copyText($("api_key").value.trim());
+    hint(
+      ok ? "已复制 API 密钥，可以贴给容器/脚本" : "复制失败，先点「显示」再手动选中复制",
+      ok ? "ok" : "err",
+    );
+  });
+
+  $("pull-refresh").addEventListener("click", () => rebuildPull());
+  $("pull-copy").addEventListener("click", async () => {
+    const ok = await copyText($("pull_curl").value);
+    hint(ok ? "已复制 curl 命令" : "复制失败，请手动选中内容复制", ok ? "ok" : "err");
+  });
+  $("pull_cert").addEventListener("change", () => rebuildPull());
+  $("pull_api_id").addEventListener("input", () => {
+    clearTimeout(pullTimer);
+    pullTimer = setTimeout(() => rebuildPull(), 300);
   });
 
   $("toggle").addEventListener("click", async () => {

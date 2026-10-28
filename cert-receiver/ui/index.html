@@ -20,6 +20,8 @@
     </header>
 
     <main>
+      <!-- 上半部分（配置 + 拉取示例）自己滚动，日志始终占满剩下的空间 -->
+      <div id="top-scroll">
       <section class="card">
         <div class="card-title">服务配置</div>
 
@@ -27,6 +29,14 @@
           <label>
             监听端口
             <input id="port" type="number" min="1" max="65535" step="1" />
+          </label>
+
+          <label>
+            监听地址
+            <select id="host">
+              <option value="127.0.0.1">127.0.0.1 — 仅本机</option>
+              <option value="0.0.0.0">0.0.0.0 — 允许其它机器 / 容器访问</option>
+            </select>
           </label>
 
           <label>
@@ -39,22 +49,26 @@
             </select>
           </label>
 
-          <label class="span2">
-            共享 Token（Kira 的「Windows 接收端」节点里要填同一个）
-            <span class="row">
-              <input id="token" type="password" spellcheck="false" />
-              <button id="gen-token" type="button">生成</button>
-              <button id="toggle-token" type="button">显示</button>
-            </span>
-          </label>
+          <div class="span2 pair">
+            <label>
+              共享 Token（Kira 的「Windows 接收端」节点填同一个）
+              <span class="row">
+                <input id="token" type="password" spellcheck="false" />
+                <button id="gen-token" type="button">生成</button>
+                <button id="toggle-token" type="button">显示</button>
+              </span>
+            </label>
 
-          <label class="span2">
-            API 密钥（留空则关闭 /api/open/getCertificate 拉取接口）
-            <span class="row">
-              <input id="api_key" type="password" spellcheck="false" />
-              <button id="gen-api" type="button">生成</button>
-            </span>
-          </label>
+            <label>
+              API 密钥（给拉取方用，留空则关闭拉取接口）
+              <span class="row">
+                <input id="api_key" type="password" spellcheck="false" />
+                <button id="gen-api" type="button">生成</button>
+                <button id="toggle-api" type="button">显示</button>
+                <button id="copy-api" type="button">复制</button>
+              </span>
+            </label>
+          </div>
 
           <label class="span2">
             证书输出目录
@@ -78,6 +92,10 @@
           <div class="span2 grid hidden" id="reload-extra"></div>
         </div>
 
+        <p class="warn hidden" id="host-warn">
+          0.0.0.0 会把接收端暴露到局域网/公网：确保共享 Token 足够强，并在防火墙里只放行需要的来源。
+        </p>
+
         <div class="actions">
           <button id="save" class="primary" type="button">保存并应用</button>
           <button id="toggle" type="button">启动</button>
@@ -86,6 +104,33 @@
         </div>
         <div class="path" id="cfg-path"></div>
       </section>
+
+      <section class="card">
+        <div class="card-title">
+          拉取示例（给 Docker / 脚本用）
+          <span class="spacer"></span>
+          <button id="pull-refresh" type="button">刷新签名</button>
+        </div>
+        <div class="grid">
+          <label>
+            apiId
+            <input id="pull_api_id" value="kira-pull" spellcheck="false" />
+          </label>
+          <label>
+            证书（已收到的）
+            <select id="pull_cert"></select>
+          </label>
+          <label class="span2">
+            curl（timestamp 5 分钟内有效，过期点右上「刷新签名」）
+            <span class="row">
+              <input id="pull_curl" readonly spellcheck="false" />
+              <button id="pull-copy" type="button">复制</button>
+            </span>
+          </label>
+        </div>
+        <div class="path" id="pull-note"></div>
+      </section>
+      </div>
 
       <section class="card grow">
         <div class="card-title">

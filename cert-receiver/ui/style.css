@@ -26,6 +26,7 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  overflow-x: hidden;
   background: var(--bg);
   color: var(--text);
   font: 13px/1.5 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
@@ -98,22 +99,38 @@ header {
 main {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   flex: 1;
   min-height: 0;
-  padding: 14px 16px 16px;
+  padding: 12px 14px 14px;
+  /* 页面本身不滚：上半部分（配置/拉取示例）在自己的容器里滚，
+     日志始终占据剩余高度 —— 这是个「随时要看请求结果」的工具，
+     日志被挤到窗口外就只能先去滚页面，很别扭。 */
+  overflow: hidden;
+}
+
+/* 配置 + 拉取示例：内容多时这里滚动 */
+#top-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .card {
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--panel);
-  padding: 12px 14px;
+  padding: 10px 12px;
+  flex: 0 0 auto;
 }
 
 .card.grow {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 auto;
+  min-height: 150px;
   display: flex;
   flex-direction: column;
 }
@@ -134,14 +151,23 @@ main {
   flex: 1;
 }
 
+/* 自适应列数：高 DPI（150%/200% 缩放）下窗口的逻辑像素会明显变小，
+   写死两列会把右侧那列挤出可视区，这里按可用宽度自动降到单列。 */
 .grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 10px 12px;
 }
 
 .span2 {
-  grid-column: span 2;
+  grid-column: 1 / -1;
+}
+
+/* 一对等宽字段（Token / API 密钥）：两列并排，窄窗口自动堆叠 */
+.pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+  gap: 10px 12px;
 }
 
 .hidden {
@@ -225,6 +251,16 @@ button:disabled {
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid var(--border);
+}
+
+.warn {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(251, 191, 36, 0.25);
+  border-radius: 7px;
+  background: rgba(251, 191, 36, 0.08);
+  color: #fcd34d;
+  font-size: 12px;
 }
 
 .hint {

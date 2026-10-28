@@ -12,9 +12,9 @@
       {
         "label": "main",
         "title": "证书接收端",
-        "width": 780,
-        "height": 760,
-        "minWidth": 640,
+        "width": 880,
+        "height": 960,
+        "minWidth": 680,
         "minHeight": 560,
         "center": true,
         "resizable": true

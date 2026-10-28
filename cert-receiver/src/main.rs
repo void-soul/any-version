@@ -17,6 +17,7 @@ use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -56,6 +57,8 @@ pub struct AppState {
     server: Mutex<Option<ServerHandle>>,
     stats: Mutex<Stats>,
     logs: Mutex<VecDeque<String>>,
+    /// 每一代服务的编号：重启时旧任务收尾晚于新任务启动，靠它避免打错日志
+    run_seq: AtomicU64,
 }
 
 #[derive(Serialize, Clone)]
@@ -78,6 +81,7 @@ impl AppState {
             server: Mutex::new(None),
             stats: Mutex::new(Stats::default()),
             logs: Mutex::new(VecDeque::new()),
+            run_seq: AtomicU64::new(0),
         }
     }
 
@@ -170,6 +174,7 @@ impl AppState {
         });
         let (tx, rx) = oneshot::channel::<()>();
         let log_state = self.clone();
+        let run_id = self.run_seq.fetch_add(1, Ordering::SeqCst) + 1;
         tauri::async_runtime::spawn(async move {
             let listener = match tokio::net::TcpListener::from_std(std_listener) {
                 Ok(l) => l,
@@ -178,7 +183,6 @@ impl AppState {
                     return;
                 }
             };
-            log_state.log(format!("服务已就绪，监听 {}", addr));
             let app = server::router(data);
             let served = axum::serve(
                 listener,
@@ -191,15 +195,25 @@ impl AppState {
             if let Err(e) = served {
                 log_state.log(format!("服务异常退出：{}", e));
             }
-            log_state.log("服务已停止");
-            log_state.emit_status();
+            // 只有「当前这一代」还在跑才打停止日志：重启时旧任务收尾晚于新任务启动，
+            // 否则会出现「服务已就绪」之后紧跟一条「服务已停止」的假象。
+            if log_state.run_seq.load(Ordering::SeqCst) == run_id {
+                log_state.log("服务已停止");
+                log_state.emit_status();
+            }
         });
 
         *self.server.lock().unwrap_or_else(|e| e.into_inner()) = Some(ServerHandle { shutdown: tx, addr });
+        // 「就绪」在这里同步打，不放到后台任务里：否则快速停止/重启时会串到
+        // 「服务已停止」后面，日志看着像先停了又起来。
         self.log(format!(
-            "服务已启动：{}（布局 {}，重载 {}）",
+            "服务已就绪，监听 {}（布局 {}，重载 {}）",
             addr, cfg.layout, cfg.reload_mode
         ));
+        if addr.ip().is_unspecified() {
+            // 服务器场景确实需要 0.0.0.0，但这意味着整个网络都能访问，日志里留一句提醒
+            self.log("⚠ 正在监听所有网卡（0.0.0.0）：请确保共享 Token 足够强，并在防火墙限制来源");
+        }
         self.emit_status();
         Ok(())
     }
@@ -288,6 +302,185 @@ fn set_running(state: State<'_, Arc<AppState>>, running: bool) -> Result<Status,
         state.stop_server();
     }
     Ok(state.status())
+}
+
+/// 扫描输出目录里已收到的证书（读每份 meta.json）。
+///
+/// 用户需要知道「到底收到了哪些、什么时候到期」，也才有东西可选来生成拉取示例。
+#[derive(Serialize)]
+struct StoredCert {
+    /// 落盘目录名（可能就是证书 ID，也可能是域名，取决于 layout）
+    dir: String,
+    certificate_id: String,
+    domains: Vec<String>,
+    expired_time: String,
+    updated_at_ms: u64,
+}
+
+#[tauri::command]
+fn list_stored_certs(state: State<'_, Arc<AppState>>) -> Vec<StoredCert> {
+    let root = PathBuf::from(state.cfg().output_dir);
+    let mut out: Vec<StoredCert> = Vec::new();
+    let entries = match std::fs::read_dir(&root) {
+        Ok(rd) => rd,
+        Err(_) => return out,
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        if !p.is_dir() {
+            continue;
+        }
+        let meta_path = p.join("meta.json");
+        let text = match std::fs::read_to_string(&meta_path) {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        let v: serde_json::Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let certificate_id = v
+            .get("certificate_id")
+            .and_then(|x| x.as_str())
+            .unwrap_or_default()
+            .to_string();
+        if certificate_id.is_empty() {
+            continue;
+        }
+        out.push(StoredCert {
+            dir: p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
+            certificate_id,
+            domains: v
+                .get("domains")
+                .and_then(|x| x.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            expired_time: v
+                .get("expired_time")
+                .and_then(|x| x.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            updated_at_ms: v.get("updated_at_ms").and_then(|x| x.as_u64()).unwrap_or(0),
+        });
+    }
+    out.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
+    out
+}
+
+#[derive(Serialize)]
+struct PullExample {
+    url: String,
+    curl: String,
+    /// 签名里用的时间戳（5 分钟内有效，过期要重新生成）
+    timestamp: String,
+    /// 是否监听在 0.0.0.0：是的话示例里的主机是 127.0.0.1，客户端要换成真实地址
+    listen_is_any: bool,
+    /// 本机可用 IPv4（出口网卡），让用户知道该填哪个地址
+    hosts: Vec<String>,
+}
+
+/// 本机出口 IPv4。UDP `connect` 只是让系统选路由，不会真的发包。
+fn local_ipv4() -> Vec<String> {
+    let mut out = Vec::new();
+    if let Ok(sock) = std::net::UdpSocket::bind("0.0.0.0:0") {
+        if sock.connect("223.5.5.5:53").is_ok() {
+            if let Ok(addr) = sock.local_addr() {
+                let ip = addr.ip().to_string();
+                if ip != "0.0.0.0" && ip != "127.0.0.1" {
+                    out.push(ip);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 拉取接口的签名：md5(按字母序拼接 apiId/apiKey/certificateId/timestamp)。
+///
+/// **必须**与 `server.rs` 里 `get_certificate` 的校验保持同一算法 —— 两边一起改，
+/// 否则示例看起来正常、实际一律 401。单测用同一组固定向量交叉验证。
+fn pull_sign(api_id: &str, api_key: &str, certificate_id: &str, timestamp: &str) -> String {
+    let mut params = std::collections::BTreeMap::new();
+    params.insert("apiId", api_id);
+    params.insert("apiKey", api_key);
+    params.insert("certificateId", certificate_id);
+    params.insert("timestamp", timestamp);
+    let joined = params
+        .iter()
+        .map(|(k, v)| format!("{}={}", k, v))
+        .collect::<Vec<_>>()
+        .join("&");
+    format!("{:x}", md5::compute(joined.as_bytes()))
+}
+
+/// 只对 URL 里必须转义的字符做最小处理：这里的 id 一般是字母数字和 -_.
+fn url_encode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
+
+/// 生成一条可直接交给容器/脚本的拉取命令。
+///
+/// 签名算法与接收端校验逻辑（`server.rs` 的 `get_certificate`）必须一致：
+/// md5(按字母序拼接 apiId/apiKey/certificateId/timestamp)。放后端算是因为
+/// 浏览器没有内置 md5，前端自己实现容易和校验端写岔。
+#[tauri::command]
+fn pull_example(
+    state: State<'_, Arc<AppState>>,
+    api_id: String,
+    certificate_id: String,
+) -> Result<PullExample, String> {
+    let cfg = state.cfg();
+    if cfg.api_key.trim().is_empty() {
+        return Err("接收端还没配 API 密钥：先在上面生成/填写并保存，拉取接口才会启用".into());
+    }
+    if certificate_id.trim().is_empty() {
+        return Err("先选一个已收到的证书（列表为空说明还没推送过）".into());
+    }
+    let api_id = if api_id.trim().is_empty() {
+        "kira-pull".to_string()
+    } else {
+        api_id.trim().to_string()
+    };
+    let cert_id = certificate_id.trim().to_string();
+    let ts = chrono::Utc::now().timestamp_millis().to_string();
+    let sign = pull_sign(&api_id, cfg.api_key.trim(), &cert_id, &ts);
+
+    // 监听在 0.0.0.0 时，示例里给 127.0.0.1（0.0.0.0 不是可连接的目标地址），
+    // 并由界面提示用户换成服务器实际地址。
+    let listen_is_any = cfg.listen_addr.starts_with("0.0.0.0");
+    let host = if listen_is_any {
+        cfg.listen_addr.replacen("0.0.0.0", "127.0.0.1", 1)
+    } else {
+        cfg.listen_addr.clone()
+    };
+    let url = format!(
+        "http://{}/api/open/getCertificate?apiId={}&certificateId={}&timestamp={}&sign={}",
+        host,
+        url_encode(&api_id),
+        url_encode(&cert_id),
+        ts,
+        sign
+    );
+    Ok(PullExample {
+        curl: format!("curl \"{}\"", url),
+        url,
+        timestamp: ts,
+        listen_is_any,
+        hosts: local_ipv4(),
+    })
 }
 
 #[tauri::command]
@@ -443,6 +636,8 @@ fn main() {
             save_config,
             set_running,
             clear_logs,
+            list_stored_certs,
+            pull_example,
             pick_dir,
             pick_file,
             open_dir,
@@ -501,4 +696,28 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("cert-receiver 启动失败");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 与 `server::tests::api_sign_matches_ohttps_algorithm` 用同一组向量：
+    /// 拉取示例算出的签名必须能被接收端校验通过，否则示例给了也白给。
+    #[test]
+    fn pull_sign_matches_server_algorithm() {
+        let sign = pull_sign(
+            "push-1xlpm40g1105n9gz",
+            "89066abd0f21b983331f3aca02590ea3",
+            "cert-n2x740m2qxg8kwyz",
+            "1695743251613",
+        );
+        assert_eq!(sign, "c58d69d9e59923f16b7dafa45bef208d");
+    }
+
+    #[test]
+    fn url_encode_escapes_only_when_needed() {
+        assert_eq!(url_encode("cert-abc_1.2~"), "cert-abc_1.2~");
+        assert_eq!(url_encode("a b/c"), "a%20b%2Fc");
+    }
 }
