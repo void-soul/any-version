@@ -3536,51 +3536,17 @@ pub async fn issue_and_deploy(
     ));
 
     // 域名列表 → 部署方式关联；target 用于 CDN / 负载均衡等需要目标域名的节点
-    let links: Vec<DeployLink> = if cert.deploy_links.is_empty() {
-        cert.deploy_node_ids
-            .iter()
-            .map(|id| DeployLink {
-                node_id: id.clone(),
-                target: String::new(),
-            })
-            .collect()
-    } else {
-        cert.deploy_links.clone()
-    };
-    let default_target = cert.domains.first().cloned().unwrap_or_default();
-    for link in &links {
-        if let Some(node) = find_node(&nodes, &link.node_id) {
-            let node = node.clone();
-            let target = if link.target.trim().is_empty() {
-                default_target.clone()
-            } else {
-                link.target.trim().to_string()
-            };
-            log.line(format!(
-                "→ 部署到「{}」（{}）…",
-                node.name,
-                if target.is_empty() { "默认域名" } else { target.as_str() }
-            ));
-            match deploy_to_node(&node, &cert, &pems, &target).await {
-                Ok(()) => {
-                    log.line("  部署成功");
-                    if let Some(n) = nodes.iter_mut().find(|n| n.id == link.node_id) {
-                        n.last_deploy_at = Some(now.clone());
-                        n.last_deploy_error = None;
-                    }
-                }
-                Err(e) => {
-                    log.line(format!("  部署失败：{}", e));
-                    if let Some(n) = nodes.iter_mut().find(|n| n.id == link.node_id) {
-                        n.last_deploy_error = Some(e.clone());
-                    }
-                }
-            }
-        }
-    }
-
+    let links = cert_links(&cert);
     if links.is_empty() {
         log.line("（未关联任何部署方式，跳过部署）");
+    } else {
+        let (summary, records) =
+            deploy_links(&mut log, &cert, &pems, &mut nodes, &links, "issue").await;
+        append_deploy_history(&records);
+        log.line(format!(
+            "部署汇总：成功 {} 个，失败 {} 个",
+            summary.ok_count, summary.fail_count
+        ));
     }
 
     let updated = certs[idx].clone();
@@ -3599,6 +3565,179 @@ pub async fn issue_and_deploy(
         renewed,
         days_left,
     })
+}
+
+/* ─── 部署：申请后自动执行，也可手动单独触发 ─── */
+
+/// 证书关联的部署方式（兼容旧数据里只有 deploy_node_ids 的情况）。
+fn cert_links(cert: &Certificate) -> Vec<DeployLink> {
+    if cert.deploy_links.is_empty() {
+        cert.deploy_node_ids
+            .iter()
+            .map(|id| DeployLink {
+                node_id: id.clone(),
+                target: String::new(),
+            })
+            .collect()
+    } else {
+        cert.deploy_links.clone()
+    }
+}
+
+/// 一条部署记录（`certs/deploy_history.json`，只保留最近 500 条）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeployRecord {
+    pub at: String,
+    pub cert_id: String,
+    pub node_id: String,
+    pub node_name: String,
+    /// 实际推送的目标域名；空串表示用了证书首个域名
+    pub target: String,
+    pub ok: bool,
+    pub message: String,
+    /// 触发来源：issue（申请后自动）| manual（手动部署）| scheduler
+    pub trigger: String,
+}
+
+/// 单次部署里一个节点的结果。
+#[derive(Debug, Clone, Serialize)]
+pub struct DeployOutcome {
+    pub node_id: String,
+    pub node_name: String,
+    pub target: String,
+    pub ok: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeploySummary {
+    pub results: Vec<DeployOutcome>,
+    pub ok_count: usize,
+    pub fail_count: usize,
+}
+
+const DEPLOY_HISTORY_FILE: &str = "deploy_history.json";
+const DEPLOY_HISTORY_CAP: usize = 500;
+
+/// 只保留最近 `DEPLOY_HISTORY_CAP` 条（纯函数，便于测试）。
+fn trim_deploy_history(mut all: Vec<DeployRecord>) -> Vec<DeployRecord> {
+    if all.len() > DEPLOY_HISTORY_CAP {
+        let cut = all.len() - DEPLOY_HISTORY_CAP;
+        all.drain(0..cut);
+    }
+    all
+}
+
+/// 追加部署记录；避免文件无限增长。
+fn append_deploy_history(records: &[DeployRecord]) {
+    if records.is_empty() {
+        return;
+    }
+    let mut all = load_json::<DeployRecord>(DEPLOY_HISTORY_FILE);
+    all.extend(records.iter().cloned());
+    save_json(DEPLOY_HISTORY_FILE, &trim_deploy_history(all));
+}
+
+/// 把一枚证书推到给定的部署方式：逐个节点写日志、更新节点状态，并返回本次的记录。
+///
+/// 记录由调用方落盘（这样单测里不会往真实数据目录写东西）。
+/// `trigger` 只用于记录来源（申请后自动 / 手动 / 调度），不影响行为。
+async fn deploy_links(
+    log: &mut IssueLog,
+    cert: &Certificate,
+    pems: &(String, String, String),
+    nodes: &mut Vec<DeployNode>,
+    links: &[DeployLink],
+    trigger: &str,
+) -> (DeploySummary, Vec<DeployRecord>) {
+    let default_target = cert.domains.first().cloned().unwrap_or_default();
+    let at = Utc::now().to_rfc3339();
+    let mut results: Vec<DeployOutcome> = Vec::new();
+    let mut records: Vec<DeployRecord> = Vec::new();
+
+    for link in links {
+        let target = if link.target.trim().is_empty() {
+            default_target.clone()
+        } else {
+            link.target.trim().to_string()
+        };
+        let node = nodes.iter().find(|n| n.id == link.node_id).cloned();
+        let Some(node) = node else {
+            let msg = "节点不存在（可能已被删除）".to_string();
+            log.line(format!("→ 部署到节点 {} 失败：{}", link.node_id, msg));
+            results.push(DeployOutcome {
+                node_id: link.node_id.clone(),
+                node_name: link.node_id.clone(),
+                target: target.clone(),
+                ok: false,
+                message: msg.clone(),
+            });
+            records.push(DeployRecord {
+                at: at.clone(),
+                cert_id: cert.id.clone(),
+                node_id: link.node_id.clone(),
+                node_name: link.node_id.clone(),
+                target,
+                ok: false,
+                message: msg,
+                trigger: trigger.to_string(),
+            });
+            continue;
+        };
+
+        log.line(format!(
+            "→ 部署到「{}」（{}）…",
+            node.name,
+            if target.is_empty() { "默认域名" } else { target.as_str() }
+        ));
+        let (ok, message) = match deploy_to_node(&node, cert, pems, &target).await {
+            Ok(()) => {
+                log.line("  部署成功");
+                (true, "成功".to_string())
+            }
+            Err(e) => {
+                log.line(format!("  部署失败：{}", e));
+                (false, e)
+            }
+        };
+
+        if let Some(n) = nodes.iter_mut().find(|n| n.id == node.id) {
+            if ok {
+                n.last_deploy_at = Some(at.clone());
+                n.last_deploy_error = None;
+            } else {
+                n.last_deploy_error = Some(message.clone());
+            }
+        }
+
+        results.push(DeployOutcome {
+            node_id: node.id.clone(),
+            node_name: node.name.clone(),
+            target: target.clone(),
+            ok,
+            message: message.clone(),
+        });
+        records.push(DeployRecord {
+            at: at.clone(),
+            cert_id: cert.id.clone(),
+            node_id: node.id.clone(),
+            node_name: node.name.clone(),
+            target,
+            ok,
+            message,
+            trigger: trigger.to_string(),
+        });
+    }
+
+    let fail_count = results.iter().filter(|r| !r.ok).count();
+    (
+        DeploySummary {
+            ok_count: results.len() - fail_count,
+            fail_count,
+            results,
+        },
+        records,
+    )
 }
 
 /// 极简 DER TLV 读取器（仅用于解析 X.509 证书有效期）。
@@ -4663,6 +4802,59 @@ pub async fn cert_issue_now(app: tauri::AppHandle, id: String) -> Result<IssueRe
     issue_and_deploy(Some(app), &id, true).await
 }
 
+/// 手动部署：把当前证书推给指定（或证书已关联的）部署方式，过程日志实时推给前端。
+///
+/// 与「申请」的区别：只部署、不签发 —— 证书内容直接取磁盘上已签发的那份。
+#[tauri::command]
+pub async fn cert_deploy_now(
+    app: tauri::AppHandle,
+    id: String,
+    links: Option<Vec<DeployLink>>,
+) -> Result<DeploySummary, String> {
+    let certs = load_certs();
+    let cert = find_cert(&certs, &id)
+        .cloned()
+        .ok_or_else(|| "证书不存在".to_string())?;
+    let mut nodes = load_json::<DeployNode>("deploy_nodes.json");
+
+    let cert_dir = ensure_dir().join(&cert.id);
+    let pems = read_lego_pems(&cert_dir, cert.domains.first().map(|s| s.as_str()))
+        .ok_or_else(|| "证书目录里没有 PEM（还没签发成功过），先点「申请」".to_string())?;
+    let pems = (pems.crt, pems.key, pems.issuer);
+
+    let links = match links {
+        Some(l) if !l.is_empty() => l,
+        _ => cert_links(&cert),
+    };
+    if links.is_empty() {
+        return Err("还没有关联任何部署方式：先到「部署方式」建节点，再在证书里勾选".to_string());
+    }
+
+    let mut log = IssueLog::new(Some(app), &cert.id);
+    log.line(format!(
+        "===== {} | 手动部署 | 域名：{} =====",
+        Utc::now().format("%Y-%m-%d %H:%M:%S"),
+        cert.domains.join(", ")
+    ));
+    let (summary, records) =
+        deploy_links(&mut log, &cert, &pems, &mut nodes, &links, "manual").await;
+    append_deploy_history(&records);
+    save_json("deploy_nodes.json", &nodes);
+    log.line(format!(
+        "===== 部署结束：成功 {} 个，失败 {} 个 =====",
+        summary.ok_count, summary.fail_count
+    ));
+    Ok(summary)
+}
+
+/// 某证书的部署记录（新的在前，最多 100 条）。
+#[tauri::command]
+pub fn deploy_history(id: String) -> Vec<DeployRecord> {
+    let mut all = load_json::<DeployRecord>(DEPLOY_HISTORY_FILE);
+    all.reverse();
+    all.into_iter().filter(|r| r.cert_id == id).take(100).collect()
+}
+
 /// 读取某证书的申请日志（最近 200KB，前端「日志」按钮用；没有日志时返回空串）。
 #[tauri::command]
 pub fn cert_issue_log(id: String) -> Result<String, String> {
@@ -5363,6 +5555,124 @@ mod tests {
         assert!(timeout.contains("超时"));
 
         assert!(lego_network_hint("", "INFO everything is fine").is_none());
+    }
+
+    /// 部署失败要落到三处：日志、节点状态、记录 —— 这样界面和节点卡片都能看到原因。
+    #[tokio::test]
+    async fn deploy_links_marks_failure_and_updates_node() {
+        let base = unique_tmp("anyver_deploy");
+        let log_path = base.join("log.txt");
+        let mut log = IssueLog::open(None, "cert-1", log_path.clone());
+
+        let cert = Certificate {
+            id: "cert-1".into(),
+            domains: vec!["a.com".into()],
+            email: String::new(),
+            ca: default_ca(),
+            dns_provider: "alidns".into(),
+            credential_id: String::new(),
+            validation: default_validation(),
+            http_port: 80,
+            renew_before_days: 30,
+            not_before: None,
+            not_after: None,
+            last_issue_at: None,
+            status: default_status(),
+            last_error: None,
+            deploy_links: Vec::new(),
+            deploy_node_ids: Vec::new(),
+        };
+        // 故意少填 url：deploy_http_push 会立刻报「缺少 url」，不碰网络
+        let mut nodes = vec![DeployNode {
+            id: "n1".into(),
+            node_type: "windows".into(),
+            name: "没填地址的节点".into(),
+            config: HashMap::new(),
+            deploy_before_days: 7,
+            last_deploy_at: None,
+            last_deploy_error: None,
+            note: String::new(),
+        }];
+        let pems = ("CRT".to_string(), "KEY".to_string(), "ISS".to_string());
+        let links = vec![DeployLink {
+            node_id: "n1".into(),
+            target: String::new(),
+        }];
+
+        let (summary, records) =
+            deploy_links(&mut log, &cert, &pems, &mut nodes, &links, "manual").await;
+
+        assert_eq!(summary.ok_count, 0);
+        assert_eq!(summary.fail_count, 1);
+        assert_eq!(records.len(), 1);
+        assert!(!records[0].ok);
+        assert_eq!(records[0].trigger, "manual");
+        assert!(records[0].message.contains("缺少 url"), "实际：{}", records[0].message);
+        assert!(nodes[0].last_deploy_error.is_some(), "失败原因要写回节点");
+
+        let text = std::fs::read_to_string(&log_path).unwrap_or_default();
+        assert!(text.contains("部署失败"), "日志里应能看到失败原因");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 部署记录只留最近 N 条，且保留的是**新的**那一端。
+    #[test]
+    fn deploy_history_is_capped_from_the_front() {
+        let mk = |i: usize| DeployRecord {
+            at: format!("t{}", i),
+            cert_id: "c".into(),
+            node_id: "n".into(),
+            node_name: "n".into(),
+            target: String::new(),
+            ok: true,
+            message: String::new(),
+            trigger: "manual".into(),
+        };
+        let all: Vec<DeployRecord> = (0..DEPLOY_HISTORY_CAP + 2).map(mk).collect();
+        let kept = trim_deploy_history(all);
+        assert_eq!(kept.len(), DEPLOY_HISTORY_CAP);
+        assert_eq!(kept[0].at, "t2", "应丢掉最旧的记录");
+        assert_eq!(
+            kept[kept.len() - 1].at,
+            format!("t{}", DEPLOY_HISTORY_CAP + 1)
+        );
+    }
+
+    /// 旧数据只有 deploy_node_ids 时，也要能推出「要部署到哪些节点」。
+    #[test]
+    fn cert_links_falls_back_to_legacy_node_ids() {
+        let mut cert = Certificate {
+            id: "cert-1".into(),
+            domains: vec!["a.com".into()],
+            email: String::new(),
+            ca: default_ca(),
+            dns_provider: "alidns".into(),
+            credential_id: String::new(),
+            validation: default_validation(),
+            http_port: 80,
+            renew_before_days: 30,
+            not_before: None,
+            not_after: None,
+            last_issue_at: None,
+            status: default_status(),
+            last_error: None,
+            deploy_links: Vec::new(),
+            deploy_node_ids: vec!["n1".into(), "n2".into()],
+        };
+        let links = cert_links(&cert);
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[0].node_id, "n1");
+        assert!(links[0].target.is_empty());
+
+        // 有 deploy_links 时以它为准（target 保留）
+        cert.deploy_links = vec![DeployLink {
+            node_id: "n9".into(),
+            target: "cdn.example.com".into(),
+        }];
+        let links = cert_links(&cert);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target, "cdn.example.com");
     }
 
     /// 空的证书目录不算「已有证书」，否则首次申请会被当成续期。
