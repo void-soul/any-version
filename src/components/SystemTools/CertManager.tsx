@@ -887,8 +887,9 @@ function CertList() {
 
       {detail && (
         <div className="fixed inset-0 modal-mask bg-black/60 flex items-center justify-center z-50">
+          {/* 面板用 ui-modal（实色背景）：之前误用了 ui-input，5% 白底半透明，后面的列表会透上来 */}
           <div
-            className="ui-input rounded-card w-[70vw] max-h-[85vh] flex flex-col"
+            className="ui-modal w-[70vw] max-h-[85vh] flex flex-col overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             {/* 头部：标题 + 下载 + 关闭 */}
