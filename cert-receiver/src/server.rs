@@ -60,14 +60,18 @@ fn now_ms() -> u128 {
         .unwrap_or(0)
 }
 
-/// 路径安全名：仅保留字母数字、点、连字符与下划线；通配符 `*` 转 `_`。
+/// 路径安全名：仅保留字母数字、点、连字符与下划线。
+///
+/// 通配符 `*` **直接丢掉**（不是换成 `_`）：`*.seemove.cn` → `seemove.cn`。
+/// 这样通配符证书和裸域名证书落在同一个目录，正好对应 nginx 里
+/// `ssl_certificate ./conf/cert/seemove.cn/fullchain.cer;` 这类写法。
 pub fn safe_name(name: &str) -> String {
     let s: String = name
         .chars()
+        .filter(|c| *c != '*')
         .map(|c| match c {
             c if c.is_alphanumeric() => c,
             '.' | '-' | '_' => c,
-            '*' => '_',
             _ => '_',
         })
         .collect();
@@ -132,62 +136,115 @@ fn write_layout(root: &Path, dir_name: &str, body: &PushBody) -> Result<(), (Sta
     Ok(())
 }
 
-fn run_command(program: &str, args: &[&str]) -> Result<String, String> {
+/// 执行外部命令。
+///
+/// `cwd` 用来把工作目录固定到 nginx 前缀：配置文件里的相对路径
+/// （`ssl_certificate "./conf/cert/xxx/fullchain.cer"`）会按**进程工作目录**解析，
+/// 不设的话就跟着接收端自己的启动目录飘 —— 「手动 reload 正常、接收端 reload 报
+/// 找不到证书」正是这么来的。
+fn run_command(program: &str, args: &[&str], cwd: Option<&str>) -> Result<String, String> {
     let mut cmd = Command::new(program);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
     let out = cmd
         .args(args)
         .output()
         .map_err(|e| format!("启动 {} 失败: {}", program, e))?;
     let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
     if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
         return Err(format!(
             "{} 返回非零({}): {} {}",
             program, out.status, stdout, stderr
         ));
     }
-    Ok(stdout)
+    // nginx -t 的成功信息在 stderr（"syntax is ok / test is successful"），两路都带上
+    Ok([stdout, stderr]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" "))
 }
 
-fn run_reload(cfg: &Config) -> Result<String, String> {
+fn quoted(s: &str) -> String {
+    format!("\"{}\"", s)
+}
+
+/// 拼一条「人能看懂、空格也藏不住」的命令行用于日志。
+fn cmdline(program: &str, args: &[String]) -> String {
+    let mut s = quoted(program);
+    for a in args {
+        s.push(' ');
+        s.push_str(&quoted(a));
+    }
+    s
+}
+
+fn as_refs(v: &[String]) -> Vec<&str> {
+    v.iter().map(|s| s.as_str()).collect()
+}
+
+fn run_reload(data: &AppData) -> Result<String, String> {
+    let cfg = &data.cfg;
+    let prefix = cfg.nginx_prefix.trim();
+    // nginx 相关的命令都固定在 nginx 前缀下执行（等价于管理员先 cd 再执行）
+    let cwd = if prefix.is_empty() { None } else { Some(prefix) };
+
     // 旧配置：post_script 优先兼容
     if let Some(script) = &cfg.post_script {
         if !script.trim().is_empty() {
-            return run_command("cmd", &["/c", script]);
+            data.state.log(format!("重载脚本：cmd /c {}", quoted(script)));
+            return run_command("cmd", &["/c", script], cwd);
         }
     }
     match cfg.reload_mode.as_str() {
         "none" | "" => Ok("未配置重载".to_string()),
         "command" => {
-            if cfg.reload_command.trim().is_empty() {
+            let script = cfg.reload_command.trim();
+            if script.is_empty() {
                 return Err("reload_mode=command 但缺少 reload_command".into());
             }
-            run_command("cmd", &["/c", &cfg.reload_command])
+            data.state.log(format!("重载命令：cmd /c {}", quoted(script)));
+            run_command("cmd", &["/c", script], cwd)
         }
         "nginx" => {
-            let exe = if cfg.nginx_prefix.trim().is_empty() {
-                PathBuf::from("nginx.exe")
+            let exe = if prefix.is_empty() {
+                "nginx.exe".to_string()
             } else {
-                Path::new(cfg.nginx_prefix.trim()).join("nginx.exe")
+                Path::new(prefix).join("nginx.exe").to_string_lossy().to_string()
             };
-            let mut args: Vec<String> = Vec::new();
-            if !cfg.nginx_prefix.trim().is_empty() {
-                args.push("-p".into());
-                args.push(cfg.nginx_prefix.trim().into());
+            let mut base: Vec<String> = Vec::new();
+            if !prefix.is_empty() {
+                base.push("-p".into());
+                base.push(prefix.to_string());
             }
             if !cfg.nginx_conf.trim().is_empty() {
-                args.push("-c".into());
-                args.push(cfg.nginx_conf.trim().into());
+                base.push("-c".into());
+                base.push(cfg.nginx_conf.trim().to_string());
             }
-            args.push("-s".into());
-            args.push("reload".into());
-            let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-            run_command(&exe.to_string_lossy(), &refs)
+
+            // 1) 先校验配置：有问题当场说清楚，别让人以为是「证书推送失败」。
+            //    nginx 的相对路径按工作目录解析，这也顺带验证了 cwd 设对了没有。
+            let mut test_args = base.clone();
+            test_args.push("-t".into());
+            data.state
+                .log(format!("校验配置：{}", cmdline(&exe, &test_args)));
+            if let Err(e) = run_command(&exe, &as_refs(&test_args), cwd) {
+                return Err(format!("nginx 配置校验失败（已跳过 reload）：{}", e));
+            }
+
+            // 2) 再发 reload
+            let mut reload_args = base.clone();
+            reload_args.push("-s".into());
+            reload_args.push("reload".into());
+            data.state.log(format!("重载：{}", cmdline(&exe, &reload_args)));
+            run_command(&exe, &as_refs(&reload_args), cwd)
         }
         "service" => {
             if cfg.service_name.trim().is_empty() {
@@ -198,7 +255,8 @@ fn run_reload(cfg: &Config) -> Result<String, String> {
                 cfg.service_name.trim(),
                 cfg.service_name.trim()
             );
-            run_command("cmd", &["/c", &cmd])
+            data.state.log(format!("重载服务：{}", cmd));
+            run_command("cmd", &["/c", &cmd], None)
         }
         other => Err(format!("未知 reload_mode: {}", other)),
     }
@@ -323,7 +381,7 @@ fn push_inner(
         other => return Err((StatusCode::BAD_REQUEST, format!("未知 layout: {}", other))),
     }
 
-    let reload = match run_reload(&data.cfg) {
+    let reload = match run_reload(data) {
         Ok(msg) => {
             data.state.log(format!("  重载：{}", msg));
             msg
@@ -448,7 +506,10 @@ mod tests {
 
     #[test]
     fn safe_name_strips_traversal_and_wildcard() {
-        assert_eq!(safe_name("*.a.com"), "_.a.com");
+        // 通配符直接丢掉：通配符证书和裸域名要落同一个目录，
+        // nginx 里才只写一条 ./conf/cert/seemove.cn/...
+        assert_eq!(safe_name("*.a.com"), "a.com");
+        assert_eq!(safe_name("*.seemove.cn"), "seemove.cn");
         assert_eq!(safe_name("../../etc/passwd"), "_.._etc_passwd");
         assert_eq!(safe_name(""), "cert");
     }
