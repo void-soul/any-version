@@ -69,6 +69,26 @@ pub fn normalize_account_id(account_id: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
+/// 派生账号 ID：`{platform}_{md5(seed)}`，seed = uid → email(小写) → `{prefix}_user`。
+///
+/// 规则与本地导入（`workbuddy.rs` / `codebuddy_cn.rs` 的 `build_account_from_local`）一致，
+/// 这样同一个账号不管从哪条路进来，id（= 文件名）都一样。真正的去重仍由 uid/email 承担。
+pub fn derive_account_id(platform: BuddyPlatform, uid: Option<&str>, email: &str) -> String {
+    let seed = uid
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            let trimmed = email.trim().to_lowercase();
+            if trimmed.is_empty() || trimmed == "unknown" {
+                None
+            } else {
+                Some(trimmed)
+            }
+        })
+        .unwrap_or_else(|| format!("{}_user", platform.id_prefix()));
+    format!("{}_{:x}", platform.id_prefix(), md5::compute(seed.as_bytes()))
+}
+
 fn account_file_path(platform: BuddyPlatform, account_id: &str) -> Result<PathBuf, String> {
     let normalized = normalize_account_id(account_id)?;
     Ok(accounts_dir(platform)?.join(format!("{}.json", normalized)))
@@ -275,7 +295,18 @@ pub fn upsert_account(platform: BuddyPlatform, account: BuddyAccount) -> Result<
         })
         .map(|a| a.id);
 
-    let account_id = existing_id.unwrap_or(account.id.clone());
+    // 新账号（库里没有同 uid/email）必须自己分配 id：
+    // 「新增账号（OAuth / 粘贴 token）」两条路传进来的 `id` 都是空的，
+    // 以前直接把它当文件名 → normalize_account_id("") → 报「账号 ID 不能为空」，
+    // 而界面上根本没有让用户填 ID 的地方，文案把真因埋了。
+    let account_id = existing_id.unwrap_or_else(|| {
+        let given = account.id.trim().to_string();
+        if given.is_empty() {
+            derive_account_id(platform, account.uid.as_deref(), &account.email)
+        } else {
+            given
+        }
+    });
     let existing = load_account(platform, &account_id);
 
     let mut merged = account.clone();
@@ -797,6 +828,50 @@ mod tests {
         assert!(normalize_account_id("a/b").is_err());
         assert!(normalize_account_id("").is_err());
         assert_eq!(normalize_account_id("acc-1_x.y").unwrap(), "acc-1_x.y");
+    }
+
+    /// 新增账号（OAuth / 粘贴 token）传进来的 id 是空的：
+    /// upsert 必须自己按 uid/email 派生，否则会报「账号 ID 不能为空」。
+    #[test]
+    fn upsert_derives_id_when_missing() {
+        let (_root, _guard) = test_root();
+        let mut acc = sample_account("", "new-add@test.com");
+        acc.id.clear();
+        acc.uid = Some("New-Uid-1".into()); // 大小写不影响派生（统一小写）
+
+        let saved = upsert_account(test_platform(), acc).unwrap();
+        assert_eq!(saved.id, format!("workbuddy_{:x}", md5::compute(b"new-uid-1")));
+
+        // 同一 uid（大小写不同）再 upsert：复用同一个 id，不新增第二条
+        let mut again = sample_account("", "another@test.com");
+        again.id.clear();
+        again.uid = Some("new-uid-1".into());
+        let saved2 = upsert_account(test_platform(), again).unwrap();
+        assert_eq!(saved2.id, saved.id);
+        let hits = load_index(test_platform())
+            .accounts
+            .into_iter()
+            .filter(|a| a.id == saved.id)
+            .count();
+        assert_eq!(hits, 1);
+    }
+
+    /// 派生规则：uid 优先，其次 email（小写），都没有才退化成 `{prefix}_user`。
+    #[test]
+    fn derive_account_id_prefers_uid_then_email() {
+        let p = test_platform();
+        assert_eq!(
+            derive_account_id(p, Some("U-1"), "x@test.com"),
+            format!("workbuddy_{:x}", md5::compute(b"u-1"))
+        );
+        assert_eq!(
+            derive_account_id(p, None, "X@Test.com"),
+            format!("workbuddy_{:x}", md5::compute(b"x@test.com"))
+        );
+        let fallback = format!("workbuddy_{:x}", md5::compute(b"workbuddy_user"));
+        assert_eq!(derive_account_id(p, None, ""), fallback);
+        // "unknown" 是 email 缺失时的占位值，不能拿来当 seed
+        assert_eq!(derive_account_id(p, None, "unknown"), fallback);
     }
 
     #[test]

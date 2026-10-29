@@ -562,6 +562,10 @@ pub async fn oauth_complete(
                                 )
                                 .await;
 
+                                let info_err = match &account_info {
+                                    Ok(_) => None,
+                                    Err(e) => Some(e.clone()),
+                                };
                                 let (uid, nickname, email, enterprise_id, enterprise_name, profile_raw) =
                                     match account_info {
                                         Ok(info) => info,
@@ -570,9 +574,22 @@ pub async fn oauth_complete(
                                             (None, None, String::new(), None, None, None)
                                         }
                                     };
+                                // uid / email 都拿不到：这个账号既识别不了、也用不了（上游 X-User-Id 就来自 uid）。
+                                // 以前会继续往下走，最后在 store 的路径校验处报「账号 ID 不能为空」，
+                                // 把真因（账号信息接口失败）埋掉了；这里带上原始错误直接失败。
+                                if uid.is_none() && email.trim().is_empty() {
+                                    return Err(format!(
+                                        "官方接口未返回账号信息（uid / email 均为空），无法保存账号{}",
+                                        info_err
+                                            .map(|e| format!("：{}", e))
+                                            .unwrap_or_default()
+                                    ));
+                                }
 
                                 let account = BuddyAccount {
-                                    id: String::new(), // upsert 时按 uid/email 去重
+                                    // id 由 store::upsert_account 按 uid/email 派生（{platform}_{md5}）；
+                                    // 库里已有同 uid/email 时直接复用旧 id，所以这里留空即可。
+                                    id: String::new(),
                                     platform: platform.as_str().to_string(),
                                     email,
                                     uid,
@@ -1590,6 +1607,15 @@ pub async fn build_payload_from_token(
         Some(Value::Object(combined_quota))
     };
 
+    // uid / email 全空时不要落库：派生 id 只能退化成 `{platform}_user`，
+    // 多个这种账号会互相覆盖，而且缺 uid 的账号上游根本用不了（X-User-Id）。
+    if uid.is_none() && email.trim().is_empty() {
+        return Err(
+            "接口未返回账号信息（uid / email 均为空）：token 可能无效，或 /v2/plugin/accounts 契约变了"
+                .to_string(),
+        );
+    }
+
     let email_final = if email.is_empty() {
         nickname
             .clone()
@@ -1601,6 +1627,7 @@ pub async fn build_payload_from_token(
 
     let now = chrono::Utc::now().timestamp();
     Ok(BuddyAccount {
+        // id 由 store::upsert_account 按 uid/email 派生（{platform}_{md5}）
         id: String::new(),
         platform: platform.as_str().to_string(),
         email: email_final,
