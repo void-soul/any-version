@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0540",
+  "question": "全局配置文件仍混合模型、持久化、备份、托盘设置、RSS、迁移命令和外观接口；基础层提取后应进一步明确这些应用职责。",
+  "root_cause": "配置DTO、配置存储和各设置命令在单文件维护，缺少模块内的职责分区和测试隔离。",
+  "solution": "1. 将配置模型与私有序列化字段、持久化/并发补丁分别放入 **models/persistence**。\n2. 备份、托盘、迁移接口、RSS和外观设置分成明确子模块，公开名称在 **config.rs** 兼容重导出。\n3. 单元测试独立成文件，基础路径直接使用 **foundation**，移除旧递归解释和已删除迁移实现的过期注释。\n4. 格式化后所有配置模块小于1000行，最大385行。\n主agent验收：Main lib compiled; 8 original unit tests passed under preserved public module path; all declared outputs <1000 lines.",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/config.rs** | 薄公开兼容入口 |\n| **src-tauri/src/commands/config/models.rs、persistence.rs** | 模型和并发持久化 |\n| **src-tauri/src/commands/config/backups.rs、tray_settings.rs、rss_settings.rs** | 应用设置与备份职责 |\n| **src-tauri/src/commands/config/migration_api.rs** | 重启迁移命令契约 |\n| **src-tauri/src/commands/config/appearance.rs、tests.rs** | 外观接口和原有回归 |",
+  "status": "已验证",
+  "validation": "Main lib compiled; 8 original unit tests passed under preserved public module path; all declared outputs <1000 lines.",
+  "parent_task": "Q-0506",
+  "paths": [
+    "src-tauri/src/commands/config.rs",
+    "src-tauri/src/commands/config/appearance.rs",
+    "src-tauri/src/commands/config/backups.rs",
+    "src-tauri/src/commands/config/migration_api.rs",
+    "src-tauri/src/commands/config/models.rs",
+    "src-tauri/src/commands/config/persistence.rs",
+    "src-tauri/src/commands/config/rss_settings.rs",
+    "src-tauri/src/commands/config/tests.rs",
+    "src-tauri/src/commands/config/tray_settings.rs"
+  ]
+}
