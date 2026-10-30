@@ -1,0 +1,23 @@
+{
+  "qid": "Q-0555",
+  "parent_task": "Q-0506",
+  "question": "数据库设计器AI与逆向解析混合提示、解析、修复、流式快照、DDL语法和SQLite读取。",
+  "root_cause": "独立领域算法与存储/运行编排缺少文件职责边界。",
+  "solution": "按完整Rust AST声明提取具名职责子模块，保留原公开facade、共享状态/模型唯一所有权和原回归。只调整Rust路径token层级，保留字符串和注释；私有函数仅提升到父模块可见。\n主agent验收：Main lib compiled. All 126 database designer tests passed. Every output <1000 lines; literal content retained during token path adjustment.",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/db_designer/reverse.rs**及同领域原入口 | 兼容公开入口与唯一状态 |\n| 对应具名职责子模块 | 完整声明与原回归 |",
+  "status": "已验证",
+  "paths": [
+    "src-tauri/src/commands/db_designer/ai/prompts.rs",
+    "src-tauri/src/commands/db_designer/ai/parse.rs",
+    "src-tauri/src/commands/db_designer/ai/repair.rs",
+    "src-tauri/src/commands/db_designer/ai/generation.rs",
+    "src-tauri/src/commands/db_designer/ai/partial.rs",
+    "src-tauri/src/commands/db_designer/ai/tests.rs",
+    "src-tauri/src/commands/db_designer/ai.rs",
+    "src-tauri/src/commands/db_designer/reverse/ddl.rs",
+    "src-tauri/src/commands/db_designer/reverse/sqlite.rs",
+    "src-tauri/src/commands/db_designer/reverse/tests.rs",
+    "src-tauri/src/commands/db_designer/reverse.rs"
+  ],
+  "validation": "Main lib compiled. All 126 database designer tests passed. Every output <1000 lines; literal content retained during token path adjustment."
+}
