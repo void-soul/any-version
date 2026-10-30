@@ -1,5 +1,7 @@
 //! HTTP 服务本体：接口路径与落盘布局沿用 0.1.x，行为不变，只是多了日志与统计。
 
+use crate::deployment::Deployment;
+use crate::reload_command::run as run_command;
 use axum::{
     extract::{ConnectInfo, Query, State},
     http::{header::AUTHORIZATION, HeaderMap, StatusCode},
@@ -11,7 +13,6 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 
 use crate::config::Config;
@@ -19,6 +20,19 @@ use crate::config::Config;
 pub struct AppData {
     pub cfg: Config,
     pub state: Arc<crate::AppState>,
+}
+
+fn deployment_slot() -> &'static Arc<tokio::sync::Semaphore> {
+    static SLOT: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
+    SLOT.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(1)))
+}
+
+pub fn prepare_storage(config: &Config) -> Result<(), String> {
+    let _permit = deployment_slot()
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| "证书部署仍在进行，请稍后重启服务".to_string())?;
+    crate::deployment::recover(Path::new(&config.output_dir))
 }
 
 pub fn router(data: Arc<AppData>) -> Router {
@@ -83,17 +97,6 @@ pub fn safe_name(name: &str) -> String {
     }
 }
 
-fn ensure_dir(p: &Path) -> Result<(), (StatusCode, String)> {
-    std::fs::create_dir_all(p)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("创建目录失败 {}: {}", p.display(), e)))
-}
-
-fn write_file(p: &Path, content: &str) -> Result<(), (StatusCode, String)> {
-    std::fs::write(p, content)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("写入 {} 失败: {}", p.display(), e)))
-}
-
-/// 取 PEM 中第一段证书（叶子证书），用于 cert.cer。
 pub fn pem_first_block(pem: &str) -> String {
     let mut out = String::new();
     let mut in_block = false;
@@ -117,13 +120,11 @@ pub fn pem_first_block(pem: &str) -> String {
     out
 }
 
-fn write_layout(root: &Path, dir_name: &str, body: &PushBody) -> Result<(), (StatusCode, String)> {
-    let dir = root.join(dir_name);
-    ensure_dir(&dir)?;
-    write_file(&dir.join("cert.key"), &body.key)?;
-    write_file(&dir.join("fullchain.cer"), &body.cert)?;
-    write_file(&dir.join("cert.cer"), &pem_first_block(&body.cert))?;
-    write_file(&dir.join("chain.cer"), &body.ca)?;
+fn write_layout(
+    deployment: &mut Deployment,
+    dir_name: &str,
+    body: &PushBody,
+) -> Result<(), (StatusCode, String)> {
     let meta = Meta {
         certificate_id: &body.certificate_id,
         domains: &body.domains,
@@ -132,8 +133,18 @@ fn write_layout(root: &Path, dir_name: &str, body: &PushBody) -> Result<(), (Sta
     };
     let text = serde_json::to_string_pretty(&meta)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    write_file(&dir.join("meta.json"), &text)?;
-    Ok(())
+    deployment
+        .directory(
+            dir_name,
+            vec![
+                ("cert.key", body.key.clone()),
+                ("fullchain.cer", body.cert.clone()),
+                ("cert.cer", pem_first_block(&body.cert)),
+                ("chain.cer", body.ca.clone()),
+                ("meta.json", text),
+            ],
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
 }
 
 /// 执行外部命令。
@@ -142,36 +153,6 @@ fn write_layout(root: &Path, dir_name: &str, body: &PushBody) -> Result<(), (Sta
 /// （`ssl_certificate "./conf/cert/xxx/fullchain.cer"`）会按**进程工作目录**解析，
 /// 不设的话就跟着接收端自己的启动目录飘 —— 「手动 reload 正常、接收端 reload 报
 /// 找不到证书」正是这么来的。
-fn run_command(program: &str, args: &[&str], cwd: Option<&str>) -> Result<String, String> {
-    let mut cmd = Command::new(program);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    }
-    if let Some(dir) = cwd {
-        cmd.current_dir(dir);
-    }
-    let out = cmd
-        .args(args)
-        .output()
-        .map_err(|e| format!("启动 {} 失败: {}", program, e))?;
-    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-    if !out.status.success() {
-        return Err(format!(
-            "{} 返回非零({}): {} {}",
-            program, out.status, stdout, stderr
-        ));
-    }
-    // nginx -t 的成功信息在 stderr（"syntax is ok / test is successful"），两路都带上
-    Ok([stdout, stderr]
-        .into_iter()
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(" "))
-}
-
 fn quoted(s: &str) -> String {
     format!("\"{}\"", s)
 }
@@ -194,12 +175,17 @@ fn run_reload(data: &AppData) -> Result<String, String> {
     let cfg = &data.cfg;
     let prefix = cfg.nginx_prefix.trim();
     // nginx 相关的命令都固定在 nginx 前缀下执行（等价于管理员先 cd 再执行）
-    let cwd = if prefix.is_empty() { None } else { Some(prefix) };
+    let cwd = if prefix.is_empty() {
+        None
+    } else {
+        Some(prefix)
+    };
 
     // 旧配置：post_script 优先兼容
     if let Some(script) = &cfg.post_script {
         if !script.trim().is_empty() {
-            data.state.log(format!("重载脚本：cmd /c {}", quoted(script)));
+            data.state
+                .log(format!("重载脚本：cmd /c {}", quoted(script)));
             return run_command("cmd", &["/c", script], cwd);
         }
     }
@@ -210,14 +196,18 @@ fn run_reload(data: &AppData) -> Result<String, String> {
             if script.is_empty() {
                 return Err("reload_mode=command 但缺少 reload_command".into());
             }
-            data.state.log(format!("重载命令：cmd /c {}", quoted(script)));
+            data.state
+                .log(format!("重载命令：cmd /c {}", quoted(script)));
             run_command("cmd", &["/c", script], cwd)
         }
         "nginx" => {
             let exe = if prefix.is_empty() {
                 "nginx.exe".to_string()
             } else {
-                Path::new(prefix).join("nginx.exe").to_string_lossy().to_string()
+                Path::new(prefix)
+                    .join("nginx.exe")
+                    .to_string_lossy()
+                    .to_string()
             };
             let mut base: Vec<String> = Vec::new();
             if !prefix.is_empty() {
@@ -243,7 +233,8 @@ fn run_reload(data: &AppData) -> Result<String, String> {
             let mut reload_args = base.clone();
             reload_args.push("-s".into());
             reload_args.push("reload".into());
-            data.state.log(format!("重载：{}", cmdline(&exe, &reload_args)));
+            data.state
+                .log(format!("重载：{}", cmdline(&exe, &reload_args)));
             run_command(&exe, &as_refs(&reload_args), cwd)
         }
         "service" => {
@@ -300,14 +291,30 @@ async fn push(
         return Err(e);
     }
 
-    let result = push_inner(&data, &body);
+    let permit = deployment_slot()
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| (StatusCode::CONFLICT, "已有证书正在部署，请稍后重试".into()))?;
+    let certificate_id = body.certificate_id.clone();
+    let push_data = data.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        push_inner(&push_data, &body)
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("部署任务异常: {e}"),
+        )
+    })?;
     match &result {
         Ok((written, _)) => data.state.record_push(
             true,
             format!(
                 "{} 推送成功（{}），写入 {} 处",
                 peer.ip(),
-                body.certificate_id,
+                certificate_id,
                 written.len()
             ),
         ),
@@ -319,7 +326,7 @@ async fn push(
     let (written, reload) = result?;
     Ok(Json(json!({
         "ok": true,
-        "certificateId": body.certificate_id,
+        "certificateId": certificate_id,
         "written": written,
         "reload": reload,
     })))
@@ -329,71 +336,132 @@ fn push_inner(
     data: &AppData,
     body: &PushBody,
 ) -> Result<(Vec<String>, String), (StatusCode, String)> {
+    let (domain, cert_id) = resolve_target_names(&data.cfg.layout, body)?;
+    crate::deployment::validate_identity(&body.cert, &body.key)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+
+    deploy_validated(data, body, domain, cert_id)
+}
+
+fn resolve_target_names(
+    layout: &str,
+    body: &PushBody,
+) -> Result<(String, String), (StatusCode, String)> {
     let domain = body
         .domains
-        .first()
-        .cloned()
-        .unwrap_or_else(|| body.domain.clone());
+        .iter()
+        .map(|value| value.trim())
+        .find(|value| !value.is_empty())
+        .unwrap_or_else(|| body.domain.trim())
+        .to_string();
     let cert_id = if body.certificate_id.trim().is_empty() {
         domain.clone()
     } else {
-        body.certificate_id.clone()
+        body.certificate_id.trim().to_string()
     };
     if cert_id.trim().is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "certificate_id 与 domain 不能同时为空".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "certificate_id 与 domain 不能同时为空".into(),
+        ));
     }
+    if layout == "domain" && domain.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "按域名部署时必须提供非空域名".into(),
+        ));
+    }
+    Ok((domain, cert_id))
+}
 
+fn deploy_validated(
+    data: &AppData,
+    body: &PushBody,
+    domain: String,
+    cert_id: String,
+) -> Result<(Vec<String>, String), (StatusCode, String)> {
     let root = PathBuf::from(&data.cfg.output_dir);
-    ensure_dir(&root)?;
+    let mut deployment =
+        Deployment::new(&root).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     let mut wrote = Vec::new();
     match data.cfg.layout.as_str() {
         "cert" => {
-            write_layout(&root, &safe_name(&cert_id), body)?;
+            write_layout(&mut deployment, &safe_name(&cert_id), body)?;
             wrote.push(safe_name(&cert_id));
         }
         "domain" => {
             if !domain.is_empty() {
-                write_layout(&root, &safe_name(&domain), body)?;
+                write_layout(&mut deployment, &safe_name(&domain), body)?;
                 wrote.push(safe_name(&domain));
             }
         }
         "both" => {
-            write_layout(&root, &safe_name(&cert_id), body)?;
+            write_layout(&mut deployment, &safe_name(&cert_id), body)?;
             wrote.push(safe_name(&cert_id));
             if !domain.is_empty() && safe_name(&domain) != safe_name(&cert_id) {
-                write_layout(&root, &safe_name(&domain), body)?;
+                write_layout(&mut deployment, &safe_name(&domain), body)?;
                 wrote.push(safe_name(&domain));
             }
         }
         "flat" => {
-            let name = safe_name(if !body.domain.is_empty() { &body.domain } else { &cert_id });
-            let p = root.join(format!("{}.crt", name));
-            write_file(&p, &body.cert)?;
-            write_file(&root.join(format!("{}.key", name)), &body.key)?;
+            let name = safe_name(if !body.domain.is_empty() {
+                &body.domain
+            } else {
+                &cert_id
+            });
+            deployment
+                .file(&format!("{}.crt", name), &body.cert)
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+            deployment
+                .file(&format!("{}.key", name), &body.key)
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
             if !body.ca.is_empty() {
-                write_file(&root.join(format!("{}.issuer.crt", name)), &body.ca)?;
+                deployment
+                    .file(&format!("{}.issuer.crt", name), &body.ca)
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
             }
             // 同时写一份标准布局，便于 Nginx/脚本直接引用
-            write_layout(&root, &safe_name(&cert_id), body)?;
+            write_layout(&mut deployment, &safe_name(&cert_id), body)?;
             wrote.push(name);
         }
         other => return Err((StatusCode::BAD_REQUEST, format!("未知 layout: {}", other))),
     }
 
+    if wrote.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "没有可部署的证书目标".into()));
+    }
+    deployment
+        .install()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     let reload = match run_reload(data) {
         Ok(msg) => {
             data.state.log(format!("  重载：{}", msg));
             msg
         }
         Err(e) => {
-            // 证书已经落盘，重载失败只提示不吞掉（老版本同样返回 500 + 提示）
+            let rollback = deployment.rollback();
+            let recovery = if rollback.is_ok() {
+                run_reload(data)
+            } else {
+                Ok(String::new())
+            };
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("证书已写入，但重载失败: {}", e),
+                format!(
+                    "重载失败: {e}；{}{}",
+                    rollback.err().unwrap_or_else(|| "已恢复原证书文件".into()),
+                    recovery
+                        .err()
+                        .map(|error| format!("；恢复后的重载也失败: {error}"))
+                        .unwrap_or_default()
+                ),
             ));
         }
     };
+    deployment
+        .finish()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok((wrote, reload))
 }
 
@@ -443,7 +511,10 @@ async fn get_certificate(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let cfg = &data.cfg;
     if cfg.api_key.trim().is_empty() {
-        return Err((StatusCode::NOT_FOUND, "拉取接口未启用（配置 api_key 后可用）".into()));
+        return Err((
+            StatusCode::NOT_FOUND,
+            "拉取接口未启用（配置 api_key 后可用）".into(),
+        ));
     }
     let ts: u128 = q
         .timestamp
@@ -452,7 +523,10 @@ async fn get_certificate(
     let now = now_ms();
     let diff = if ts > now { ts - now } else { now - ts };
     if diff > 5 * 60 * 1000 {
-        return Err((StatusCode::BAD_REQUEST, "timestamp 已过期（5 分钟有效）".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "timestamp 已过期（5 分钟有效）".into(),
+        ));
     }
 
     // 与 ohttps 相同：apiId/apiKey/certificateId/timestamp 一起按字母序排序拼接
@@ -468,14 +542,25 @@ async fn get_certificate(
         .join("&");
     let expect = lower_md5(&string_for_sign);
     if q.sign.to_lowercase() != expect {
-        data.state.log(format!("拉取 {} 失败：签名校验不通过", q.certificate_id));
+        data.state
+            .log(format!("拉取 {} 失败：签名校验不通过", q.certificate_id));
         return Err((StatusCode::UNAUTHORIZED, "签名校验失败".into()));
     }
     let _ = q.api_key; // 请求里可以不带 apiKey，只参与签名
 
+    // Read the key/certificate/meta from one generation, never across a swap.
+    let _permit = deployment_slot()
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| (StatusCode::SERVICE_UNAVAILABLE, "证书服务正在停止".into()))?;
+
     let root = PathBuf::from(&cfg.output_dir);
     let dir = find_cert_dir(&root, &q.certificate_id).ok_or_else(|| {
-        (StatusCode::NOT_FOUND, format!("证书 {} 不存在", q.certificate_id))
+        (
+            StatusCode::NOT_FOUND,
+            format!("证书 {} 不存在", q.certificate_id),
+        )
     })?;
     let key = std::fs::read_to_string(dir.join("cert.key")).unwrap_or_default();
     let cert = std::fs::read_to_string(dir.join("fullchain.cer")).unwrap_or_default();
@@ -503,6 +588,25 @@ async fn get_certificate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn domain_layout_rejects_missing_domain_before_any_deployment() {
+        let body: PushBody =
+            serde_json::from_value(json!({"certificate_id":"id-only","cert":"","key":""})).unwrap();
+        assert_eq!(
+            resolve_target_names("domain", &body).unwrap_err().0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[test]
+    fn blank_domain_entries_fall_back_to_valid_domain() {
+        let body:PushBody=serde_json::from_value(json!({"certificate_id":"id","domains":[""," "],"domain":" example.com ","cert":"","key":""})).unwrap();
+        assert_eq!(
+            resolve_target_names("domain", &body).unwrap(),
+            ("example.com".into(), "id".into())
+        );
+    }
 
     #[test]
     fn safe_name_strips_traversal_and_wildcard() {

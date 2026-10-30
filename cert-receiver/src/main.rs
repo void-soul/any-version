@@ -11,6 +11,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod config;
+mod deployment;
+mod reload_command;
 mod server;
 
 use std::collections::VecDeque;
@@ -155,6 +157,10 @@ impl AppState {
         let cfg = self.cfg();
         if let Err(e) = cfg.validate() {
             self.log(format!("未启动：{}", e));
+            return Err(e);
+        }
+        if let Err(e) = server::prepare_storage(&cfg) {
+            self.log(format!("未启动，证书部署恢复失败：{e}"));
             return Err(e);
         }
         let addr: SocketAddr = cfg

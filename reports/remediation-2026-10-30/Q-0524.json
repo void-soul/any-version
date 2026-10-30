@@ -1,0 +1,9 @@
+{
+  "qid": "Q-0524",
+  "question": "证书推送处理器在异步线程同步等待无超时重载命令，脚本卡住会拖住请求和服务停止。",
+  "root_cause": "**push**直接调用同步部署，**Command::output**无限等待进程；管道继承还可能在父进程结束后继续等待子进程EOF。",
+  "solution": "1. 完整部署放入 **spawn_blocking**，以单permit限制同一接收端部署并发，忙时409。\n2. 重载命令最多30秒，超时终止Windows进程树并回收子进程；输出使用临时文件而非会悬挂的继承管道，读取最多64KB。\n3. 新增150ms超时进程终止、成功输出和非零返回测试；测试仅启动临时powershell休眠与cmd回显。",
+  "files": "| File | Change |\n|------|--------|\n| **cert-receiver/src/reload_command.rs** | 有界命令执行和进程树终止 |\n| **cert-receiver/src/server.rs** | 阻塞任务隔离和部署并发限制 |\n| **cert-receiver/src/main.rs** | 模块声明 |",
+  "status": "已验证",
+  "validation": "Primary reviewed deployment, journal and timeout paths; all 17 receiver tests passed outside sandbox, including certificate/key mismatch, rollback, interrupted journal and process-tree timeout. Embedded receiver duplication discovered and queued for shared-core remediation before final acceptance."
+}

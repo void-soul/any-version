@@ -28,3 +28,4 @@ md5 = "0.7"
 rfd = "0.16"
 chrono = "0.4"
 getrandom = "0.2"
+rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }

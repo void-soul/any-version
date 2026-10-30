@@ -1,0 +1,9 @@
+{
+  "qid": "Q-0526",
+  "question": "证书接收端domain布局在请求仅有certificate_id时不写任何文件仍报告成功，domains中的空项还会阻止有效domain回退。",
+  "root_cause": "目标解析只取 **domains.first**，布局校验只检查证书ID和域名不同时为空，未要求domain布局有实际域名。",
+  "solution": "1. 提取 **resolve_target_names**，跳过空白domains项并回退到trim后的domain。\n2. domain布局缺少非空域名立即返回400，零目标也拒绝部署。\n3. 新增缺域名拒绝与空项回退两项纯函数测试。",
+  "files": "| File | Change |\n|------|--------|\n| **cert-receiver/src/server.rs** | 按布局验证部署目标和两项回归测试 |",
+  "status": "已验证",
+  "validation": "Primary reviewed deployment, journal and timeout paths; all 17 receiver tests passed outside sandbox, including certificate/key mismatch, rollback, interrupted journal and process-tree timeout. Embedded receiver duplication discovered and queued for shared-core remediation before final acceptance."
+}
