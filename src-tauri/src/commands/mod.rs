@@ -18,6 +18,7 @@ pub mod ai;
 pub mod ai_registry;
 pub mod tool_version;
 pub mod cert;
+pub mod cert_receiver;
 pub mod rtsp_server;
 pub mod file_io;
 pub mod mihomo;

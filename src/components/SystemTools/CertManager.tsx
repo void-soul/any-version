@@ -21,7 +21,9 @@ import {
   Check,
   Activity,
   Bell,
+  RadioTower,
 } from "lucide-react";
+import CertReceiverView from "./CertReceiverView";
 
 // ---------------------------------------------------------------------------
 // 类型（与后端 commands/cert.rs 对齐）
@@ -181,7 +183,7 @@ interface NotifyChannel {
   note: string;
 }
 
-type SubTab = "certs" | "nodes" | "creds" | "sched" | "monitors" | "notify";
+type SubTab = "certs" | "nodes" | "creds" | "sched" | "monitors" | "notify" | "receiver";
 
 // 跨组件卸载持久化：切换子 tab / 离开证书页面再回来时，仍保留上次选中的 tab
 // 与「申请中」状态，避免申请未结束时误以为可再次点击申请。
@@ -812,6 +814,7 @@ export default function CertManager() {
           { k: "monitors" as const, label: t("certmgr.tabMonitors"), icon: Activity },
           { k: "notify" as const, label: t("certmgr.tabNotify"), icon: Bell },
           { k: "sched" as const, label: t("certmgr.tabSched"), icon: History },
+          { k: "receiver" as const, label: t("certmgr.tabReceiver"), icon: RadioTower },
         ]).map(({ k, label, icon: Icon }) => (
           <button
             key={k}
@@ -834,6 +837,7 @@ export default function CertManager() {
         {tab === "monitors" && <MonitorView />}
         {tab === "notify" && <NotifyView />}
         {tab === "sched" && <SchedulerView />}
+        {tab === "receiver" && <CertReceiverView />}
       </div>
     </div>
   );

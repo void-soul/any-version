@@ -332,6 +332,9 @@ pub fn run() {
                 }
             }
             commands::cert::start_scheduler(app.handle().clone());
+            // 内嵌证书接收端：注入 AppHandle（事件推送需要）+ 按配置自启
+            commands::cert_receiver::init(app.handle().clone());
+            commands::cert_receiver::start_on_boot();
             let mihomo_state = commands::mihomo::init_state();
             app.manage(mihomo_state.clone());
             commands::mihomo::start_scheduler(app.handle().clone(), mihomo_state.clone());
@@ -900,6 +903,16 @@ pub fn run() {
             commands::cert::notify_channel_upsert,
             commands::cert::notify_channel_delete,
             commands::cert::notify_channel_test,
+            // 内嵌证书接收端（原 cert-receiver 小工具）
+            commands::cert_receiver::cert_receiver_bootstrap,
+            commands::cert_receiver::cert_receiver_status,
+            commands::cert_receiver::cert_receiver_start,
+            commands::cert_receiver::cert_receiver_stop,
+            commands::cert_receiver::cert_receiver_save_config,
+            commands::cert_receiver::cert_receiver_logs,
+            commands::cert_receiver::cert_receiver_clear_logs,
+            commands::cert_receiver::cert_receiver_stored_certs,
+            commands::cert_receiver::cert_receiver_pull_example,
 
             // RTSP 服务器
             commands::rtsp_server::get_rtsp_camera_devices,

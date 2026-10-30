@@ -143,6 +143,10 @@ pub struct Config {
     /// 端口被占用时用户可在 2API 面板改，改完会同步 AI 模块里指向它的供应商 URL。
     #[serde(default = "default_twoapi_port")]
     pub twoapi_port: u16,
+    /// 内嵌证书接收端（原 cert-receiver 独立小工具，现已集成）。
+    /// 为空表示还没配置过；首次启动若发现旧 `cert-receiver.toml` 会自动迁移并写入。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cert_receiver: Option<crate::commands::cert_receiver::CertReceiverConfig>,
     /// 顶级模块主题色：模块 id -> 主题色 hex（如 launcher -> "#8b5cf6"）
     #[serde(default)]
     pub module_theme_colors: std::collections::HashMap<String, String>,
@@ -234,6 +238,9 @@ struct SettingsFile {
     pub motion_preference: String,
     #[serde(default)]
     pub density: String,
+    /// 内嵌证书接收端配置（原 cert-receiver 的 toml 字段，迁移后落在这里）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cert_receiver: Option<crate::commands::cert_receiver::CertReceiverConfig>,
 }
 
 /// 业务选项文件：**跟随数据目录**（它是数据，不是入口配置；config.json 才是入口）。
@@ -287,6 +294,7 @@ fn split_config(config: &Config) -> (ConfigPathsFile, SettingsFile) {
             language: config.language.clone(),
             motion_preference: config.motion_preference.clone(),
             density: config.density.clone(),
+            cert_receiver: config.cert_receiver.clone(),
         },
     )
 }
@@ -299,6 +307,7 @@ fn merge_config(paths: ConfigPathsFile, settings: SettingsFile) -> Config {
         data_dir: paths.data_dir,
         sdk_dir: String::new(),
         twoapi_port: default_twoapi_port(),
+        cert_receiver: settings.cert_receiver,
         managed_items: settings.managed_items,
         simple_managed_items: settings.simple_managed_items,
         custom_install_paths: settings.custom_install_paths,
@@ -495,6 +504,7 @@ fn default_config() -> Config {
         data_dir: base_dir.to_string_lossy().to_string(),
         sdk_dir: base_dir.join("sdk").to_string_lossy().to_string(),
         twoapi_port: default_twoapi_port(),
+        cert_receiver: None,
         managed_items: std::collections::HashSet::new(),
         simple_managed_items: std::collections::HashSet::new(),
         github_token: None,
