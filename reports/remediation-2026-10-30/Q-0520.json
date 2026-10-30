@@ -5,5 +5,6 @@
   "root_cause": "公共展示能力没有独立所有权；**moduleRegistry.tsx**同时提供导航元数据和业务页面装配。",
   "solution": "1. 将Markdown编辑与渲染、AI选择器和宽度偏好迁至**components/shared**，AI契约迁至**contracts/ai.ts**，旧路径保留兼容重导出。\n2. 各业务调用方直接依赖公共路径，避免共享能力再次反向引用业务模块。",
   "files": "| File | Change |\n|------|--------|\n| **src/contracts/ai.ts** | Shared AI contracts |\n| **src/components/shared/ai/** | Shared model selection, promotion and width utilities |\n| **src/components/shared/markdown/** | Shared Markdown editing and rendering |\n| **src/components/** | Migrate consumers and preserve compatibility exports |",
-  "validation": "Primary review: tsc passed; full Vitest 48 files / 393 tests passed; git diff --check passed. User explicitly authorized batch verification and commit."
+  "validation": "Primary review: tsc passed; full Vitest 48 files / 393 tests passed; git diff --check passed. User explicitly authorized batch verification and commit.",
+  "question": "AUDIT-20261030-015 共享编辑器和 AI 展示组件仍归属业务模块\n任务编辑器从 mindmap 引入 MarkdownFieldEditor，后者又依赖 MindmapMarkdown；模型选择器、MarkdownRenderer、paneWidth 和 Provider 类型在 ai 目录被多个模块直接复用。复用本身必要且优于复制，但公共能力属于某个业务目录，使独立修改、测试或移除业务模块必须跟随这些引用。"
 }

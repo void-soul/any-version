@@ -10,5 +10,6 @@
     "src-tauri/src/commands/storage_migration.rs",
     "src-tauri/src/commands/storage_migration_transaction.rs",
     "src-tauri/src/commands/storage_assets.rs"
-  ]
+  ],
+  "question": "AUDIT-20261030-007 数据目录迁移使用固定旧根和不完整资产清单\nupdate_config 保存了 old_data_dir，但可变数据迁移始终从 base_dir 读取；旧目录本来是自定义目录时，不会从实际旧根搬数据。文件清单仅含 tasks、ai_usage 等，遗漏 launcher、mindmap、favorites、api、buddy、music、otp、clipboard 等。迁移函数返回 void，失败主要记日志，之后仍保存新根。重启后模块可能打开新目录中的空库，旧数据仍留在原位置。"
 }

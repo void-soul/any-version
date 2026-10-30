@@ -1,7 +1,7 @@
 {
   "qid": "Q-0533",
   "parent_task": "Q-0506",
-  "question": "文件搜索弹窗、新建启动项弹窗和项目子页把独立的格式工具、类型、版本/环境/服务/配置页面集中定义在同一文件，文件超过1000行，项目环境冲突向导的多个阶段也混入环境状态控制器。",
+  "question": "Q-0506 文件搜索弹窗、新建启动项弹窗和项目子页把独立的格式工具、类型、版本/环境/服务/配置页面集中定义在同一文件，文件超过1000行，项目环境冲突向导的多个阶段也混入环境状态控制器。",
   "root_cause": "现有页面已有清晰职责，但没有形成组件与模型文件；向导的纯展示阶段没有独立视图边界。",
   "solution": "1. 文件搜索分离筛选预设、格式和高亮工具，弹窗主体851行。\n2. 启动项弹窗分离props和系统工具预设，完整组件975行。\n3. 项目子页按版本、环境、服务、历史、包管理、数据路径和配置职责提取完整组件，入口保留公开导出。\n4. 环境冲突向导分离方式选择、执行进度、完成三个小视图，仅接收对应阶段的数据和事件；原控制器继续拥有状态、确认和外部命令调用。\n5. 保持所有原props接口和hook调用顺序，不引入通用大上下文。",
   "files": "| File | Change |\n|------|--------|\n| **src/components/FileSearchPopup.tsx**、**src/components/FileSearchPopup.model.tsx** | 搜索视图与纯工具 |\n| **src/components/launcher/AddItemModal.tsx**、**src/components/launcher/AddItemModal.model.tsx** | 启动项表单与预设 |\n| **src/components/project/ProjectSubTabs*.tsx** | 独立项目业务子页与契约 |\n| **src/components/project/ProjectConflictSteps.tsx** | 独立向导阶段展示 |",

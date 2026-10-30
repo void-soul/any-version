@@ -1,7 +1,7 @@
 {
   "qid": "Q-0528",
   "audit_id": "AUDIT-20261030-023",
-  "question": "HTTP 列表链接不编码特殊文件名，路径解码错误替换加号",
+  "question": "AUDIT-20261030-023 HTTP 列表链接不编码特殊文件名，路径解码错误替换加号\n目录名和文件名直接拼入 href 和 HTML 文本；# 被浏览器当片段，%xx 会被解码，+ 又被服务器改成空格。a#b.txt、a+b.txt 等 Windows 合法名称可能显示但点击打不开。没有将该问题夸大为 Windows 下可直接用 <script> 文件名触发 XSS。",
   "root_cause": "**PathBuf::starts_with** 仅做词法前缀比较；URL解码沿用表单加号语义；文件名未经编码；请求行只读取一次。",
   "solution": "1. 对URL严格解码，拒绝父目录、反斜杠、驱动器前缀和空字节，并以实际canonical路径校验根归属，首页也执行检查。\n2. 目录链接按UTF-8路径段编码，文本和属性转义，路径中的加号保持字面含义。\n3. 累积完整请求行，限制8192字节及5秒等待；启动仅接受实际目录。\n4. 新增路径/特殊文件名、回环TCP分片和临时junction回归测试。",
   "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/http_server.rs** | 根路径校验、URL/HTML编码、请求行组帧与隔离测试 |",

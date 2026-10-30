@@ -1,7 +1,7 @@
 {
   "qid": "Q-0527",
   "audit_id": "AUDIT-20261030-022",
-  "question": "解除 Markdown 文件关联时没有查询权限且忽略失败",
+  "question": "AUDIT-20261030-022 解除 Markdown 文件关联时没有查询权限且忽略失败\n扩展名键以 KEY_SET_VALUE 打开，随即 get_value 读取默认值，需要的 KEY_QUERY_VALUE 未申请。if let Ok 静默跳过读取失败，随后继续删除 ProgID 并返回解除成功，可能留下指向不存在 ProgID 的 .md/.markdown 关联。",
   "root_cause": "**set_markdown_assoc** 使用 **KEY_SET_VALUE** 打开后执行需要查询权限的操作，且读取、删除异常被吞掉。",
   "solution": "1. 父键及扩展名键使用 **KEY_READ | KEY_WRITE**，覆盖查询、设置和子键删除所需权限。\n2. 仅将NotFound视为幂等成功，其他读取、打开、ProgID删除错误向调用方传播。",
   "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/file_io.rs** | 文件关联访问权限与错误传播 |",

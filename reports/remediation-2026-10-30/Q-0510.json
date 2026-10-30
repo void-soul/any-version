@@ -9,5 +9,6 @@
     "src-tauri/src/commands/state_sync.rs",
     "src-tauri/src/commands/storage_maintenance.rs",
     "src-tauri/src/commands/storage_maintenance_tests.rs"
-  ]
+  ],
+  "question": "AUDIT-20261030-005 快照直接覆盖运行中的 SQLite，旧 WAL 可覆盖恢复内容\n快照分别读取 .db 与 -wal，无 SQLite backup 或统一一致性屏障；恢复不关闭模块连接、不清理既有 WAL/SHM，直接 fs::write。临时 SQLite 实验中，覆盖主库后旧连接仍读到 live-old，关闭重开后仍是 live-old，而完整性检查为 ok：恢复可以无报错却未生效。部分失败还会留下跨模块混合状态。"
 }

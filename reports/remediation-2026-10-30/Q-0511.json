@@ -8,5 +8,6 @@
   "paths": [
     "src-tauri/src/commands/storage_assets.rs",
     "src-tauri/src/commands/state_sync.rs"
-  ]
+  ],
+  "question": "AUDIT-20261030-006 全量备份的固定清单遗漏 Buddy、Suno 与设计器数据\nbuild_snapshot 只遍历 MANAGED_FILES/MANAGED_DIRS/MIHOMO_FILES。buddy/ 账号和视图、suno/profiles.json 与 downloaded.json、db_designer/ 会话、db_designer_settings.json 均不在清单，也无父目录兜底遍历。用户使用全量快照迁移设备时，这些模块数据不会随快照恢复。现有清单测试只断言少数已知名称，不能发现新模块遗漏。"
 }

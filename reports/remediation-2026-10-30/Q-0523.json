@@ -1,7 +1,7 @@
 {
   "qid": "Q-0523",
   "audit_id": "AUDIT-20261030-018",
-  "question": "音乐热键保存失败没有提示，界面保留未生效的新值",
+  "question": "AUDIT-20261030-018 音乐热键保存失败没有提示，界面保留未生效的新值\nlauncher_get_settings 失败被空 catch 吞掉；保存先 setLauncher(next)，invoke 失败后既不回滚也不提示。数据库不可写或热键设置服务失败时，用户看到的值与实际持久化值不一致，缺少重试入口或失败状态。",
   "root_cause": "业务页面缓存**LauncherSetting**后整体替换后端值，公共设置的所有权与更新粒度不清晰；错误被空catch吞掉，恢复成功提示超过实际验证。",
   "solution": "1. 音乐设置成功后才更新界面，保存失败保留原值并提示，读取失败提供重试，保存期间禁用录制。",
   "files": "| File | Change |\n|------|--------|\n| **src/components/music/MusicSettings.tsx** | Save feedback and accurate status |\n| **src/services/appSettings.ts** | Save feedback and accurate status |\n| **src/i18n/locales/zh/translation.json** | Save feedback and accurate status |\n| **src/i18n/locales/en/translation.json** | Save feedback and accurate status |",

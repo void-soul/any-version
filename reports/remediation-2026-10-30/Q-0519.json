@@ -1,7 +1,7 @@
 {
   "qid": "Q-0519",
   "audit_id": "AUDIT-20261030-014",
-  "question": "恢复提示声称数据已确认，但没有恢复结果校验",
+  "question": "AUDIT-20261030-014 恢复提示声称数据已确认，但没有恢复结果校验\n当前提示为“恢复完成，数据都归位了，我确认过了。✅”。导入返回成功只表示写入循环结束，没有验证模块可读取、SQLite 内容或完整资产覆盖；DataSyncPanel 已提示重启，但仍作全部已确认的保证。与运行中 WAL 恢复及遗漏资产问题联动，属于文案承诺超过实际验证。",
   "root_cause": "业务页面缓存**LauncherSetting**后整体替换后端值，公共设置的所有权与更新粒度不清晰；错误被空catch吞掉，恢复成功提示超过实际验证。",
   "solution": "1. 中英文恢复提示改为导入已结束、重启后检查数据，不作未经验证的保证。",
   "files": "| File | Change |\n|------|--------|\n| **src/i18n/locales/zh/translation.json** | Save feedback and accurate status |\n| **src/i18n/locales/en/translation.json** | Save feedback and accurate status |",

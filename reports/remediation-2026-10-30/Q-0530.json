@@ -4,5 +4,6 @@
   "solution": "升级 **rqrr 0.11.0**，锁定 **lru 0.18.5**。新增公开rqrr QR矩阵与许可，走与OTP相同的图像检测解码路径；主agent执行integration测试1项通过，主库编译和1454项既有测试通过。RustSec重新扫描已无lru告警；扫描新发现TLS/ZIP/Zstd告警另立任务处理，不能将本条关闭等同全部依赖无风险。",
   "files": "| File | Change |\n|------|--------|\n| **src-tauri/Cargo.toml**、**src-tauri/Cargo.lock** | 更新QR依赖及lru；新增存储锁和共享部署库依赖 |\n| **src-tauri/tests/qr_decode.rs**、**src-tauri/tests/fixtures/** | QR识别回归与公开fixture许可 |",
   "validation": "QR integration 1 passed; main lib compiled; refreshed cargo audit has no lru finding.",
-  "status": "已验证"
+  "status": "已验证",
+  "question": "AUDIT-20261030-025 锁文件包含 lru 内存安全告警，需要验证依赖升级和可达性\n本机离线 cargo audit 报告 lru 0.12.5 的 RUSTSEC-2026-0002 与 RUSTSEC-2026-0253，归类 unsound 警告而非 vulnerabilities 列表。Windows 目标依赖树确认 lru→rqrr→kira；尚未确认应用是否使用告警涉及的迭代器或 panic/drop 组合，不能声称可利用。glib 告警在接收端 Windows 目标树中未出现，未按 Windows 产品漏洞报告。"
 }

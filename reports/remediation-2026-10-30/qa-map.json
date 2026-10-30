@@ -1,0 +1,210 @@
+[
+  {
+    "audit_id": "AUDIT-20261030-001",
+    "qid": "Q-0506",
+    "title": "76 个源文件达到技能的超长文件阈值（结构风险）",
+    "result": "Created Q-0506",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-002",
+    "qid": "Q-0507",
+    "title": "全局配置读改写不在同一个锁内，会跨模块丢失更新",
+    "result": "Created Q-0507",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-003",
+    "qid": "Q-0508",
+    "title": "两个模块无互斥创建同一主密钥，首写竞态可使凭据无法解密",
+    "result": "Created Q-0508",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-004",
+    "qid": "Q-0509",
+    "title": "热键整份设置回传使一个模块覆盖另一个模块的修改",
+    "result": "Created Q-0509",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-005",
+    "qid": "Q-0510",
+    "title": "快照直接覆盖运行中的 SQLite，旧 WAL 可覆盖恢复内容",
+    "result": "Created Q-0510",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-006",
+    "qid": "Q-0511",
+    "title": "全量备份的固定清单遗漏 Buddy、Suno 与设计器数据",
+    "result": "Created Q-0511",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-007",
+    "qid": "Q-0512",
+    "title": "数据目录迁移使用固定旧根和不完整资产清单",
+    "result": "Created Q-0512",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-008",
+    "qid": "Q-0513",
+    "title": "HTTP 文件服务 Windows 路径边界可绕过",
+    "result": "Created Q-0513",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-009",
+    "qid": "Q-0514",
+    "title": "快照导入把 Windows 根相对和驱动器相对路径当成安全路径",
+    "result": "Created Q-0514",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-010",
+    "qid": "Q-0515",
+    "title": "公共配置和工具反向依赖业务实现，形成底层依赖环",
+    "result": "Created Q-0515",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-011",
+    "qid": "Q-0516",
+    "title": "禁用模块只影响前端布局，后台监听与调度没有统一停用语义",
+    "result": "Created Q-0516",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-012",
+    "qid": "Q-0517",
+    "title": "压测并发没有后端上限，可创建任意数量 worker",
+    "result": "Created Q-0517",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-013",
+    "qid": "Q-0518",
+    "title": "完成的压测状态长期留在全局 RUNS，采样内存不释放",
+    "result": "Created Q-0518",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-014",
+    "qid": "Q-0519",
+    "title": "恢复提示声称数据已确认，但没有恢复结果校验",
+    "result": "Created Q-0519",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-015",
+    "qid": "Q-0520",
+    "title": "共享编辑器和 AI 展示组件仍归属业务模块",
+    "result": "Created Q-0520",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-016",
+    "qid": "Q-0521",
+    "title": "模块元数据与页面加载器绑在同一注册表，页面反向导入注册表",
+    "result": "Created Q-0521",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-017",
+    "qid": "Q-0522",
+    "title": "AI 公共通道与代理基础设施通过业务回调双向耦合",
+    "result": "Created Q-0522",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-018",
+    "qid": "Q-0523",
+    "title": "音乐热键保存失败没有提示，界面保留未生效的新值",
+    "result": "Created Q-0523",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-019",
+    "qid": "Q-0524",
+    "title": "证书推送同步等待外部重载命令，且没有超时",
+    "result": "Created Q-0524",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-020",
+    "qid": "Q-0525",
+    "title": "证书与私钥分步覆盖，失败后留下不匹配的一组文件",
+    "result": "Created Q-0525",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-021",
+    "qid": "Q-0526",
+    "title": "domain 布局零写入仍返回证书推送成功",
+    "result": "Created Q-0526",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-022",
+    "qid": "Q-0527",
+    "title": "解除 Markdown 文件关联时没有查询权限且忽略失败",
+    "result": "Created Q-0527",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-023",
+    "qid": "Q-0528",
+    "title": "HTTP 列表链接不编码特殊文件名，路径解码错误替换加号",
+    "result": "Created Q-0528",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-024",
+    "qid": "Q-0529",
+    "title": "CI 未单独检查随包发布的证书接收端",
+    "result": "Created Q-0529",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-025",
+    "qid": "Q-0530",
+    "title": "锁文件包含 lru 内存安全告警，需要验证依赖升级和可达性",
+    "result": "Created Q-0530",
+    "error": "",
+    "status": 0
+  },
+  {
+    "audit_id": "AUDIT-20261030-026",
+    "qid": "Q-0531",
+    "title": "README 的 Node 建议版本与项目声明不一致",
+    "result": "Created Q-0531",
+    "error": "",
+    "status": 0
+  }
+]

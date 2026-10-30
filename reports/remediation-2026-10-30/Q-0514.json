@@ -9,5 +9,6 @@
     "src-tauri/src/commands/state_sync.rs",
     "src-tauri/src/commands/storage_maintenance.rs",
     "src-tauri/src/commands/storage_maintenance_tests.rs"
-  ]
+  ],
+  "question": "AUDIT-20261030-009 快照导入把 Windows 根相对和驱动器相对路径当成安全路径\nis_safe_rel 只检查 !is_absolute 和没有 ..。Windows 下 \\outside\\probe.txt 与 D:probe.txt 的 is_absolute 为 false；join 后前者成为 C:\\outside\\probe.txt，后者也丢弃原数据根。导入含恶意键名的快照时，内容可写到数据目录以外。必须由用户执行快照导入或拉取才能触发，不是远程无交互漏洞。"
 }

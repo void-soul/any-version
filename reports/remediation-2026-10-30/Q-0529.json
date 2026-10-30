@@ -1,7 +1,7 @@
 {
   "qid": "Q-0529",
   "audit_id": "AUDIT-20261030-024",
-  "question": "CI 未单独检查随包发布的证书接收端",
+  "question": "AUDIT-20261030-024 CI 未单独检查随包发布的证书接收端\nCI 的 Rust check/test 只指向 src-tauri/Cargo.toml；cert-receiver 是另一个独立 Cargo 包，没有 workspace 把其测试纳入上述命令。前端 CI 也仅执行 tsc/test，因此接收端的编译或测试退化可能在 PR 检查中漏过。源码构建阶段会编译接收端，但不等于 PR 单测覆盖。",
   "root_cause": "**cert-receiver** 是独立 Cargo 包，主应用的 **cargo check/test --manifest-path src-tauri/Cargo.toml** 不会验证接收端。",
   "solution": "1. 在 Windows CI 中加入独立接收端的 **cargo check --locked** 与 **cargo test --locked**。\n2. 主应用强制检查也使用 **--locked**，避免CI静默改锁文件。",
   "files": "| File | Change |\n|------|--------|\n| **.github/workflows/ci.yml** | 独立接收端检查与测试、锁文件一致性 |",

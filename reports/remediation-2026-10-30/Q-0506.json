@@ -1,0 +1,9 @@
+{
+  "qid": "Q-0506",
+  "root_cause": "业务状态、数据模型、平台I/O、IPC/页面装配与回归测试长期追加到同一源文件，职责和共享状态所有权缺少文件边界。",
+  "solution": "1. 原审计76个达到1000行阈值的文件按真实职责拆分，保留公开IPC、序列化协议、单例状态和已有测试。\n2. 共享底座采用foundation、公共proxy契约与应用hooks、shared前端能力和独立cert-deployment库；应用组合层集中处理生命周期、存储编排和IPC。\n3. 全量复扫四个源码根1084个文件，原76与所有新增文件均小于1000行，零遗留；持续检查接入CI。\n4. 私有导出按实际crate/祖先/内部域完善，路径变更仅作用于Rust token；渲染闭包和共享buffer所有权已复核。\n5. 最终tsc、50文件397测试、生产前端与receiver release构建、主all-targets、1477 Rust分组测试（另6原忽略）、共享库14/接收端10/QR1通过。\n6. 最终报告、26项结果矩阵、完整提交索引、复扫和验证摘要保存reports/remediation-2026-10-30。",
+  "files": "| File | Change |\n|------|--------|\n| **src/** | 页面领域hook、typed视图、共享能力及契约 |\n| **src-tauri/src/** | 业务职责、底座、应用组合和回归 |\n| **cert-receiver/**、**crates/cert-deployment/** | 双端共享部署算法与独立包检查 |\n| **scripts/**、**.github/workflows/**、**reports/remediation-2026-10-30/** | 持续边界检查、QA和最终报告 |",
+  "status": "已验证",
+  "validation": "See verification-summary.json and source-size-verification.json.",
+  "question": "AUDIT-20261030-001 76 个源文件达到技能的超长文件阈值（结构风险）\n按指定技能 ≥1000 行必须记 CRITICAL 的规则，76 个源文件触发阈值，完整清单见 ARCHITECTURE.md。cert.rs 5787 行混合配置加密、证书供应商调用、部署和调度；node_manager.rs 4157 行混合项目存储、npm 操作、进程与 Docker；大型面板混合数据加载、事件、表单和子视图。统计包含 Rust 文件内单测，不代表 76 个可利用漏洞。"
+}

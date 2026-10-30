@@ -5,5 +5,6 @@
   "root_cause": "公共展示能力没有独立所有权；**moduleRegistry.tsx**同时提供导航元数据和业务页面装配。",
   "solution": "1. 新建纯**moduleCatalog.ts**，设置、统计及命令面板仅依赖元数据；**moduleRegistry.tsx**仅负责懒加载与页面装配。\n2. 保持**settings**为不可禁用模块并增加注册表契约回归。",
   "files": "| File | Change |\n|------|--------|\n| **src/moduleCatalog.ts** | Pure module metadata |\n| **src/moduleRegistry.tsx** | Page composition only |\n| **src/components/GlobalSettings.tsx**, **src/components/ai/UsageStats.tsx**, **src/utils/paletteCommands.ts** | Depend on catalog |\n| **src/__tests__/moduleCatalog.test.ts** | Catalog contract regression |",
-  "validation": "Primary review: tsc passed; full Vitest 48 files / 393 tests passed; git diff --check passed. User explicitly authorized batch verification and commit."
+  "validation": "Primary review: tsc passed; full Vitest 48 files / 393 tests passed; git diff --check passed. User explicitly authorized batch verification and commit.",
+  "question": "AUDIT-20261030-016 模块元数据与页面加载器绑在同一注册表，页面反向导入注册表\nMODULES 同时包含 id/标签/颜色等元数据和页面 lazy import。GlobalSettings、UsageStats 为元数据反向引用 moduleRegistry，而 registry 又注册这些页面，形成包含动态 import 的文件依赖环。当前构建可通过，未实证初始化错误，但任何仅需菜单信息的公共能力也耦合到页面装配层。CanvasFlow 对 JsonBrowser 的 type-only 回边另行排除，不按运行时环报告。"
 }

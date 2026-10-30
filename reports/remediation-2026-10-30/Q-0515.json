@@ -22,5 +22,6 @@
     "src-tauri/src/app_commands.rs",
     "src-tauri/src/lib.rs"
   ],
-  "validation": "Final all-targets check and1483 inventory;1459 sandbox +18 exact Windows fixture tests passed,6 existing ignored. Frontend tsc/50 files397 tests and production build passed; source guard1084 passed."
+  "validation": "Final all-targets check and1483 inventory;1459 sandbox +18 exact Windows fixture tests passed,6 existing ignored. Frontend tsc/50 files397 tests and production build passed; source guard1084 passed.",
+  "question": "AUDIT-20261030-010 公共配置和工具反向依赖业务实现，形成底层依赖环\nutils::expand_home 调用 project::dirs，而 dirs 又取 utils::get_home_dir；registry 依赖 utils 的资源定位，utils 又使用 project 的 PackageManagerDef。通用 config 同时包含 SDK 文件迁移、junction、注册表 PATH 和业务配置类型。多数业务使用 get_data_dir/atomic_write 时被绑定到这些上层实现。模块级环不是已发生的函数递归，但违反已确认的公共能力单向依赖原则。"
 }

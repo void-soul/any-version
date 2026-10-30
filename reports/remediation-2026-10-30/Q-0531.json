@@ -1,7 +1,7 @@
 {
   "qid": "Q-0531",
   "audit_id": "AUDIT-20261030-026",
-  "question": "README 的 Node 建议版本与项目声明不一致",
+  "question": "AUDIT-20261030-026 README 的 Node 建议版本与项目声明不一致\nREADME 建议 Node.js 18+，package.json engines 要求 >=20.19；CI 又使用 Node22 与 pnpm11。按 README 选择 Node18 的开发者不能满足仓库自身声明的构建前提。",
   "root_cause": "**README.md** 仍建议 Node18、Rust1.75、Vite7 和开发端口1420，与当前配置和发布工具链不符。",
   "solution": "1. 推荐 Node22.13+ 与 pnpm11，说明 npm 最低版本以 **engines** 为准，发布使用 Rust1.93。\n2. 更新前端栈 Vite8 和开发地址 **localhost:8888**。",
   "files": "| File | Change |\n|------|--------|\n| **README.md** | 同步构建前提、技术栈和开发地址 |",

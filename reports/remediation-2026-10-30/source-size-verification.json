@@ -1,0 +1,451 @@
+{
+  "original_long_files": 76,
+  "remaining_original_long_files": 0,
+  "source_files_checked": 1084,
+  "all_long_files": [],
+  "threshold": 1000,
+  "original_files": [
+    {
+      "path": "src-tauri/src/commands/cert.rs",
+      "before_lines": 5787,
+      "after_lines": 75
+    },
+    {
+      "path": "src/components/buddy/BuddyPanel.tsx",
+      "before_lines": 4657,
+      "after_lines": 987
+    },
+    {
+      "path": "src-tauri/src/commands/node_manager.rs",
+      "before_lines": 4157,
+      "after_lines": 52
+    },
+    {
+      "path": "src-tauri/src/commands/ai/collab.rs",
+      "before_lines": 4015,
+      "after_lines": 834
+    },
+    {
+      "path": "src/components/launcher/LauncherPanel.tsx",
+      "before_lines": 3441,
+      "after_lines": 997
+    },
+    {
+      "path": "src-tauri/src/commands/buddy/session_transfer/codebuddy.rs",
+      "before_lines": 3396,
+      "after_lines": 49
+    },
+    {
+      "path": "src/components/mindmap/MindmapPanel.tsx",
+      "before_lines": 3324,
+      "after_lines": 963
+    },
+    {
+      "path": "src-tauri/src/commands/mindmap/commands.rs",
+      "before_lines": 3231,
+      "after_lines": 474
+    },
+    {
+      "path": "src/components/dbdesigner/DbDesignerPanel.tsx",
+      "before_lines": 3191,
+      "after_lines": 985
+    },
+    {
+      "path": "src-tauri/src/commands/ai/launch.rs",
+      "before_lines": 3122,
+      "after_lines": 210
+    },
+    {
+      "path": "src-tauri/src/commands/ai/aggregate.rs",
+      "before_lines": 2793,
+      "after_lines": 295
+    },
+    {
+      "path": "src-tauri/src/commands/ai/skills.rs",
+      "before_lines": 2792,
+      "after_lines": 313
+    },
+    {
+      "path": "src/components/project/ProjectSubTabs.tsx",
+      "before_lines": 2766,
+      "after_lines": 16
+    },
+    {
+      "path": "src-tauri/src/commands/buddy/api.rs",
+      "before_lines": 2725,
+      "after_lines": 374
+    },
+    {
+      "path": "src-tauri/src/commands/favorites/db.rs",
+      "before_lines": 2659,
+      "after_lines": 277
+    },
+    {
+      "path": "src-tauri/src/commands/mihomo/mod.rs",
+      "before_lines": 2628,
+      "after_lines": 66
+    },
+    {
+      "path": "src/components/ai/ToolLauncher.tsx",
+      "before_lines": 2430,
+      "after_lines": 947
+    },
+    {
+      "path": "src-tauri/src/commands/buddy/sessions.rs",
+      "before_lines": 2415,
+      "after_lines": 39
+    },
+    {
+      "path": "src/components/favorites/FavoritesPanel.tsx",
+      "before_lines": 2344,
+      "after_lines": 988
+    },
+    {
+      "path": "src-tauri/src/proxy/server.rs",
+      "before_lines": 2271,
+      "after_lines": 572
+    },
+    {
+      "path": "src-tauri/src/commands/project/commands.rs",
+      "before_lines": 2238,
+      "after_lines": 23
+    },
+    {
+      "path": "src/components/SystemTools/CertManager.tsx",
+      "before_lines": 2225,
+      "after_lines": 62
+    },
+    {
+      "path": "src-tauri/src/commands/api/import.rs",
+      "before_lines": 2110,
+      "after_lines": 160
+    },
+    {
+      "path": "src-tauri/src/commands/picky/mod.rs",
+      "before_lines": 2101,
+      "after_lines": 51
+    },
+    {
+      "path": "src-tauri/src/commands/project/versions.rs",
+      "before_lines": 1988,
+      "after_lines": 35
+    },
+    {
+      "path": "src-tauri/src/commands/db_designer/ai.rs",
+      "before_lines": 1987,
+      "after_lines": 317
+    },
+    {
+      "path": "src/components/api/ApiPanel.tsx",
+      "before_lines": 1905,
+      "after_lines": 982
+    },
+    {
+      "path": "src-tauri/src/commands/launcher/file_search.rs",
+      "before_lines": 1862,
+      "after_lines": 211
+    },
+    {
+      "path": "src-tauri/src/commands/config.rs",
+      "before_lines": 1854,
+      "after_lines": 30
+    },
+    {
+      "path": "src-tauri/src/commands/ai/mcp.rs",
+      "before_lines": 1848,
+      "after_lines": 365
+    },
+    {
+      "path": "src-tauri/src/commands/launcher/windows.rs",
+      "before_lines": 1840,
+      "after_lines": 151
+    },
+    {
+      "path": "src/components/SystemTools/MarkdownReader.tsx",
+      "before_lines": 1780,
+      "after_lines": 992
+    },
+    {
+      "path": "src-tauri/src/commands/buddy/auto_checkin.rs",
+      "before_lines": 1694,
+      "after_lines": 303
+    },
+    {
+      "path": "src/components/GlobalSettings.tsx",
+      "before_lines": 1683,
+      "after_lines": 918
+    },
+    {
+      "path": "src/components/ai/CollabRoom.tsx",
+      "before_lines": 1665,
+      "after_lines": 978
+    },
+    {
+      "path": "src/components/node/NodeManagerPanel.tsx",
+      "before_lines": 1648,
+      "after_lines": 635
+    },
+    {
+      "path": "src/components/ai/SkillManager.tsx",
+      "before_lines": 1637,
+      "after_lines": 992
+    },
+    {
+      "path": "src-tauri/src/proxy/transform.rs",
+      "before_lines": 1615,
+      "after_lines": 767
+    },
+    {
+      "path": "src-tauri/src/commands/favorites/commands.rs",
+      "before_lines": 1567,
+      "after_lines": 339
+    },
+    {
+      "path": "src/components/project/tabs/PackageManagerTab.tsx",
+      "before_lines": 1527,
+      "after_lines": 1
+    },
+    {
+      "path": "src/components/project/ProjectDetailPanel.tsx",
+      "before_lines": 1487,
+      "after_lines": 983
+    },
+    {
+      "path": "src-tauri/src/commands/music/player.rs",
+      "before_lines": 1486,
+      "after_lines": 48
+    },
+    {
+      "path": "src-tauri/src/lib.rs",
+      "before_lines": 1463,
+      "after_lines": 680
+    },
+    {
+      "path": "src-tauri/src/commands/mindmap/scan.rs",
+      "before_lines": 1448,
+      "after_lines": 672
+    },
+    {
+      "path": "src/components/PickyPanel.tsx",
+      "before_lines": 1419,
+      "after_lines": 499
+    },
+    {
+      "path": "src-tauri/src/proxy/responses.rs",
+      "before_lines": 1411,
+      "after_lines": 545
+    },
+    {
+      "path": "src-tauri/src/commands/ai/channel.rs",
+      "before_lines": 1392,
+      "after_lines": 16
+    },
+    {
+      "path": "src-tauri/src/commands/db_designer/reverse.rs",
+      "before_lines": 1339,
+      "after_lines": 321
+    },
+    {
+      "path": "src-tauri/src/commands/buddy/auto_travel.rs",
+      "before_lines": 1329,
+      "after_lines": 250
+    },
+    {
+      "path": "src-tauri/src/commands/service.rs",
+      "before_lines": 1322,
+      "after_lines": 28
+    },
+    {
+      "path": "src-tauri/src/commands/buddy/mod.rs",
+      "before_lines": 1319,
+      "after_lines": 397
+    },
+    {
+      "path": "src-tauri/src/proxy/google.rs",
+      "before_lines": 1304,
+      "after_lines": 967
+    },
+    {
+      "path": "src-tauri/src/commands/cert_receiver.rs",
+      "before_lines": 1302,
+      "after_lines": 998
+    },
+    {
+      "path": "src-tauri/src/commands/music/plugin_host.rs",
+      "before_lines": 1267,
+      "after_lines": 47
+    },
+    {
+      "path": "src-tauri/src/commands/launcher/db.rs",
+      "before_lines": 1262,
+      "after_lines": 207
+    },
+    {
+      "path": "src/components/mindmap/agentShared.tsx",
+      "before_lines": 1255,
+      "after_lines": 4
+    },
+    {
+      "path": "src-tauri/src/commands/ai/tools.rs",
+      "before_lines": 1237,
+      "after_lines": 389
+    },
+    {
+      "path": "src/components/ai/ModelConfig.tsx",
+      "before_lines": 1222,
+      "after_lines": 965
+    },
+    {
+      "path": "src-tauri/src/commands/buddy/store.rs",
+      "before_lines": 1189,
+      "after_lines": 759
+    },
+    {
+      "path": "src/components/ai/McpManager.tsx",
+      "before_lines": 1186,
+      "after_lines": 989
+    },
+    {
+      "path": "src-tauri/src/commands/env.rs",
+      "before_lines": 1181,
+      "after_lines": 23
+    },
+    {
+      "path": "src/components/OtpPanel.tsx",
+      "before_lines": 1180,
+      "after_lines": 403
+    },
+    {
+      "path": "src/components/SystemTools/RtspServer.tsx",
+      "before_lines": 1180,
+      "after_lines": 988
+    },
+    {
+      "path": "src-tauri/src/commands/ai_registry.rs",
+      "before_lines": 1179,
+      "after_lines": 646
+    },
+    {
+      "path": "src-tauri/src/commands/ai/tool_config_custom.rs",
+      "before_lines": 1167,
+      "after_lines": 722
+    },
+    {
+      "path": "src-tauri/src/commands/favorites/organize.rs",
+      "before_lines": 1148,
+      "after_lines": 695
+    },
+    {
+      "path": "src-tauri/src/commands/suno/mod.rs",
+      "before_lines": 1148,
+      "after_lines": 36
+    },
+    {
+      "path": "src-tauri/src/commands/utils.rs",
+      "before_lines": 1135,
+      "after_lines": 750
+    },
+    {
+      "path": "src-tauri/src/commands/buddy/workbuddy.rs",
+      "before_lines": 1105,
+      "after_lines": 593
+    },
+    {
+      "path": "src-tauri/src/proxy/optimizers.rs",
+      "before_lines": 1094,
+      "after_lines": 891
+    },
+    {
+      "path": "src/components/devtools/SerialMonitor.tsx",
+      "before_lines": 1086,
+      "after_lines": 972
+    },
+    {
+      "path": "src-tauri/src/commands/api/commands.rs",
+      "before_lines": 1079,
+      "after_lines": 30
+    },
+    {
+      "path": "src-tauri/src/commands/network.rs",
+      "before_lines": 1045,
+      "after_lines": 966
+    },
+    {
+      "path": "src/components/launcher/AddItemModal.tsx",
+      "before_lines": 1033,
+      "after_lines": 974
+    },
+    {
+      "path": "src-tauri/src/commands/project/scanner.rs",
+      "before_lines": 1010,
+      "after_lines": 948
+    },
+    {
+      "path": "src/components/FileSearchPopup.tsx",
+      "before_lines": 1005,
+      "after_lines": 850
+    }
+  ],
+  "largest_final_files": [
+    {
+      "path": "src-tauri/src/commands/cert_receiver.rs",
+      "lines": 998
+    },
+    {
+      "path": "src/components/launcher/LauncherPanel.tsx",
+      "lines": 997
+    },
+    {
+      "path": "src/components/ai/SkillManager.tsx",
+      "lines": 992
+    },
+    {
+      "path": "src/components/SystemTools/MarkdownReader.tsx",
+      "lines": 992
+    },
+    {
+      "path": "src-tauri/src/commands/ai/launch/tests.rs",
+      "lines": 991
+    },
+    {
+      "path": "src/components/ai/McpManager.tsx",
+      "lines": 989
+    },
+    {
+      "path": "src/components/favorites/FavoritesPanel.tsx",
+      "lines": 988
+    },
+    {
+      "path": "src/components/SystemTools/RtspServer.tsx",
+      "lines": 988
+    },
+    {
+      "path": "src-tauri/src/commands/buddy/twoapi/mod.rs",
+      "lines": 988
+    },
+    {
+      "path": "src/components/buddy/BuddyPanel.tsx",
+      "lines": 987
+    },
+    {
+      "path": "src/components/dbdesigner/DbDesignerPanel.tsx",
+      "lines": 985
+    },
+    {
+      "path": "src/components/project/ProjectSubTabs.EnvVarsTab.tsx",
+      "lines": 985
+    },
+    {
+      "path": "src/components/mindmap/MindmapPanel.CanvasInner.tsx",
+      "lines": 983
+    },
+    {
+      "path": "src/components/project/ProjectDetailPanel.tsx",
+      "lines": 983
+    },
+    {
+      "path": "src/components/api/ApiPanel.tsx",
+      "lines": 982
+    }
+  ]
+}

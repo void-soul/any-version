@@ -1,0 +1,58 @@
+{
+  "baseline": "780ed48",
+  "code_head": "8e02d65d381b419a15d825548d3ee3a71928f681",
+  "branch": "codex/audit-remediation-20261030",
+  "source_files_checked": 1084,
+  "original_long_files": 76,
+  "remaining_long_files": 0,
+  "frontend": {
+    "typecheck": "passed",
+    "test_files": 50,
+    "tests_passed": 397,
+    "production_build": "passed",
+    "pnpm11_frozen_lockfile": "passed"
+  },
+  "rust": {
+    "inventory": 1483,
+    "sandbox_passed": 1459,
+    "isolated_windows_passed": 18,
+    "ignored_existing": 6,
+    "failed": 0,
+    "all_targets_check": "passed",
+    "qr_integration_passed": 1,
+    "shared_deployment_passed": 14,
+    "standalone_receiver_passed": 10,
+    "receiver_release_build": "passed"
+  },
+  "dependencies": {
+    "production_npm_vulnerabilities": 0,
+    "main_rust_vulnerabilities": 0,
+    "shared_rust_vulnerabilities": 0,
+    "receiver_rust_vulnerabilities": 0,
+    "rust_maintenance_warning_counts": {
+      "unmaintained": 11,
+      "unsound": 2
+    },
+    "warning_disposition": {
+      "RUSTSEC-2024-0429": "glib0.18.5 is absent from the Windows normal dependency tree.",
+      "RUSTSEC-2026-0386": "Tokio AsyncFd is cfg_net_unix; application source has no AsyncFd reference. Windows target is outside this API path."
+    }
+  },
+  "limitations": [
+    "Six original ignored Rust tests remain ignored.",
+    "No live cloud/account deployment, real service control or real Markdown registry change was performed.",
+    "Existing QA database modifications and 19 historical file-table format issues are preserved.",
+    "Vite retains non-blocking large chunk warnings; Rust retains non-blocking compiler/maintenance warnings."
+  ],
+  "original_findings_verified": 26,
+  "qa_records_verified": 74,
+  "source_commits": 60,
+  "ignored_tests": [
+    "test commands::buddy::twoapi::atrest::tests::real_auth_file_decrypt_roundtrip ... ignored, 需要本机安装并登录 WorkBuddy",
+    "test commands::buddy::twoapi::direct_probe::probe_upstream_directly ... ignored, 诊断用：需要网络与本机 WorkBuddy",
+    "test commands::buddy::twoapi::e2e_chat_completions_against_real_backend ... ignored, 端到端：需要网络与本机 WorkBuddy",
+    "test commands::buddy::twoapi::e2e_models_lists_new_models ... ignored, 端到端：需要网络与本机 WorkBuddy",
+    "test commands::buddy::twoapi::e2e_streaming_anthropic_and_models ... ignored, 端到端：需要网络与本机 WorkBuddy",
+    "test commands::music::player::tests::test_auto_advance_survives_state_polling ... ignored, 需要音频输出设备（真实播放），用 `cargo test --lib -- --ignored` 手动跑"
+  ]
+}

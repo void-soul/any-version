@@ -1,7 +1,7 @@
 {
   "qid": "Q-0518",
   "audit_id": "AUDIT-20261030-013",
-  "question": "完成的压测状态长期留在全局 RUNS，采样内存不释放",
+  "question": "AUDIT-20261030-013 完成的压测状态长期留在全局 RUNS，采样内存不释放\n每次运行把 Arc<LoadRunState> 放入全局 RUNS；结束写报告后没有 remove/retain 或样本清空。每个运行的 samples 上限虽为 500000，但运行数量没有上限；删除数据库报告也只删 api_load_runs，不释放 RUNS。长期反复压测会保留全部完成任务的采样内存。",
   "root_cause": "**start_load_run** 直接按用户并发数spawn；**RUNS**只插入不移除；停止信号无法唤醒等待中的请求和升压延时。",
   "solution": "1. 后端校验1到128并发、1到3600秒时长、升压不超过时长，活动任务上限4；无效配置在创建任务前拒绝。\n2. 使用watch取消信号唤醒请求和延时，监督任务join全部worker后才完成报告。\n3. 完成后从RUNS移除并释放采样，仅保留16条不含采样的结果缓存，历史从SQLite读取；禁止删除仍活动的任务。\n4. 启动失败删除占位行，测试数据库改用系统临时目录；新增越界拒绝和停止回收测试。",
   "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/api/loadtest.rs** | 资源限额、取消收尾、状态回收和生命周期测试 |\n| **src-tauri/src/commands/api/commands.rs** | 启动校验、失败清理及活跃删除保护 |\n| **src-tauri/src/commands/api/db.rs** | 单测使用临时数据库，避免访问用户数据 |",

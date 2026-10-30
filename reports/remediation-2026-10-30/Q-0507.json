@@ -1,7 +1,7 @@
 {
   "qid": "Q-0507",
   "audit_id": "AUDIT-20261030-002",
-  "question": "全局配置读改写不在同一个锁内，会跨模块丢失更新",
+  "question": "AUDIT-20261030-002 全局配置读改写不在同一个锁内，会跨模块丢失更新\nset_auto_start_service、set_module_layout、set_module_theme_color 等先 load_config 得到整对象，再调用只串行化写阶段的 save_config；异步 project_install_version 也在结束时 load/修改/save 同一对象。异步安装线程与UI配置入口交错时，A/B各读旧值、各改不同字段，后保存者会把另一方字段改回旧值。不是声称两个同步UI命令必定并行。现存 mutate_config 已提供单锁读改写，但这些入口没有使用。",
   "root_cause": "**save_config** 只锁定写入，旧调用方持有的对象缺少读取基线；集合与映射还会覆盖不属于本次操作的键。",
   "solution": "1. 普通布局、主题、字体、语言、自启等设置入口使用 **mutate_config** 单锁读改写。\n2. **Config** 增加不参与序列化的读取基线；兼容旧 **load/modify/save** 调用时，在同一锁内仅合并相对基线变动的字段。\n3. 递归合并映射键，对托管项目和自启服务集合应用增删差量，保留其他线程新增的数据。\n4. 新增不同字段/映射键并发快照合并及集合新增和删除回归测试。",
   "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/config.rs** | 字段级写入、旧调用兼容补丁、集合差量与回归测试 |",

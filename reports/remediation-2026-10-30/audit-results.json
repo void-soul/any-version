@@ -1,0 +1,696 @@
+{
+  "original_findings": 26,
+  "verified": 26,
+  "open": 0,
+  "code_head": "8e02d65",
+  "results": [
+    {
+      "audit_id": "AUDIT-20261030-001",
+      "qid": "Q-0506",
+      "title": "76 个源文件达到技能的超长文件阈值（结构风险）",
+      "status": "已验证",
+      "commits": [
+        "ad81c11",
+        "9e34e6f",
+        "24c8ab6",
+        "f6d33f0",
+        "0649c0a",
+        "e0733c8",
+        "ed0fd21",
+        "d7cbe6b",
+        "89cf0be",
+        "0103b0d",
+        "8f6d7a4",
+        "20e39f2",
+        "f151a54",
+        "dd46cd2",
+        "6f201d5",
+        "0becc49",
+        "b0e0d95",
+        "ed206e7",
+        "9230a7b",
+        "01d1917",
+        "d3327c6",
+        "a47302c",
+        "4d86587",
+        "3647320",
+        "8daa799",
+        "6c0ce7a",
+        "6e20c2f",
+        "6a41d01",
+        "26c4cb2",
+        "6a095ab",
+        "71ed789",
+        "ccb3a85",
+        "fbe8064",
+        "5c904ca",
+        "511f9a3",
+        "9123505",
+        "61eebfb",
+        "5eda7f7",
+        "3f8ce97",
+        "a9e0b4f",
+        "10414db",
+        "01e0738",
+        "d8bfa8f",
+        "da802d6",
+        "3afc495",
+        "603eabd",
+        "2f7a760",
+        "3a3c3af",
+        "6dfc03f",
+        "354b5f5",
+        "9a6ec1b",
+        "23c2c84",
+        "92269b7"
+      ],
+      "qa_snapshot": "Q-0506.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-002",
+      "qid": "Q-0507",
+      "title": "全局配置读改写不在同一个锁内，会跨模块丢失更新",
+      "status": "已验证",
+      "commits": [
+        "9a6ec1b"
+      ],
+      "qa_snapshot": "Q-0507.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-003",
+      "qid": "Q-0508",
+      "title": "两个模块无互斥创建同一主密钥，首写竞态可使凭据无法解密",
+      "status": "已验证",
+      "commits": [
+        "23c2c84"
+      ],
+      "qa_snapshot": "Q-0508.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-004",
+      "qid": "Q-0509",
+      "title": "热键整份设置回传使一个模块覆盖另一个模块的修改",
+      "status": "已验证",
+      "commits": [
+        "354b5f5"
+      ],
+      "qa_snapshot": "Q-0509.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-005",
+      "qid": "Q-0510",
+      "title": "快照直接覆盖运行中的 SQLite，旧 WAL 可覆盖恢复内容",
+      "status": "已验证",
+      "commits": [
+        "da802d6"
+      ],
+      "qa_snapshot": "Q-0510.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-006",
+      "qid": "Q-0511",
+      "title": "全量备份的固定清单遗漏 Buddy、Suno 与设计器数据",
+      "status": "已验证",
+      "commits": [
+        "da802d6"
+      ],
+      "qa_snapshot": "Q-0511.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-007",
+      "qid": "Q-0512",
+      "title": "数据目录迁移使用固定旧根和不完整资产清单",
+      "status": "已验证",
+      "commits": [
+        "da802d6"
+      ],
+      "qa_snapshot": "Q-0512.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-008",
+      "qid": "Q-0513",
+      "title": "HTTP 文件服务 Windows 路径边界可绕过",
+      "status": "已验证",
+      "commits": [
+        "e75471d"
+      ],
+      "qa_snapshot": "Q-0513.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-009",
+      "qid": "Q-0514",
+      "title": "快照导入把 Windows 根相对和驱动器相对路径当成安全路径",
+      "status": "已验证",
+      "commits": [
+        "da802d6"
+      ],
+      "qa_snapshot": "Q-0514.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-010",
+      "qid": "Q-0515",
+      "title": "公共配置和工具反向依赖业务实现，形成底层依赖环",
+      "status": "已验证",
+      "commits": [
+        "da802d6",
+        "9e34e6f"
+      ],
+      "qa_snapshot": "Q-0515.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-011",
+      "qid": "Q-0516",
+      "title": "禁用模块只影响前端布局，后台监听与调度没有统一停用语义",
+      "status": "已验证",
+      "commits": [
+        "da802d6"
+      ],
+      "qa_snapshot": "Q-0516.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-012",
+      "qid": "Q-0517",
+      "title": "压测并发没有后端上限，可创建任意数量 worker",
+      "status": "已验证",
+      "commits": [
+        "6dfc03f"
+      ],
+      "qa_snapshot": "Q-0517.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-013",
+      "qid": "Q-0518",
+      "title": "完成的压测状态长期留在全局 RUNS，采样内存不释放",
+      "status": "已验证",
+      "commits": [
+        "6dfc03f"
+      ],
+      "qa_snapshot": "Q-0518.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-014",
+      "qid": "Q-0519",
+      "title": "恢复提示声称数据已确认，但没有恢复结果校验",
+      "status": "已验证",
+      "commits": [
+        "354b5f5"
+      ],
+      "qa_snapshot": "Q-0519.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-015",
+      "qid": "Q-0520",
+      "title": "共享编辑器和 AI 展示组件仍归属业务模块",
+      "status": "已验证",
+      "commits": [
+        "92269b7"
+      ],
+      "qa_snapshot": "Q-0520.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-016",
+      "qid": "Q-0521",
+      "title": "模块元数据与页面加载器绑在同一注册表，页面反向导入注册表",
+      "status": "已验证",
+      "commits": [
+        "92269b7"
+      ],
+      "qa_snapshot": "Q-0521.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-017",
+      "qid": "Q-0522",
+      "title": "AI 公共通道与代理基础设施通过业务回调双向耦合",
+      "status": "已验证",
+      "commits": [
+        "5eda7f7"
+      ],
+      "qa_snapshot": "Q-0522.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-018",
+      "qid": "Q-0523",
+      "title": "音乐热键保存失败没有提示，界面保留未生效的新值",
+      "status": "已验证",
+      "commits": [
+        "354b5f5"
+      ],
+      "qa_snapshot": "Q-0523.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-019",
+      "qid": "Q-0524",
+      "title": "证书推送同步等待外部重载命令，且没有超时",
+      "status": "已验证",
+      "commits": [
+        "e33aa7c",
+        "da802d6"
+      ],
+      "qa_snapshot": "Q-0524.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-020",
+      "qid": "Q-0525",
+      "title": "证书与私钥分步覆盖，失败后留下不匹配的一组文件",
+      "status": "已验证",
+      "commits": [
+        "e33aa7c",
+        "da802d6"
+      ],
+      "qa_snapshot": "Q-0525.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-021",
+      "qid": "Q-0526",
+      "title": "domain 布局零写入仍返回证书推送成功",
+      "status": "已验证",
+      "commits": [
+        "e33aa7c",
+        "da802d6"
+      ],
+      "qa_snapshot": "Q-0526.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-022",
+      "qid": "Q-0527",
+      "title": "解除 Markdown 文件关联时没有查询权限且忽略失败",
+      "status": "已验证",
+      "commits": [
+        "8d453d5"
+      ],
+      "qa_snapshot": "Q-0527.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-023",
+      "qid": "Q-0528",
+      "title": "HTTP 列表链接不编码特殊文件名，路径解码错误替换加号",
+      "status": "已验证",
+      "commits": [
+        "e75471d"
+      ],
+      "qa_snapshot": "Q-0528.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-024",
+      "qid": "Q-0529",
+      "title": "CI 未单独检查随包发布的证书接收端",
+      "status": "已验证",
+      "commits": [
+        "a3c98e3"
+      ],
+      "qa_snapshot": "Q-0529.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-025",
+      "qid": "Q-0530",
+      "title": "锁文件包含 lru 内存安全告警，需要验证依赖升级和可达性",
+      "status": "已验证",
+      "commits": [
+        "da802d6"
+      ],
+      "qa_snapshot": "Q-0530.json"
+    },
+    {
+      "audit_id": "AUDIT-20261030-026",
+      "qid": "Q-0531",
+      "title": "README 的 Node 建议版本与项目声明不一致",
+      "status": "已验证",
+      "commits": [
+        "aa7ad24"
+      ],
+      "qa_snapshot": "Q-0531.json"
+    }
+  ],
+  "qa_records": [
+    {
+      "qid": "Q-0506",
+      "status": "已验证",
+      "question": "AUDIT-20261030-001 76 个源文件达到技能的超长文件阈值（结构风险）"
+    },
+    {
+      "qid": "Q-0507",
+      "status": "已验证",
+      "question": "AUDIT-20261030-002 全局配置读改写不在同一个锁内，会跨模块丢失更新"
+    },
+    {
+      "qid": "Q-0508",
+      "status": "已验证",
+      "question": "AUDIT-20261030-003 两个模块无互斥创建同一主密钥，首写竞态可使凭据无法解密"
+    },
+    {
+      "qid": "Q-0509",
+      "status": "已验证",
+      "question": "AUDIT-20261030-004 热键整份设置回传使一个模块覆盖另一个模块的修改"
+    },
+    {
+      "qid": "Q-0510",
+      "status": "已验证",
+      "question": "AUDIT-20261030-005 快照直接覆盖运行中的 SQLite，旧 WAL 可覆盖恢复内容"
+    },
+    {
+      "qid": "Q-0511",
+      "status": "已验证",
+      "question": "AUDIT-20261030-006 全量备份的固定清单遗漏 Buddy、Suno 与设计器数据"
+    },
+    {
+      "qid": "Q-0512",
+      "status": "已验证",
+      "question": "AUDIT-20261030-007 数据目录迁移使用固定旧根和不完整资产清单"
+    },
+    {
+      "qid": "Q-0513",
+      "status": "已验证",
+      "question": "AUDIT-20261030-008 HTTP 文件服务 Windows 路径边界可绕过"
+    },
+    {
+      "qid": "Q-0514",
+      "status": "已验证",
+      "question": "AUDIT-20261030-009 快照导入把 Windows 根相对和驱动器相对路径当成安全路径"
+    },
+    {
+      "qid": "Q-0515",
+      "status": "已验证",
+      "question": "AUDIT-20261030-010 公共配置和工具反向依赖业务实现，形成底层依赖环"
+    },
+    {
+      "qid": "Q-0516",
+      "status": "已验证",
+      "question": "AUDIT-20261030-011 禁用模块只影响前端布局，后台监听与调度没有统一停用语义"
+    },
+    {
+      "qid": "Q-0517",
+      "status": "已验证",
+      "question": "AUDIT-20261030-012 压测并发没有后端上限，可创建任意数量 worker"
+    },
+    {
+      "qid": "Q-0518",
+      "status": "已验证",
+      "question": "AUDIT-20261030-013 完成的压测状态长期留在全局 RUNS，采样内存不释放"
+    },
+    {
+      "qid": "Q-0519",
+      "status": "已验证",
+      "question": "AUDIT-20261030-014 恢复提示声称数据已确认，但没有恢复结果校验"
+    },
+    {
+      "qid": "Q-0520",
+      "status": "已验证",
+      "question": "AUDIT-20261030-015 共享编辑器和 AI 展示组件仍归属业务模块"
+    },
+    {
+      "qid": "Q-0521",
+      "status": "已验证",
+      "question": "AUDIT-20261030-016 模块元数据与页面加载器绑在同一注册表，页面反向导入注册表"
+    },
+    {
+      "qid": "Q-0522",
+      "status": "已验证",
+      "question": "共享AI请求通道和协议proxy反向依赖AI业务模型、usage数据库和协作服务，模块禁用边界不清晰。"
+    },
+    {
+      "qid": "Q-0523",
+      "status": "已验证",
+      "question": "AUDIT-20261030-018 音乐热键保存失败没有提示，界面保留未生效的新值"
+    },
+    {
+      "qid": "Q-0524",
+      "status": "已验证",
+      "question": "AUDIT-20261030-019 证书推送同步等待外部重载命令，且没有超时"
+    },
+    {
+      "qid": "Q-0525",
+      "status": "已验证",
+      "question": "AUDIT-20261030-020 证书与私钥分步覆盖，失败后留下不匹配的一组文件"
+    },
+    {
+      "qid": "Q-0526",
+      "status": "已验证",
+      "question": "AUDIT-20261030-021 domain 布局零写入仍返回证书推送成功"
+    },
+    {
+      "qid": "Q-0527",
+      "status": "已验证",
+      "question": "AUDIT-20261030-022 解除 Markdown 文件关联时没有查询权限且忽略失败"
+    },
+    {
+      "qid": "Q-0528",
+      "status": "已验证",
+      "question": "AUDIT-20261030-023 HTTP 列表链接不编码特殊文件名，路径解码错误替换加号"
+    },
+    {
+      "qid": "Q-0529",
+      "status": "已验证",
+      "question": "AUDIT-20261030-024 CI 未单独检查随包发布的证书接收端"
+    },
+    {
+      "qid": "Q-0530",
+      "status": "已验证",
+      "question": "AUDIT-20261030-025 锁文件包含 lru 内存安全告警，需要验证依赖升级和可达性"
+    },
+    {
+      "qid": "Q-0531",
+      "status": "已验证",
+      "question": "AUDIT-20261030-026 README 的 Node 建议版本与项目声明不一致"
+    },
+    {
+      "qid": "Q-0532",
+      "status": "已验证",
+      "question": "Q-0506 Node管理、OTP、Picky、证书管理和思维导图工作台在单文件集中定义独立的表单、列表卡片、调度视图及共享状态，文件达到1256至2226行，修改任一职责都需审阅无关组件。"
+    },
+    {
+      "qid": "Q-0533",
+      "status": "已验证",
+      "question": "Q-0506 文件搜索弹窗、新建启动项弹窗和项目子页把独立的格式工具、类型、版本/环境/服务/配置页面集中定义在同一文件，文件超过1000行，项目环境冲突向导的多个阶段也混入环境状态控制器。"
+    },
+    {
+      "qid": "Q-0534",
+      "status": "已验证",
+      "question": "Q-0506 串口调试、RTSP服务、MCP管理和模型配置页面把规则编辑、编码参数、托管来源、供应商协议字段、模型参数及详情弹窗放在主控制器中，四个文件仍超过1000行。"
+    },
+    {
+      "qid": "Q-0535",
+      "status": "已验证",
+      "question": "协作房间、全局设置、项目详情与Markdown阅读器混合状态编排、事件与完整子视图，原文件均超过1000行。"
+    },
+    {
+      "qid": "Q-0536",
+      "status": "已验证",
+      "question": "SkillManager将技能元数据、在线安装、目录操作、项目技能与预览混合在1638行单一页面。"
+    },
+    {
+      "qid": "Q-0537",
+      "status": "已验证",
+      "question": "PackageManagerTab将包管理检测、安装、缓存/数据迁移状态机和全部流程视图集中在1528行文件。"
+    },
+    {
+      "qid": "Q-0538",
+      "status": "已验证",
+      "question": "刷新RustSec后TLS、ZIP和Zstd依赖存在已知漏洞。"
+    },
+    {
+      "qid": "Q-0539",
+      "status": "已验证",
+      "question": "证书管理单文件超过5700行，模型、凭据、ACME执行、多个云商部署、X509解析、监控通知、调度和IPC混合，难以独立检查和定位变更。"
+    },
+    {
+      "qid": "Q-0540",
+      "status": "已验证",
+      "question": "全局配置文件仍混合模型、持久化、备份、托盘设置、RSS、迁移命令和外观接口；基础层提取后应进一步明确这些应用职责。"
+    },
+    {
+      "qid": "Q-0541",
+      "status": "已验证",
+      "question": "测试凭据备份使用真实用户home，且基础UTF8截断函数仍挂在业务工具命名空间。"
+    },
+    {
+      "qid": "Q-0542",
+      "status": "已验证",
+      "question": "Windows监听端口自有PID回归真实失败，端口冲突探测可能漏报。"
+    },
+    {
+      "qid": "Q-0543",
+      "status": "已验证",
+      "question": "API导入导出和IPC命令分别超过2000/1000行，需要按格式与职责拆分。"
+    },
+    {
+      "qid": "Q-0544",
+      "status": "已验证",
+      "question": "协议代理与公共AI传输包含多份超过1000行的实现文件，HTTP调度、SSE状态机、响应解析和观测职责耦合。"
+    },
+    {
+      "qid": "Q-0545",
+      "status": "已验证",
+      "question": "ToolLauncher混合插件市场、会话选择、模型启动配置、工具安装卸载、日志和缓存管理，原文件2431行。"
+    },
+    {
+      "qid": "Q-0546",
+      "status": "已验证",
+      "question": "FavoritesPanel原2345行，分类树/AI整理、AI检索、导入与处理任务、进度和条目列表集中在同一组件。"
+    },
+    {
+      "qid": "Q-0547",
+      "status": "已验证",
+      "question": "env.rs原文件超过1000行，多项职责和单元测试混在同一模块，降低独立维护和审查效率。"
+    },
+    {
+      "qid": "Q-0548",
+      "status": "已验证",
+      "question": "node_manager.rs原文件超过1000行，多项职责和单元测试混在同一模块，降低独立维护和审查效率。"
+    },
+    {
+      "qid": "Q-0549",
+      "status": "已验证",
+      "question": "project/commands.rs原文件超过1000行，多项职责和单元测试混在同一模块，降低独立维护和审查效率。"
+    },
+    {
+      "qid": "Q-0550",
+      "status": "已验证",
+      "question": "project/versions.rs原文件超过1000行，多项职责和单元测试混在同一模块，降低独立维护和审查效率。"
+    },
+    {
+      "qid": "Q-0551",
+      "status": "已验证",
+      "question": "project/scanner.rs原文件超过1000行，多项职责和单元测试混在同一模块，降低独立维护和审查效率。"
+    },
+    {
+      "qid": "Q-0552",
+      "status": "已验证",
+      "question": "网络诊断入口与七项主机校验、连接解析和Ping解析回归集中在同文件，需要分离生产诊断与测试职责。"
+    },
+    {
+      "qid": "Q-0553",
+      "status": "已验证",
+      "question": "utils生产文件rustfmt后仍超过1000行。"
+    },
+    {
+      "qid": "Q-0554",
+      "status": "已验证",
+      "question": "AI业务中聚合、协作、工具启动、MCP和技能管理多个文件超过1000行，协议适配、存储与调度职责难以独立检查。"
+    },
+    {
+      "qid": "Q-0555",
+      "status": "已验证",
+      "question": "数据库设计器AI与逆向解析混合提示、解析、修复、流式快照、DDL语法和SQLite读取。"
+    },
+    {
+      "qid": "Q-0556",
+      "status": "已验证",
+      "question": "导图命令与扫描混合文档、AI路由、工具执行、附件、目录索引和缓存。"
+    },
+    {
+      "qid": "Q-0557",
+      "status": "已验证",
+      "question": "启动器数据库将分类树、项目记录、备份、连接和所有回归集中在1262行文件。"
+    },
+    {
+      "qid": "Q-0558",
+      "status": "已验证",
+      "question": "ApiPanel原1906行混合请求发送/响应抽取、压测轮询、项目模板操作、集合导出及多个编辑区域。"
+    },
+    {
+      "qid": "Q-0559",
+      "status": "已验证",
+      "question": "整改后的公共层依赖方向和1000行结构上限缺少持续检查，需要在CI阻止同类边界回归。"
+    },
+    {
+      "qid": "Q-0560",
+      "status": "已验证",
+      "question": "播放输出、队列切换、解码探测、快照与周期任务需要明确文件所有权。"
+    },
+    {
+      "qid": "Q-0561",
+      "status": "已验证",
+      "question": "Node插件桥接进程、包安装、沙箱能力检测与插件调用缺少独立职责文件。"
+    },
+    {
+      "qid": "Q-0562",
+      "status": "已验证",
+      "question": "代理内核安装、订阅更新、运行参数与网络配置IPC集中在Mihomo大入口。"
+    },
+    {
+      "qid": "Q-0563",
+      "status": "已验证",
+      "question": "归档模块页面、标签、评论、SQLite及S3加密同步配置需要拆开维护。"
+    },
+    {
+      "qid": "Q-0564",
+      "status": "已验证",
+      "question": "音乐资源的账户配置、HTTP获取、歌曲解析、抓取与下载混合在Suno入口。"
+    },
+    {
+      "qid": "Q-0565",
+      "status": "已验证",
+      "question": "Windows服务管理的安装运行控制和进程处理集中于超长公共服务文件。"
+    },
+    {
+      "qid": "Q-0566",
+      "status": "已验证",
+      "question": "Buddy账号API、自动调度、存储和客户端适配长文件混合多类职责，IPC facade也超过1000行。"
+    },
+    {
+      "qid": "Q-0567",
+      "status": "已验证",
+      "question": "收藏后端的数据库、归类协议和导入命令需要按来源、分类、凭据与内容独立维护。"
+    },
+    {
+      "qid": "Q-0568",
+      "status": "已验证",
+      "question": "启动器原生Shell执行、图标、热键、程序扫描及文件索引/查询/弹窗需按职责拆分。"
+    },
+    {
+      "qid": "Q-0569",
+      "status": "已验证",
+      "question": "工具注册表的配置协议模型与注册表读取、配置转换和回归混合，元数据契约缺少文件边界。"
+    },
+    {
+      "qid": "Q-0570",
+      "status": "已验证",
+      "question": "应用启动装配被约900行IPC注册清单淹没，需要独立命令组合模块并保持注册项完全一致。"
+    },
+    {
+      "qid": "Q-0571",
+      "status": "已验证",
+      "question": "DbDesignerPanel原3192行，设计编辑、AI生成/流式事件、会话持久化、画布缓存、文件操作与底部编辑器集中。"
+    },
+    {
+      "qid": "Q-0572",
+      "status": "已验证",
+      "question": "MindmapPanel原3325行，把文档库、撤销重做、AI导入、画布布局、自由连线与位置持久化及多个弹窗混合。"
+    },
+    {
+      "qid": "Q-0573",
+      "status": "已验证",
+      "question": "最终pnpm生产依赖扫描新增DOMPurify严重XSS、KaTeX和Vite告警，需要更新覆盖项与锁文件并验证构建。"
+    },
+    {
+      "qid": "Q-0574",
+      "status": "已验证",
+      "question": "职责拆分后部分facade把仅父模块可见的内部实现标成公开glob回导出，产生无效公开边界和新增编译警告，需要按编译器精确位置收紧。"
+    },
+    {
+      "qid": "Q-0575",
+      "status": "已验证",
+      "question": "Buddy会话索引的列举、删除、移动和分叉及两客户端文件处理缺少职责边界。"
+    },
+    {
+      "qid": "Q-0576",
+      "status": "已验证",
+      "question": "CodeBuddy共享扩展目录重定向、冲突决策与SQLite合并事务集中在3396行实现。"
+    },
+    {
+      "qid": "Q-0577",
+      "status": "已验证",
+      "question": "WorkBuddy会话源目标根解析、活跃会话映射与数据库转移需要明确模块责任。"
+    },
+    {
+      "qid": "Q-0578",
+      "status": "已验证",
+      "question": "BuddyPanel原4657行，将账号、OAuth/导入、平台切换、会话管理与冲突裁决、签到/旅行、到期列及路径设置集中。"
+    },
+    {
+      "qid": "Q-0579",
+      "status": "已验证",
+      "question": "LauncherPanel原3440行，同时承载目录/分类状态、搜索、拖拽、原生热键和大型视图，难以独立检查。"
+    }
+  ]
+}

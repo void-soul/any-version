@@ -1,7 +1,7 @@
 {
   "qid": "Q-0534",
   "parent_task": "Q-0506",
-  "question": "串口调试、RTSP服务、MCP管理和模型配置页面把规则编辑、编码参数、托管来源、供应商协议字段、模型参数及详情弹窗放在主控制器中，四个文件仍超过1000行。",
+  "question": "Q-0506 串口调试、RTSP服务、MCP管理和模型配置页面把规则编辑、编码参数、托管来源、供应商协议字段、模型参数及详情弹窗放在主控制器中，四个文件仍超过1000行。",
   "root_cause": "页面控制逻辑与独立的纯表单/详情视图混合；模型和表单字段契约没有文件边界。",
   "solution": "1. 提取完整顶层类型与纯工具到各模块模型文件。\n2. 提取**SerialRuleEditor**和**RtspEncodingOptions**，分别只有5个和3个明确的typed props，串口事件与RTSP实例控制仍由父页面持有。\n3. 提取**McpManagedSourceEditor**，仅托管安装来源的值和事件。\n4. 提取**ProviderProtocolFields**、**ProviderModelParameters**、**ProviderDetailsDialog**，props数量为2/6/7，类型从原逻辑校验推导后明确声明，未引入any上下文。\n5. 保留原JSX行为和事件闭包；全部输出文件小于1000行。",
   "files": "| File | Change |\n|------|--------|\n| **src/components/devtools/SerialMonitor.tsx**、**SerialMonitor.model.tsx**、**SerialRuleEditor.tsx** | 串口主体973行、独立模拟规则编辑 |\n| **src/components/SystemTools/RtspServer.tsx**、**RtspServer.model.tsx**、**RtspEncodingOptions.tsx** | RTSP主体989行、独立编码选项 |\n| **src/components/ai/McpManager.tsx**、**McpManager.model.tsx**、**McpManagedSourceEditor.tsx** | MCP主体990行、托管来源表单 |\n| **src/components/ai/ModelConfig.tsx**、**ModelConfig.model.tsx**、**ProviderProtocolFields.tsx**、**ProviderModelParameters.tsx**、**ProviderDetailsDialog.tsx** | 模型配置主体966行、供应商表单/详情视图 |",

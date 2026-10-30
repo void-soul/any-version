@@ -4,5 +4,6 @@
   "solution": "1. 提取本地Cargo库 **cert-deployment**，共享证书身份验证、Push协议/目标解析/布局、代际journal回滚恢复和有界重载命令；库不依赖Tauri或业务配置。\n2. 内嵌和独立接收端都变成薄配置/HTTP适配器，部署在blocking worker，读取证书与部署使用同一输出目录OS文件锁。\n3. 使用fs2跨进程锁覆盖部署、重载、回滚和恢复，新增同进程与子进程争锁回归。\n4. 共享库14项测试通过，含合法/错配身份、完整协议部署、失败/崩溃恢复、进程超时；两端薄适配需主agent统一验收，独立端旧测试通过不等于内嵌已验证。\n主agent验收：主应用编译通过，内嵌兼容5项、独立端10项、共享库14项全部通过（含子进程争锁）。共享库CI新增独立test步骤。",
   "files": "| File | Change |\n|------|--------|\n| **crates/cert-deployment/** | Shared protocol, identity validation, journal recovery, process locking, bounded commands and fixtures |\n| **src-tauri/src/commands/cert_receiver.rs**, **cert_receiver/tests.rs** | Embedded adapter and compatibility tests |\n| **cert-receiver/src/** | Standalone adapter; remove duplicate deployment/command implementations |\n| **src-tauri/Cargo.{toml,lock}**, **cert-receiver/Cargo.{toml,lock}** | Shared local dependency and resolved locks |",
   "validation": "Main compile + embedded 5 + standalone 10 + shared core 14 passed.",
-  "status": "已验证"
+  "status": "已验证",
+  "question": "AUDIT-20261030-019 证书推送同步等待外部重载命令，且没有超时\nasync push 直接调用同步 push_inner，其中 Command::output 阻塞等待脚本/nginx 命令，没有执行超时。命令挂起会占用异步运行时工作线程，并让请求及服务优雅停止长期等待；多个已鉴权推送可以同时阻塞。"
 }
