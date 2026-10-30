@@ -1,0 +1,15 @@
+{
+  "qid": "Q-0553",
+  "parent_task": "Q-0506",
+  "question": "utils生产文件rustfmt后仍超过1000行。",
+  "root_cause": "职责边界未独立。",
+  "solution": "将端口所有者与冲突描述职责独立到utils/ports.rs，保留utils原公开API，平台原生实现及测试仍分别归档。根文件实测962行。\n删除未使用hold_storage_read_lock辅助，显式文件CLI保持独立。\n主agent验收：Main lib compiled; utils eight sandbox tests and native two exact listener tests passed; storage14 sandbox + two junction tests passed.",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/utils.rs** | 职责拆分 |\n| **src-tauri/src/commands/utils/ports.rs** | 职责拆分 |",
+  "status": "已验证",
+  "paths": [
+    "src-tauri/src/commands/utils.rs",
+    "src-tauri/src/commands/utils/ports.rs",
+    "src-tauri/src/commands/storage_maintenance.rs"
+  ],
+  "validation": "Main lib compiled; utils eight sandbox tests and native two exact listener tests passed; storage14 sandbox + two junction tests passed."
+}

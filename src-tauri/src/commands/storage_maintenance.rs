@@ -210,17 +210,6 @@ pub(crate) fn apply_restore(plan: &RestorePlan) -> Result<(), String> {
     apply_restore_inner(plan, None)
 }
 
-/// CLI processes participate in the same lifecycle barrier without applying plans.
-pub fn hold_storage_read_lock() -> Result<(), String> {
-    if APPLICATION_STORAGE_GUARD.get().is_some() { return Ok(()); }
-    let base = super::config::get_base_dir();
-    std::fs::create_dir_all(&base).map_err(|e| e.to_string())?;
-    let guard = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false)
-        .open(base.join(".application-storage.lock")).map_err(|e| e.to_string())?;
-    FileExt::lock_shared(&guard).map_err(|e| format!("应用数据暂不可用: {e}"))?;
-    APPLICATION_STORAGE_GUARD.set(guard).map_err(|_| "应用存储已初始化".to_string())
-}
-
 fn apply_restore_inner(plan: &RestorePlan, fail_after: Option<usize>) -> Result<(), String> {
     for rel in &plan.files {
         normalize_relative_path(rel)?;
