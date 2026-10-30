@@ -1,9 +1,8 @@
 use tauri::Emitter;
 // Observability, request history and live configuration registry.
 use super::{
-    get, google, header, json, middleware, Arc, HashMap, Instant, IntoResponse, Mutex, OnceLock,
-    OriginalUri, ProxyConfig, ProxyState, Request, Response, RwLock, State, StatusCode, Value,
-    VecDeque,
+    header, json, middleware, Arc, HashMap, Instant, IntoResponse, Mutex, OnceLock, OriginalUri,
+    ProxyConfig, ProxyState, Request, Response, RwLock, State, StatusCode, Value, VecDeque,
 };
 
 /// 记录使用量到 SQLite 数据库（线程安全）。携带真实 tool_id / provider_id。

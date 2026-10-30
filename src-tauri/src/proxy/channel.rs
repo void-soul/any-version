@@ -324,5 +324,3 @@ mod tests;
 use completion::extract_json;
 #[cfg(test)]
 use completion::is_tools_unsupported_error_text;
-#[cfg(test)]
-use stream::{finish_stream_text, process_sse_line};

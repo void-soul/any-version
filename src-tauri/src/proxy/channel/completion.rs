@@ -1,8 +1,7 @@
 //! Non-stream completion, tool-call and JSON response handling.
 use super::{
-    ai_http_client, completion_url, error_or_status, is_recoverable_network_error,
-    is_retryable_no_output, log_call, log_preview, next_call_id, read_body_text_lossy,
-    send_with_retries, stream_chat_with_resume, strip_prefix_of, ChannelHooks, ChannelProvider,
+    ai_http_client, completion_url, error_or_status, is_retryable_no_output, log_call, log_preview,
+    next_call_id, read_body_text_lossy, send_with_retries, ChannelHooks, ChannelProvider,
     EMPTY_RETRY_DELAY, EMPTY_RETRY_MAX, READ_BODY_TIMEOUT,
 };
 

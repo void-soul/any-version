@@ -2,9 +2,8 @@
 use super::RESUME_MIN_PROGRESS_CHARS;
 use super::{
     ai_http_client, completion_url, error_or_status, extract_json, is_recoverable_network_error,
-    is_retryable_no_output, log_call, log_preview, next_call_id, parse_json, read_body_text_lossy,
-    send_with_retries, strip_prefix_of, ChannelHooks, ChannelProvider, EMPTY_RETRY_DELAY,
-    EMPTY_RETRY_MAX, SSE_IDLE_TIMEOUT, STREAM_RESUME_MAX,
+    log_call, log_preview, next_call_id, read_body_text_lossy, send_with_retries, strip_prefix_of,
+    ChannelHooks, ChannelProvider, SSE_IDLE_TIMEOUT, STREAM_RESUME_MAX,
 };
 
 /// 解析一行 SSE data 载荷：累积 delta.content、delta.reasoning*（思考过程）、记录 usage、识别 error。

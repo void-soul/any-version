@@ -3,11 +3,11 @@ use tauri::Emitter;
 // response responsibility.
 use super::{
     convert_response, emit_proxy_event, extract_inbound_delta_text, extract_inbound_full_text,
-    extract_stream_usage, get, get_collab_msg_id, google, header, json, log_proxy,
-    log_proxy_json_full, log_proxy_raw, proxy_debug_enabled, push_request_log, reasoning_fallback,
-    record_proxy_usage, record_usage_from_response, set_response_model, sse, store_proxy_text_for,
-    store_proxy_text_with, stream_guard, transform, upstream_error, Body, Event, Infallible,
-    Instant, Json, ProxyConfig, ProxyState, Response, Sse, StatusCode, Value,
+    extract_stream_usage, get_collab_msg_id, google, header, json, log_proxy, log_proxy_json_full,
+    log_proxy_raw, proxy_debug_enabled, push_request_log, reasoning_fallback, record_proxy_usage,
+    record_usage_from_response, set_response_model, sse, store_proxy_text_for,
+    store_proxy_text_with, stream_guard, transform, Body, Event, Infallible, Instant, Json,
+    ProxyConfig, ProxyState, Response, Sse, StatusCode, Value,
 };
 
 /// 处理成功的上游响应（流式 / 非流式）

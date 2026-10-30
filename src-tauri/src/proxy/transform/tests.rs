@@ -1,5 +1,4 @@
 //! tests implementation.
-use super::*;
 
 #[cfg(test)]
 mod stream_block_tests {

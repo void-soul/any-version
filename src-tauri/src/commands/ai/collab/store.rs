@@ -1,12 +1,12 @@
 //! collab.json 数据模型持久化：路径、读写、ID/时间戳生成。
 //! 与 collab.rs 为父子模块关系：类型定义在父模块，本模块只负责存储层。
 
+use crate::commands::config::get_data_dir;
+use parking_lot::Mutex;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
-use parking_lot::Mutex;
-use crate::commands::config::get_data_dir;
 
 use super::CollabStore;
 
@@ -28,7 +28,10 @@ pub(crate) fn load_store() -> CollabStore {
                 }
                 Err(e) => {
                     // 解析失败：保留损坏文件并备份，避免静默丢弃数据（运维可据此恢复）
-                    eprintln!("[collab] ⚠ collab.json 解析失败，已备份原文件为 .corrupt: {}", e);
+                    eprintln!(
+                        "[collab] ⚠ collab.json 解析失败，已备份原文件为 .corrupt: {}",
+                        e
+                    );
                     let _ = fs::copy(&path, path.with_extension("json.corrupt"));
                 }
             },
@@ -70,7 +73,11 @@ pub(crate) fn now_str() -> String {
 /// 兼容的 updated_at 比较：约定由 now_str() 生成（"%Y-%m-%dT%H:%M:%S"，字典序即时间序），
 /// 同时兼容 RFC3339（含时区偏移）解析比较，任一解析失败时回退字典序。返回降序（新→旧）。
 pub(crate) fn cmp_updated_at(a: &str, b: &str) -> std::cmp::Ordering {
-    let parse = |s: &str| chrono::DateTime::parse_from_rfc3339(s).map(|d| d.timestamp()).ok();
+    let parse = |s: &str| {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .map(|d| d.timestamp())
+            .ok()
+    };
     match (parse(a), parse(b)) {
         (Some(x), Some(y)) => y.cmp(&x),
         _ => b.cmp(a),

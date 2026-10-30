@@ -1,9 +1,8 @@
 use axum::response::IntoResponse;
 // inbound responsibility.
 use super::{
-    convert, get, google, header, json, log_proxy, process_request, proxy_debug_enabled, sse,
-    stream_guard, Body, HeaderMap, Infallible, Json, OriginalUri, ProxyState, Response, State,
-    StatusCode, Value,
+    convert, header, json, log_proxy, process_request, proxy_debug_enabled, stream_guard, Body,
+    HeaderMap, Json, OriginalUri, ProxyState, Response, State, StatusCode, Value,
 };
 
 /// GET /health

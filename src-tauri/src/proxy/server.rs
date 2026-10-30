@@ -32,7 +32,6 @@ use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
-use tauri::Emitter;
 use tokio::sync::RwLock;
 
 /// 代理服务器共享状态
@@ -553,8 +552,7 @@ use observability::{
     catch_all_handler, emit_proxy_event, extract_inbound_delta_text, extract_inbound_full_text,
     get_collab_msg_id, log_proxy, log_proxy_json_full, log_proxy_raw, log_requests_mw,
     proxy_debug_enabled, record_proxy_usage, require_proxy_token_mw, store_proxy_text_for,
-    store_proxy_text_with, COLLAB_MSG_ID, PROXY_TEXT, REQUEST_LOG, REQUEST_LOG_CAP,
-    RUNNING_CONFIGS,
+    store_proxy_text_with, REQUEST_LOG_CAP, RUNNING_CONFIGS,
 };
 pub use observability::{
     clear_collab_msg_id, clear_request_logs, get_request_logs, push_request_log, set_collab_msg_id,
@@ -564,12 +562,11 @@ pub use observability::{
 mod inbound;
 use inbound::{
     chat_completions_handler, count_tokens_handler, google_handler, health_handler,
-    messages_handler, models_handler, parse_sse_json, responses_handler,
-    wrap_chat_json_as_responses, wrap_chat_stream_as_responses,
+    messages_handler, models_handler, responses_handler,
 };
 
 mod dispatch;
 use dispatch::process_request;
 
 mod response;
-use response::{aggregate_upstream_stream, process_response, stream_response};
+use response::process_response;
