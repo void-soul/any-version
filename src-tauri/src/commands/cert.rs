@@ -325,31 +325,7 @@ const CRED_ENCRYPTION_MARKER: &str = "ENC_V2:";
 /// 获取或生成机器级加密密钥（32 字节）。
 /// 密钥存储在 `~/.any-version/certs/.master_key`，权限由 OS 文件权限保护。
 fn get_or_create_master_key() -> Result<[u8; 32], String> {
-    let key_path = super::config::get_data_dir().join("certs").join(".master_key");
-    if key_path.exists() {
-        let encoded = std::fs::read_to_string(&key_path)
-            .map_err(|e| format!("读取主密钥失败: {}", e))?;
-        let bytes = B64.decode(encoded.trim())
-            .map_err(|e| format!("主密钥 base64 解码失败: {}", e))?;
-        if bytes.len() == 32 {
-            let mut key = [0u8; 32];
-            key.copy_from_slice(&bytes);
-            return Ok(key);
-        }
-        eprintln!("[cert] ⚠ 主密钥长度不匹配，重新生成");
-    }
-    // 生成新密钥
-    let mut key = [0u8; 32];
-    // 使用操作系统随机数生成器
-    getrandom::getrandom(&mut key[..]).map_err(|e| format!("生成随机密钥失败: {}", e))?;
-    // 确保父目录存在
-    if let Some(parent) = key_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("创建密钥目录失败: {}", e))?;
-    }
-    // 写入 base64 编码的密钥
-    let encoded = B64.encode(&key);
-    std::fs::write(&key_path, encoded).map_err(|e| format!("写入主密钥失败: {}", e))?;
-    Ok(key)
+    crate::commands::secrets::get_or_create_master_key()
 }
 
 /// 使用 AES-256-GCM 加密字符串，返回 base64(nonce || ciphertext)。

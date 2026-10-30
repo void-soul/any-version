@@ -1,0 +1,10 @@
+{
+  "qid": "Q-0508",
+  "audit_id": "AUDIT-20261030-003",
+  "question": "两个模块无互斥创建同一主密钥，首写竞态可使凭据无法解密",
+  "root_cause": "**cert** 与 **secrets** 分别读写同一 **certs/.master_key**，都采用先检查再覆盖写入且缺乏统一所有权。",
+  "solution": "1. 证书模块统一调用 **secrets::get_or_create_master_key**，消除重复创建逻辑。\n2. 进程内互斥，跨进程以 **create_new** 竞争；竞争失败者只返回磁盘中的密钥，不返回自己未保存的随机值。\n3. 非法或损坏的现有密钥返回错误，保留原文件；测试使用隔离临时路径。\n4. 新增并发首写一致性和损坏密钥保留回归测试。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/secrets.rs** | 唯一密钥创建、并发保护、损坏保留及隔离测试 |\n| **src-tauri/src/commands/cert.rs** | 使用公共密钥接口 |",
+  "status": "已验证",
+  "validation": "Primary source review and 6 isolated secrets tests passed, including concurrent creation, damaged-key preservation and authenticated encryption. No user credential files read."
+}
