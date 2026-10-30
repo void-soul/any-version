@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { filterProviders } from "../providerSearch";
-import type { AiProvider } from "../types";
+import type { AiProvider } from "../../../contracts/ai";
 
 function provider(partial: Partial<AiProvider> & { id: string; name: string }): AiProvider {
   return {

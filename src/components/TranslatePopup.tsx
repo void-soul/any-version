@@ -8,7 +8,7 @@ import VexGreeting from "./VexGreeting";
 import VexBusy from "./VexBusy";
 import { VEX_CYBER_ACCENT, resolveThemeAccent, themeAccentVars } from "../utils/brand";
 import { useTranslation } from "react-i18next";
-import { ModelSelector } from "./ai/ModelSelector";
+import { ModelSelector } from "./shared/ai/ModelSelector";
 
 interface TranslateResult {
   source?: string;

@@ -12,7 +12,7 @@
 // `param.label` 是**用户数据**（保存进配置、可在模型卡片里继续编辑），所以这里给中文
 // 初始值而不是 i18n key；下拉里的 `name` / `scope` 才走 i18n。
 
-import type { ModelCustomParam } from "./types";
+import type { ModelCustomParam } from "../../contracts/ai";
 
 export interface ParamPreset {
   id: string;

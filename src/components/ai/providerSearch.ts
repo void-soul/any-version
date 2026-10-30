@@ -1,4 +1,4 @@
-import type { AiProvider } from "./types";
+import type { AiProvider } from "../../contracts/ai";
 
 /**
  * 参与匹配的字段：显示名、id、官网、三个协议端点。

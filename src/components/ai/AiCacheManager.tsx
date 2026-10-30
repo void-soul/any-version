@@ -11,7 +11,7 @@ import {
   RefreshCw,
   CheckCircle,
 } from "lucide-react";
-import type { DetectedAiTool, AiToolCacheInfo } from "./types";
+import type { DetectedAiTool, AiToolCacheInfo } from "../../contracts/ai";
 import { alertError, theamedAlert } from "../shared/ThemedAlert";
 
 export default function AiCacheManager() {

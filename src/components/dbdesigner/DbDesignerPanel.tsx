@@ -31,7 +31,7 @@ import {
   sessionTitle,
   type SessionEntry,
 } from "./sessionKey";
-import type { ProviderLike } from "../ai/ModelSelector";
+import type { ProviderLike } from "../shared/ai/ModelSelector";
 import { cardClickAction, clickRoleOf } from "./cardClick";
 import { DEFAULT_LAYOUT_MODE, computeLayout, type LayoutMode } from "./layout";
 import {
@@ -82,7 +82,7 @@ import {
   relatedEdgeWidth,
   useGraphHighlightPrefs,
 } from "../../utils/graphHighlight";
-import { useAiPanelWidth } from "../ai/paneWidth";
+import { useAiPanelWidth } from "../shared/ai/paneWidth";
 import { createEventBuffer, useEventBufferSnapshot } from "../../utils/eventBuffer";
 import { ResultNote } from "../shared/Note";
 import { HoverPreview, useHoverPreview } from "../shared/HoverPreview";

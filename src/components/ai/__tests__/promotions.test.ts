@@ -4,8 +4,8 @@ import {
   promotionCountdown,
   promotionState,
   prunePromotions,
-} from "../promotions";
-import type { ProviderPromotion } from "../types";
+} from "../../shared/ai/promotions";
+import type { ProviderPromotion } from "../../../contracts/ai";
 
 const NOW = Date.parse("2026-10-01T10:00:00Z");
 const HOUR = 3_600_000;

@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { SharedButton, inputCls, labelCls } from "../shared/Button";
 import { SharedModal } from "../shared/Modal";
-import { MarkdownFieldEditor } from "../mindmap/MarkdownFieldEditor";
+import { MarkdownFieldEditor } from "../shared/markdown/MarkdownFieldEditor";
 import { isOverdue } from "./calendarRange";
 import { TaskLogsSection } from "./TaskLogsSection";
 import {

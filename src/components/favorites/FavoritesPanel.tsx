@@ -47,10 +47,10 @@ import { toast } from "../shared/Toast";
 import { theamedConfirm, theamedPrompt } from "../shared/ThemedAlert";
 import VexEmptyState from "../VexEmptyState";
 import { GithubTokenDialog } from "../project/GithubTokenDialog";
-import { MarkdownRenderer } from "../ai/MarkdownRenderer";
+import { MarkdownRenderer } from "../shared/markdown/MarkdownRenderer";
 import { CredentialDialog } from "./CredentialDialog";
-import type { AiConfig, AiProvider } from "../ai/types";
-import { ModelSelector } from "../ai/ModelSelector";
+import type { AiConfig, AiProvider } from "../../contracts/ai";
+import { ModelSelector } from "../shared/ai/ModelSelector";
 import {
   SOURCE_LABELS,
   expiringInDays,

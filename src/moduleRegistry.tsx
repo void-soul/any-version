@@ -1,62 +1,7 @@
-import { lazy, Suspense, ComponentType } from "react";
-import {
-  Rocket,
-  Rss,
-  Cpu,
-  Bot,
-  Brain,
-  Boxes,
-  Waypoints,
-  ShieldCheck,
-  Clipboard,
-  Settings,
-  Activity,
-  Server,
-  Video,
-  Image,
-  ListOrdered,
-  ScrollText,
-  Braces,
-  BookOpen,
-  KeyRound,
-  Languages,
-  Bookmark,
-  FlaskConical,
-  Usb,
-  Cable,
-  UserRoundCog,
-  Music,
-  Music2,
-  Star,
-  CalendarDays,
-  Database,
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
-import i18n from "./i18n";
-
-/**
- * 统一模块注册表：Kira 的所有模块都是「平级」的，
- * 只不过有的显示在顶栏（toolbar），有的收进「更多」（overflow）。
- * 用户可自由控制每个模块的归类（顶栏/更多）与启用/禁用。
- *
- * 每个模块声明：id、label、icon、color、component（懒加载）。
- * 「设置」模块为特殊模块（不可禁用、始终在顶栏），其余模块完全平等。
- */
-
-export interface ModuleDef {
-  id: string;
-  label: string;
-  icon: LucideIcon;
-  color: string;
-  /** 默认是否显示在顶栏（false = 默认收进「更多」） */
-  defaultToolbar: boolean;
-  /** 懒加载组件 */
-  Component: ComponentType<any>;
-  /** 是否特殊模块（不可禁用、不可移入「更多」） */
-  pinned?: boolean;
-  /** 组件加载时的 loading 占位 */
-  loading?: React.ReactNode;
-}
+import { lazy, Suspense, type ComponentType } from "react";
+import { MODULE_CATALOG, DEFAULT_MODULE_ORDER, DEFAULT_TOOLBAR, type ModuleMeta } from "./moduleCatalog";
+export { moduleLabel, DEFAULT_MODULE_ORDER, DEFAULT_TOOLBAR } from "./moduleCatalog";
+export interface ModuleDef extends ModuleMeta { Component: ComponentType<any>; }
 
 // 统一的懒加载包装，加载时显示简洁占位。
 function lazyLoad(fn: () => Promise<{ default: ComponentType<any> }>): ComponentType<any> {
@@ -74,284 +19,41 @@ function lazyLoad(fn: () => Promise<{ default: ComponentType<any> }>): Component
   );
 }
 
-// —— 模块清单（全部平级） ——
-export const MODULES: ModuleDef[] = [
-  {
-    id: "launcher",
-    label: "启动",
-    icon: Rocket,
-    color: "#8b5cf6",
-    defaultToolbar: true,
-    Component: lazyLoad(() => import("./components/launcher/LauncherPanel")),
-  },
-  {
-    id: "news",
-    label: "资讯",
-    icon: Rss,
-    color: "#ea580c",
-    defaultToolbar: true,
-    Component: lazyLoad(() => import("./components/RssReader")),
-  },
-  {
-    id: "sdk",
-    label: "SDK",
-    icon: Cpu,
-    color: "#2563eb",
-    defaultToolbar: true,
-    Component: lazyLoad(() => import("./components/ProjectManager")),
-  },
-  {
-    id: "ai",
-    label: "AI",
-    icon: Bot,
-    color: "#7c3aed",
-    defaultToolbar: true,
-    Component: lazyLoad(() => import("./components/ai/AiPanel")),
-  },
-  {
-    id: "mindmap",
-    label: "思维导图",
-    icon: Brain,
-    color: "#f59e0b",
-    defaultToolbar: true,
-    Component: lazyLoad(() => import("./components/mindmap/MindmapPanel")),
-  },
-  {
-    id: "api",
-    label: "API",
-    icon: FlaskConical,
-    color: "#06b6d4",
-    defaultToolbar: true,
-    Component: lazyLoad(() => import("./components/api/ApiPanel")),
-  },
+const PAGE_LOADERS: Record<string, ComponentType<any>> = {
+  launcher: lazyLoad(() => import("./components/launcher/LauncherPanel")),
+  news: lazyLoad(() => import("./components/RssReader")),
+  sdk: lazyLoad(() => import("./components/ProjectManager")),
+  ai: lazyLoad(() => import("./components/ai/AiPanel")),
+  mindmap: lazyLoad(() => import("./components/mindmap/MindmapPanel")),
+  api: lazyLoad(() => import("./components/api/ApiPanel")),
+  node: lazyLoad(() => import("./components/node/NodeManagerPanel")),
+  mihomo: lazyLoad(() => import("./components/SystemTools/Mihomo")),
+  cert: lazyLoad(() => import("./components/SystemTools/CertManager")),
+  clipboard: lazyLoad(() => import("./components/ClipboardPanel")),
+  otp: lazyLoad(() => import("./components/OtpPanel")),
+  translate: lazyLoad(() => import("./components/TranslatePanel")),
+  picky: lazyLoad(() => import("./components/PickyPanel")),
+  buddy: lazyLoad(() => import("./components/buddy/BuddyPanel")),
+  settings: lazyLoad(() => import("./components/GlobalSettings")),
+  network: lazyLoad(() => import("./components/LocalNetworkPanel")),
+  httpServer: lazyLoad(() => import("./components/HttpServer")),
+  rtspServer: lazyLoad(() => import("./components/SystemTools/RtspServer")),
+  imageBase64: lazyLoad(() => import("./components/ImageBase64")),
+  env: lazyLoad(() => import("./components/EnvManager")),
+  logViewer: lazyLoad(() => import("./components/LogViewer")),
+  jsonBrowser: lazyLoad(() => import("./components/SystemTools/JsonBrowser")),
+  markdownReader: lazyLoad(() => import("./components/SystemTools/MarkdownReader")),
+  serial: lazyLoad(() => import("./components/devtools/SerialMonitor")),
+  wsDebugger: lazyLoad(() => import("./components/devtools/WsDebugger")),
+  music: lazyLoad(() => import("./components/music/MusicPanel")),
+  favorites: lazyLoad(() => import("./components/favorites/FavoritesPanel")),
+  suno: lazyLoad(() => import("./components/suno/SunoPanel")),
+  tasks: lazyLoad(() => import("./components/tasks/TaskCalendarPanel")),
+  dbdesigner: lazyLoad(() => import("./components/dbdesigner/DbDesignerPanel")),
+};
 
-  {
-    id: "node",
-    label: "服务",
-    icon: Boxes,
-    color: "#0891b2",
-    defaultToolbar: true,
-    Component: lazyLoad(() => import("./components/node/NodeManagerPanel")),
-  },
-  {
-    id: "mihomo",
-    label: "代理",
-    icon: Waypoints,
-    color: "#4f46e5",
-    defaultToolbar: true,
-    Component: lazyLoad(() => import("./components/SystemTools/Mihomo")),
-  },
-  {
-    id: "cert",
-    label: "证书",
-    icon: ShieldCheck,
-    color: "#0d9488",
-    defaultToolbar: true,
-    Component: lazyLoad(() => import("./components/SystemTools/CertManager")),
-  },
-  {
-    id: "clipboard",
-    label: "剪贴板",
-    icon: Clipboard,
-    color: "#0ea5e9",
-    defaultToolbar: true,
-    Component: lazyLoad(() => import("./components/ClipboardPanel")),
-  },
-  {
-    id: "otp",
-    label: "OTP",
-    icon: KeyRound,
-    color: "#f59e0b",
-    defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/OtpPanel")),
-  },
-  {
-    id: "translate",
-    label: "翻译",
-    icon: Languages,
-    color: "#10b981",
-    defaultToolbar: true,
-    Component: lazyLoad(() => import("./components/TranslatePanel")),
-  },
-  {
-    id: "picky",
-    label: "Picky",
-    icon: Bookmark,
-    color: "#e11d48",
-    defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/PickyPanel")),
-  },
-  {
-    id: "buddy",
-    label: "Buddy",
-    icon: UserRoundCog,
-    color: "#0d9488",
-    defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/buddy/BuddyPanel")),
-  },
-  {
-    id: "settings",
-    label: "设置",
-    icon: Settings,
-    color: "#dc2626",
-    defaultToolbar: true,
-    pinned: true, // 设置模块始终在顶栏，不可禁用
-    Component: lazyLoad(() => import("./components/GlobalSettings")),
-  },
-  // —— 以下默认收进「更多」的子模块 ——
-  {
-    id: "network",
-    label: "本地网络",
-    icon: Activity,
-    color: "#0ea5e9",
-    defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/LocalNetworkPanel")),
-  },
-  {
-    id: "httpServer",
-    label: "HTTP 服务",
-    icon: Server,
-    color: "#0891b2",
-    defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/HttpServer")),
-  },
-  {
-    id: "rtspServer",
-    label: "RTSP 服务",
-    icon: Video,
-    color: "#4f46e5",
-    defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/SystemTools/RtspServer")),
-  },
-  {
-    id: "imageBase64",
-    label: "图片 Base64",
-    icon: Image,
-    color: "#0d9488",
-    defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/ImageBase64")),
-  },
-  {
-    id: "env",
-    label: "环境变量",
-    icon: ListOrdered,
-    color: "#f59e0b",
-    defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/EnvManager")),
-  },
-  {
-    id: "logViewer",
-    label: "日志查看",
-    icon: ScrollText,
-    color: "#059669",
-    defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/LogViewer")),
-  },
-  {
-    id: "jsonBrowser",
-    label: "JSON 浏览",
-    icon: Braces,
-    color: "#dc2626",
-    defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/SystemTools/JsonBrowser")),
-  },
-  {
-    id: "markdownReader",
-    label: "Markdown",
-    icon: BookOpen,
-    color: "#ea580c",
-    defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/SystemTools/MarkdownReader")),
-  },
-  // —— 开发者工具（默认收进「更多」） ——
-  {
-    id: "serial",
-    label: "串口调试",
-    icon: Usb,
-    color: "#14b8a6",
-    defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/devtools/SerialMonitor")),
-  },
-  {
-    id: "wsDebugger",
-    label: "网络调试器",
-    icon: Cable,
-    color: "#6366f1",
-    defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/devtools/WsDebugger")),
-  },
-  // —— 音乐播放器（纯本地，默认收进「更多」） ——
-  {
-    id: "music",
-    label: "音乐播放器",
-    icon: Music,
-    color: "#8b5cf6",
-    defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/music/MusicPanel")),
-  },
-  // —— 收藏 / 星标聚合（只读导入 + AI 归类）——
-  {
-    id: "favorites",
-    label: "收藏",
-    icon: Star,
-    color: "#f59e0b",
-    defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/favorites/FavoritesPanel")),
-  },
-  // —— Suno 音频下载（解析用户主页 → 下载 m4a → 转 mp3）——
-  {
-    id: "suno",
-    label: "Suno 下载",
-    icon: Music2,
-    color: "#ec4899",
-    defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/suno/SunoPanel")),
-  },
-  // —— 任务计划（全屏日历；独立库 tasks.db，与思维导图解耦）——
-  {
-    id: "tasks",
-    label: "任务计划",
-    icon: CalendarDays,
-    color: "#f59e0b",
-    defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/tasks/TaskCalendarPanel")),
-  },
-  // —— 数据库设计器（画表/视图 → 导出建表 SQL；纯文件 .dbdesign.json）——
-  {
-    id: "dbdesigner",
-    label: "数据库设计",
-    icon: Database,
-    color: "#0ea5e9",
-    defaultToolbar: false,
-    Component: lazyLoad(() => import("./components/dbdesigner/DbDesignerPanel")),
-  },
-];
-
-/** 按 id 取模块定义 */
-export const MODULE_MAP: Record<string, ModuleDef> = Object.fromEntries(
-  MODULES.map((m) => [m.id, m])
-);
-
-/**
- * 模块显示名：优先取 i18n 翻译（modules.<id>），翻译缺失时回退注册表里的 label。
- * 避免在导航/设置等高频处硬编码，切换语言后模块名即时更新。
- */
-export function moduleLabel(id: string): string {
-  const key = `modules.${id}`;
-  try {
-    const translated = i18n.t(key);
-    if (translated && translated !== key) return translated;
-  } catch {
-    /* 忽略：回退注册表 label */
-  }
-  return MODULE_MAP[id]?.label ?? id;
-}
-
-/** 默认模块顺序（未自定义时） */
-export const DEFAULT_MODULE_ORDER: string[] = MODULES.map((m) => m.id);
-
-/** 默认顶栏模块 id 列表（未自定义时） */
-export const DEFAULT_TOOLBAR: string[] = MODULES.filter((m) => m.defaultToolbar).map((m) => m.id);
+export const MODULES: ModuleDef[] = MODULE_CATALOG.map((meta) => ({ ...meta, Component: PAGE_LOADERS[meta.id] }));
+export const MODULE_MAP: Record<string, ModuleDef> = Object.fromEntries(MODULES.map((m) => [m.id, m]));
 
 /**
  * 根据布局配置计算「顶栏模块」与「更多模块」。
@@ -364,7 +66,7 @@ export function resolveModuleLayout(
   toolbar: string[],
   disabled: string[]
 ): { toolbarModules: ModuleDef[]; moreModules: ModuleDef[]; allEnabled: ModuleDef[] } {
-  const enabled = MODULES.filter((m) => !disabled.includes(m.id));
+  const enabled = MODULES.filter((m) => m.pinned || !disabled.includes(m.id));
   const effectiveToolbar =
     toolbar.length > 0 ? toolbar : DEFAULT_TOOLBAR.filter((id) => !disabled.includes(id));
 

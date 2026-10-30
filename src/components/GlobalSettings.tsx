@@ -170,7 +170,7 @@ function ModuleConfigRow({
   );
 }
 import type { LauncherSetting } from "./launcher/types";
-import { MODULES, moduleLabel } from "../moduleRegistry";
+import { MODULE_CATALOG as MODULES, moduleLabel } from "../moduleCatalog";
 import { useTranslation } from "react-i18next";
 import DataSyncPanel from "./DataSyncPanel";
 import VexGlowAvatar from "./VexGlowAvatar";

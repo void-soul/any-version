@@ -13,8 +13,8 @@ import {
   Server,
   Activity,
 } from "lucide-react";
-import { MODULE_MAP, moduleLabel } from "../../moduleRegistry";
-import type { DetectedAiTool } from "./types";
+import { MODULE_CATALOG_MAP as MODULE_MAP, moduleLabel } from "../../moduleCatalog";
+import type { DetectedAiTool } from "../../contracts/ai";
 
 interface UsageSummary {
   total_records: number;

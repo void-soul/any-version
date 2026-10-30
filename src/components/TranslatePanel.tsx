@@ -19,7 +19,7 @@ import { useTranslation } from "react-i18next";
 import { HotkeyRecorder } from "./shared/HotkeyRecorder";
 import { ModuleSettingsButton, SettingsGroup, SettingsRow } from "./shared/ModuleSettings";
 import type { LauncherSetting } from "./launcher/types";
-import { ModelSelector } from "./ai/ModelSelector";
+import { ModelSelector } from "./shared/ai/ModelSelector";
 
 // ─── 类型 ───
 

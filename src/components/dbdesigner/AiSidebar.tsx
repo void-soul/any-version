@@ -1,4 +1,4 @@
-﻿// AI 助手侧栏：**窄条 + 展开**两态，与左侧表树同款（不用 translate-x 滑出，
+// AI 助手侧栏：**窄条 + 展开**两态，与左侧表树同款（不用 translate-x 滑出，
 // 思维导图那边也是宽度切换 —— 项目里没有滑出动画，滑出会与整体手感不一致）。
 //
 // 对话按**气泡**渲染，用户右对齐、助手左对齐；进度（思考中 / 正在写 / 已完成）
@@ -8,7 +8,7 @@ import { Ban, ChevronDown, HelpCircle, Lightbulb, Loader2, Sparkles } from "luci
 import { useTranslation } from "react-i18next";
 
 import { ThinkingBlock } from "../shared/ThinkingBlock";
-import { ModelSelector, type ProviderLike } from "../ai/ModelSelector";
+import { ModelSelector, type ProviderLike } from "../shared/ai/ModelSelector";
 import SessionBar from "./SessionBar";
 import type { ChatMsg } from "./chatState";
 import type { SessionEntry } from "./sessionKey";

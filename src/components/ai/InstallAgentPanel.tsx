@@ -3,8 +3,8 @@ import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Bot, Send, Sparkles, Wrench, CheckCircle, AlertTriangle } from "lucide-react";
-import type { AiConfig } from "./types";
-import { ModelSelector } from "./ModelSelector";
+import type { AiConfig } from "../../contracts/ai";
+import { ModelSelector } from "../shared/ai/ModelSelector";
 import { ThinkingBlock } from "../shared/ThinkingBlock";
 
 /** 后端 install_agent::InstallAgentStep */

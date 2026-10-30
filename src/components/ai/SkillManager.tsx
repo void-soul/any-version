@@ -15,7 +15,7 @@ import {
 import { alertError } from "../shared/ThemedAlert";
 import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
 import { SharedModal } from "../shared/Modal";
-import { MarkdownRenderer } from "./MarkdownRenderer";
+import { MarkdownRenderer } from "../shared/markdown/MarkdownRenderer";
 
 // ─── 类型 ───
 /** 预置技能来源（后端 get_skill_sources） */

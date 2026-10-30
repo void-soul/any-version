@@ -5,7 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
 import { Note, ResultNote } from "../shared/Note";
-import { useToolListWidth } from "./paneWidth";
+import { useToolListWidth } from "../shared/ai/paneWidth";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   Rocket,
@@ -51,9 +51,9 @@ import type {
   CodexPluginInfo,
   ClaudePluginInfo,
   ClaudePluginStatus,
-} from "./types";
+} from "../../contracts/ai";
 import { alertError } from "../shared/ThemedAlert";
-import { ModelSelector, CustomParamControls } from "./ModelSelector";
+import { ModelSelector, CustomParamControls } from "../shared/ai/ModelSelector";
 
 /**
  * 插件列表的统一行结构。

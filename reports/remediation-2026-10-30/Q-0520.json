@@ -1,0 +1,9 @@
+{
+  "qid": "Q-0520",
+  "audit_id": "AUDIT-20261030-015",
+  "status": "已验证",
+  "root_cause": "公共展示能力没有独立所有权；**moduleRegistry.tsx**同时提供导航元数据和业务页面装配。",
+  "solution": "1. 将Markdown编辑与渲染、AI选择器和宽度偏好迁至**components/shared**，AI契约迁至**contracts/ai.ts**，旧路径保留兼容重导出。\n2. 各业务调用方直接依赖公共路径，避免共享能力再次反向引用业务模块。",
+  "files": "| File | Change |\n|------|--------|\n| **src/contracts/ai.ts** | Shared AI contracts |\n| **src/components/shared/ai/** | Shared model selection, promotion and width utilities |\n| **src/components/shared/markdown/** | Shared Markdown editing and rendering |\n| **src/components/** | Migrate consumers and preserve compatibility exports |",
+  "validation": "Primary review: tsc passed; full Vitest 48 files / 393 tests passed; git diff --check passed. User explicitly authorized batch verification and commit."
+}

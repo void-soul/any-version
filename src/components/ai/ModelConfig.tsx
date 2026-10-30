@@ -22,9 +22,9 @@ import {
   EyeOff,
   FolderOpen,
 } from "lucide-react";
-import type { ModelEntry, AiProvider, AiConfig, ModelCustomParam, UpstreamHeader, ProviderPromotion } from "./types";
+import type { ModelEntry, AiProvider, AiConfig, ModelCustomParam, UpstreamHeader, ProviderPromotion } from "../../contracts/ai";
 import { filterProviders } from "./providerSearch";
-import { promotionCountdown, promotionState, prunePromotions } from "./promotions";
+import { promotionCountdown, promotionState, prunePromotions } from "../shared/ai/promotions";
 import { PARAM_PRESETS } from "./paramPresets";
 import { theamedAlert } from "../shared/ThemedAlert";
 

@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Brain, ChevronDown, ListTree, Plus, X } from "lucide-react";
 import { mmApi, type MindmapDocument, type DocumentFull, type MindmapNode, kindColor } from "./types";
-import { MarkdownFieldEditor } from "./MarkdownFieldEditor";
+import { MarkdownFieldEditor } from "../shared/markdown/MarkdownFieldEditor";
 import { NodeFormFields } from "./NodeFormFields";
 import { usePopupSize } from "./usePopupSize";
 import VexGlowAvatar from "../VexGlowAvatar";

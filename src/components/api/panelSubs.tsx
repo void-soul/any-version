@@ -10,8 +10,8 @@ import remarkGfm from "remark-gfm";
 import type { ApiEndpoint, ApiModule, UnitTest, UnitTestRunOutput } from "./types";
 import { ASSERTION_TYPES } from "./types";
 import { methodIcon, fmtTime } from "./panelParts";
-import type { AiProvider } from "../ai/types";
-import { ModelSelector } from "../ai/ModelSelector";
+import type { AiProvider } from "../../contracts/ai";
+import { ModelSelector } from "../shared/ai/ModelSelector";
 import { theamedAlert } from "../shared/ThemedAlert";
 
 // ─── 接口树行（方法图标 + 名称） ───

@@ -13,8 +13,8 @@ import {
   AlertTriangle, Ban, Brain, Check, ChevronDown, Coins, File, GitFork, LayoutGrid, Loader2,
   MessageCircle, Pencil, Plus, RotateCcw, Search, Send, Sparkles, Square, Terminal, Trash2, Wrench,
 } from "lucide-react";
-import type { AiConfig } from "../ai/types";
-import { ModelSelector } from "../ai/ModelSelector";
+import type { AiConfig } from "../../contracts/ai";
+import { ModelSelector } from "../shared/ai/ModelSelector";
 import { ThinkingBlock } from "../shared/ThinkingBlock";
 import type { AgentSessionRow, AiImportResult } from "./types";
 import { createEventBuffer, useEventBufferSnapshot, type EventBuffer } from "../../utils/eventBuffer";

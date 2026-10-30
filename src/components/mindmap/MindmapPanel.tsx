@@ -18,9 +18,9 @@ import {
 } from "../../utils/graphHighlight";
 import { graphScope, hopFade } from "../../utils/graphScope";
 import GraphLookPrefs from "../shared/GraphLookPrefs";
-import { MindmapMarkdown } from "./MindmapMarkdown";
+import { MindmapMarkdown } from "../shared/markdown/DocumentMarkdown";
 import { HoverPreview, useHoverPreview } from "../shared/HoverPreview";
-import { MarkdownFieldEditor } from "./MarkdownFieldEditor";
+import { MarkdownFieldEditor } from "../shared/markdown/MarkdownFieldEditor";
 import { NodeFormFields } from "./NodeFormFields";
 import VexEmptyState from "../VexEmptyState";
 import {
@@ -29,7 +29,7 @@ import {
   ChevronDown, ChevronRight, ChevronsRight, ChevronLeft, FolderPlus, Search, Maximize2, Minimize2, Code2, FileText, ListTree, RotateCcw, RotateCw, Rows3, Link2, Square, MessageCircle, LocateFixed,
   ArrowLeft, ArrowRight, ArrowUp, ArrowDown, FileDown,
 } from "lucide-react";
-import type { AiConfig } from "../ai/types";
+import type { AiConfig } from "../../contracts/ai";
 import { AgentSessionRow, AiImportResult, DocumentFull, MindmapDocument, MindmapFolder, MindmapLink, MindmapNode, MindmapSticker, PositionInput, kindColor, mmApi } from "./types";
 import { isLayoutDir, layoutTree, type LayoutDir } from "./layout";
 import { moduleAccent } from "../../utils/theme";

@@ -43,7 +43,7 @@ import type {
   AggregateConfig,
   AggregateStatus,
   AggregateLog,
-} from "./types";
+} from "../../contracts/ai";
 
 /** 被清洗掉的链路成员 + 原因（后端 `get_route_chain_health` 返回） */
 export interface DroppedMember {

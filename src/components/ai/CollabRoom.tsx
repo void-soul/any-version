@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { MarkdownRenderer } from "./MarkdownRenderer";
+import { MarkdownRenderer } from "../shared/markdown/MarkdownRenderer";
 import VexEmptyState from "../VexEmptyState";
 import {
   MessagesSquare,
@@ -57,9 +57,9 @@ import type {
   ProxyErrorPayload,
   LastLaunchConfig,
   CollabAgentStatus,
-} from "./types";
+} from "../../contracts/ai";
 import { alertError, theamedAlert, theamedConfirm } from "../shared/ThemedAlert";
-import { ModelSelector, CustomParamControls } from "./ModelSelector";
+import { ModelSelector, CustomParamControls } from "../shared/ai/ModelSelector";
 
 const DYNAMIC_COLOR_PALETTE = [
   "bg-orange-500", "bg-emerald-500", "bg-violet-500",

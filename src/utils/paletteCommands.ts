@@ -9,7 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { LucideIcon } from "lucide-react";
 
 import { toast } from "../components/shared/Toast";
-import { moduleLabel, type ModuleDef } from "../moduleRegistry";
+import { moduleLabel, type ModuleMeta } from "../moduleCatalog";
 import { applyDensity } from "./appearance";
 
 export interface PaletteItem {
@@ -27,7 +27,7 @@ type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 /** 模块导航条目。onGo 由 App 注入（切换页面并懒挂载）。 */
 export function modulePaletteItems(
-  modules: ModuleDef[],
+  modules: ModuleMeta[],
   activeId: string,
   t: Translate,
   onGo: (id: string) => void,

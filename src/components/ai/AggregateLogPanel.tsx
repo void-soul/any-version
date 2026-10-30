@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Trash2 } from "lucide-react";
-import type { AggregateLog } from "./types";
+import type { AggregateLog } from "../../contracts/ai";
 
 /// 聚合服务日志面板（仿服务页日志区：等宽、错误行着色、自动滚底）
 export default function AggregateLogPanel({

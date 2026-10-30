@@ -19,7 +19,7 @@ if (POPUP_KIND === "translate" || POPUP_KIND === "mindmap-node" || POPUP_KIND ==
   // 划词翻译悬浮窗只渲染轻量组件，不加载 App 与全局快捷键逻辑。
   // 样式：Tailwind 指令在 App.css 中，App 分支由 App.tsx 引入；
   // 悬浮窗分支必须在此一并加载，否则所有工具类样式失效。
-  import("./App.css");
+  import("./App");
   const mod = POPUP_KIND === "translate"
     ? import("./components/TranslatePopup")
     : POPUP_KIND === "mindmap-sticker"
@@ -29,7 +29,7 @@ if (POPUP_KIND === "translate" || POPUP_KIND === "mindmap-node" || POPUP_KIND ==
     : import("./components/mindmap/MindmapNodePopup");
   // 悬浮窗同样需要 i18n：与主应用一致，先读后端语言偏好初始化，
   // 否则 useTranslation 只会返回原始 key。
-  import("./i18n").then(async ({ loadAppLanguage, initI18n }) => {
+  import("./i18n/index").then(async ({ loadAppLanguage, initI18n }) => {
     const lang = await loadAppLanguage();
     await initI18n(lang);
     void mod.then(({ default: Popup }) => {
@@ -70,7 +70,7 @@ if (POPUP_KIND === "translate" || POPUP_KIND === "mindmap-node" || POPUP_KIND ==
   // 而是由共享 MonacoEditor 组件在首个编辑器真正挂载时才依次加载
   // monacoSetup（配置本地 worker）→ @monaco-editor/react → monaco 核心。
   // 国际化：先读取后端语言偏好（config.language）初始化 i18n，再挂载 App。
-  import("./i18n").then(async ({ loadAppLanguage, initI18n }) => {
+  import("./i18n/index").then(async ({ loadAppLanguage, initI18n }) => {
     const lang = await loadAppLanguage();
     await initI18n(lang);
     import("./App").then(({ default: App }) => {
