@@ -7,11 +7,12 @@
     "start": "node scripts/bundle-resources.mjs && set ANY_VERSION_PROXY_DEBUG=1 && tauri dev",
     "dev": "vite",
     "build": "npm run build:receiver && node scripts/bundle-resources.mjs && tsc && vite build",
-    "build:receiver": "cargo build --release --manifest-path cert-receiver/Cargo.toml",
+    "build:receiver": "cargo build --release --locked --manifest-path cert-receiver/Cargo.toml",
     "preview": "vite preview",
     "tauri": "tauri",
     "bump": "node scripts/bump-version.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check:architecture": "node scripts/check-module-boundaries.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -26,11 +27,11 @@
     "@tauri-apps/plugin-process": "~2.3.1",
     "@tauri-apps/plugin-updater": "~2.11.0",
     "@xyflow/react": "^12.11.6",
-    "dompurify": "^3.4.15",
+    "dompurify": "^3.4.17",
     "flag-icons": "^7.5.0",
     "highlight.js": "^11.12.0",
     "i18next": "^26.4.2",
-    "katex": "^0.18.7",
+    "katex": "^0.19.0",
     "lucide-react": "^1.47.0",
     "marked": "^18.0.13",
     "monaco-editor": "0.56.0",
@@ -50,7 +51,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
     "typescript": "~7.0.2",
-    "vite": "^8.3.0",
+    "vite": "^8.3.3",
     "vitest": "^5.0.1"
   },
   "engines": {

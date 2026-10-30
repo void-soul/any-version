@@ -24,6 +24,7 @@ jobs:
           cache: pnpm
       # 锁文件漂移设防：与本地 lockfile 不一致时直接失败。
       - run: pnpm install --frozen-lockfile
+      - run: pnpm check:architecture
       - run: pnpm exec tsc --noEmit
       - run: pnpm test
       # 依赖漏洞扫描：生产依赖存在 high/critical 漏洞时阻断。

@@ -1,0 +1,13 @@
+{
+  "qid": "Q-0559",
+  "root_cause": "拆分与分层约定缺少可持续执行的检查，后续功能可能重新引入反向依赖或超长文件。",
+  "solution": "新增check-module-boundaries.mjs，对四个源码根1084文件执行小于1000行上限；检查公共proxy、foundation、通用config/utils、SDK资源定位、模块目录及共享UI关键import边界。检查范围明确为静态导入约束，配合编译和行为回归；Node检查接入CI与package脚本。最终全部通过。",
+  "files": "| File | Change |\n|------|--------|\n| **scripts/check-module-boundaries.mjs** | 行数与关键层依赖约束 |\n| **package.json** | 本地检查入口 |\n| **.github/workflows/ci.yml** | CI架构关卡 |",
+  "status": "已验证",
+  "paths": [
+    "scripts/check-module-boundaries.mjs",
+    "package.json",
+    ".github/workflows/ci.yml"
+  ],
+  "validation": "Final all-targets check and1483 inventory;1459 sandbox +18 exact Windows fixture tests passed,6 existing ignored. Frontend tsc/50 files397 tests and production build passed; source guard1084 passed."
+}

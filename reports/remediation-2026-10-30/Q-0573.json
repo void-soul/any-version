@@ -1,0 +1,14 @@
+{
+  "qid": "Q-0573",
+  "root_cause": "旧workspace覆盖项锁定DOMPurify旧范围；Markdown传递KaTeX保留旧分支，Vite修复未进锁文件。",
+  "solution": "DOMPurify统一3.4.17，KaTeX直接及传递统一0.19.1（采用推荐非deprecated版本），Vite8.3.5；更新manifest/override/lock。新增真实ReactMarkdown+remark-math+rehype-katex兼容与不可信链接两项回归。pnpm生产audit所有级别0，pnpm11.3 frozen锁兼容通过；tsc、50文件397测试、生产构建通过。receiver构建使用--locked。",
+  "files": "| File | Change |\n|------|--------|\n| **package.json**、**pnpm-workspace.yaml**、**pnpm-lock.yaml** | 依赖与覆盖修复，可复现构建 |\n| **src/components/shared/markdown/mathRendering.test.tsx** | 数学渲染与非信任链接回归 |",
+  "status": "已验证",
+  "paths": [
+    "package.json",
+    "pnpm-workspace.yaml",
+    "pnpm-lock.yaml",
+    "src/components/shared/markdown/mathRendering.test.tsx"
+  ],
+  "validation": "Final all-targets check and1483 inventory;1459 sandbox +18 exact Windows fixture tests passed,6 existing ignored. Frontend tsc/50 files397 tests and production build passed; source guard1084 passed."
+}
