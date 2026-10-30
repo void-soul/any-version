@@ -1,0 +1,27 @@
+{
+  "qid": "Q-0546",
+  "question": "FavoritesPanel原2345行，分类树/AI整理、AI检索、导入与处理任务、进度和条目列表集中在同一组件。",
+  "root_cause": "分类领域和长任务事件的状态所有权与视图混合，独立展示区域缺少文件边界。",
+  "solution": "完整提取顶层分类树/markdown/按钮等声明；useFavoriteCategories拥有分类筛选、CRUD、整理计划、分类选择及相应视图，7项明确输入；useFavoriteAiAssistant拥有检索事件、消息和视图，4项输入；useFavoriteTasks拥有导入、归类、检测与进度事件，3项输入。主页面保留条目虚拟列表及正文；筛选/进度/汇总/墓碑弹窗独立typed视图。延迟刷新/面板切换回调在声明初始化前仅捕获、不提前求值。\n主agent验收：Agent tsc and all 49 files/395 tests passed; primary reviewed hook initialization order, typed domain inputs and independent event ownership; output line counts checked.",
+  "files": "| File | Change |\n|------|--------|\n| **FavoritesPanel.tsx** | 2345降至989行条目列表与编排 |\n| **useFavoriteCategories.tsx** | 615行分类/整理领域 |\n| **useFavoriteAiAssistant.tsx**、**useFavoriteTasks.tsx** | AI与长任务事件独立所有权 |\n| **FavoriteItemFilters.tsx**、**FavoriteTaskProgress.tsx**、**FavoriteLibrarySummary.tsx**、**FavoriteDeletedDialog.tsx** | typed展示视图 |\n| **FavoritesPanel.*.tsx** | 完整顶层子组件及纯模型 |",
+  "status": "已验证",
+  "validation": "Agent tsc and all 49 files/395 tests passed; primary reviewed hook initialization order, typed domain inputs and independent event ownership; output line counts checked.",
+  "paths": [
+    "src/components/favorites/FavoritesPanel.CategoryCheckTree.tsx",
+    "src/components/favorites/FavoritesPanel.CategoryTree.tsx",
+    "src/components/favorites/FavoritesPanel.AiResultMarkdown.tsx",
+    "src/components/favorites/FavoritesPanel.Divider.tsx",
+    "src/components/favorites/FavoritesPanel.LinkButton.tsx",
+    "src/components/favorites/FavoritesPanel.CredDot.tsx",
+    "src/components/favorites/FavoritesPanel.model.tsx",
+    "src/components/favorites/FavoritesPanel.tsx",
+    "src/components/favorites/FavoriteItemFilters.tsx",
+    "src/components/favorites/FavoriteTaskProgress.tsx",
+    "src/components/favorites/FavoriteLibrarySummary.tsx",
+    "src/components/favorites/FavoriteDeletedDialog.tsx",
+    "src/components/favorites/useFavoriteCategories.tsx",
+    "src/components/favorites/useFavoriteAiAssistant.tsx",
+    "src/components/favorites/useFavoriteTasks.tsx"
+  ],
+  "parent_task": "Q-0506"
+}

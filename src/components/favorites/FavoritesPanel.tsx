@@ -1,101 +1,31 @@
-// 收藏 / 星标聚合：只读导入各平台的收藏 → 本地库 → AI 多标签归类 → 失效检测。
-//
-// 设计要点：
-// - 导入是幂等的（后端按平台原生 id 去重），重复点「导入」只会得到 added=0；
-// - 归类默认只处理未归类且未被人工改过的条目；「全部重新归类」会重跑所有条目并替换 AI 旧分类；
-// - 一个条目可以属于多个分类（多标签），所以同一条目会在多个分类下出现；
-// - AI 归类支持多级分类（如「编程语言/Rust」），人工改标签后该条目被锁定。
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type MouseEvent as ReactMouseEvent,
-} from "react";
+import { FavoriteDeletedDialog } from "./FavoriteDeletedDialog";
+import { FavoriteLibrarySummary } from "./FavoriteLibrarySummary";
+import { FavoriteTaskProgress } from "./FavoriteTaskProgress";
+import { FavoriteItemFilters } from "./FavoriteItemFilters";
+import { useFavoriteTasks } from "./useFavoriteTasks";
+import { useFavoriteAiAssistant } from "./useFavoriteAiAssistant";
+import { useFavoriteCategories } from "./useFavoriteCategories";
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useTranslation } from "react-i18next";
-import {
-  ChevronDown,
-  ChevronRight,
-  Clock,
-  ExternalLink,
-  Pencil,
-  RefreshCw,
-  Search,
-  Plus,
-  X,
-  Trash2,
-  Bot,
-  Send,
-  Sparkles,
-  Loader2,
-  Star,
-} from "lucide-react";
-
+import { ChevronDown, ChevronRight, Clock, ExternalLink, Pencil, RefreshCw, Trash2, Star } from "lucide-react";
 import { favoritedDateLabel, sinceToLocalString, type SincePreset } from "./favoritedTime";
-import { progressKeyOf, progressRowsOf } from "./progress";
-import { parseAiResultLine } from "./aiResult";
-import { SharedButton } from "../shared/Button";
 import { Menu } from "../shared/Menu";
 import { useVirtualList } from "../shared/useVirtualList";
 import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
-import { ThinkingBlock } from "../shared/ThinkingBlock";
 import { toast } from "../shared/Toast";
-import { theamedConfirm, theamedPrompt } from "../shared/ThemedAlert";
 import VexEmptyState from "../VexEmptyState";
 import { GithubTokenDialog } from "../project/GithubTokenDialog";
 import { MarkdownRenderer } from "../shared/markdown/MarkdownRenderer";
 import { CredentialDialog } from "./CredentialDialog";
 import type { AiConfig, AiProvider } from "../../contracts/ai";
 import { ModelSelector } from "../shared/ai/ModelSelector";
-import {
-  SOURCE_LABELS,
-  expiringInDays,
-  statusBadge,
-  type ApplyCategoryMovesResult,
-  type CachedContent,
-  type CategoryMovePlan,
-  type CheckResult,
-  type ClassifyResult,
-  type PlannedCategoryGroup,
-  type PlannedCategoryMove,
-  type CredentialStatus,
-  type FavoriteDeletedRow,
-  type FavoriteRow,
-  type FavoriteSettings,
-  type FavoriteStats,
-  type FavoriteCategoryNode,
-  type FavoritesProgress,
-  type ImportResult,
-} from "./types";
-
-/** 分类栏宽度：默认 180px（比原先固定的 160px 宽 20px），范围与后端 clamp 一致。 */
-const DEFAULT_LEFT_WIDTH = 180;
-
-/**
- * 长任务名（与后端 `commands/favorites/commands.rs` 的 TASK_* 一致）。
- *
- * 三个平台的导入可以同时跑（各拉各的接口），但导入与「加工」（归类 / 失效检测）
- * 必须互斥：加工要扫全库挑条目，和正在写入的导入抢同一份数据。
- */
-type FavTask = "github" | "bilibili" | "zhihu" | "bookmark" | "classify" | "check";
-const IMPORT_TASKS: FavTask[] = ["github", "bilibili", "zhihu", "bookmark"];
-const isImportTask = (task: FavTask) => IMPORT_TASKS.includes(task);
-const MIN_LEFT_WIDTH = 140;
-const MAX_LEFT_WIDTH = 420;
-
-/** AI 检索右栏宽度（与后端 settings.rs 的 MIN/MAX_AI_WIDTH 一致） */
-const DEFAULT_AI_WIDTH = 360;
-const MIN_AI_WIDTH = 260;
-const MAX_AI_WIDTH = 640;
-
-/** 检索 Agent 轮数：与后端 `clamp_agent_rounds` 同一范围，默认 6。 */
-const MIN_AGENT_ROUNDS = 1;
-const MAX_AGENT_ROUNDS = 20;
-const DEFAULT_AGENT_ROUNDS = 6;
+import { SOURCE_LABELS, expiringInDays, statusBadge, type CachedContent, type CredentialStatus, type FavoriteDeletedRow, type FavoriteRow, type FavoriteSettings, type FavoriteStats } from "./types";
+import { DEFAULT_AGENT_ROUNDS, DEFAULT_AI_WIDTH, DEFAULT_LEFT_WIDTH, MAX_AGENT_ROUNDS, MAX_AI_WIDTH, MAX_LEFT_WIDTH, MIN_AGENT_ROUNDS, MIN_AI_WIDTH, MIN_LEFT_WIDTH, isImportTask } from "./FavoritesPanel.model";
+import { CredDot } from "./FavoritesPanel.CredDot";
+import { LinkButton } from "./FavoritesPanel.LinkButton";
+import { Divider } from "./FavoritesPanel.Divider";
 
 export default function FavoritesPanel() {
   const { t } = useTranslation();
@@ -103,42 +33,47 @@ export default function FavoritesPanel() {
   const [items, setItems] = useState<FavoriteRow[]>([]);
   const [stats, setStats] = useState<FavoriteStats | null>(null);
   // 分类筛选：走分类 id（树），名字只用于回显
-  const [categoryId, setCategoryId] = useState<number | null>(null);
-  const [categoryName, setCategoryName] = useState<string | null>(null);
-  // 只看星标（左侧「星标」入口）：与分类筛选可叠加 —— 同时选中时两者都要满足
-  const [starredOnly, setStarredOnly] = useState(false);
-  // 分类树里展开的节点
-  const [expandedCats, setExpandedCats] = useState<Set<number>>(new Set());
-  // 分类右键菜单
-  const [catMenu, setCatMenu] = useState<{ id: number | null; name: string; x: number; y: number } | null>(null);
-  // 条目分类选择器
-  const [pickerFor, setPickerFor] = useState<FavoriteRow | null>(null);
-  const [pickerSelected, setPickerSelected] = useState<number[]>([]);
-  // 整理类目：AI 只生成「改上级」的方案，用户在预览里勾选后才落库
-  const [organizeOpen, setOrganizeOpen] = useState(false);
-  const [organizePlan, setOrganizePlan] = useState<CategoryMovePlan | null>(null);
-  const [organizeSelected, setOrganizeSelected] = useState<number[]>([]);
-  const [organizeBusy, setOrganizeBusy] = useState(false);
-  const [organizeApplying, setOrganizeApplying] = useState(false);
-  const [organizeError, setOrganizeError] = useState<string | null>(null);
+
   const [source, setSource] = useState<string | null>(null);
   const [keyword, setKeyword] = useState("");
   // 收藏时间过滤（全部 / 近 7 天 / 近 30 天 / 近一年）
   const [since, setSince] = useState<SincePreset>("all");
   // 正在跑的长任务（替换原先单个 busy 字段）：三个导入可以同时在列，
   // 归类 / 失效检测与导入互斥，所以加工类任务在列时导入按钮全灰。
-  const [running, setRunning] = useState<FavTask[]>([]);
-  const startTask = (task: FavTask) =>
-    setRunning((prev) => (prev.includes(task) ? prev : [...prev, task]));
-  const endTask = (task: FavTask) => setRunning((prev) => prev.filter((x) => x !== task));
-  /** 有导入在跑 → 归类/检测禁用；有加工在跑 → 导入禁用。 */
-  const importRunning = running.some(isImportTask);
-  const processRunning = running.includes("classify") || running.includes("check");
 
   // AI 归类的模型选择：直接复用 AI 模块的配置，不另设一套
   const [providers, setProviders] = useState<AiProvider[]>([]);
   const [providerId, setProviderId] = useState<string>("");
   const [modelId, setModelId] = useState<string>("");
+  const {
+    running,
+    importRunning,
+    processRunning,
+    progressRows,
+    biliConfigured,
+    setBiliConfigured,
+    cookieOpen,
+    setCookieOpen,
+    zhihuCookieConfigured,
+    setZhihuCookieConfigured,
+    zhihuCookieOpen,
+    setZhihuCookieOpen,
+    tokenConfigured,
+    setTokenConfigured,
+    tokenOpen,
+    setTokenOpen,
+    runImport,
+    runImportBili,
+    runImportZhihu,
+    runImportBookmarks,
+    runClassify,
+    runCheck,
+    requestStop,
+  } = useFavoriteTasks({
+    refresh: () => refresh(),
+    providerId,
+    modelId,
+  });
 
   // 左侧分类栏宽度：可拖动，宽度与模型选择一起存进 favorites_settings.json
   const [leftWidth, setLeftWidth] = useState(DEFAULT_LEFT_WIDTH);
@@ -170,82 +105,18 @@ export default function FavoritesPanel() {
 
   // ── AI 检索助手（用户说需求 → agent 在本地库里找 → 整理成清单）──
   const [aiOpen, setAiOpen] = useState(false);
-  const [aiInput, setAiInput] = useState("");
-  const [aiResult, setAiResult] = useState("");
-  const [aiSteps, setAiSteps] = useState<{ step: string; text: string; tool?: string }[]>([]);
-  const [aiBusy, setAiBusy] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
-  const aiLogRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    const unlisten = listen<{ step: string; text: string; tool?: string }>(
-      "favorites-agent-progress",
-      (event) => {
-        const s = event.payload;
-        // 以前这里连 step === "thinking" 一起过滤掉，于是「思考」在收藏检索里
-        // 什么都不显示；后端现在发的是 step === "reasoning"（模型的真实思考内容），
-        // 要收下来渲染成可展开的思考块。
-        if (s.step === "done") return;
-        setAiSteps((prev) => [...prev, s]);
-      },
-    );
-    return () => { unlisten.then((fn) => fn()); };
-  }, []);
-
-  useEffect(() => {
-    const el = aiLogRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [aiSteps]);
-
-  const runAiSearch = async () => {
-    const text = aiInput.trim();
-    if (!text || aiBusy) return;
-    setAiBusy(true);
-    setAiError(null);
-    setAiResult("");
-    setAiSteps([]);
-    try {
-      const reply = await invoke<{ text: string }>("fav_agent_search", {
-        providerId: providerId || null,
-        modelId: modelId || null,
-        prompt: text,
-      });
-      setAiResult(reply.text);
-    } catch (e: any) {
-      setAiError(String(e));
-    } finally {
-      setAiBusy(false);
-    }
-  };
-
-  // 导入 / 归类的实时进度（后端 favorites-progress 事件）。
-  // 按任务分行存：三个导入同时跑时各显示各的，不会互相覆盖。
-  const [progressMap, setProgressMap] = useState<Record<string, FavoritesProgress>>({});
-  const clearProgress = (task: FavTask) =>
-    setProgressMap((prev) => {
-      if (!(task in prev)) return prev;
-      const next = { ...prev };
-      delete next[task];
-      return next;
-    });
-
-  useEffect(() => {
-    const unlisten = listen<FavoritesProgress>("favorites-progress", (event) => {
-      const p = event.payload;
-      const key = progressKeyOf(p);
-      setProgressMap((prev) =>
-        p.done
-          ? Object.fromEntries(Object.entries(prev).filter(([k]) => k !== key))
-          : { ...prev, [key]: p },
-      );
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  /** 正在跑的任务的进度行（保持事件到达顺序）。 */
-  const progressRows = progressRowsOf(progressMap, running);
+  const {
+    setAiResult,
+    setAiSteps,
+    aiBusy,
+    setAiError,
+    renderAiAssistant,
+  } = useFavoriteAiAssistant({
+    providerId,
+    modelId,
+    aiWidth,
+    toggleAiPanel: () => toggleAiPanel(),
+  });
 
   /** 条目列表虚拟化：只渲染视口内的行（行高由实测修正，展开正文后也会跟着变）。 */
   const vlist = useVirtualList({
@@ -254,14 +125,6 @@ export default function FavoritesPanel() {
     // 未测量前的估计值：标题 + 描述两行 + 标签行 ≈ 76px
     estimateHeight: 76,
   });
-
-  // B站：需要 Cookie（含 SESSDATA）才能读自己的收藏；配过就不再每次问
-  const [biliConfigured, setBiliConfigured] = useState(false);
-  const [cookieOpen, setCookieOpen] = useState(false);
-
-  // 知乎：只走 Cookie 直连（官方接口拿不到私有收藏夹，已下线）
-  const [zhihuCookieConfigured, setZhihuCookieConfigured] = useState(false);
-  const [zhihuCookieOpen, setZhihuCookieOpen] = useState(false);
 
   // 凭证健康状态：Cookie 快过期/已失效时主动提醒
   const [credStatus, setCredStatus] = useState<CredentialStatus[]>([]);
@@ -272,9 +135,30 @@ export default function FavoritesPanel() {
   const [content, setContent] = useState<Record<number, CachedContent | null>>({});
   const [contentBusy, setContentBusy] = useState<number | null>(null);
 
-  // GitHub Token：**收藏模块自己的一份**，与 SDK 模块的 token 互不共享
-  const [tokenConfigured, setTokenConfigured] = useState(false);
-  const [tokenOpen, setTokenOpen] = useState(false);
+  const {
+    categoryId,
+    setCategoryId,
+    categoryName,
+    setCategoryName,
+    starredOnly,
+    catMenu,
+    pickerFor,
+    organizeOpen,
+    findCatByName,
+    openPicker,
+    renderCategorySidebar,
+    renderCategoryMenu,
+    renderOrganizeDialog,
+    renderCategoryPicker,
+  } = useFavoriteCategories({
+    stats,
+    refresh: () => refresh(),
+    providerId,
+    modelId,
+    running,
+    leftWidth,
+    starredCount: items.filter(item => item.isStarred).length,
+  });
 
   const refresh = useCallback(async () => {
     const [list, overview, creds, deleted] = await Promise.all([
@@ -301,7 +185,6 @@ export default function FavoritesPanel() {
   }, [source, categoryId, keyword, since, starredOnly]);
 
   // 星标数量：当前列表里的（分类/关键词筛选会收窄它，与列表所见保持一致）
-  const starredCount = useMemo(() => items.filter((i) => i.isStarred).length, [items]);
 
   /** 星标开关：乐观更新（先改 UI 再发请求），失败时回滚并提示。
    *  星标是纯本地标记，不涉及任何平台同步，所以不该有等待感。 */
@@ -312,231 +195,6 @@ export default function FavoritesPanel() {
       await invoke("fav_set_starred", { id: item.id, starred: next });
     } catch (e) {
       setItems((cur) => cur.map((x) => (x.id === item.id ? { ...x, isStarred: item.isStarred } : x)));
-      toast(String(e), "err");
-    }
-  };
-
-  // ── 分类树操作（对齐启动模块：新建子分类 / 重命名 / 删除 / 同级排序）──
-  const cats: FavoriteCategoryNode[] = stats?.categories || [];
-
-  const findCat = (id: number | null): FavoriteCategoryNode | null => {
-    if (id == null) return null;
-    const walk = (list: FavoriteCategoryNode[]): FavoriteCategoryNode | null => {
-      for (const c of list) {
-        if (c.id === id) return c;
-        const hit = walk(c.children);
-        if (hit) return hit;
-      }
-      return null;
-    };
-    return walk(cats);
-  };
-
-  /** 按名字找分类（条目标签存的是名字，筛选要的是 id） */
-  const findCatByName = (name: string): FavoriteCategoryNode | null => {
-    const walk = (list: FavoriteCategoryNode[]): FavoriteCategoryNode | null => {
-      for (const c of list) {
-        if (c.name === name) return c;
-        const hit = walk(c.children);
-        if (hit) return hit;
-      }
-      return null;
-    };
-    return walk(cats);
-  };
-
-  /** 同级排序用的 id 列表（上下移动时只重排这一层） */
-  const siblingsOf = (id: number | null): FavoriteCategoryNode[] => {
-    if (id == null) return cats;
-    const walk = (list: FavoriteCategoryNode[]): FavoriteCategoryNode[] | null => {
-      for (const c of list) {
-        if (c.id === id) return list;
-        const hit = walk(c.children);
-        if (hit) return hit;
-      }
-      return null;
-    };
-    return walk(cats) || [];
-  };
-
-  /**
-   * 新建分类。
-   *
-   * 只保留「普通分类」一种。之前还有个 kind="follow" 的「关注分组」，已删除：
-   * 它建完之后**没有任何入口能把收藏项归进去**（唯一的归类入口是铅笔按钮，
-   * 而且默认 hover 才显形），于是用户建了一堆分组却发现「咋用啊」——
-   * 真正在用的其实一直是星标。留一个用不上的概念比不留更费解。
-   *
-   * 已存在的 follow 分组**不删数据**，按普通分类照样显示与筛选（不替用户删东西）。
-   */
-  const createCat = async (parentId: number | null) => {
-    const name = await theamedPrompt(t(pickCatKey(parentId)), {
-      title: parentId == null ? t("favorites.newCategory") : t("favorites.newSubCategory"),
-      confirmText: t("common.create"),
-    });
-    if (!name?.trim()) return;
-    try {
-      const id = await invoke<number>("fav_create_category", { name: name.trim(), parentId, kind: "topic" });
-      if (parentId != null) setExpandedCats((s) => new Set(s).add(parentId));
-      setCategoryId(id);
-      setCategoryName(name.trim());
-      await refresh();
-    } catch (e) {
-      toast(String(e), "err");
-    }
-  };
-  function pickCatKey(parentId: number | null) {
-    return parentId == null ? "favorites.newCategoryPrompt" : "favorites.newSubCategoryPrompt";
-  }
-
-  const renameCat = async (id: number) => {
-    const cur = findCat(id);
-    const name = await theamedPrompt(t("favorites.renameCategoryPrompt"), {
-      title: t("favorites.renameCategory"),
-      initial: cur?.name || "",
-    });
-    if (!name?.trim()) return;
-    try {
-      await invoke("fav_rename_category", { id, name: name.trim() });
-      if (categoryId === id) setCategoryName(name.trim());
-      await refresh();
-    } catch (e) {
-      toast(String(e), "err");
-    }
-  };
-
-  const deleteCat = async (id: number) => {
-    const cur = findCat(id);
-    if (!(await theamedConfirm(t("favorites.deleteCategoryConfirm", { name: cur?.name || "" }), { danger: true }))) return;
-    try {
-      await invoke("fav_delete_category", { id });
-      if (categoryId === id) {
-        setCategoryId(null);
-        setCategoryName(null);
-      }
-      await refresh();
-    } catch (e) {
-      toast(String(e), "err");
-    }
-  };
-
-  /** 同级上移 / 下移：只重排这一层，动完立刻落盘 */
-  const moveCat = async (id: number, dir: -1 | 1) => {
-    const list = siblingsOf(id);
-    const from = list.findIndex((c) => c.id === id);
-    const to = from + dir;
-    if (from < 0 || to < 0 || to >= list.length) return;
-    const next = [...list];
-    [next[from], next[to]] = [next[to], next[from]];
-    try {
-      await invoke("fav_reorder_categories", {
-        orders: next.map((c, i) => [c.id, i]),
-      });
-      await refresh();
-    } catch (e) {
-      toast(String(e), "err");
-    }
-  };
-
-  // ── 整理类目（AI 只给「改上级」建议，预览确认后才落库）──
-  const organizeReady = Boolean(providerId && modelId) && running.length === 0;
-
-  /** 请求 AI 生成方案。只读：不落库，用户勾选后才应用。 */
-  const loadOrganizePlan = async () => {
-    if (!providerId || !modelId || organizeBusy) return;
-    setOrganizeBusy(true);
-    setOrganizeError(null);
-    setOrganizePlan(null);
-    setOrganizeSelected([]);
-    try {
-      const plan = await invoke<CategoryMovePlan>("fav_plan_category_moves", {
-        providerId,
-        modelId,
-      });
-      setOrganizePlan(plan);
-      setOrganizeSelected(plan.moves.map((m) => m.id));
-    } catch (e) {
-      setOrganizeError(String(e));
-    } finally {
-      setOrganizeBusy(false);
-    }
-  };
-
-  const openOrganize = () => {
-    setOrganizeOpen(true);
-    void loadOrganizePlan();
-  };
-
-  /** 只把勾选的建议发回后端；后端会重新校验一次（前端传的可以是子集）。 */
-  const applyOrganize = async () => {
-    if (!organizePlan || organizeApplying) return;
-    const picked = new Set(organizeSelected);
-    const moves = organizePlan.moves
-      .filter((m: PlannedCategoryMove) => picked.has(m.id))
-      .map((m) => ({ id: m.id, parentId: m.toParentId }));
-    if (moves.length === 0) return;
-    // 新建分组由后端按「被勾选的移动」筛选用到的，不会被多余创建
-    const groups = organizePlan.groups.map((g: PlannedCategoryGroup) => ({
-      tempId: g.tempId,
-      name: g.name,
-      parentId: g.parentId,
-      parentName: g.parentName ?? null,
-      depth: g.depth,
-    }));
-    setOrganizeApplying(true);
-    try {
-      const result = await invoke<ApplyCategoryMovesResult>("fav_apply_category_moves", {
-        moves,
-        groups,
-      });
-      setOrganizeOpen(false);
-      setOrganizePlan(null);
-      await refresh();
-      if (result.skipped.length > 0) {
-        toast(
-          t("favorites.organizeAppliedSkipped", {
-            applied: result.applied,
-            skipped: result.skipped.length,
-          }),
-          "info",
-        );
-      } else if (result.created > 0) {
-        toast(
-          t("favorites.organizeAppliedWithGroups", {
-            count: result.applied,
-            groups: result.created,
-          }),
-          "ok",
-        );
-      } else {
-        toast(t("favorites.organizeApplied", { count: result.applied }), "ok");
-      }
-    } catch (e) {
-      toast(t("favorites.organizeApplyFail", { err: String(e) }), "err");
-    } finally {
-      setOrganizeApplying(false);
-    }
-  };
-
-  const organizePickedCount =
-    organizePlan?.moves.filter((m: PlannedCategoryMove) => organizeSelected.includes(m.id)).length ?? 0;
-
-  // ── 条目分类选择器 ──
-  const openPicker = (item: FavoriteRow) => {
-    setPickerFor(item);
-    const ids = (item.tags || [])
-      .map((name) => cats.find((c) => c.name === name)?.id)
-      .filter((v): v is number => typeof v === "number");
-    setPickerSelected(ids);
-  };
-
-  const submitPicker = async () => {
-    if (!pickerFor) return;
-    try {
-      await invoke("fav_set_item_categories", { id: pickerFor.id, categoryIds: pickerSelected });
-      setPickerFor(null);
-      await refresh();
-    } catch (e) {
       toast(String(e), "err");
     }
   };
@@ -713,37 +371,6 @@ export default function FavoritesPanel() {
     });
   };
 
-  const runImport = async () => {
-    // 没配 Token 就直接把配置弹窗递上去，别让用户吃一个报错再自己找入口
-    if (!tokenConfigured) {
-      setTokenOpen(true);
-      return;
-    }
-    startTask("github");
-    try {
-      const result = await invoke<ImportResult>("fav_import_github", { maxPages: null });
-      await refresh();
-      if (result.cancelled) {
-        toast(t("favorites.importCancelled"), "ok");
-      } else {
-        toast(
-          t("favorites.importDone", {
-            added: result.added,
-            updated: result.updated,
-            skipped: result.skipped,
-          }),
-          "ok",
-        );
-      }
-      reportSkippedDeleted(result.skippedDeleted);
-    } catch (e) {
-      toast(t("favorites.importFail", { err: String(e) }), "err");
-    } finally {
-      endTask("github");
-      clearProgress("github");
-    }
-  };
-
   /**
    * 展开正文：知乎用已缓存的内容，GitHub 懒抓 README（优先中文版）。
    *
@@ -779,188 +406,6 @@ export default function FavoritesPanel() {
     if (!(item.id in content)) void openContent(item);
   };
 
-  /** 导入完成后补一句「有几条是你之前删过的，已跳过」——否则用户会以为导入漏了 */
-  const reportSkippedDeleted = (n?: number) => {
-    if (!n) return;
-    toast(t("favorites.importSkippedDeleted", { count: n }), "info");
-  };
-
-  const runImportBili = async () => {
-    startTask("bilibili");
-    try {
-      const result = await invoke<ImportResult>("fav_import_bilibili");
-      await refresh();
-      toast(
-        t("favorites.importDone", {
-          added: result.added,
-          updated: result.updated,
-          skipped: result.skipped,
-        }),
-        "ok",
-      );
-      reportSkippedDeleted(result.skippedDeleted);
-    } catch (e) {
-      toast(t("favorites.importFail", { err: String(e) }), "err");
-      // Cookie 失效是最常见原因：直接把配置弹窗递上去
-      if (!biliConfigured) setCookieOpen(true);
-    } finally {
-      endTask("bilibili");
-      clearProgress("bilibili");
-    }
-  };
-
-  // 知乎：只走 Cookie 直连（含私有收藏夹；官方接口拿不到全量，已下线）
-  const runImportZhihu = async () => {
-    if (!zhihuCookieConfigured) {
-      setZhihuCookieOpen(true);
-      return;
-    }
-    startTask("zhihu");
-    try {
-      const result = await invoke<ImportResult>("fav_import_zhihu");
-      await refresh();
-      // 部分收藏夹失败（限流等）：主体照常导入，但要把失败明细露出来
-      if (result.failed && result.failed.length > 0) {
-        toast(
-          t("favorites.importPartial", {
-            added: result.added,
-            failed: result.failed.length,
-            detail: result.failed.join("；"),
-          }),
-          "err",
-        );
-      } else if (result.cancelled) {
-        toast(t("favorites.importCancelled"), "ok");
-      } else {
-        toast(
-          t("favorites.importDone", {
-            added: result.added,
-            updated: result.updated,
-            skipped: result.skipped,
-          }),
-          "ok",
-        );
-      }
-      reportSkippedDeleted(result.skippedDeleted);
-    } catch (e) {
-      toast(t("favorites.importFail", { err: String(e) }), "err");
-      // Cookie 失效是最常见原因：把配置弹窗递上去
-      setZhihuCookieOpen(true);
-    } finally {
-      endTask("zhihu");
-      clearProgress("zhihu");
-    }
-  };
-
-  /** 浏览器收藏夹导入：书签目录会按层级建成多级分类（可反复导入，靠 URL 去重） */
-  const runImportBookmarks = async (browser: "edge" | "chrome") => {
-    startTask("bookmark");
-    try {
-      const result = await invoke<{
-        imported: number;
-        folders: number;
-        skipped: number;
-        /** 命中删除墓碑而跳过（之前删过这个网址） */
-        deleted?: number;
-        file: string;
-      }>("fav_import_bookmarks", { browser, customPath: null });
-      await refresh();
-      toast(
-        t("favorites.importBookmarksDone", {
-          browser: browser === "edge" ? "Edge" : "Chrome",
-          count: result.imported,
-          folders: result.folders,
-        }),
-        "ok",
-      );
-      reportSkippedDeleted(result.deleted);
-    } catch (e) {
-      toast(t("favorites.importFail", { err: String(e) }), "err");
-    } finally {
-      endTask("bookmark");
-      clearProgress("bookmark");
-    }
-  };
-
-  const runClassify = async (reclassify: boolean) => {
-    // 双保险：按钮已禁用，但键盘/脚本路径也要挡住——后端同样会拒绝
-    if (!providerId || !modelId) {
-      toast(t("favorites.needProviderModel"), "info");
-      return;
-    }
-    startTask("classify");
-    try {
-      const result = await invoke<ClassifyResult>("fav_classify", {
-        providerId,
-        modelId,
-        limit: null,
-        reclassify,
-      });
-      await refresh();
-      if (result.cancelled) {
-        // 停掉了也要说清「已归类多少条被保留」，否则用户不知道白干了没有
-        toast(
-          t(
-            reclassify
-              ? "favorites.classifyReclassifyCancelled"
-              : "favorites.classifyCancelled",
-            {
-              classified: result.classified,
-              remaining: result.remaining,
-            },
-          ),
-          "info",
-        );
-      } else {
-        toast(
-          t(reclassify ? "favorites.classifyReclassifyDone" : "favorites.classifyDone", {
-            classified: result.classified,
-            tags: result.tagsWritten,
-            remaining: result.remaining,
-          }),
-          "ok",
-        );
-      }
-    } catch (e) {
-      toast(t("favorites.classifyFail", { err: String(e) }), "err");
-    } finally {
-      endTask("classify");
-      clearProgress("classify");
-    }
-  };
-
-  const runCheck = async () => {
-    startTask("check");
-    try {
-      const result = await invoke<CheckResult>("fav_check_gone", { all: false });
-      await refresh();
-      // 没配 Token 时 GitHub 那批查不了：如实说，不要让人以为「全查完了」
-      const skipped = result.skippedNoToken
-        ? ` · ${t("favorites.checkSkippedNoToken", { count: result.skippedNoToken })}`
-        : "";
-      if (result.cancelled) {
-        toast(t("favorites.checkCancelled", { checked: result.checked }), "info");
-      } else if (result.aborted) {
-        toast(t("favorites.checkAborted", { checked: result.checked }), "err");
-      } else {
-        toast(
-          t("favorites.checkDone", {
-            checked: result.checked,
-            gone: result.gone,
-            redirect: result.redirect,
-            unknown: result.unknown,
-          }) + skipped,
-          "ok",
-        );
-      }
-    } catch (e) {
-      toast(t("favorites.checkFail", { err: String(e) }), "err");
-    } finally {
-      endTask("check");
-      clearProgress("check");
-    }
-  };
-
   const removeItem = (item: FavoriteRow) => {
     setConfirmRequest({
       title: t("favorites.deleteTitle"),
@@ -994,22 +439,6 @@ export default function FavoritesPanel() {
       await refresh();
     } catch (e) {
       toast(t("favorites.restoreDeletedFail", { err: String(e) }), "err");
-    }
-  };
-
-  /**
-   * 停止当前长任务。
-   *
-   * 后端在**循环的下一轮开始前**检查标志：进行中的那次请求会跑完
-   * （导入的一页 / 归类的一批 / 检测的一条），所以提示语要说清是「下一轮才停」，
-   * 否则用户看界面没立刻反应会以为按钮坏了、再点几次。
-   */
-  const requestStop = async (task?: FavTask) => {
-    try {
-      await invoke("fav_cancel", { task: task ?? null });
-      toast(t("favorites.stopRequested"), "info");
-    } catch (e) {
-      toast(String(e), "err");
     }
   };
 
@@ -1225,242 +654,28 @@ export default function FavoritesPanel() {
           />
         )}
 
-        <div className="ml-auto flex items-center gap-2">
-          <div className="flex items-center gap-1 glass-input px-2 h-7">
-            <Search className="w-3 h-3 text-slate-500" />
-            <input
-              value={keyword}
-              onChange={(e) => setKeyword(e.target.value)}
-              placeholder={t("favorites.searchPlaceholder")}
-              className="bg-transparent outline-none text-caption w-36"
-            />
-          </div>
-          <select
-            value={source ?? ""}
-            onChange={(e) => setSource(e.target.value || null)}
-            className="glass-input px-2 h-7 text-caption cursor-pointer"
-          >
-            <option value="">{t("favorites.allSources")}</option>
-            {(stats?.bySource || []).map(([key]) => (
-              <option key={key} value={key}>
-                {SOURCE_LABELS[key] ?? key}
-              </option>
-            ))}
-          </select>
-          {/* 收藏时间过滤 */}
-          <select
-            value={since}
-            onChange={(e) => setSince(e.target.value as SincePreset)}
-            className="glass-input px-2 h-7 text-caption cursor-pointer"
-            title={t("favorites.sinceTip")}
-          >
-            <option value="all">{t("favorites.sinceAll")}</option>
-            <option value="7d">{t("favorites.since7d")}</option>
-            <option value="30d">{t("favorites.since30d")}</option>
-            <option value="365d">{t("favorites.since365d")}</option>
-          </select>
-        </div>
+        <FavoriteItemFilters
+          keyword={keyword}
+          setKeyword={setKeyword}
+          source={source}
+          setSource={setSource}
+          stats={stats}
+          since={since}
+          setSince={setSince}
+        />
       </div>
 
       {/* 实时进度：**每个在跑的任务一行** —— 三个导入可以同时跑，各显示各的，
           用一条进度条会让后到的事件盖掉前一个。任务结束由 done 事件（或 finally）清掉。 */}
       {progressRows.length > 0 && (
-        <div className="space-y-1">
-          {progressRows.map(([key, p]) => (
-            <div key={key} className="glass-panel px-3 py-2 space-y-1.5">
-              <div className="flex items-center gap-2 text-tiny text-slate-300 flex-wrap">
-                <RefreshCw className="w-3 h-3 animate-spin text-[var(--module-accent)]" />
-                {p.stage === "check" ? (
-                  <>
-                    <span>{t("favorites.checkProgress")}</span>
-                    <span>
-                      {t("favorites.progressChecked", {
-                        checked: p.checked ?? 0,
-                        total: p.checkTotal ?? 0,
-                      })}
-                    </span>
-                    <span className="text-slate-500 truncate max-w-[260px]">
-                      {p.message ?? ""}
-                    </span>
-                  </>
-                ) : p.stage === "import" ? (
-                  <>
-                    <span>
-                      {SOURCE_LABELS[p.source ?? ""] ?? p.source ?? ""}
-                      {p.folder ? ` · ${p.folder}` : ""}
-                      {p.message ? ` · ${p.message}` : ""}
-                    </span>
-                    <span>{t("favorites.progressFetched", { fetched: p.fetched ?? 0 })}</span>
-                    <span className="text-emerald-400/80">
-                      {t("favorites.progressAdded", { added: p.added ?? 0 })}
-                    </span>
-                    <span className="text-amber-400/80">
-                      {t("favorites.progressUpdated", { updated: p.updated ?? 0 })}
-                    </span>
-                    <span className="text-slate-500">
-                      {t("favorites.progressSkipped", { skipped: p.skipped ?? 0 })}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <span>{p.message}</span>
-                    <span>
-                      {t("favorites.progressClassified", {
-                        classified: p.classified ?? 0,
-                        remaining: p.remaining ?? 0,
-                      })}
-                    </span>
-                    <span className="text-slate-400">
-                      {t("favorites.progressTags", { tags: p.tagsWritten ?? 0 })}
-                    </span>
-                  </>
-                )}
-              </div>
-              {/* 归类过程中模型对这批的真实思考。原来完全没有上报，前端只看到进度数字；
-                  分类错了也无从查它当时是怎么判断的。
-                  注意它**不能另起一行**：progressKeyOf 用 task 作行键，reasoning 事件
-                  与归类事件同 key，另起一个 stage 会让两边互相覆盖。
-                  所以后端在 reasoning 帧里一并带上分类进度，这里渲染在同一行。 */}
-              {p.stage === "reasoning" && !!p.message && (
-                <ThinkingBlock text={p.message} pending />
-              )}
-              <div className="h-1 rounded bg-white/5 overflow-hidden">
-                {p.stage === "check" && (p.checkTotal ?? 0) > 0 ? (
-                  <div
-                    className="h-full bg-[var(--module-accent)] transition-all duration-300"
-                    style={{
-                      width: `${Math.min(
-                        100,
-                        ((p.checked ?? 0) / (p.checkTotal ?? 1)) * 100,
-                      )}%`,
-                    }}
-                  />
-                ) : p.stage === "classify" &&
-                  (p.classified ?? 0) + (p.remaining ?? 0) > 0 ? (
-                  <div
-                    className="h-full bg-[var(--module-accent)] transition-all duration-300"
-                    style={{
-                      width: `${Math.min(
-                        100,
-                        ((p.classified ?? 0) /
-                          ((p.classified ?? 0) + (p.remaining ?? 0))) *
-                          100,
-                      )}%`,
-                    }}
-                  />
-                ) : p.stage === "import" &&
-                  (p.folderTotal ?? 0) > 0 &&
-                  (p.folderFetched ?? 0) > 0 ? (
-                  // 知乎：服务端给了收藏夹总数（Totals），可以显示真实百分比
-                  <div
-                    className="h-full bg-[var(--module-accent)] transition-all duration-300"
-                    style={{
-                      width: `${Math.min(
-                        100,
-                        ((p.folderFetched ?? 0) / (p.folderTotal ?? 1)) * 100,
-                      )}%`,
-                    }}
-                  />
-                ) : (
-                  <div className="h-full w-1/3 bg-[var(--module-accent)] animate-pulse" />
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
+        <FavoriteTaskProgress
+          progressRows={progressRows}
+        />
       )}
 
       <div className="flex-1 flex min-h-0">
         {/* 左侧分类树（宽度可拖动，默认 180px，拖动后写回设置） */}
-        <div
-          className="shrink-0 overflow-y-auto glass-panel p-2 space-y-0.5"
-          style={{ width: leftWidth }}
-        >
-          {/* 顶部操作：新建分类 / 整理类目。分类多时这两个入口也不该被滚到底部 */}
-          <div className="flex items-center gap-1 pb-1 mb-0.5 border-b border-white/5">
-            <button
-              onClick={() => void createCat(null)}
-              className="flex-1 min-w-0 inline-flex items-center justify-center gap-1 px-1 py-1 rounded-ctl text-tiny text-slate-400 hover:text-slate-200 hover:bg-white/5 cursor-pointer"
-              title={t("favorites.newCategory")}
-            >
-              <Plus className="w-3 h-3 shrink-0" />
-              <span className="truncate">{t("favorites.newCategory")}</span>
-            </button>
-            {/* 整理类目：AI 检查「该做子类却建成平级」的分类，可补建缺失父级 */}
-            <button
-              onClick={openOrganize}
-              disabled={!organizeReady}
-              title={
-                !providerId || !modelId
-                  ? t("favorites.organizeNeedProvider")
-                  : running.length > 0
-                    ? t("favorites.organizeBlocked")
-                    : t("favorites.organizeHint")
-              }
-              className="flex-1 min-w-0 inline-flex items-center justify-center gap-1 px-1 py-1 rounded-ctl text-tiny text-slate-400 hover:text-slate-200 hover:bg-white/5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {organizeBusy ? (
-                <Loader2 className="w-3 h-3 shrink-0 animate-spin" />
-              ) : (
-                <Sparkles className="w-3 h-3 shrink-0" />
-              )}
-              <span className="truncate">{t("favorites.organize")}</span>
-            </button>
-          </div>
-
-          <button
-            onClick={() => { setCategoryId(null); setCategoryName(null); }}
-            className={`w-full text-left px-2 py-1 rounded text-caption cursor-pointer transition-colors ${
-              categoryId === null
-                ? "bg-[var(--module-accent-soft)] text-white"
-                : "text-slate-400 hover:bg-white/5"
-            }`}
-          >
-            {t("favorites.allTags")}
-            <span className="float-right text-slate-500">{stats?.total ?? 0}</span>
-          </button>
-
-          {/* 星标（特别关注）入口：与「全部」并列，筛选逻辑是 starred_only */}
-          <button
-            onClick={() => { setCategoryId(null); setCategoryName(null); setStarredOnly((v) => !v); }}
-            className={`w-full text-left px-2 py-1 rounded text-caption cursor-pointer transition-colors ${
-              starredOnly
-                ? "bg-[var(--module-accent-soft)] text-white"
-                : "text-slate-400 hover:bg-white/5"
-            }`}
-          >
-            <Star className={`w-3 h-3 inline mr-1 ${starredOnly ? "text-amber-400" : "text-slate-500"}`} />
-            {t("favorites.starred")}
-            <span className="float-right text-slate-500">{starredCount}</span>
-          </button>
-
-          {/* 分类树：可折叠，右键出菜单（新建子分类 / 重命名 / 上移下移 / 删除）。
-              关注分组（kind=follow）用琥珀色区分 —— 它由用户人工维护，
-              AI 归类不会往里写，两者混在一起会让人分不清哪些是自动、哪些是手动。 */}
-          <CategoryTree
-            nodes={cats}
-            depth={0}
-            expanded={expandedCats}
-            selectedId={categoryId}
-            onToggle={(id) => setExpandedCats((s) => {
-              const next = new Set(s);
-              if (next.has(id)) next.delete(id); else next.add(id);
-              return next;
-            })}
-            onSelect={(id, name) => { setCategoryId(id); setCategoryName(name); }}
-            onContextMenu={(id, name, x, y) => setCatMenu({ id, name, x, y })}
-          />
-
-          {/* 原先这里还有一个「+ 关注分组」（kind=follow）。已删除：它建完之后没有任何入口
-              能把收藏项归进去——真正在用的机制一直是星标（侧栏「星标」筛选 + 行内星标按钮）。
-              已存在的 follow 分组不删数据，按普通分类照样显示与筛选。 */}
-
-          {cats.length === 0 && (
-            <p className="text-tiny text-slate-500 px-2 py-1 leading-snug">
-              {t("favorites.noTagsHint")}
-            </p>
-          )}
-        </div>
+        {renderCategorySidebar()}
 
         {/* 分隔条：左右布局的唯一调节点（拖动改左栏宽度） */}
         <div
@@ -1679,160 +894,30 @@ export default function FavoritesPanel() {
                 onMouseDown={startAiResize}
                 className="w-2 shrink-0 cursor-col-resize rounded transition-colors hover:bg-[var(--module-accent-soft)]"
               />
-              <aside
-                className="shrink-0 flex flex-col min-h-0 glass-panel p-3 gap-2"
-                style={{ width: aiWidth }}
-              >
-                <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-ctl bg-[var(--module-accent)]/15 border border-[var(--module-accent)]/30 flex items-center justify-center">
-                    <Bot className="w-3.5 h-3.5 text-[var(--module-accent)]" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-caption font-bold text-white truncate">{t("favorites.aiSearchTitle")}</div>
-                    <div className="text-micro text-slate-500 truncate">{t("favorites.aiSearchHint")}</div>
-                  </div>
-                  <button
-                    onClick={toggleAiPanel}
-                    className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
-                    title={t("favorites.aiPanelClose")}
-                  >
-                    ✕
-                  </button>
-                </div>
-
-                <div className="flex items-center gap-1.5">
-                  <input
-                    value={aiInput}
-                    onChange={(e) => setAiInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void runAiSearch(); } }}
-                    placeholder={t("favorites.aiSearchPh")}
-                    className="flex-1 min-w-0 ui-input rounded-ctl px-2 py-1.5 text-caption text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
-                  />
-                  <button
-                    onClick={() => void runAiSearch()}
-                    disabled={aiBusy || !aiInput.trim()}
-                    className="px-2 py-1.5 rounded-ctl text-tiny ui-btn-primary text-white font-semibold cursor-pointer disabled:opacity-40 flex items-center gap-1"
-                  >
-                    {aiBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
-                    {aiBusy ? t("favorites.aiSearchRunning") : t("favorites.aiSearchGo")}
-                  </button>
-                </div>
-
-                {/* 检索过程：让用户看得见 agent 到底查了什么，而不是黑箱等结果。
-                    reasoning 步骤（模型的真实思考）走共享的 ThinkingBlock——
-                    以前它被上面的过滤器整个丢掉，前端只显示工具调用。 */}
-                {aiSteps.length > 0 && (
-                  <div ref={aiLogRef} className="max-h-40 shrink-0 overflow-y-auto rounded-ctl border border-white/5 bg-black/30 p-2 space-y-1">
-                    {aiSteps.map((s, i) =>
-                      s.step === "reasoning" ? (
-                        <ThinkingBlock key={i} text={s.text} pending={aiBusy && i === aiSteps.length - 1} />
-                      ) : (
-                        <div key={i} className="text-micro text-slate-500 flex gap-1.5">
-                          <span className="flex-shrink-0 text-slate-600">{AI_TOOL_LABEL[s.tool ?? ""] ?? "过程"}</span>
-                          <span className="min-w-0 break-all">{s.text.slice(0, 160)}</span>
-                        </div>
-                      ),
-                    )}
-                  </div>
-                )}
-
-                <div className="min-h-0 flex-1 overflow-y-auto rounded-card border border-white/5 bg-slate-900/30 p-2.5">
-                  {aiError ? (
-                    <div className="text-caption text-rose-400 break-all">{aiError}</div>
-                  ) : aiResult ? (
-                    <AiResultMarkdown text={aiResult} />
-                  ) : (
-                    <div className="text-caption text-slate-500 py-6 text-center">
-                      <Sparkles className="w-4 h-4 mx-auto mb-2 text-slate-600" />
-                      {t("favorites.aiSearchPlaceholder")}
-                    </div>
-                  )}
-                </div>
-              </aside>
+              {renderAiAssistant()}
             </>
           )}
         </div>
       </div>
 
-      <div className="flex items-center gap-3 text-tiny text-slate-500">
-        <span>
-          {t("favorites.total")}: {stats?.total ?? 0}
-        </span>
-        <span>
-          {t("favorites.unclassified")}: {stats?.unclassified ?? 0}
-        </span>
-        {goneCount > 0 && (
-          <span className="text-rose-400/80">
-            {t("favorites.goneCount")}: {goneCount}
-          </span>
-        )}
-        {/* 当前分类筛选（含子分类）：点了分类树就得让用户知道自己「在哪一层」 */}
-        {categoryId != null && categoryName && (
-          <button
-            onClick={() => { setCategoryId(null); setCategoryName(null); }}
-            className="px-1.5 py-0.5 rounded-full bg-[var(--module-accent-soft)] text-[var(--module-accent)] cursor-pointer"
-            title={t("favorites.clearCategoryFilter")}
-          >
-            {categoryName} ✕
-          </button>
-        )}
-        {/* 删除墓碑：让用户知道删掉的条目被记住了，且可以反悔 */}
-        {deletedRows.length > 0 && (
-          <button
-            onClick={() => setDeletedOpen(true)}
-            className="px-1.5 py-0.5 rounded-full border border-white/10 text-slate-400 hover:text-[var(--module-accent)] cursor-pointer"
-            title={t("favorites.deletedHint")}
-          >
-            {t("favorites.deletedCount", { count: deletedRows.length })}
-          </button>
-        )}
-        <span className="ml-auto">{t("favorites.readonlyHint")}</span>
-      </div>
+      <FavoriteLibrarySummary
+        stats={stats}
+        goneCount={goneCount}
+        categoryId={categoryId}
+        categoryName={categoryName}
+        setCategoryId={setCategoryId}
+        setCategoryName={setCategoryName}
+        deletedRows={deletedRows}
+        setDeletedOpen={setDeletedOpen}
+      />
 
       {/* 已删除条目（墓碑）：重新纳入后，下次导入会把它们再拉进来 */}
       {deletedOpen && (
-        <div className="fixed inset-0 z-[300] modal-mask bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-surface-panel border border-white/15 rounded-panel p-4 shadow-2xl space-y-3 text-body">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-white">{t("favorites.deletedTitle")}</h3>
-              <button onClick={() => setDeletedOpen(false)} className="text-slate-400 hover:text-white p-1">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <p className="text-tiny text-slate-500 leading-relaxed">{t("favorites.deletedHint")}</p>
-            <div className="max-h-64 overflow-y-auto space-y-1">
-              {deletedRows.map((d) => (
-                <div key={`${d.source}-${d.externalId}`} className="flex items-center gap-2 rounded-ctl border border-white/5 bg-white/[0.02] px-2 py-1.5">
-                  <span className="shrink-0 text-micro text-slate-500">{SOURCE_LABELS[d.source] ?? d.source}</span>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-caption text-slate-200">{d.title || d.externalId}</div>
-                    <div className="truncate text-micro text-slate-600">{d.deletedAt}</div>
-                  </div>
-                  <button
-                    onClick={() => void restoreDeleted(d.source, d.externalId)}
-                    className="shrink-0 px-2 py-1 rounded-ctl border border-white/10 text-tiny text-slate-300 hover:text-[var(--module-accent)] cursor-pointer"
-                  >
-                    {t("favorites.deletedRestore")}
-                  </button>
-                </div>
-              ))}
-            </div>
-            <div className="flex items-center justify-end gap-2 pt-1">
-              <button
-                onClick={() => void restoreDeleted()}
-                className="px-2.5 py-1.5 rounded-ctl border border-white/10 text-tiny text-slate-300 hover:text-white cursor-pointer"
-              >
-                {t("favorites.deletedRestoreAll", { count: deletedRows.length })}
-              </button>
-              <button
-                onClick={() => setDeletedOpen(false)}
-                className="px-2.5 py-1.5 rounded-ctl bg-[var(--module-accent)] text-white text-tiny font-semibold cursor-pointer"
-              >
-                {t("favorites.deletedClose")}
-              </button>
-            </div>
-          </div>
-        </div>
+        <FavoriteDeletedDialog
+          setDeletedOpen={setDeletedOpen}
+          deletedRows={deletedRows}
+          restoreDeleted={restoreDeleted}
+        />
       )}
 
       {/* GitHub Token（收藏模块专属）：与 SDK 模块的 Token 各存各的 */}
@@ -1882,463 +967,22 @@ export default function FavoritesPanel() {
 
       {/* 分类右键菜单 */}
       {catMenu && (
-        <div
-          className="fixed z-[300] bg-surface-panel border border-white/15 rounded-ctl shadow-2xl py-1 text-caption min-w-[140px]"
-          style={{ left: catMenu.x, top: catMenu.y }}
-          onMouseLeave={() => setCatMenu(null)}
-        >
-          <div className="px-2 py-1 text-slate-500 truncate border-b border-white/5 mb-1">
-            {catMenu.name}
-          </div>
-          <button className="w-full text-left px-2 py-1 hover:bg-white/10 text-slate-200 cursor-pointer"
-            onClick={() => { const id = catMenu.id; setCatMenu(null); void createCat(id); }}>
-            {t("favorites.newSubCategory")}
-          </button>
-          {catMenu.id != null && (
-            <>
-              <button className="w-full text-left px-2 py-1 hover:bg-white/10 text-slate-200 cursor-pointer"
-                onClick={() => { const id = catMenu.id!; setCatMenu(null); void renameCat(id); }}>
-                {t("favorites.renameCategory")}
-              </button>
-              <button className="w-full text-left px-2 py-1 hover:bg-white/10 text-slate-200 cursor-pointer"
-                onClick={() => { const id = catMenu.id!; setCatMenu(null); void moveCat(id, -1); }}>
-                {t("favorites.moveUp")}
-              </button>
-              <button className="w-full text-left px-2 py-1 hover:bg-white/10 text-slate-200 cursor-pointer"
-                onClick={() => { const id = catMenu.id!; setCatMenu(null); void moveCat(id, 1); }}>
-                {t("favorites.moveDown")}
-              </button>
-              <button className="w-full text-left px-2 py-1 hover:bg-rose-500/15 text-rose-300 cursor-pointer"
-                onClick={() => { const id = catMenu.id!; setCatMenu(null); void deleteCat(id); }}>
-                {t("favorites.deleteCategory")}
-              </button>
-            </>
-          )}
-        </div>
+        renderCategoryMenu()
       )}
 
       {/* 整理类目方案预览：AI 只给「改上级」建议，勾选后才应用；ID / 名称 / 条目关联都不动 */}
       {organizeOpen && (
         <div className="fixed inset-0 z-[300] modal-mask bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-xl bg-surface-panel border border-white/15 rounded-panel p-4 shadow-2xl space-y-3 text-body">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-white">{t("favorites.organizeTitle")}</h3>
-              <button
-                onClick={() => { setOrganizeOpen(false); setOrganizePlan(null); }}
-                disabled={organizeApplying}
-                className="text-slate-400 hover:text-white p-1 cursor-pointer disabled:opacity-40"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <p className="text-tiny text-slate-500 leading-relaxed">{t("favorites.organizeDesc")}</p>
-
-            {organizeBusy ? (
-              <div className="flex items-center justify-center gap-2 py-8 text-caption text-slate-400">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                {t("favorites.organizeRunning")}
-              </div>
-            ) : organizeError ? (
-              <div className="py-4 text-caption text-rose-400 break-all">
-                {t("favorites.organizePlanFail", { err: organizeError })}
-              </div>
-            ) : organizePlan ? (
-              <>
-                <div className="flex items-center gap-2 text-tiny text-slate-500">
-                  <span>{t("favorites.organizeConsidered", { count: organizePlan.considered })}</span>
-                  {organizePlan.moves.length > 0 && (
-                    <>
-                      <span className="text-slate-600">·</span>
-                      <button
-                        onClick={() => setOrganizeSelected(organizePlan.moves.map((m) => m.id))}
-                        className="hover:text-slate-200 cursor-pointer"
-                      >
-                        {t("favorites.organizeSelectAll")}
-                      </button>
-                      <button
-                        onClick={() => setOrganizeSelected([])}
-                        className="hover:text-slate-200 cursor-pointer"
-                      >
-                        {t("favorites.organizeSelectNone")}
-                      </button>
-                    </>
-                  )}
-                </div>
-
-                {organizePlan.groups.length > 0 && (
-                  <div className="rounded-ctl border border-[var(--module-accent)]/20 bg-[var(--module-accent)]/5 px-2 py-1.5">
-                    <div className="text-tiny text-slate-300">
-                      {t("favorites.organizeNewGroups", { count: organizePlan.groups.length })}
-                    </div>
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      {organizePlan.groups.map((g: PlannedCategoryGroup) => (
-                        <span
-                          key={g.tempId}
-                          className="text-micro px-1.5 py-0.5 rounded-full bg-white/5 text-slate-300"
-                        >
-                          {g.name}
-                          {" · "}
-                          {g.parentName
-                            ? t("favorites.organizeUnder", { parent: g.parentName })
-                            : t("favorites.organizeRoot")}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {organizePlan.moves.length === 0 ? (
-                  <p className="py-6 text-center text-caption text-slate-400">
-                    {organizePlan.skipped.length > 0
-                      ? t("favorites.organizeEmptyAllSkipped")
-                      : t("favorites.organizeEmpty")}
-                  </p>
-                ) : (
-                  <div className="max-h-80 overflow-y-auto space-y-1">
-                    {organizePlan.moves.map((m: PlannedCategoryMove) => (
-                      <label
-                        key={m.id}
-                        className="flex items-start gap-2 rounded-ctl border border-white/5 bg-white/[0.02] px-2 py-1.5 hover:bg-white/5 cursor-pointer"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={organizeSelected.includes(m.id)}
-                          onChange={() =>
-                            setOrganizeSelected((s) =>
-                              s.includes(m.id) ? s.filter((x) => x !== m.id) : [...s, m.id],
-                            )
-                          }
-                          className="mt-0.5 accent-[var(--module-accent)] cursor-pointer"
-                        />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="text-caption font-semibold text-slate-200">{m.name}</span>
-                            <span className="text-micro text-slate-500">
-                              {m.fromParentName ?? t("favorites.organizeRoot")}
-                            </span>
-                            <ChevronRight className="w-3 h-3 text-slate-600" />
-                            <span className="text-micro text-[var(--module-accent)]">
-                              {m.toParentName ?? t("favorites.organizeRoot")}
-                            </span>
-                            <span className="text-micro text-slate-600">
-                              · {t("favorites.organizeDepth", { depth: m.depth })}
-                            </span>
-                          </div>
-                          <div className="text-micro text-slate-500 truncate" title={m.path}>
-                            {m.path}
-                          </div>
-                          {m.reason && (
-                            <div className="text-micro text-slate-400 mt-0.5 leading-snug">{m.reason}</div>
-                          )}
-                        </div>
-                      </label>
-                    ))}
-                  </div>
-                )}
-
-                {organizePlan.skipped.length > 0 && (
-                  <details className="rounded-ctl border border-amber-500/20 bg-amber-500/5 px-2 py-1.5">
-                    <summary className="text-tiny text-amber-300/90 cursor-pointer select-none">
-                      {t("favorites.organizeSkipped", { count: organizePlan.skipped.length })}
-                    </summary>
-                    <div className="mt-1 max-h-28 overflow-y-auto space-y-0.5">
-                      {organizePlan.skipped.map((s) => (
-                        <div key={`${s.id}-${s.problem}`} className="text-micro text-slate-400">
-                          <span className="text-slate-300">{s.name || `#${s.id}`}</span> · {s.problem}
-                        </div>
-                      ))}
-                    </div>
-                  </details>
-                )}
-              </>
-            ) : null}
-
-            <div className="flex items-center justify-end gap-2 pt-1">
-              <button
-                onClick={() => void loadOrganizePlan()}
-                disabled={organizeBusy || organizeApplying}
-                className="px-2.5 py-1.5 rounded-ctl border border-white/10 text-tiny text-slate-300 hover:text-white cursor-pointer disabled:opacity-40 flex items-center gap-1"
-              >
-                <RefreshCw className={`w-3 h-3 ${organizeBusy ? "animate-spin" : ""}`} />
-                {t("favorites.organizeRegenerate")}
-              </button>
-              <button
-                onClick={() => { setOrganizeOpen(false); setOrganizePlan(null); }}
-                disabled={organizeApplying}
-                className="px-2.5 py-1.5 rounded-ctl border border-white/10 text-tiny text-slate-300 hover:text-white cursor-pointer disabled:opacity-40"
-              >
-                {t("common.cancel")}
-              </button>
-              <button
-                onClick={() => void applyOrganize()}
-                disabled={organizePickedCount === 0 || organizeBusy || organizeApplying}
-                className="px-2.5 py-1.5 rounded-ctl bg-[var(--module-accent)] text-white text-tiny font-semibold cursor-pointer disabled:opacity-40 flex items-center gap-1"
-              >
-                {organizeApplying && <Loader2 className="w-3 h-3 animate-spin" />}
-                {t("favorites.organizeApply", { count: organizePickedCount })}
-              </button>
-            </div>
-          </div>
+          {renderOrganizeDialog()}
         </div>
       )}
 
       {/* 条目分类选择器：勾选式，支持多级 */}
       {pickerFor && (
         <div className="fixed inset-0 z-[300] modal-mask bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-surface-panel border border-white/15 rounded-panel p-4 shadow-2xl space-y-3 text-body">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-white">{t("favorites.pickCategoryTitle")}</h3>
-              <button onClick={() => setPickerFor(null)} className="text-slate-400 hover:text-white p-1">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <p className="text-tiny text-slate-500 truncate">{pickerFor.title}</p>
-            <div className="max-h-64 overflow-y-auto space-y-0.5">
-              {cats.length === 0 && (
-                <p className="text-caption text-slate-500">{t("favorites.noTagsHint")}</p>
-              )}
-              <CategoryCheckTree
-                nodes={cats}
-                depth={0}
-                selected={pickerSelected}
-                onToggle={(id) => setPickerSelected((s) =>
-                  s.includes(id) ? s.filter((x) => x !== id) : [...s, id]
-                )}
-              />
-            </div>
-            <div className="flex items-center gap-2 pt-1">
-              <SharedButton className="!h-7 !px-3 !text-caption" onClick={() => void submitPicker()}>
-                {t("common.save")}
-              </SharedButton>
-              <button onClick={() => setPickerFor(null)}
-                className="px-3 py-1 rounded-ctl bg-white/5 hover:bg-white/10 text-caption text-slate-300 cursor-pointer">
-                {t("common.cancel")}
-              </button>
-            </div>
-          </div>
+          {renderCategoryPicker()}
         </div>
       )}
     </div>
-  );
-}
-
-/** 选择器里的勾选树（缩进 + 复选框）。 */
-function CategoryCheckTree({
-  nodes, depth, selected, onToggle,
-}: {
-  nodes: FavoriteCategoryNode[];
-  depth: number;
-  selected: number[];
-  onToggle: (id: number) => void;
-}) {
-  return (
-    <>
-      {nodes.map((c) => (
-        <div key={c.id}>
-          <label
-            className="flex items-center gap-1.5 py-1 rounded hover:bg-white/5 cursor-pointer"
-            style={{ paddingLeft: depth * 12 }}
-          >
-            <input
-              type="checkbox"
-              checked={selected.includes(c.id)}
-              onChange={() => onToggle(c.id)}
-              className="accent-[var(--module-accent)] cursor-pointer"
-            />
-            <span className="text-caption text-slate-200 truncate">{c.name}</span>
-            <span className="ml-auto text-tiny text-slate-500">{c.count}</span>
-          </label>
-          {c.children.length > 0 && (
-            <CategoryCheckTree
-              nodes={c.children}
-              depth={depth + 1}
-              selected={selected}
-              onToggle={onToggle}
-            />
-          )}
-        </div>
-      ))}
-    </>
-  );
-}
-
-/** 分类树（递归）：缩进表示层级，箭头展开/折叠，右键出操作菜单。
- *  操作逻辑对齐启动模块的分类：点选筛选（含子分类）、右键改名/新建子分类/上下移/删除。 */
-function CategoryTree({
-  nodes, depth, expanded, selectedId, onToggle, onSelect, onContextMenu,
-}: {
-  nodes: FavoriteCategoryNode[];
-  depth: number;
-  expanded: Set<number>;
-  selectedId: number | null;
-  onToggle: (id: number) => void;
-  onSelect: (id: number, name: string) => void;
-  onContextMenu: (id: number, name: string, x: number, y: number) => void;
-}) {
-  return (
-    <>
-      {nodes.map((c) => {
-        const hasKids = c.children.length > 0;
-        const open = expanded.has(c.id);
-        return (
-          <div key={c.id}>
-            <div
-              className={`flex items-center gap-0.5 rounded text-caption cursor-pointer transition-colors ${
-                selectedId === c.id
-                  ? "bg-[var(--module-accent-soft)] text-white"
-                  : "text-slate-400 hover:bg-white/5"
-              }`}
-              style={{ paddingLeft: 4 + depth * 10 }}
-              onClick={() => onSelect(c.id, c.name)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                onContextMenu(c.id, c.name, e.clientX, e.clientY);
-              }}
-              title={c.name}
-            >
-              <button
-                onClick={(e) => { e.stopPropagation(); if (hasKids) onToggle(c.id); }}
-                className={`w-3 shrink-0 text-slate-600 hover:text-slate-300 ${hasKids ? "cursor-pointer" : "invisible"}`}
-              >
-                {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-              </button>
-              {/* 分组一视同仁：kind="follow" 的区分样式已随「关注分组」功能一起删除，
-                历史遗留的 follow 分组也按普通分组显示（不替用户删数据）。 */}
-              <span className="truncate flex-1 py-1" title={c.name}>
-                {c.name}
-              </span>
-              <span className="pr-1 text-slate-500">{c.total}</span>
-            </div>
-            {open && hasKids && (
-              <CategoryTree
-                nodes={c.children}
-                depth={depth + 1}
-                expanded={expanded}
-                selectedId={selectedId}
-                onToggle={onToggle}
-                onSelect={onSelect}
-                onContextMenu={onContextMenu}
-              />
-            )}
-          </div>
-        );
-      })}
-    </>
-  );
-}
-
-/** 极简 Markdown 渲染：只处理 agent 输出约定里的几种行（标题 / 列表项 / 普通段落）。
- *  不引第三方渲染库——内容是可控的模型输出，够用且没有 XSS 面（链接走 openUrl）。 */
-function AiResultMarkdown({ text }: { text: string }) {
-  const { t } = useTranslation();
-  return (
-    <div className="space-y-1.5">
-      {text.split("\n").map((raw, i) => {
-        const parsed = parseAiResultLine(raw);
-        switch (parsed.kind) {
-          case "blank":
-            return <div key={i} className="h-1" />;
-          case "heading":
-            return parsed.level === 2 ? (
-              <div key={i} className="text-body font-bold text-white mt-2">{parsed.text}</div>
-            ) : (
-              <div key={i} className="text-caption font-bold text-slate-200 mt-2">{parsed.text}</div>
-            );
-          case "item":
-            return (
-              <div key={i} className="flex items-start gap-1.5 text-caption">
-                <span className="text-slate-600 mt-[3px]">•</span>
-                <button
-                  onClick={() => { void openUrl(parsed.url).catch(() => {}); }}
-                  className="ui-link cursor-pointer text-left"
-                  title={parsed.url}
-                >
-                  {parsed.title}
-                </button>
-                {parsed.note && <span className="text-slate-400">{parsed.note}</span>}
-              </div>
-            );
-          case "bullet":
-            return <div key={i} className="text-caption text-slate-300 pl-2">• {parsed.text}</div>;
-          default:
-            return (
-              <div key={i} className="text-caption text-slate-300 whitespace-pre-wrap">{parsed.text}</div>
-            );
-        }
-      })}
-      <div className="pt-2 text-micro text-slate-600">{t("favorites.aiSearchDisclaimer")}</div>
-    </div>
-  );
-}
-
-const AI_TOOL_LABEL: Record<string, string> = {
-  search_favorites: "检索",
-  get_favorite_content: "读正文",
-  list_favorite_tags: "看分类",
-};
-
-/** 分组之间的细分隔线（比留白更明确地「断开」，又不至于像卡片那样围起来）。 */
-function Divider() {
-  return <span className="w-px h-3.5 bg-white/10" />;
-}
-
-/**
- * 工具栏的文字链接按钮。
- *
- * 刻意做成纯文字：这一排全是同级动作，用按钮样式会把「导入」这种高频操作
- * 和其它动作拉成一样的视觉重量，反而看不出主次，一行里还会挤满色块。
- * `busy` 时显示转圈并禁用点击（避免重复触发）。
- */
-function LinkButton({
-  label,
-  onClick,
-  disabled,
-  busy,
-  danger,
-  active,
-  title,
-}: {
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-  busy?: boolean;
-  danger?: boolean;
-  /** 当前处于「已开启」状态（如 AI 检索右栏展开中）：高亮，让用户看出这是开关 */
-  active?: boolean;
-  title?: string;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled || busy}
-      title={title}
-      className={`inline-flex items-center gap-1 text-caption cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-        danger
-          ? "text-rose-400/80 hover:text-rose-300"
-          : active
-            ? "text-[var(--module-accent)]"
-            : "text-slate-400 hover:text-[var(--module-accent)]"
-      }`}
-    >
-      {busy && <RefreshCw className="w-2.5 h-2.5 animate-spin" />}
-      {label}
-    </button>
-  );
-}
-
-/**
- * 凭证链接右上角的告警点。
- *
- * 只做「一眼看出有事」，具体原因交给 `title`——因为这里能承载的信息量太小，
- * 把「3 天后过期」塞进一个点里只会让人困惑。
- */
-function CredDot({ level }: { level: "expired" | "soon" | null }) {
-  if (!level) return null;
-  return (
-    <span
-      className={`absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full ${
-        level === "expired" ? "bg-rose-400" : "bg-amber-400"
-      }`}
-    />
   );
 }
