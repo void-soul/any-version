@@ -83,6 +83,9 @@ fn default_twoapi_port() -> u16 {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Config {
+    /// In-process read baseline, never exposed through IPC or written to disk.
+    #[serde(skip)]
+    baseline: Option<serde_json::Value>,
     /// 已废弃：SDK 版本库目录（由 `sdk_dir/_versions` 取代）。保留读取兼容。
     #[serde(default)]
     pub versions_dir: String,
@@ -302,6 +305,7 @@ fn split_config(config: &Config) -> (ConfigPathsFile, SettingsFile) {
 /// 两个落盘文件 → 完整配置（versions_dir/links_dir/sdk_dir 由 fill_legacy_dirs 派生）。
 fn merge_config(paths: ConfigPathsFile, settings: SettingsFile) -> Config {
     Config {
+        baseline: None,
         versions_dir: String::new(),
         links_dir: String::new(),
         data_dir: paths.data_dir,
@@ -468,6 +472,7 @@ pub fn read_config_file() -> Option<Config> {
                 let settings = load_settings_file(&data);
                 let mut config = merge_config(paths, settings);
                 fill_legacy_dirs(&mut config, &base_dir);
+                config.baseline = serde_json::to_value(&config).ok();
                 Some(config)
             }
             Err(e) => {
@@ -489,9 +494,10 @@ pub fn load_config() -> Config {
     if let Some(config) = read_config_file() {
         return config;
     }
-    let default_config = default_config();
+    let mut default_config = default_config();
     let _ = fs::create_dir_all(&base_dir);
     let _ = save_config(&default_config);
+    default_config.baseline = serde_json::to_value(&default_config).ok();
     default_config
 }
 
@@ -499,6 +505,7 @@ pub fn load_config() -> Config {
 fn default_config() -> Config {
     let base_dir = get_base_dir();
     Config {
+        baseline: None,
         versions_dir: base_dir.join("versions").to_string_lossy().to_string(),
         links_dir: base_dir.join("links").to_string_lossy().to_string(),
         data_dir: base_dir.to_string_lossy().to_string(),
@@ -598,7 +605,41 @@ pub fn save_config(config: &Config) -> Result<(), String> {
         return Err(e.to_string());
     }
     let _guard = CONFIG_SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // Legacy background callers still use load/modify/save. Apply only their changed
+    // fields to the latest state while holding the same lock as mutate_config.
+    if let Some(baseline) = &config.baseline {
+        if let Some(latest) = read_config_file() {
+            let mut merged = serde_json::to_value(latest).map_err(|e| e.to_string())?;
+            let desired = serde_json::to_value(config).map_err(|e| e.to_string())?;
+            merge_config_patch(&mut merged, baseline, &desired, "");
+            let merged: Config = serde_json::from_value(merged).map_err(|e| e.to_string())?;
+            return write_config_unlocked(&merged);
+        }
+    }
     write_config_unlocked(config)
+}
+
+/// A three-way patch preserves unrelated fields and independently changed map keys.
+fn merge_config_patch(latest: &mut serde_json::Value, baseline: &serde_json::Value, desired: &serde_json::Value, field: &str) {
+    if baseline == desired { return; }
+    if let (Some(old), Some(new)) = (baseline.as_object(), desired.as_object()) {
+        if !latest.is_object() { *latest = serde_json::json!({}); }
+        let current = latest.as_object_mut().unwrap();
+        for key in old.keys().chain(new.keys()).collect::<std::collections::BTreeSet<_>>() {
+            match (old.get(key), new.get(key)) {
+                (Some(a), Some(b)) if a == b => {},
+                (Some(_), None) => { current.remove(key); },
+                (None, Some(b)) => { current.insert(key.clone(), b.clone()); },
+                (Some(a), Some(b)) => merge_config_patch(current.entry(key.clone()).or_insert(serde_json::Value::Null), a, b, key),
+                _ => {},
+            }
+        }
+    } else if matches!(field, "managed_items" | "simple_managed_items" | "auto_start_services") {
+        if let (Some(old), Some(new), Some(current)) = (baseline.as_array(), desired.as_array(), latest.as_array_mut()) {
+            current.retain(|v| !old.contains(v) || new.contains(v));
+            for v in new { if !old.contains(v) && !current.contains(v) { current.push(v.clone()); } }
+        } else { *latest = desired.clone(); }
+    } else { *latest = desired.clone(); }
 }
 
 /// 原子写入文件（tmp + rename），崩溃时不损坏原文件。
@@ -1301,12 +1342,10 @@ pub fn get_project_menu_config(id: String) -> Result<ProjectMenuConfig, String> 
 
 #[tauri::command]
 pub fn update_project_menu_config(app_handle: tauri::AppHandle, id: String, show_version: bool, show_service: bool) -> Result<(), String> {
-    let mut config = load_config();
-    config.project_menu_configs.insert(id, ProjectMenuConfig {
-        show_version,
-        show_service,
-    });
-    save_config(&config)?;
+    mutate_config(|config| {
+        config.project_menu_configs.insert(id, ProjectMenuConfig { show_version, show_service });
+        Ok(())
+    })?;
     let _ = crate::tray::rebuild_tray_menu(&app_handle);
     Ok(())
 }
@@ -1451,13 +1490,11 @@ pub fn get_auto_start_services() -> Vec<String> {
 
 #[tauri::command]
 pub fn set_auto_start_service(service_id: String, enabled: bool) -> Result<(), String> {
-    let mut config = load_config();
-    if enabled {
-        config.auto_start_services.insert(service_id);
-    } else {
-        config.auto_start_services.remove(&service_id);
-    }
-    save_config(&config)
+    mutate_config(|config| {
+        if enabled { config.auto_start_services.insert(service_id); }
+        else { config.auto_start_services.remove(&service_id); }
+        Ok(())
+    })
 }
 
 // ---- 外观：顶级模块主题色 + 全局字体 ----
@@ -1483,9 +1520,7 @@ pub fn get_appearance_config() -> AppearanceConfig {
 /// 保存顶级模块的自定义顺序（模块 id 列表，空 = 恢复默认顺序）
 #[tauri::command]
 pub fn set_module_order(order: Vec<String>) -> Result<(), String> {
-    let mut config = load_config();
-    config.module_order = order;
-    save_config(&config)
+    mutate_config(|config| { config.module_order = order; Ok(()) })
 }
 
 /// 保存模块布局：顶栏模块列表 + 禁用模块列表（所有模块平级，用户自由归类）。
@@ -1494,47 +1529,40 @@ pub fn set_module_layout(
     toolbar_modules: Vec<String>,
     disabled_modules: Vec<String>,
 ) -> Result<(), String> {
-    let mut config = load_config();
-    config.toolbar_modules = toolbar_modules;
-    config.disabled_modules = disabled_modules;
-    save_config(&config)
+    mutate_config(|config| {
+        config.toolbar_modules = toolbar_modules;
+        config.disabled_modules = disabled_modules;
+        Ok(())
+    })
 }
 
 /// 设置单个顶级模块的主题色（hex，如 #8b5cf6）
 #[tauri::command]
 pub fn set_module_theme_color(module_id: String, color: String) -> Result<(), String> {
-    let mut config = load_config();
-    if color.trim().is_empty() {
-        config.module_theme_colors.remove(&module_id);
-    } else {
-        config.module_theme_colors.insert(module_id, color);
-    }
-    save_config(&config)
+    mutate_config(|config| {
+        if color.trim().is_empty() { config.module_theme_colors.remove(&module_id); }
+        else { config.module_theme_colors.insert(module_id, color); }
+        Ok(())
+    })
 }
 
 /// 设置全局字体（CSS font-family 名称，空=恢复默认）
 #[tauri::command]
 pub fn set_global_font(font: String) -> Result<(), String> {
-    let mut config = load_config();
-    config.global_font = font;
-    save_config(&config)
+    mutate_config(|config| { config.global_font = font; Ok(()) })
 }
 
 /// 设置全局背景底图纹理（grid / dots / scanline / aurora / solid；空=默认网格）。
 #[tauri::command]
 pub fn set_background_texture(texture: String) -> Result<(), String> {
-    let mut config = load_config();
-    config.background_texture = texture;
-    save_config(&config)
+    mutate_config(|config| { config.background_texture = texture; Ok(()) })
 }
 
 /// 设置界面语言（"zh" / "en"；空=跟随系统）。
 /// 语言变更后立即重建托盘菜单（菜单文案随语言切换）。
 #[tauri::command]
 pub fn set_language(language: String) -> Result<(), String> {
-    let mut config = load_config();
-    config.language = language;
-    save_config(&config)?;
+    mutate_config(|config| { config.language = language; Ok(()) })?;
     let _ = crate::tray::rebuild_tray_menu_global();
     Ok(())
 }
@@ -1574,10 +1602,11 @@ pub fn import_custom_font(src: String) -> Result<CustomFontInfo, String> {
     let dest = fonts_dir.join(&file_name);
     fs::copy(src_path, &dest).map_err(|e| format!("拷贝字体失败: {e}"))?;
 
-    let mut config = load_config();
-    config.custom_font_path = dest.to_string_lossy().to_string();
-    config.global_font = family.clone();
-    save_config(&config)?;
+    mutate_config(|config| {
+        config.custom_font_path = dest.to_string_lossy().to_string();
+        config.global_font = family.clone();
+        Ok(())
+    })?;
 
     Ok(CustomFontInfo {
         family,
@@ -1589,6 +1618,26 @@ pub fn import_custom_font(src: String) -> Result<CustomFontInfo, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stale_config_patch_preserves_other_fields_and_map_keys() {
+        let baseline = serde_json::json!({"language":"zh", "global_font":"", "active_versions":{"node":"20", "go":"1"}});
+        let desired = serde_json::json!({"language":"en", "global_font":"", "active_versions":{"node":"22", "go":"1"}});
+        let mut latest = serde_json::json!({"language":"zh", "global_font":"Consolas", "active_versions":{"node":"20", "go":"2", "java":"21"}});
+        merge_config_patch(&mut latest, &baseline, &desired, "");
+        assert_eq!(latest, serde_json::json!({"language":"en", "global_font":"Consolas", "active_versions":{"node":"22", "go":"2", "java":"21"}}));
+    }
+
+    #[test]
+    fn stale_config_patch_merges_set_members_and_deletes_only_changed_map_keys() {
+        let baseline = serde_json::json!({"managed_items":["node"],"active_versions":{"node":"20"}});
+        let desired = serde_json::json!({"managed_items":["node","go"],"active_versions":{}});
+        let mut latest = serde_json::json!({"managed_items":["node","java"],"active_versions":{"node":"20","java":"21"}});
+        merge_config_patch(&mut latest, &baseline, &desired, "");
+        let members = latest["managed_items"].as_array().unwrap();
+        assert!(members.contains(&serde_json::json!("node")) && members.contains(&serde_json::json!("go")) && members.contains(&serde_json::json!("java")));
+        assert_eq!(latest["active_versions"], serde_json::json!({"java":"21"}));
+    }
 
     /// 落盘的 config.json 只能有数据路径；业务选项必须落进 settings.json。
     #[test]
@@ -1703,14 +1752,14 @@ mod tests {
 /// 移除自定义字体（恢复默认字体）
 #[tauri::command]
 pub fn clear_custom_font() -> Result<(), String> {
-    let mut config = load_config();
-    if !config.custom_font_path.is_empty() {
-        let p = config.custom_font_path.clone();
-        let _ = fs::remove_file(Path::new(&p));
-    }
-    config.custom_font_path.clear();
-    config.global_font.clear();
-    save_config(&config)
+    let mut previous = String::new();
+    mutate_config(|config| {
+        previous = std::mem::take(&mut config.custom_font_path);
+        config.global_font.clear();
+        Ok(())
+    })?;
+    if !previous.is_empty() { let _ = fs::remove_file(previous); }
+    Ok(())
 }
 
 /// 枚举系统已安装的字体家族名（供前端「全局字体」下拉动态填充）。
@@ -1818,9 +1867,7 @@ pub struct AppearanceConfig {
 /// 弹窗淡入这类自家动效全部关掉 —— 而用户往往并不知道系统被切过。
 #[tauri::command]
 pub fn set_motion_preference(preference: String) -> Result<(), String> {
-    let mut config = load_config();
-    config.motion_preference = normalize_motion_preference(&preference);
-    save_config(&config)
+    mutate_config(|config| { config.motion_preference = normalize_motion_preference(&preference); Ok(()) })
 }
 
 /// 归一化动效偏好：只有 `always` 表示「无视系统设置」，其余（空 / `system` / 未知值）都为「跟随系统」。
@@ -1838,9 +1885,7 @@ fn normalize_motion_preference(preference: &str) -> String {
 /// 密度是纯视觉手感，后端不该知道 8px / 4px 这种数。
 #[tauri::command]
 pub fn set_density(density: String) -> Result<(), String> {
-    let mut config = load_config();
-    config.density = normalize_density(&density);
-    save_config(&config)
+    mutate_config(|config| { config.density = normalize_density(&density); Ok(()) })
 }
 
 /// 归一化密度：只有 `compact` 是紧凑，其余（空 / `comfortable` / 未知值）都回落到舒适。

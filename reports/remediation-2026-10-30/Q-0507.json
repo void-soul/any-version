@@ -1,0 +1,10 @@
+{
+  "qid": "Q-0507",
+  "audit_id": "AUDIT-20261030-002",
+  "question": "全局配置读改写不在同一个锁内，会跨模块丢失更新",
+  "root_cause": "**save_config** 只锁定写入，旧调用方持有的对象缺少读取基线；集合与映射还会覆盖不属于本次操作的键。",
+  "solution": "1. 普通布局、主题、字体、语言、自启等设置入口使用 **mutate_config** 单锁读改写。\n2. **Config** 增加不参与序列化的读取基线；兼容旧 **load/modify/save** 调用时，在同一锁内仅合并相对基线变动的字段。\n3. 递归合并映射键，对托管项目和自启服务集合应用增删差量，保留其他线程新增的数据。\n4. 新增不同字段/映射键并发快照合并及集合新增和删除回归测试。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/config.rs** | 字段级写入、旧调用兼容补丁、集合差量与回归测试 |",
+  "status": "已验证",
+  "validation": "8 config tests passed, including disjoint stale snapshots, map keys and set changes."
+}
