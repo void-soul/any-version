@@ -1,0 +1,14 @@
+{
+  "qid": "Q-0552",
+  "parent_task": "Q-0506",
+  "question": "网络诊断入口与七项主机校验、连接解析和Ping解析回归集中在同文件，需要分离生产诊断与测试职责。",
+  "root_cause": "网络连接、网卡流量及诊断命令文件末尾直接维护解析回归，导致生产逻辑和测试修改互相干扰。",
+  "solution": "生产诊断与IPC原实现保持在network.rs，原七项纯解析回归移入正常tests子模块，保留私有函数可测性；生产文件966行，测试独立维护。\n主agent验收：Main lib compiled; seven network regression tests passed.",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/network.rs** | 兼容facade和子模块声明 |\n| **src-tauri/src/commands/network/** | 按职责独立实现与原有回归测试 |",
+  "status": "已验证",
+  "paths": [
+    "src-tauri/src/commands/network.rs",
+    "src-tauri/src/commands/network/tests.rs"
+  ],
+  "validation": "Main lib compiled; seven network regression tests passed."
+}
