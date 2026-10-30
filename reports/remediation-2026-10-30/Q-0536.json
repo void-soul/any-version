@@ -1,0 +1,35 @@
+{
+  "qid": "Q-0536",
+  "parent_task": "Q-0506",
+  "question": "SkillManager将技能元数据、在线安装、目录操作、项目技能与预览混合在1638行单一页面。",
+  "root_cause": "技能管理领域操作和独立展示区域缺少职责边界。",
+  "solution": "提取useSkillMetadataEditor、useSkillInstallation、useSkillDirectoryActions和useSkillPreview，明确各自状态/输入；元数据与安装通过延迟回调重新加载技能，避免读取尚未初始化的loadSkills。技能库、项目技能详情、目录弹窗、扫描选项等纯视图分别导出，保留原事件闭包；分类标签聚合提取为skillSelectors纯函数。\n主agent复核：领域hook保留完整状态与命令工作流、输入为明确领域值；技能重载使用延迟回调避免TDZ。tsc与49文件395测试通过，清单每个输出小于1000行。",
+  "files": "| File | Change |\n|------|--------|\n| **SkillManager.tsx** | 主页面由1638降至993行 |\n| **useSkill*.ts** | 元数据、安装、目录动作、预览四个独立功能hook |\n| **SkillManager.model.tsx**、**skillSelectors.ts** | 契约与分类/标签纯函数 |\n| **Skill*.tsx**、**BuiltinSkillLibrary.tsx**、**ProjectSkillDetails.tsx** | 窄typed props的明确子视图 |",
+  "status": "已验证",
+  "validation": [
+    "npx --no-install tsc --noEmit passed",
+    "npx --no-install vitest run: 49 files, 395 tests passed",
+    "18 exact paths below 1000 lines and trailing whitespace removed",
+    "Hook callbacks passed lazily where loadSkills initializes later; no controller/context bag"
+  ],
+  "paths": [
+    "src/components/ai/SkillManager.model.tsx",
+    "src/components/ai/SkillManager.tsx",
+    "src/components/ai/SkillManagerHeader.tsx",
+    "src/components/ai/SkillScanDirectoryOptions.tsx",
+    "src/components/ai/SkillLibraryPicker.tsx",
+    "src/components/ai/ProjectSkillDetails.tsx",
+    "src/components/ai/SkillPreviewDialog.tsx",
+    "src/components/ai/SkillLibraryFilters.tsx",
+    "src/components/ai/SkillLibraryList.tsx",
+    "src/components/ai/SkillMarketplaceDirectory.tsx",
+    "src/components/ai/BuiltinSkillLibrary.tsx",
+    "src/components/ai/SkillDirectoryDialog.tsx",
+    "src/components/ai/SkillMetadataFields.tsx",
+    "src/components/ai/useSkillMetadataEditor.ts",
+    "src/components/ai/useSkillDirectoryActions.ts",
+    "src/components/ai/useSkillPreview.ts",
+    "src/components/ai/useSkillInstallation.ts",
+    "src/components/ai/skillSelectors.ts"
+  ]
+}

@@ -1,102 +1,30 @@
+import { getSkillFacets } from "./skillSelectors";
+import { SkillMetadataFields } from "./SkillMetadataFields";
+import { SkillDirectoryDialog } from "./SkillDirectoryDialog";
+import { BuiltinSkillLibrary } from "./BuiltinSkillLibrary";
+import { SkillMarketplaceDirectory } from "./SkillMarketplaceDirectory";
+import { SkillLibraryList } from "./SkillLibraryList";
+import { SkillLibraryFilters } from "./SkillLibraryFilters";
+import { SkillPreviewDialog } from "./SkillPreviewDialog";
+import { ProjectSkillDetails } from "./ProjectSkillDetails";
+import { SkillLibraryPicker } from "./SkillLibraryPicker";
+import { SkillScanDirectoryOptions } from "./SkillScanDirectoryOptions";
+import { SkillManagerHeader } from "./SkillManagerHeader";
+import { useSkillDirectoryActions } from "./useSkillDirectoryActions";
+import { useSkillPreview } from "./useSkillPreview";
+import { useSkillInstallation } from "./useSkillInstallation";
+import { useSkillMetadataEditor } from "./useSkillMetadataEditor";
 import { useState, useEffect, useMemo } from 'react';
 import { useProjects } from './useProjects';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
-import { openPath, openUrl } from '@tauri-apps/plugin-opener';
+import { openPath } from '@tauri-apps/plugin-opener';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen as listenEvent } from '@tauri-apps/api/event';
-import { Note, ResultNote } from '../shared/Note';
-import {
-  Search, Tag, Store, Download, Trash2,
-  CheckCircle, AlertTriangle, ExternalLink, X, Package, Loader2,
-  ChevronDown, Settings2, Filter, Unlink, Sparkles, FolderOpen, Plus, Link2, FileText,
-  RotateCw
-} from 'lucide-react';
-import { alertError } from "../shared/ThemedAlert";
+import { Search, Tag, Store, Download, Trash2, CheckCircle, AlertTriangle, X, Loader2, ChevronDown, Filter, Sparkles, FolderOpen, Plus, Link2, RotateCw } from 'lucide-react';
 import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
 import { SharedModal } from "../shared/Modal";
-import { MarkdownRenderer } from "../shared/markdown/MarkdownRenderer";
-
-// ─── 类型 ───
-/** 预置技能来源（后端 get_skill_sources） */
-interface SkillSourceItem {
-  label: string;
-  repo: string;
-  hint: string;
-}
-
-/** 有更新的技能（后端 check_skill_updates；camelCase） */
-interface SkillUpdateInfo {
-  skillId: string;
-  name: string;
-  source: string;
-  current: string;
-  latest: string;
-}
-
-interface SkillEntry {
-  id: string;
-  name: string;
-  description: string;
-  installedAt: string;
-  installMethod: string;
-  /** 用户自定义分类（来自 .meta.json） */
-  category: string;
-  /** 用户自定义标签（来自 .meta.json） */
-  tags: string[];
-  /** SKILL.md 字符数：描述每次会话常驻，这个数字就是该技能的成本量级 */
-  skillMdChars: number;
-}
-
-/** 内置技能（随 Kira 分发，装进技能库后由用户安装给项目） */
-interface BuiltinSkillView {
-  id: string;
-  name: string;
-  description: string;
-}
-
-/** 项目 = 一个目录，技能装给它就只在该目录生效（后端 list_projects / add_project） */
-interface SkillProject {
-  id: string;
-  path: string;
-  name: string;
-  addedAt: string;
-}
-
-/** 安装结果（后端 InstallOutcome）：逐目录成败，不是「一句装好了」 */
-interface InstallOutcome {
-  linked: string[];
-  failed: string[];
-  replaced: string[];
-}
-
-/** 项目里已安装的技能（后端 list_project_skills；camelCase） */
-interface ProjectSkillEntry {
-  skillId: string;
-  name: string;
-  description: string;
-  /**
-   * 'linked' 指向技能库的链接 · 'local' 项目自带的真实目录 · 'broken' 悬空链接
-   * （技能库里的技能已被删除，链接还留着）
-   */
-  state: string;
-  skillMdChars: number;
-  /** 技能库 .meta.json 里的标签/分类 —— 在项目列表里同样显示，免得两边信息各说各话 */
-  tags: string[];
-  category: string;
-  /** 装在哪些扫描目录（一个技能装 N 处也只有**一行**，dirs 说明装在哪） */
-  dirs?: string[];
-  /** 这些链接里有多少已失效（目标技能被从库里删了）；有一个还有效就仍算「已安装」 */
-  staleLinks?: number;
-}
-
-type TabKey = 'skills' | 'projects';
-
-const MARKET_SOURCES = [
-  { name: 'skills.sh 官网', desc: 'Agent Skills 官方生态与规范', url: 'https://skills.sh' },
-  { name: 'Anthropic 官方 Skills', desc: 'anthropics/skills 仓库示例技能', url: 'https://github.com/anthropics/skills' },
-  { name: 'GitHub 主题搜索', desc: '搜索社区维护的 agentskills 仓库', url: 'https://github.com/search?q=agentskills&type=repositories' },
-];
+import { type BuiltinSkillView, type InstallOutcome, type ProjectSkillEntry, type SkillEntry, type SkillProject, type TabKey } from "./SkillManager.model";
 
 export default function SkillManager() {
   const { t } = useTranslation();
@@ -108,28 +36,47 @@ export default function SkillManager() {
   const [search, setSearch] = useState('');
   const [selCat, setSelCat] = useState<string | null>(null);
   const [selTags, setSelTags] = useState<string[]>([]);
-  const [editing, setEditing] = useState<SkillEntry | null>(null);
-  const [edCat, setEdCat] = useState('');
-  const [edTags, setEdTags] = useState<string[]>([]);
-  const [tagInput, setTagInput] = useState('');
-  const [savingMeta, setSavingMeta] = useState(false);
+  const {
+    editing,
+    setEditing,
+    edCat,
+    setEdCat,
+    edTags,
+    tagInput,
+    setTagInput,
+    savingMeta,
+    saveMeta,
+    openEdit,
+    addTag,
+    removeTag,
+  } = useSkillMetadataEditor({
+    loadSkills: () => loadSkills(),
+  });
   const [skillMsg, setSkillMsg] = useState<{ id: string; msg: string; ok: boolean } | null>(null);
 
   // ── 市场安装 ──
-  const [installInput, setInstallInput] = useState('');
-  const [installing, setInstalling] = useState(false);
-  const [installLog, setInstallLog] = useState('');
-  const [installErr, setInstallErr] = useState('');
-  // 预置来源（点一下填进输入框，省得用户自己翻仓库地址）
-  const [sources, setSources] = useState<SkillSourceItem[]>([]);
-  // 可更新的技能（安装时记了来源的才能比对）
-  const [updates, setUpdates] = useState<SkillUpdateInfo[]>([]);
-  const [checkingUpdates, setCheckingUpdates] = useState(false);
-
-  // ── 内置技能 ──
-  const [builtins, setBuiltins] = useState<BuiltinSkillView[]>([]);
-  const [builtinBusy, setBuiltinBusy] = useState<string | null>(null);
-  const [builtinResult, setBuiltinResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const {
+    installInput,
+    setInstallInput,
+    installing,
+    setInstalling,
+    installLog,
+    setInstallLog,
+    installErr,
+    sources,
+    updates,
+    checkingUpdates,
+    builtins,
+    setBuiltins,
+    builtinBusy,
+    builtinResult,
+    checkUpdates,
+    startInstall,
+    updateBuiltin,
+    installBuiltin,
+  } = useSkillInstallation({
+    loadSkills: () => loadSkills(),
+  });
   // 市场 / 内置技能收进「添加技能」弹框（它们只是「获取技能的渠道」，不是并列的管理维度）
   const [showAdd, setShowAdd] = useState(false);
   const [showMarket, setShowMarket] = useState(false);
@@ -206,8 +153,15 @@ export default function SkillManager() {
   const [pickedLib, setPickedLib] = useState<Set<string>>(new Set());
   /** 右侧勾选的「项目内已装技能」= 要删除的技能 */
   /** SKILL.md 预览弹窗 */
-  const [preview, setPreview] = useState<{ name: string; md: string } | null>(null);
-  const [previewBusy, setPreviewBusy] = useState(false);
+  const {
+    preview,
+    setPreview,
+    previewBusy,
+    openPreview,
+    openLibPreview,
+  } = useSkillPreview({
+    selProject,
+  });
   const [projBusy, setProjBusy] = useState<string | null>(null);
 
   // ── 加载 ──
@@ -259,18 +213,7 @@ export default function SkillManager() {
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
-  // 分类与标签导出
-  const allCats = useMemo(() => {
-    const set = new Set<string>();
-    for (const s of skills) if (s.category) set.add(s.category);
-    return Array.from(set).sort();
-  }, [skills]);
-
-  const allTags = useMemo(() => {
-    const set = new Set<string>();
-    for (const s of skills) for (const t of s.tags) set.add(t);
-    return Array.from(set).sort();
-  }, [skills]);
+  const { allCats, allTags } = useMemo(() => getSkillFacets(skills), [skills]);
 
   // 筛选技能列表
   const filtered = useMemo(() => {
@@ -326,101 +269,6 @@ export default function SkillManager() {
     });
   };
 
-  // 保存元数据（分类/标签）
-  const saveMeta = async () => {
-    if (!editing) return;
-    setSavingMeta(true);
-    try {
-      await invoke('update_skill_meta', {
-        skillId: editing.id,
-        category: edCat.trim(),
-        tags: edTags,
-      });
-      setEditing(null);
-      loadSkills();
-    } catch (e: any) {
-      alertError(t("skillmgr.saveFail", { err: String(e) }));
-    }
-    setSavingMeta(false);
-  };
-
-  const openEdit = (s: SkillEntry) => {
-    setEditing(s);
-    setEdCat(s.category || '');
-    setEdTags([...s.tags]);
-    setTagInput('');
-  };
-
-  const addTag = () => {
-    const t = tagInput.trim();
-    if (t && !edTags.includes(t)) setEdTags([...edTags, t]);
-    setTagInput('');
-  };
-
-  const removeTag = (t: string) => setEdTags(edTags.filter((x) => x !== t));
-
-  /** 预置来源：进来就拉一次，失败就静默（不给用户添噪音） */
-  useEffect(() => {
-    invoke<SkillSourceItem[]>('get_skill_sources').then(setSources).catch(() => setSources([]));
-  }, []);
-
-  /** 检查已装技能是否有更新：后端按记录的来源 `git ls-remote` 比对，不 clone */
-  const checkUpdates = async () => {
-    setCheckingUpdates(true);
-    try {
-      setUpdates(await invoke<SkillUpdateInfo[]>('check_skill_updates'));
-    } catch {
-      setUpdates([]);
-    } finally {
-      setCheckingUpdates(false);
-    }
-  };
-
-  // 市场安装
-  const startInstall = async () => {
-    const src = installInput.trim();
-    if (!src) return;
-    setInstalling(true);
-    setInstallLog(t("skillmgr.installStart") + '\n');
-    setInstallErr('');
-    try {
-      await invoke('install_skill_from_online', { source: src });
-    } catch (e: any) {
-      setInstalling(false);
-      setInstallErr(String(e));
-    }
-  };
-
-  // 更新内置技能：后端会先删掉旧目录再按随包内容重写（否则新版移除的文件会残留）。
-  // 不走「先 uninstall 再 install」的前端两步 —— 那样中间会出现技能库实体短暂消失，
-  // 此刻所有项目里的 junction 都是 broken，失败时还会停在那个状态。
-  const updateBuiltin = async (id: string) => {
-    setBuiltinBusy(id);
-    setBuiltinResult(null);
-    try {
-      const path = await invoke<string>('update_builtin_skill', { skillId: id });
-      setBuiltinResult({ ok: true, msg: t("skillmgr.builtinUpdated", { path }) });
-      loadSkills();
-    } catch (e: any) {
-      setBuiltinResult({ ok: false, msg: String(e) });
-    }
-    setBuiltinBusy(null);
-  };
-
-  // 安装内置技能：直接落进技能库。装完它就是普通技能，由用户显式安装给某个项目
-  const installBuiltin = async (id: string) => {
-    setBuiltinBusy(id);
-    setBuiltinResult(null);
-    try {
-      const path = await invoke<string>('install_builtin_skill', { skillId: id });
-      setBuiltinResult({ ok: true, msg: t("skillmgr.builtinInstalled", { path }) });
-      loadSkills();
-    } catch (e: any) {
-      setBuiltinResult({ ok: false, msg: String(e) });
-    }
-    setBuiltinBusy(null);
-  };
-
 // ── 项目操作 ──
 
   /**
@@ -430,41 +278,18 @@ export default function SkillManager() {
    * 以及各项目里指向旧库的 junction（目录联接记绝对路径，不重建就全成悬空）。
    * 所以这里成功提示要报迁移数量，让用户知道发生了什么。
    */
-  const saveSkillsDir = async () => {
-    if (!dirDialog) return;
-    setDirDialog((d) => (d ? { ...d, busy: true, msg: null } : d));
-    try {
-      const r = await invoke<{ dir: string; moved: number; relinked: number; unchanged: boolean }>(
-        'set_skills_dir',
-        { path: dirDialog.path },
-      );
-      setSkillsDir(r.dir);
-      setDirDialog(null);
-      // 技能库换位置了，列表和项目清单都得重拉
-      await Promise.all([loadSkills(), loadProjects()]);
-      setProjSkills({});
-      setProjMsg({
-        id: '*',
-        msg: r.unchanged
-          ? t("skillmgr.dirSame")
-          : t("skillmgr.dirChanged", { path: r.dir, n: r.moved, links: r.relinked }),
-        ok: true,
-      });
-    } catch (e: any) {
-      setDirDialog((d) => (d ? { ...d, busy: false, msg: String(e) } : d));
-    }
-  };
-
-  const pickSkillsDir = async () => {
-    try {
-      const picked = await open({ directory: true, multiple: false, title: t("skillmgr.dirPick") });
-      if (typeof picked === 'string' && picked) {
-        setDirDialog((d) => (d ? { ...d, path: picked, msg: null } : d));
-      }
-    } catch {
-      /* 用户取消 */
-    }
-  };
+  const {
+    saveSkillsDir,
+    pickSkillsDir,
+  } = useSkillDirectoryActions({
+    dirDialog,
+    setDirDialog,
+    setSkillsDir,
+    loadSkills,
+    loadProjects,
+    setProjSkills,
+    setProjMsg,
+  });
 
   /** 添加项目：让用户直接选一个目录 */
   const addProject = async () => {
@@ -631,35 +456,6 @@ export default function SkillManager() {
     }
   };
 
-  /** 打开 SKILL.md 预览（按需取全文，避免列表被撑大） */
-  const openPreview = async (e: { skillId: string; name: string }) => {
-    if (!selProject) return;
-    setPreviewBusy(true);
-    setPreview({ name: e.name, md: '' });
-    try {
-      const md = await invoke<string>('get_project_skill_md', { projectId: selProject, skillId: e.skillId });
-      setPreview({ name: e.name, md });
-    } catch (err: any) {
-      setPreview({ name: e.name, md: String(err) });
-    } finally {
-      setPreviewBusy(false);
-    }
-  };
-
-  /** 打开技能库里某个技能的 SKILL.md 预览（与项目内预览共用同一个弹窗） */
-  const openLibPreview = async (skillId: string, name: string) => {
-    setPreviewBusy(true);
-    setPreview({ name, md: '' });
-    try {
-      const md = await invoke<string>('get_library_skill_md', { skillId });
-      setPreview({ name, md });
-    } catch (err: any) {
-      setPreview({ name, md: String(err) });
-    } finally {
-      setPreviewBusy(false);
-    }
-  };
-
   /** 清掉悬空链接（技能库里的技能已被删除，junction 还留在项目里） */
   const cleanupBroken = async (pid: string) => {
     const broken = (projSkills[pid] || []).filter((e) => e.state === 'broken');
@@ -680,39 +476,12 @@ export default function SkillManager() {
   return (
     <div className="flex flex-col h-full text-slate-200 select-none">
       {/* 顶部导航 Tab */}
-      <div className="flex items-center justify-between px-4 pt-3 border-b border-white/5 bg-white/[0.02]">
-        <div className="flex items-center gap-1">
-          {([
-            { k: 'skills' as TabKey, label: t("skillmgr.tabSkills"), icon: Package },
-            { k: 'projects' as TabKey, label: t("skillmgr.tabProjects"), icon: FolderOpen },
-          ]).map(({ k, label, icon: Icon }) => (
-            <button
-              key={k}
-              onClick={() => setTab(k)}
-              className={`flex items-center gap-1.5 px-3.5 py-2.5 text-body font-semibold border-b-2 transition-all cursor-pointer ${
-                tab === k
-                  ? 'border-[var(--module-accent)] text-white bg-white/[0.03]'
-                  : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-white/[0.01]'
-              }`}
-            >
-              <Icon className="w-3.5 h-3.5" />
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="flex items-center gap-1.5 min-w-0">
-          <div className="text-tiny text-slate-500 font-mono truncate max-w-[320px]" title={skillsDir}>
-            {t("skillmgr.libraryDir")}<code className="text-slate-400">{skillsDir || '…'}</code>
-          </div>
-          <button
-            onClick={() => setDirDialog({ path: skillsDir, busy: false, msg: null })}
-            className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-slate-200 cursor-pointer flex-shrink-0"
-            title={t("skillmgr.dirChange")}
-          >
-            <Settings2 className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </div>
+      <SkillManagerHeader
+        setTab={setTab}
+        tab={tab}
+        skillsDir={skillsDir}
+        setDirDialog={setDirDialog}
+      />
 
       <div className="flex-1 overflow-y-auto p-4">
 {/* ════════ 项目 Tab ════════ */}
@@ -789,85 +558,24 @@ export default function SkillManager() {
 
                     {/* 装到哪些扫描目录：决定这个技能出现在哪些 AI 工具的视野里。
                         每个勾选的目录下各建一个 junction 指向库里同一份实体，不复制内容。 */}
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-micro text-slate-500">{t("skillmgr.installToDirs")}</span>
-                      {SCAN_DIRS.map((d) => {
-                        const on = pickedDirs.includes(d);
-                        return (
-                          <button
-                            key={d}
-                            onClick={() => toggleScanDir(d)}
-                            title={t("skillmgr.scanDirHint", { dir: d })}
-                            className={`flex items-center gap-1 px-2 py-0.5 rounded text-micro font-mono cursor-pointer transition-colors border ${
-                              on
-                                ? "bg-[var(--module-accent-soft)] border-[var(--module-accent-ring)] text-slate-200"
-                                : "bg-white/5 border-white/10 text-slate-600 hover:text-slate-400"
-                            }`}
-                          >
-                            <span className={`w-1.5 h-1.5 rounded-full ${on ? "bg-emerald-400" : "bg-slate-600"}`} />
-                            {d}
-                          </button>
-                        );
-                      })}
-                      <button
-                        onClick={() => setPickedDirs([...SCAN_DIRS])}
-                        className="px-2 py-0.5 rounded text-micro bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer"
-                      >
-                        {t("skillmgr.scanDirAll")}
-                      </button>
-                      <label
-                        className="flex items-center gap-1 px-2 py-0.5 rounded text-micro bg-white/5 border border-white/10 text-slate-400 cursor-pointer"
-                        title={t("skillmgr.autoGitignoreHint")}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={autoGitignore}
-                          onChange={(e) => setAutoGitignore(e.target.checked)}
-                          className="w-2.5 h-2.5 accent-[var(--module-accent)]"
-                        />
-                        {t("skillmgr.autoGitignore")}
-                      </label>
-                    </div>
+                    <SkillScanDirectoryOptions
+                      SCAN_DIRS={SCAN_DIRS}
+                      pickedDirs={pickedDirs}
+                      toggleScanDir={toggleScanDir}
+                      setPickedDirs={setPickedDirs}
+                      autoGitignore={autoGitignore}
+                      setAutoGitignore={setAutoGitignore}
+                    />
 
                     {libFiltered.length === 0 ? (
                       <div className="text-tiny text-slate-500 py-6 text-center">{t("skillmgr.emptyFiltered")}</div>
                     ) : (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 max-h-72 overflow-y-auto">
-                        {libFiltered.map((s) => {
-                          const on = pickedLib.has(s.id);
-                          return (
-                            <div
-                              key={s.id}
-                              className={`flex items-center gap-1 px-1.5 py-1 rounded-ctl transition-colors ${
-                                on ? 'bg-emerald-500/15' : 'bg-white/5 hover:bg-white/10'
-                              }`}
-                            >
-                              <button
-                                onClick={() => toggleLibPick(s.id)}
-                                className="flex items-center gap-1.5 min-w-0 flex-1 text-left cursor-pointer"
-                                title={s.description || s.id}
-                              >
-                                <span className={`w-3 h-3 rounded-sm flex-shrink-0 border ${on ? 'bg-emerald-500 border-emerald-400' : 'border-white/20'}`} />
-                                <span className={`text-tiny truncate flex-1 ${on ? 'text-emerald-300' : 'text-slate-400'}`}>
-                                  {s.name || s.id}
-                                </span>
-                                <span className="text-micro text-slate-500 font-mono flex-shrink-0">
-                                  {t("skillmgr.skillChars", { n: s.skillMdChars })}
-                                </span>
-                              </button>
-                              {/* 勾选与查看分开两个按钮：整个 item 点一下就切换勾选，
-                                  看文档必须是显式动作，否则误触会打断选择节奏 */}
-                              <button
-                                onClick={() => void openLibPreview(s.id, s.name || s.id)}
-                                className="p-0.5 rounded text-slate-600 hover:text-[var(--module-accent)] cursor-pointer flex-shrink-0"
-                                title={t("skillmgr.projViewMd")}
-                              >
-                                <FileText className="w-3 h-3" />
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
+                      <SkillLibraryPicker
+                        libFiltered={libFiltered}
+                        pickedLib={pickedLib}
+                        toggleLibPick={toggleLibPick}
+                        openLibPreview={openLibPreview}
+                      />
                     )}
                   </>
                 )
@@ -1000,200 +708,42 @@ export default function SkillManager() {
               </div>
 
               {/* 右：当前项目的技能 */}
-              <div className="min-w-0">
-                {!selProject ? (
-                  <div className="rounded-card bg-white/[0.02] border border-white/10 text-center py-16 text-slate-500 text-sm">
-                    {t("skillmgr.projPickOne")}
-                  </div>
-                ) : (
-                  (() => {
-                    const list = projSkills[selProject] || [];
-                    const broken = list.filter((e) => e.state === 'broken');
-                    const alive = list.filter((e) => e.state !== 'broken');
-                    const viewing = projects.find((p) => p.id === selProject);
-                    return (
-                      <div className="rounded-card bg-white/[0.02] border border-white/10 p-3 space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-body font-bold text-slate-300 truncate">
-                            {t("skillmgr.projInstalledTitle")}
-                            <span className="ml-1.5 text-micro text-slate-500 font-normal">{viewing?.path}</span>
-                          </span>
-                          {/* 原先这里有「批量删除 (N)」按钮 + 每行一个勾选框。
-                              已按用户要求删除：改成每一行直接列出装了哪些目录、
-                              点目录标签上的 × 逐个去掉。理由是「全卸」与「都不卸」
-                              两个极端之间没有中间态，而一个技能同时装在
-                              .agents 与 .codebuddy 是常态。 */}
-                        </div>
-
-                        {broken.length > 0 && (
-                          <div className="p-2 rounded-ctl bg-amber-500/10 text-amber-400 text-tiny flex items-center justify-between gap-2">
-                            <span className="min-w-0">
-                              {t("skillmgr.projBrokenHint", { names: broken.map((b) => b.skillId).join('、') })}
-                            </span>
-                            <button
-                              onClick={() => void cleanupBroken(selProject)}
-                              disabled={projBusy === selProject}
-                              className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 cursor-pointer disabled:opacity-50 flex-shrink-0"
-                            >
-                              <Unlink className="w-3 h-3" /> {t("skillmgr.projBrokenClean")}
-                            </button>
-                          </div>
-                        )}
-
-                        {alive.length === 0 ? (
-                          <div className="text-tiny text-slate-500 py-6 text-center">{t("skillmgr.projInstalledEmpty")}</div>
-                        ) : (
-                          <div className="space-y-1">
-                            {alive.map((e) => {
-                              return (
-                                <div
-                                  key={e.skillId}
-                                  className="flex items-center gap-2 px-2 py-1.5 rounded-ctl bg-white/[0.03]"
-                                >
-                                  <button
-                                    onClick={() => void openPreview(e)}
-                                    className="text-tiny font-semibold text-slate-200 hover:text-[var(--module-accent)] underline decoration-dotted underline-offset-2 truncate cursor-pointer"
-                                    title={t("skillmgr.projViewMd")}
-                                  >
-                                    {e.name || e.skillId}
-                                  </button>
-                                  <span
-                                    className={`px-1.5 py-0.5 rounded text-micro font-semibold flex-shrink-0 ${
-                                      e.state === 'linked'
-                                        ? 'bg-violet-500/15 text-violet-300'
-                                        : 'bg-sky-500/15 text-sky-300'
-                                    }`}
-                                  >
-                                    {e.state === 'linked' ? t("skillmgr.projFromLibrary") : t("skillmgr.projFromProject")}
-                                  </span>
-                                  {/* 装在哪些目录：**逐个可删**。
-                                      一个技能同时装在 .agents 与 .codebuddy 是常态，
-                                      而「全卸」与「都不卸」之间没有中间态 —— 所以每个
-                                      目录做成一个带 × 的标签，点哪个就去哪个。
-                                      删掉最后一个目录，这一行自然消失（列表是扫出来的）。 */}
-                                  {e.dirs && e.dirs.length > 0 && (
-                                    <span className="flex items-center gap-1 flex-shrink-0">
-                                      {e.dirs.map((d) => (
-                                        <span
-                                          key={d}
-                                          className="inline-flex items-center gap-0.5 rounded text-micro bg-white/5 text-slate-400 font-mono pl-1 pr-0.5 py-0.5"
-                                          title={t("skillmgr.installedInDirs")}
-                                        >
-                                          {d}
-                                          <button
-                                            type="button"
-                                            onClick={() => removeSkillFromDir(e, d)}
-                                            disabled={projBusy === selProject}
-                                            title={t("skillmgr.projRemoveDirHint", { dir: d })}
-                                            className="nodrag shrink-0 rounded px-0.5 text-slate-500 hover:bg-red-500/25 hover:text-red-300 disabled:opacity-40 cursor-pointer"
-                                          >
-                                            <X className="w-2.5 h-2.5" />
-                                          </button>
-                                        </span>
-                                      ))}
-                                    </span>
-                                  )}
-                                  {/* 有一个链接还有效就仍算已安装，但失效的那些要能被看见 */}
-                                  {(e.staleLinks ?? 0) > 0 && (
-                                    <span
-                                      className="px-1.5 py-0.5 rounded text-micro bg-amber-500/20 text-amber-400 flex-shrink-0"
-                                      title={t("skillmgr.staleLinksHint", { n: e.staleLinks ?? 0 })}
-                                    >
-                                      {t("skillmgr.staleLinks", { n: e.staleLinks ?? 0 })}
-                                    </span>
-                                  )}
-                                  <span className="text-micro text-slate-500 font-mono flex-shrink-0">
-                                    {t("skillmgr.skillChars", { n: e.skillMdChars })}
-                                  </span>
-                                  {e.category && (
-                                    <span className="px-1.5 py-0.5 rounded text-micro bg-[var(--module-accent-soft)] text-[var(--module-accent)] flex-shrink-0">
-                                      {e.category}
-                                    </span>
-                                  )}
-                                  {e.tags.map((tag) => (
-                                    <span key={tag} className="px-1.5 py-0.5 rounded text-micro bg-white/5 text-slate-400 flex-shrink-0">
-                                      #{tag}
-                                    </span>
-                                  ))}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-
-                        {projMsg?.id === selProject && (
-                          <div className={`text-tiny break-all ${projMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>
-                            {projMsg.msg}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()
-                )}
-              </div>
+              <ProjectSkillDetails
+                selProject={selProject}
+                projSkills={projSkills}
+                projects={projects}
+                cleanupBroken={cleanupBroken}
+                projBusy={projBusy}
+                openPreview={openPreview}
+                removeSkillFromDir={removeSkillFromDir}
+                projMsg={projMsg}
+              />
             </div>
           </div>
         )}
 
         {/* SKILL.md 预览弹窗 */}
         {preview && (
-          <div className="fixed inset-0 z-50 modal-mask bg-black/60 backdrop-blur-xs flex items-center justify-center p-6">
-            <div className="rounded-card ui-input w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl">
-              <div className="flex items-center justify-between border-b border-white/5 px-4 py-2.5 flex-shrink-0">
-                <span className="text-body font-bold text-slate-200 truncate">
-                  {t("skillmgr.projMdTitle", { name: preview.name })}
-                </span>
-                <button onClick={() => setPreview(null)} className="text-slate-500 hover:text-slate-300 ml-3">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              <div className="flex-1 overflow-y-auto px-4 py-3">
-                {previewBusy ? (
-                  <div className="flex items-center justify-center py-16 gap-2 text-slate-500 text-sm">
-                    <Loader2 className="w-4 h-4 animate-spin" /> {t("skillmgr.projMdLoading")}
-                  </div>
-                ) : preview.md.trim() ? (
-                  <MarkdownRenderer content={preview.md} />
-                ) : (
-                  <div className="text-center py-16 text-slate-500 text-sm">{t("skillmgr.projMdEmpty")}</div>
-                )}
-              </div>
-            </div>
-          </div>
+          <SkillPreviewDialog
+            preview={preview}
+            setPreview={setPreview}
+            previewBusy={previewBusy}
+          />
         )}
 
         {/* ════════ 技能 Tab ════════ */}
         {tab === 'skills' && (
           <div className="space-y-3">
             {/* 检索筛选栏 */}
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="relative flex-1 min-w-[200px]">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
-                <input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder={t("skillmgr.searchPh")}
-                  className="w-full pl-8 pr-2 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-body text-slate-200 placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent-ring)]"
-                />
-              </div>
-              <div className="relative">
-                <select
-                  value={selCat ?? ''}
-                  onChange={(e) => setSelCat(e.target.value || null)}
-                  className="appearance-none pl-7 pr-7 py-1.5 rounded-ctl bg-slate-800 border border-white/10 text-body text-slate-200 focus:outline-none focus:border-[var(--module-accent-ring)] cursor-pointer"
-                >
-                  <option value="">{t("skillmgr.allCategories")}</option>
-                  {allCats.map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
-                <Filter className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
-                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
-              </div>
-              {hasFilter && (
-                <button onClick={clearFilter} className="px-2 py-1.5 rounded-ctl bg-white/5 hover:bg-white/10 text-tiny text-slate-400 flex items-center gap-1 cursor-pointer">
-                  <X className="w-3 h-3" /> {t("skillmgr.clearFilter")}
-                </button>
-              )}
-            </div>
+            <SkillLibraryFilters
+              search={search}
+              setSearch={setSearch}
+              selCat={selCat}
+              setSelCat={setSelCat}
+              allCats={allCats}
+              hasFilter={hasFilter}
+              clearFilter={clearFilter}
+            />
 
             {/* 标签 chips */}
             {allTags.length > 0 && (
@@ -1252,58 +802,13 @@ export default function SkillManager() {
               **对比**（哪些装过、名字叫什么）。单行能让一屏列出三倍数量。
               描述与标签移进 hover 的原生 title（信息不丢，只是不再占版面）。
             */}
-            <div className="divide-y divide-white/5 rounded-card border border-white/10 overflow-hidden">
-              {filtered.map((s) => (
-                <div
-                  key={s.id}
-                  className="group flex items-center gap-2 px-3 py-1.5 hover:bg-white/[0.04] transition-colors"
-                  title={[
-                    s.name || s.id,
-                    s.id,
-                    s.description || t("skillmgr.noDesc"),
-                    s.category,
-                    s.tags.length > 0 ? `#${s.tags.join(" #")}` : "",
-                    s.installMethod === "managed" ? t("skillmgr.managedLib") : s.installMethod,
-                  ].filter(Boolean).join("\n")}
-                >
-                  <span className="text-tiny font-semibold text-slate-100 truncate flex-shrink-0 max-w-[46%]">
-                    {s.name || s.id}
-                  </span>
-                  {/* 描述仍留在行内：判断「这个技能是干什么的」靠它，全藏进 tooltip 就得逐个悬停 */}
-                  <span className="text-micro text-slate-500 truncate flex-1 min-w-0">
-                    {s.description || ""}
-                  </span>
-                  {skillMsg?.id === s.id && (
-                    <span className={`text-micro flex-shrink-0 ${skillMsg.ok ? "text-emerald-400" : "text-red-400"}`}>
-                      {skillMsg.msg}
-                    </span>
-                  )}
-                  <div className="flex items-center gap-2 flex-shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-                    <button
-                      onClick={() => void openLibPreview(s.id, s.name || s.id)}
-                      className="text-slate-400 hover:text-[var(--module-accent)] cursor-pointer"
-                      title={t("skillmgr.projViewMd")}
-                    >
-                      <FileText className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => openEdit(s)}
-                      className="text-slate-400 hover:text-[var(--module-accent)] cursor-pointer"
-                      title={t("skillmgr.managedLib")}
-                    >
-                      <Settings2 className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => removeSkill(s.id)}
-                      className="text-slate-500 hover:text-red-400 cursor-pointer"
-                      title={t("common.delete")}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <SkillLibraryList
+              filtered={filtered}
+              skillMsg={skillMsg}
+              openLibPreview={openLibPreview}
+              openEdit={openEdit}
+              removeSkill={removeSkill}
+            />
         {/* 获取渠道（市场 / 内置）：内容一字未改，只是从页头 toggle 收进了这个弹框 */}
       <SharedModal
         open={showAdd}
@@ -1336,29 +841,9 @@ export default function SkillManager() {
             </div>
 
             {/* 来源列表 */}
-            <div>
-              <div className="text-body font-semibold text-slate-300 mb-2 flex items-center gap-1.5">
-                <Store className="w-3.5 h-3.5 text-[var(--module-accent)]" /> {t("skillmgr.marketSources")}
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-                {MARKET_SOURCES.map((src) => (
-                  <a
-                    key={src.url}
-                    href={src.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={(e) => { e.preventDefault(); void openUrl(src.url); }}
-                    className="rounded-card bg-white/[0.03] border border-white/10 p-3.5 hover:border-[var(--module-accent-ring)] transition-all group"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-body font-semibold text-slate-100">{t(src.name)}</span>
-                      <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-[var(--module-accent)] transition-colors" />
-                    </div>
-                    <p className="text-tiny text-slate-400 mt-1">{t(src.desc)}</p>
-                  </a>
-                ))}
-              </div>
-            </div>
+            <SkillMarketplaceDirectory
+
+            />
 
             {/* 在线安装 */}
             <div>
@@ -1433,64 +918,16 @@ export default function SkillManager() {
           </div>
         )}
 
-
         {/* ════════ 内置技能 ════════ */}
         {showBuiltin && (
-          <div className="space-y-4 max-w-4xl">
-            {/* 原先这里有一张「内置技能随 Kira 分发…」的说明块（Note tone=info）。
-                已删除：它讲的是「装完进技能库、再由你显式安装给项目」这套流程，
-                而页面上「添加技能」按钮与装完后的结果条已经把它说清楚了。
-                说明块长期占着弹框顶部，而这里要展示的是技能本身。 */}
-
-            {builtins.length === 0 ? (
-              <div className="text-center py-16 text-slate-500 text-sm">{t("skillmgr.builtinEmpty")}</div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                {builtins.map((b) => {
-                  // 内置技能装进技能库后目录名 === id，据此判断是否已装。
-                  //（安装时不写 manifest，所以没有别的来源可查）
-                  const installed = skills.some((s) => s.id === b.id);
-                  return (
-                  <div key={b.id} className="rounded-card bg-white/[0.03] border border-white/10 p-3.5 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <Sparkles className="w-3.5 h-3.5 text-[var(--module-accent)] flex-shrink-0" />
-                      <span className="text-body font-semibold text-slate-100 truncate">{b.name}</span>
-                      {installed && (
-                        <span className="shrink-0 px-1.5 py-0.5 rounded text-micro font-semibold bg-emerald-500/15 text-emerald-400">
-                          {t("skillmgr.builtinInstalledBadge")}
-                        </span>
-                      )}
-                      <code className={`${installed ? "ml-auto" : "ml-auto"} text-micro text-slate-600 font-mono truncate`}>{b.id}</code>
-                    </div>
-                    <p className="text-tiny text-slate-400 leading-relaxed">{b.description}</p>
-                    <button
-                      onClick={() => void (installed ? updateBuiltin(b.id) : installBuiltin(b.id))}
-                      disabled={builtinBusy !== null}
-                      className={`w-full px-3 py-2 rounded-ctl disabled:opacity-50 text-body font-semibold text-white flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                        installed
-                          ? "bg-white/8 hover:bg-white/15 border border-white/15"
-                          : "bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)]"
-                      }`}
-                    >
-                      {builtinBusy === b.id
-                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        : installed
-                          ? <RotateCw className="w-3.5 h-3.5" />
-                          : <Download className="w-3.5 h-3.5" />}
-                      {builtinBusy === b.id
-                        ? t("skillmgr.builtinInstalling")
-                        : installed
-                          ? t("skillmgr.builtinUpdate")
-                          : t("skillmgr.builtinInstall")}
-                    </button>
-                  </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {builtinResult && <ResultNote ok={builtinResult.ok} message={builtinResult.msg} />}
-          </div>
+          <BuiltinSkillLibrary
+            builtins={builtins}
+            skills={skills}
+            updateBuiltin={updateBuiltin}
+            installBuiltin={installBuiltin}
+            builtinBusy={builtinBusy}
+            builtinResult={builtinResult}
+          />
         )}
       </SharedModal>
 
@@ -1501,67 +938,13 @@ export default function SkillManager() {
 
       {/* 技能库位置设置弹窗 */}
       {dirDialog && (
-        <div className="fixed inset-0 z-50 modal-mask bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="rounded-card ui-input p-4 w-full max-w-lg space-y-3 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-white/5 pb-2">
-              <span className="text-body font-bold text-slate-200">{t("skillmgr.dirChange")}</span>
-              <button onClick={() => setDirDialog(null)} className="text-slate-500 hover:text-slate-300">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-1">
-              <div className="text-tiny text-slate-400">{t("skillmgr.dirCurrent")}</div>
-              <code className="block text-micro text-slate-300 font-mono break-all">{skillsDir || '…'}</code>
-            </div>
-
-            <div className="space-y-1">
-              <div className="text-tiny text-slate-400">{t("skillmgr.dirNew")}</div>
-              <code className="block text-micro text-slate-300 font-mono break-all">
-                {dirDialog.path || t("skillmgr.dirDefaultHint")}
-              </code>
-              <div className="flex items-center gap-2 pt-1">
-                <button
-                  onClick={() => void pickSkillsDir()}
-                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-ctl bg-white/5 hover:bg-white/10 text-tiny text-slate-200 cursor-pointer"
-                >
-                  <FolderOpen className="w-3 h-3" /> {t("skillmgr.dirPick")}
-                </button>
-                <button
-                  onClick={() => setDirDialog((d) => (d ? { ...d, path: '', msg: null } : d))}
-                  disabled={dirDialog.path === ''}
-                  className="px-2.5 py-1.5 rounded-ctl bg-white/5 hover:bg-white/10 disabled:opacity-40 text-tiny text-slate-300 cursor-pointer"
-                >
-                  {t("skillmgr.dirReset")}
-                </button>
-              </div>
-            </div>
-
-            <Note tone="warn" title={t("skillmgr.dirWarnTitle")}>
-              <p>{t("skillmgr.dirWarn1")}</p>
-              <p className="text-micro text-slate-400">{t("skillmgr.dirWarn2")}</p>
-            </Note>
-
-            {dirDialog.msg && <ResultNote ok={false} message={dirDialog.msg} />}
-
-            <div className="flex items-center justify-end gap-2 pt-1">
-              <button
-                onClick={() => setDirDialog(null)}
-                className="px-3 py-1.5 rounded-ctl bg-white/5 hover:bg-white/10 text-body text-slate-300 cursor-pointer"
-              >
-                {t("skillmgr.cancel")}
-              </button>
-              <button
-                onClick={() => void saveSkillsDir()}
-                disabled={dirDialog.busy}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-body font-semibold text-white cursor-pointer"
-              >
-                {dirDialog.busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                {t("skillmgr.dirSave")}
-              </button>
-            </div>
-          </div>
-        </div>
+        <SkillDirectoryDialog
+          setDirDialog={setDirDialog}
+          skillsDir={skillsDir}
+          dirDialog={dirDialog}
+          pickSkillsDir={pickSkillsDir}
+          saveSkillsDir={saveSkillsDir}
+        />
       )}
 
       {/* 编辑分类/标签弹窗 */}
@@ -1575,43 +958,15 @@ export default function SkillManager() {
               </button>
             </div>
 
-            <div className="space-y-2 text-body">
-              <div>
-                <label className="text-tiny text-slate-400 mb-1 block">{t("skillmgr.category")}</label>
-                <input
-                  value={edCat}
-                  onChange={(e) => setEdCat(e.target.value)}
-                  placeholder={t("skillmgr.categoryPh")}
-                  className="w-full px-2.5 py-1.5 rounded bg-white/5 border border-white/10 text-body text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
-                />
-              </div>
-
-              <div>
-                <label className="text-tiny text-slate-400 mb-1 block">{t("skillmgr.tags")}</label>
-                <div className="flex flex-wrap gap-1 mb-2">
-                  {edTags.map((t) => (
-                    <span key={t} className="px-2 py-0.5 rounded bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] text-[var(--module-accent)] text-tiny flex items-center gap-1">
-                      #{t}
-                      <button onClick={() => removeTag(t)} className="hover:text-red-300">
-                        <X className="w-2.5 h-2.5" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-                <div className="flex gap-1.5">
-                  <input
-                    value={tagInput}
-                    onChange={(e) => setTagInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } }}
-                    placeholder={t("skillmgr.tagPh")}
-                    className="flex-1 px-2.5 py-1.5 rounded bg-white/5 border border-white/10 text-body text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
-                  />
-                  <button onClick={addTag} className="px-3 py-1.5 rounded bg-white/10 hover:bg-white/20 text-body font-semibold text-slate-200 cursor-pointer">
-                    {t("skillmgr.add")}
-                  </button>
-                </div>
-              </div>
-            </div>
+            <SkillMetadataFields
+              edCat={edCat}
+              setEdCat={setEdCat}
+              edTags={edTags}
+              removeTag={removeTag}
+              tagInput={tagInput}
+              setTagInput={setTagInput}
+              addTag={addTag}
+            />
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/5">
               <button onClick={() => setEditing(null)} className="px-3 py-1.5 rounded text-body text-slate-400 hover:text-slate-200 cursor-pointer">
