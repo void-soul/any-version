@@ -1,0 +1,10 @@
+{
+  "qid": "Q-0509",
+  "audit_id": "AUDIT-20261030-004",
+  "question": "热键整份设置回传使一个模块覆盖另一个模块的修改",
+  "root_cause": "**launcher_save_settings** 用整行替换共享设置，客户端持有旧快照；旧读取迁移还会把用户主动清空的独立热键恢复为默认。",
+  "solution": "1. 将应用设置持久化提取为独立 **launcher/settings.rs**，提供 **launcher_patch_settings**。\n2. 在同一个SQLite事务中读取最新值，只合并提供字段；**moduleHotkeys**按模块键合并，null删除，未知字段与错误类型拒绝并回滚。\n3. 读取时仅迁移真正的旧字段，保留显式空热键；前端调用方使用patch，不再回传无关字段。\n4. 新增隔离内存数据库测试覆盖独立字段保留、无效修改回滚与清空不复活。\n5. Frontend consumers use **contracts/appSettings.ts** and **services/appSettings.ts** to send only action-owned fields; requests remain ordered per renderer.",
+  "files": "| File | Change |\n|------|--------|\n| **src/contracts/appSettings.ts**, **src/services/** | Shared contracts, ordered patches and regression tests |\n| **src/components/** | Field-only settings requests and feedback |\n| **src/i18n/locales/** | Save/load error and scheduled-storage copy |\n| **src-tauri/src/commands/launcher/** | Transactional field patches and compatibility |\n| **src-tauri/src/lib.rs** | Register patch command |",
+  "status": "已验证",
+  "validation": "3 in-memory backend settings tests, tsc, and all frontend 49 files / 395 tests passed. Primary reviewed patch payloads, error branches and scheduled-storage wording."
+}

@@ -18,8 +18,10 @@ import { useTranslation } from "react-i18next";
 
 import { HotkeyRecorder } from "./shared/HotkeyRecorder";
 import { ModuleSettingsButton, SettingsGroup, SettingsRow } from "./shared/ModuleSettings";
-import type { LauncherSetting } from "./launcher/types";
+import type { AppSettings } from "../contracts/appSettings";
+import { loadAppSettings, patchAppSettings } from "../services/appSettings";
 import { ModelSelector } from "./shared/ai/ModelSelector";
+import { toast } from "./shared/Toast";
 
 // ─── 类型 ───
 
@@ -78,26 +80,25 @@ function doTranslate(text: string, providerId: string | null, modelId: string | 
 
 // ─── 面板 ───
 
-/** 翻译模块专属设置：划词翻译热键（数据源为 LauncherSetting）。
+/** 翻译模块专属设置：划词翻译热键（数据源为 AppSettings）。
  *  弹窗打开时才挂载，因此可以在这里按需拉取设置。 */
 function TranslateModuleSettings() {
   const { t } = useTranslation();
-  const [cfg, setCfg] = useState<LauncherSetting | null>(null);
+  const [cfg, setCfg] = useState<AppSettings | null>(null);
 
   useEffect(() => {
-    invoke<LauncherSetting>("launcher_get_settings")
+    loadAppSettings()
       .then((c) => setCfg(c))
       .catch((e) => console.error("读取启动器设置失败:", e));
   }, []);
 
-  const save = async (patch: Partial<LauncherSetting>) => {
+  const save = async (patch: Partial<AppSettings>) => {
     if (!cfg) return;
-    const next = { ...cfg, ...patch };
-    setCfg(next); // 乐观更新，录制完成后立即回显
     try {
-      await invoke("launcher_save_settings", { settings: next });
+      setCfg(await patchAppSettings(patch));
     } catch (e) {
       console.error("保存启动器设置失败:", e);
+      toast(t("settings.saveFailedTryAgain"), "err");
     }
   };
 

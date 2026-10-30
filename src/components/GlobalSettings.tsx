@@ -169,7 +169,9 @@ function ModuleConfigRow({
     </div>
   );
 }
-import type { LauncherSetting } from "./launcher/types";
+import type { AppSettings } from "../contracts/appSettings";
+import type { AppSettingsPatch } from "../contracts/appSettings";
+import { loadAppSettings, patchAppSettings } from "../services/appSettings";
 import { MODULE_CATALOG as MODULES, moduleLabel } from "../moduleCatalog";
 import { useTranslation } from "react-i18next";
 import DataSyncPanel from "./DataSyncPanel";
@@ -324,7 +326,7 @@ export default function GlobalSettings() {
   };
 
   // 启动器配置 (全局唤起快捷键 + 视图设置)
-  const [launcherCfg, setLauncherCfg] = useState<LauncherSetting>({
+  const [launcherCfg, setLauncherCfg] = useState<AppSettings>({
     moduleHotkeys: { launcher: "Alt+Space" },
     selectionTranslateHotkey: "F6",
     mindmapQuickHotkey: "Shift+F3",
@@ -343,7 +345,7 @@ export default function GlobalSettings() {
   // 录制目标：null=未录制；否则为某个顶级模块的 moduleId（含「启动」= "launcher"）
   const [recordingField, setRecordingField] = useState<string | null>(null);
   // 始终持有最新 launcherCfg，供录制监听闭包（仅依赖 recordingField）安全读取
-  const launcherCfgRef = useRef<LauncherSetting>(launcherCfg);
+  const launcherCfgRef = useRef<AppSettings>(launcherCfg);
   useEffect(() => {
     launcherCfgRef.current = launcherCfg;
   }, [launcherCfg]);
@@ -645,20 +647,20 @@ export default function GlobalSettings() {
 
   const fetchLauncherConfig = async () => {
     try {
-      const cfg = await invoke<LauncherSetting>("launcher_get_settings");
+      const cfg = await loadAppSettings();
       if (cfg) setLauncherCfg(cfg);
     } catch (e) {
       console.error(e);
     }
   };
 
-  const handleSaveLauncherConfig = async (patch?: Partial<LauncherSetting>) => {
-    const next = patch ? { ...launcherCfgRef.current, ...patch } : launcherCfgRef.current;
-    if (patch) setLauncherCfg(next);
+  const handleSaveLauncherConfig = async (patch: AppSettingsPatch) => {
     setSavingLauncher(true);
     setLauncherSaved(false);
     try {
-      await invoke("launcher_save_settings", { settings: next });
+      const saved = await patchAppSettings(patch);
+      setLauncherCfg(saved);
+      launcherCfgRef.current = saved;
       setLauncherSaved(true);
       setTimeout(() => setLauncherSaved(false), 2500);
     } catch (e: any) {
@@ -745,9 +747,7 @@ export default function GlobalSettings() {
       } else if (target === "mindmap-sticker") {
         handleSaveLauncherConfig({ mindmapStickerHotkey: hotkeyStr });
       } else {
-        const cur = launcherCfgRef.current.moduleHotkeys || {};
-        const nextMap = { ...cur, [target]: hotkeyStr };
-        handleSaveLauncherConfig({ moduleHotkeys: nextMap });
+        handleSaveLauncherConfig({ moduleHotkeys: { [target]: hotkeyStr } });
       }
       setRecordingField(null);
     };
@@ -812,12 +812,15 @@ export default function GlobalSettings() {
       const result = await invoke<MigrateResult>("update_config", {
         dataDir: dataDir || oldDataDir,
       });
-      setMigrateResult(result);
+      setMigrateResult(migrated ? null : result);
       setSuccess(true);
-      // 换了数据目录：新目录里有没有运行组件（ffmpeg/mihomo 等）要重启后重新检测才知道，
-      // 所以这里提示并允许一键重启，而不是让用户在一个「半切换」的状态下继续用。
-      if (migrated) setNeedRestart(true);
-      await fetchConfig();
+      // Scheduling does not change the live storage root. Keep the requested
+      // destination visible until the next process applies the migration.
+      if (migrated) {
+        setNeedRestart(true);
+      } else {
+        await fetchConfig();
+      }
     } catch (e: any) {
       alertError(t("settings.configSaveFail", { err: String(e) }));
     } finally {
@@ -1174,14 +1177,14 @@ export default function GlobalSettings() {
               </div>
             )}
 
-            {/* 数据目录已切换：提示重启（进程内的数据库连接等仍指向旧目录） */}
+            {/* Migration is applied before storage opens in the next process. */}
             {needRestart && (
               <div className="p-4 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] rounded-card space-y-2.5">
                 <div className="flex items-start gap-1.5">
                   <Power className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-[var(--module-accent)]" />
                   <div className="text-tiny text-slate-300 space-y-1">
                     <p className="font-semibold text-[var(--module-accent)]">{t("settings.restartRequired")}</p>
-                    <p>{t("settings.restartReason")}</p>
+                    <p>{t("settings.migrationScheduled", { path: dataDir })}</p>
                   </div>
                 </div>
                 <button
@@ -1196,7 +1199,7 @@ export default function GlobalSettings() {
 
             <div className="flex items-center justify-between pt-4 border-t border-white/5">
               <div>
-                {success &&
+                {success && !needRestart &&
                   !migrateResult?.moved_versions &&
                   !migrateResult?.moved_links && (
                     <span className="text-body font-medium text-emerald-400 flex items-center gap-1.5">
@@ -1651,9 +1654,7 @@ export default function GlobalSettings() {
                       onToggleEnabled={() => toggleModuleEnabled(id)}
                       onRecordHotkey={() => setRecordingField(isRecording ? null : id)}
                       onClearHotkey={() => {
-                        const cur = { ...(launcherCfg.moduleHotkeys || {}) };
-                        delete cur[id];
-                        handleSaveLauncherConfig({ moduleHotkeys: cur });
+                        handleSaveLauncherConfig({ moduleHotkeys: { [id]: null } });
                       }}
                     />
                   );

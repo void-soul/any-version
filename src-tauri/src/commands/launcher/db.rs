@@ -103,7 +103,7 @@ pub fn init_db() -> Result<(), String> {
     Ok(())
 }
 
-fn with_conn<T, F>(f: F) -> Result<T, String>
+pub(super) fn with_conn<T, F>(f: F) -> Result<T, String>
 where
     F: FnOnce(&mut Connection) -> Result<T, String>,
 {
@@ -928,77 +928,7 @@ pub fn increment_item_open_count(id: i64) -> Result<(), String> {
 
 // ---------------------- 设置操作 ----------------------
 
-pub fn get_settings() -> Result<LauncherSetting, String> {
-    with_conn(|conn| {
-        let res: Result<String, _> = conn.query_row(
-            "SELECT value FROM launcher_setting WHERE key = 'global'",
-            [],
-            |row| row.get(0),
-        );
-        let mut setting: LauncherSetting = match res {
-            Ok(json_str) => serde_json::from_str(&json_str).unwrap_or_default(),
-            Err(_) => LauncherSetting::default(),
-        };
-
-        // 数据迁移：旧版本的「启动」模块快捷键存在 show_hide_shortcut_key，
-        // 现统一迁移到 module_hotkeys["launcher"]（所有模块快捷键平等）。
-        if !setting.show_hide_shortcut_key.is_empty()
-            && !setting.module_hotkeys.contains_key("launcher")
-        {
-            setting
-                .module_hotkeys
-                .insert("launcher".to_string(), setting.show_hide_shortcut_key.clone());
-            setting.show_hide_shortcut_key.clear();
-            // 立即落盘，避免每次读取都重复迁移。
-            let json_str = serde_json::to_string(&setting).map_err(|e| e.to_string())?;
-            let _ = conn.execute(
-                "INSERT OR REPLACE INTO launcher_setting (key, value) VALUES ('global', ?1)",
-                params![json_str],
-            );
-        }
-        // 数据迁移：划词翻译热键默认 F6（老配置为空串时不触发 serde 默认值，需在此补齐）。
-        if setting.selection_translate_hotkey.trim().is_empty() {
-            setting.selection_translate_hotkey = crate::commands::launcher::models::default_selection_translate_hotkey();
-            let json_str = serde_json::to_string(&setting).map_err(|e| e.to_string())?;
-            let _ = conn.execute(
-                "INSERT OR REPLACE INTO launcher_setting (key, value) VALUES ('global', ?1)",
-                params![json_str],
-            );
-        }
-        // 数据迁移：思维导图速记热键默认 Shift+F3（同上，老配置缺字段时补齐）。
-        if setting.mindmap_quick_hotkey.trim().is_empty() {
-            setting.mindmap_quick_hotkey = crate::commands::launcher::models::default_mindmap_quick_hotkey();
-            let json_str = serde_json::to_string(&setting).map_err(|e| e.to_string())?;
-            let _ = conn.execute(
-                "INSERT OR REPLACE INTO launcher_setting (key, value) VALUES ('global', ?1)",
-                params![json_str],
-            );
-        }
-        // 数据迁移：思维导图贴纸热键默认 Shift+F4。
-        if setting.mindmap_sticker_hotkey.trim().is_empty() {
-            setting.mindmap_sticker_hotkey = crate::commands::launcher::models::default_mindmap_sticker_hotkey();
-            let json_str = serde_json::to_string(&setting).map_err(|e| e.to_string())?;
-            let _ = conn.execute(
-                "INSERT OR REPLACE INTO launcher_setting (key, value) VALUES ('global', ?1)",
-                params![json_str],
-            );
-        }
-        Ok(setting)
-    })
-}
-
-pub fn save_settings(setting: &LauncherSetting) -> Result<(), String> {
-    with_conn(|conn| {
-        let json_str = serde_json::to_string(setting).map_err(|e| e.to_string())?;
-        conn.execute(
-            "INSERT OR REPLACE INTO launcher_setting (key, value) VALUES ('global', ?1)",
-            params![json_str],
-        ).map_err(|e| e.to_string())?;
-        Ok(())
-    })
-}
-
-// ---------------------- 备份与恢复 ----------------------
+pub use super::settings::{get_settings, save_settings};
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct LauncherBackup {

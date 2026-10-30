@@ -5,7 +5,7 @@ import {
   Square, Link, Table, Minus, Heading1, Heading2, Heading3, Undo2, Redo2,
   Columns, Eye, Pencil, Paperclip,
 } from "lucide-react";
-import { MindmapMarkdown } from "./DocumentMarkdown";
+import { DocumentMarkdown } from "./DocumentMarkdown";
 
 /** 在光标选区前后包裹 prefix/suffix；无选区时插入占位符并选中它 */
 function wrapSelection(ta: HTMLTextAreaElement, prefix: string, suffix: string, placeholder = ""): { text: string; selStart: number; selEnd: number } {
@@ -123,7 +123,7 @@ export const MarkdownFieldEditor = memo(function MarkdownFieldEditor({ value, on
   }, [undo, redo, handleChange]);
 
   /** 插入本地文件链接：路径里的空格转成 %20（否则 Markdown 会把链接截断），
-   *  点击时 MindmapMarkdown 会解码回原路径再打开。 */
+   *  点击时 DocumentMarkdown 会解码回原路径再打开。 */
   const insertFileLink = useCallback(async () => {
     if (!pickFile) return;
     const path = await pickFile();
@@ -142,7 +142,7 @@ export const MarkdownFieldEditor = memo(function MarkdownFieldEditor({ value, on
 
   const preview = useMemo(() => (
     <div className="overflow-y-auto p-3">
-      <MindmapMarkdown content={value || t("mmd.empty")} />
+      <DocumentMarkdown content={value || t("mmd.empty")} />
     </div>
   ), [value, t]);
 

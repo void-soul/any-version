@@ -1,2 +1,1 @@
-// Compatibility export; shared capability is owned outside this business module.
-export * from "../shared/markdown/DocumentMarkdown";
+export { DocumentMarkdown as MindmapMarkdown } from "../shared/markdown/DocumentMarkdown";

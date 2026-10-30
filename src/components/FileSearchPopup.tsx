@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import ShortcutRecorder from "./launcher/ShortcutRecorder";
 import type { DriveIndexInfo, FileHit, LauncherSetting } from "./launcher/types";
+import { patchAppSettings } from "../services/appSettings";
 
 interface IndexProgress {
   drive: string;
@@ -516,9 +517,7 @@ export default function FileSearchPopup() {
 
   const saveHotkey = async (combo: string | null) => {
     try {
-      const s = await invoke<LauncherSetting>("launcher_get_settings");
-      const next: LauncherSetting = { ...s, fileSearchHotkey: combo ?? "" };
-      await invoke("launcher_save_settings", { settings: next });
+      await patchAppSettings({ fileSearchHotkey: combo ?? "" });
       setHotkey(combo ?? "");
       setInfo(t("fileSearch.hotkeySaved"));
     } catch (e) {

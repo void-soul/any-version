@@ -1,0 +1,10 @@
+{
+  "qid": "Q-0519",
+  "audit_id": "AUDIT-20261030-014",
+  "question": "恢复提示声称数据已确认，但没有恢复结果校验",
+  "root_cause": "业务页面缓存**LauncherSetting**后整体替换后端值，公共设置的所有权与更新粒度不清晰；错误被空catch吞掉，恢复成功提示超过实际验证。",
+  "solution": "1. 中英文恢复提示改为导入已结束、重启后检查数据，不作未经验证的保证。",
+  "files": "| File | Change |\n|------|--------|\n| **src/i18n/locales/zh/translation.json** | Save feedback and accurate status |\n| **src/i18n/locales/en/translation.json** | Save feedback and accurate status |",
+  "status": "已验证",
+  "validation": "3 in-memory backend settings tests, tsc, and all frontend 49 files / 395 tests passed. Primary reviewed patch payloads, error branches and scheduled-storage wording."
+}

@@ -1150,7 +1150,11 @@
     "editorPickTitle": "Select editor executable",
     "editorExeFilter": "Executables",
     "chooseEditorExe": "Browse executable",
-    "clearExternalEditor": "Clear editor config"
+    "clearExternalEditor": "Clear editor config",
+    "saveFailedTryAgain": "Settings were not saved. Please try again.",
+    "loadFailedTryAgain": "Settings could not be loaded. Please try again.",
+    "retryLoad": "Retry loading settings",
+    "migrationScheduled": "Migration to {{path}} is scheduled and will be applied on restart. The original folder is still in use."
   },
   "mihomo": {
     "connSortTime": "Time",
@@ -1931,7 +1935,7 @@
     "restartManual": "Auto restart failed, please quit and reopen the app: {{err}}",
     "vexExported": "Snapshot packed — all your data is safe. 📦",
     "vexExportErr": "Hmm… the export got stuck. Let me take a look.",
-    "vexRestored": "Restore complete — everything is back in place. ✅",
+    "vexRestored": "Snapshot import is scheduled and will be applied on restart. Restart the app and check each module’s data.",
     "vexRestoreErr": "Hmm… the restore got stuck. Don't worry, let me check the backup.",
     "snapshotHint1": "All data is packed into",
     "snapshotHint2": "one compressed snapshot file",

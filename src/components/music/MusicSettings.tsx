@@ -11,7 +11,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 
-import type { LauncherSetting } from "../launcher/types";
+import type { AppSettings } from "../../contracts/appSettings";
+import { loadAppSettings, patchAppSettings } from "../../services/appSettings";
 import { SharedButton } from "../shared/Button";
 import { HotkeyRecorder } from "../shared/HotkeyRecorder";
 import { SettingsGroup, SettingsRow } from "../shared/ModuleSettings";
@@ -27,15 +28,23 @@ interface Props {
 
 export function MusicSettingsDialog({ eq, presets, onEqChange }: Props) {
   const { t } = useTranslation();
-  const [launcher, setLauncher] = useState<LauncherSetting | null>(null);
+  const [launcher, setLauncher] = useState<AppSettings | null>(null);
   const [storage, setStorage] = useState<PluginStorageInfo | null>(null);
+  const [settingsError, setSettingsError] = useState(false);
+  const [savingHotkey, setSavingHotkey] = useState(false);
 
-  // SharedModal 只在首次打开时挂载内容，因此这里按需拉取启动器设置（存放全局热键）
-  useEffect(() => {
-    invoke<LauncherSetting>("launcher_get_settings")
-      .then(setLauncher)
-      .catch(() => {});
-  }, []);
+  const reloadSettings = useCallback(async () => {
+    try {
+      setLauncher(await loadAppSettings());
+      setSettingsError(false);
+    } catch (e) {
+      console.error("Loading application settings failed", e);
+      setSettingsError(true);
+      toast(t("settings.loadFailedTryAgain"), "err");
+    }
+  }, [t]);
+
+  useEffect(() => { void reloadSettings(); }, [reloadSettings]);
 
   const reloadStorage = useCallback(async () => {
     try {
@@ -49,15 +58,17 @@ export function MusicSettingsDialog({ eq, presets, onEqChange }: Props) {
     void reloadStorage();
   }, [reloadStorage]);
 
-  // 必须整体回传（含 moduleHotkeys 等字段），否则会把其它模块的热键覆盖成空
-  const saveLauncher = async (patch: Partial<LauncherSetting>) => {
+  // The backend merges only the changed field, preserving other modules' settings.
+  const saveLauncher = async (patch: Partial<AppSettings>) => {
     if (!launcher) return;
-    const next = { ...launcher, ...patch };
-    setLauncher(next);
+    setSavingHotkey(true);
     try {
-      await invoke("launcher_save_settings", { settings: next });
-    } catch {
-      /* 保存失败时保持界面值，用户可重试 */
+      setLauncher(await patchAppSettings(patch));
+    } catch (e) {
+      console.error("Saving music hotkey failed", e);
+      toast(t("settings.saveFailedTryAgain"), "err");
+    } finally {
+      setSavingHotkey(false);
     }
   };
 
@@ -89,11 +100,17 @@ export function MusicSettingsDialog({ eq, presets, onEqChange }: Props) {
       </SettingsGroup>
 
       <SettingsGroup title={t("music.hotkeySection")}>
+        {settingsError && (
+          <SharedButton variant="secondary" onClick={() => void reloadSettings()}>
+            {t("settings.retryLoad")}
+          </SharedButton>
+        )}
         <SettingsRow
           label={t("music.hotkeyPlayPause")}
           hint={t("music.hotkeyHint")}
         >
           <HotkeyRecorder
+            disabled={!launcher || savingHotkey}
             value={launcher?.musicPlayPauseHotkey ?? ""}
             onChange={(hotkey) => void saveLauncher({ musicPlayPauseHotkey: hotkey })}
             clearTitle={t("settings.clearHotkey")}
@@ -101,6 +118,7 @@ export function MusicSettingsDialog({ eq, presets, onEqChange }: Props) {
         </SettingsRow>
         <SettingsRow label={t("music.hotkeyPrev")} hint={t("music.hotkeyHint")}>
           <HotkeyRecorder
+            disabled={!launcher || savingHotkey}
             value={launcher?.musicPrevHotkey ?? ""}
             onChange={(hotkey) => void saveLauncher({ musicPrevHotkey: hotkey })}
             clearTitle={t("settings.clearHotkey")}
@@ -108,6 +126,7 @@ export function MusicSettingsDialog({ eq, presets, onEqChange }: Props) {
         </SettingsRow>
         <SettingsRow label={t("music.hotkeyNext")} hint={t("music.hotkeyHint")}>
           <HotkeyRecorder
+            disabled={!launcher || savingHotkey}
             value={launcher?.musicNextHotkey ?? ""}
             onChange={(hotkey) => void saveLauncher({ musicNextHotkey: hotkey })}
             clearTitle={t("settings.clearHotkey")}

@@ -700,6 +700,17 @@ pub async fn launcher_get_settings() -> Result<LauncherSetting, String> {
     db::get_settings()
 }
 
+/// Application-owned settings: apply only supplied fields to the latest row.
+#[tauri::command]
+pub async fn launcher_patch_settings(
+    app: AppHandle,
+    patch: serde_json::Value,
+) -> Result<LauncherSetting, String> {
+    let settings = super::settings::patch_settings(patch)?;
+    refresh_global_hotkeys(app);
+    Ok(settings)
+}
+
 #[tauri::command]
 pub async fn launcher_save_settings(
     app: AppHandle,

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { patchAppSettings } from "../../services/appSettings";
 import {
   Search,
   Plus,
@@ -1594,10 +1595,8 @@ export default function LauncherPanel() {
 
   // 视图设置：更新全局设置并保存
   const saveViewSettings = async (patch: Partial<LauncherSetting>) => {
-    const next = { ...settings, ...patch };
-    setSettings(next);
     try {
-      await invoke("launcher_save_settings", { settings: next });
+      setSettings(await patchAppSettings(patch));
     } catch (e) {
       console.error("保存视图设置失败", e);
     }

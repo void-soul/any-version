@@ -18,7 +18,7 @@ import {
 } from "../../utils/graphHighlight";
 import { graphScope, hopFade } from "../../utils/graphScope";
 import GraphLookPrefs from "../shared/GraphLookPrefs";
-import { MindmapMarkdown } from "../shared/markdown/DocumentMarkdown";
+import { DocumentMarkdown } from "../shared/markdown/DocumentMarkdown";
 import { HoverPreview, useHoverPreview } from "../shared/HoverPreview";
 import { MarkdownFieldEditor } from "../shared/markdown/MarkdownFieldEditor";
 import { NodeFormFields } from "./NodeFormFields";
@@ -1361,7 +1361,7 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
             onSelect: () => selectNode(n.id), onOpenDetail: () => openDetail(n),
             onToggle: () => setCollapsed(cur => { const nx = new Set(cur); nx.has(n.id) ? nx.delete(n.id) : nx.add(n.id); return nx; }),
             onAddChild: () => addChildNode(n.id),
-            onPreview: (e) => hp.show({ title: n.name, x: e.clientX, y: e.clientY, accent: effectiveNodeColor(n), content: <MindmapMarkdown content={n.detail || t("mindmap.missingView")} /> }),
+            onPreview: (e) => hp.show({ title: n.name, x: e.clientX, y: e.clientY, accent: effectiveNodeColor(n), content: <DocumentMarkdown content={n.detail || t("mindmap.missingView")} /> }),
             onPreviewEnd: () => hp.scheduleHide(),
             onDelete: () => deleteNode(n.id),
             onContextMenu: (e) => { setSelectedId(n.id); setCtxMenu({ x: e.clientX, y: e.clientY, nodeId: n.id }); } }
@@ -1898,8 +1898,8 @@ function CanvasInner({ full, accent, onDocumentUpdate, onHistoryPush, historyVer
                     {/* 行尾悬浮操作：预览详细内容 / 打开编辑弹框（与日历定位行为一致） */}
                     <span className="hidden shrink-0 items-center gap-0.5 group-hover/row:flex">
                       <button type="button" className="rounded p-0.5 text-slate-500 transition hover:bg-white/10 hover:text-cyan-300"
-                        onMouseEnter={(e) => hp.show({ title: x.node.name, x: e.clientX, y: e.clientY, accent: effectiveNodeColor(x.node), content: <MindmapMarkdown content={x.node.detail || t("mindmap.missingView")} /> })}
-                        onMouseMove={(e) => { if (!hp.preview || hp.preview.title !== x.node.name) hp.show({ title: x.node.name, x: e.clientX, y: e.clientY, accent: effectiveNodeColor(x.node), content: <MindmapMarkdown content={x.node.detail || t("mindmap.missingView")} /> }); }}
+                        onMouseEnter={(e) => hp.show({ title: x.node.name, x: e.clientX, y: e.clientY, accent: effectiveNodeColor(x.node), content: <DocumentMarkdown content={x.node.detail || t("mindmap.missingView")} /> })}
+                        onMouseMove={(e) => { if (!hp.preview || hp.preview.title !== x.node.name) hp.show({ title: x.node.name, x: e.clientX, y: e.clientY, accent: effectiveNodeColor(x.node), content: <DocumentMarkdown content={x.node.detail || t("mindmap.missingView")} /> }); }}
                         onMouseLeave={() => hp.scheduleHide()}
                         onClick={(e) => e.stopPropagation()}
                         title={t("mindmap.previewOnly")}>

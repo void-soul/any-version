@@ -1156,7 +1156,11 @@
     "editorPickTitle": "选择编辑器可执行文件",
     "editorExeFilter": "可执行文件",
     "chooseEditorExe": "浏览可执行文件",
-    "clearExternalEditor": "清除编辑器配置"
+    "clearExternalEditor": "清除编辑器配置",
+    "saveFailedTryAgain": "设置未保存，请重试。",
+    "loadFailedTryAgain": "无法读取设置，请重试。",
+    "retryLoad": "重新读取设置",
+    "migrationScheduled": "目录迁移已安排到 {{path}}，重启后应用。当前仍使用原目录。"
   },
   "mihomo": {
     "connSortTime": "时间",
@@ -1937,7 +1941,7 @@
     "restartManual": "自动重启失败，请手动退出并重新打开应用：{{err}}",
     "vexExported": "快照打包好了，数据都在，放心。📦",
     "vexExportErr": "唔…导出这步卡住了，我帮你看看",
-    "vexRestored": "恢复完成，数据都归位了，我确认过了。✅",
+    "vexRestored": "快照已安排导入，重启后应用。请重启后检查各模块数据。",
     "vexRestoreErr": "唔…恢复这步卡住了，先别急，我看看备份还在不在",
     "snapshotHint1": "所有数据统一打包为",
     "snapshotHint2": "一个压缩快照文件",

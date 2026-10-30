@@ -142,7 +142,7 @@ function extractToc(content: string): TocItem[] {
 
 // ─── 主渲染器 ───
 
-export const MindmapMarkdown = memo(function MindmapMarkdown({ content }: { content: string }) {
+export const DocumentMarkdown = memo(function DocumentMarkdown({ content }: { content: string }) {
   const { t } = useTranslation();
   const toc = useMemo(() => extractToc(content), [content]);
   const [showToc, setShowToc] = useState(true);

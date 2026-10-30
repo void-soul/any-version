@@ -1,7 +1,7 @@
 // 思维导图模块专属设置：节点速记热键、贴纸热键、外部编辑器、AI 探索参数。
 //
 // 数据源：
-// - LauncherSetting（热键与外部编辑器，存 launcher 设置）
+// - AppSettings（热键与外部编辑器，存 launcher 设置）
 // - ExplorerSettings（AI 探索预算，存数据目录 mindmap_settings.json）
 // 弹窗打开时才挂载，因此在这里按需拉取设置。
 import { useEffect, useState } from "react";
@@ -10,10 +10,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { FolderOpen } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import type { LauncherSetting } from "../launcher/types";
+import type { AppSettings } from "../../contracts/appSettings";
+import { loadAppSettings, patchAppSettings } from "../../services/appSettings";
 import { HotkeyRecorder } from "../shared/HotkeyRecorder";
 import { SettingsGroup, SettingsRow } from "../shared/ModuleSettings";
 import { theamedAlert } from "../shared/ThemedAlert";
+import { toast } from "../shared/Toast";
 
 /** 与后端 mindmap::settings::ExplorerSettings 对应（camelCase 序列化） */
 export interface ExplorerSettings {
@@ -40,12 +42,12 @@ const EXPLORER_LIMITS = {
 
 export function MindmapModuleSettings() {
   const { t } = useTranslation();
-  const [launcher, setLauncher] = useState<LauncherSetting | null>(null);
+  const [launcher, setLauncher] = useState<AppSettings | null>(null);
   const [explorer, setExplorer] = useState<ExplorerSettings | null>(null);
   const [editorCmd, setEditorCmd] = useState("");
 
   useEffect(() => {
-    invoke<LauncherSetting>("launcher_get_settings")
+    loadAppSettings()
       .then((c) => {
         setLauncher(c);
         setEditorCmd(c.externalEditor ?? "");
@@ -56,14 +58,13 @@ export function MindmapModuleSettings() {
       .catch((e) => console.error("读取思维导图设置失败:", e));
   }, []);
 
-  const saveLauncher = async (patch: Partial<LauncherSetting>) => {
+  const saveLauncher = async (patch: Partial<AppSettings>) => {
     if (!launcher) return;
-    const next = { ...launcher, ...patch };
-    setLauncher(next);
     try {
-      await invoke("launcher_save_settings", { settings: next });
+      setLauncher(await patchAppSettings(patch));
     } catch (e) {
       console.error("保存启动器设置失败:", e);
+      toast(t("settings.saveFailedTryAgain"), "err");
     }
   };
 
