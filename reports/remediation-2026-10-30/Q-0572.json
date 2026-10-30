@@ -1,0 +1,27 @@
+{
+  "qid": "Q-0572",
+  "parent_task": "Q-0506",
+  "question": "MindmapPanel原3325行，把文档库、撤销重做、AI导入、画布布局、自由连线与位置持久化及多个弹窗混合。",
+  "root_cause": "主面板与画布内部领域职责缺少文件边界，顶层辅助组件和类型也集中在入口。",
+  "solution": "完整声明提取CanvasInner/Canvas、详情/创建/确认/AI报告等控件和纯模型。主入口只保留AI和装配；useMindmapDocumentLibrary独立拥有文件夹/文档CRUD、拖放与树渲染（2输入）；useMindmapHistory拥有快照栈、持久化恢复与键盘监听（4输入）。画布useMindmapCanvasLayout拥有布局/高亮范围/折叠/导航/坐标几何（7输入），useMindmapPositionWriter拥有位置写入队列、300ms合并和卸载刷新（1输入）。节点右键菜单为8个typed props独立视图，未引入controller/context bag。\n主agent验收：Agent tsc and all49 files/395 tests passed; primary reviewed buffer singleton, partial document/fit order and position flush ownership.",
+  "files": "| File | Change |\n|------|--------|\n| **MindmapPanel.tsx**、**MindmapPanel.CanvasInner.tsx** | 964/984行主装配与画布交互 |\n| **useMindmapDocumentLibrary.tsx**、**useMindmapHistory.tsx** | 文档/文件夹与撤销重做生命周期 |\n| **useMindmapCanvasLayout.tsx**、**useMindmapPositionWriter.tsx** | 画布布局/导航与位置持久化 |\n| **MindmapPanel.*.tsx**、**MindmapNodeContextMenu.tsx** | 完整子控件、单例模型与typed菜单 |",
+  "status": "已验证",
+  "paths": [
+    "src/components/mindmap/MindmapPanel.ArrangeHighlightedButton.tsx",
+    "src/components/mindmap/MindmapPanel.ConfirmModal.tsx",
+    "src/components/mindmap/MindmapPanel.DetailModal.tsx",
+    "src/components/mindmap/MindmapPanel.CreateDocModal.tsx",
+    "src/components/mindmap/MindmapPanel.AiRunningPill.tsx",
+    "src/components/mindmap/MindmapPanel.AiImportReportModal.tsx",
+    "src/components/mindmap/MindmapPanel.CanvasInner.tsx",
+    "src/components/mindmap/MindmapPanel.Canvas.tsx",
+    "src/components/mindmap/MindmapPanel.model.tsx",
+    "src/components/mindmap/MindmapPanel.tsx",
+    "src/components/mindmap/MindmapNodeContextMenu.tsx",
+    "src/components/mindmap/useMindmapCanvasLayout.tsx",
+    "src/components/mindmap/useMindmapPositionWriter.tsx",
+    "src/components/mindmap/useMindmapDocumentLibrary.tsx",
+    "src/components/mindmap/useMindmapHistory.tsx"
+  ],
+  "validation": "Agent tsc and all49 files/395 tests passed; primary reviewed buffer singleton, partial document/fit order and position flush ownership."
+}
