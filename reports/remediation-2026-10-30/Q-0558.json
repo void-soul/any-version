@@ -1,0 +1,32 @@
+{
+  "qid": "Q-0558",
+  "parent_task": "Q-0506",
+  "question": "ApiPanel原1906行混合请求发送/响应抽取、压测轮询、项目模板操作、集合导出及多个编辑区域。",
+  "root_cause": "请求生命周期、压测生命周期、项目管理和编辑视图缺少独立领域边界。",
+  "solution": "useApiRequest拥有请求与响应状态、环境抽取写回、当前输入和响应内容视图；useApiLoadTests拥有压测状态/轮询与报告区域；useApiProjectActions处理项目弹窗与模板定位；useApiCollectionExport负责集合导出。接口树拥有折叠状态，通过明确的端点/模块动作枚举回调通知父页面；其余选择器、请求编辑与侧栏/响应视图通过窄typed props独立导出。主页面保留项目加载、端点草稿与命令编排。后声明回调惰性传入，压测hook在请求输入初始化后调用。\n主agent验收：Agent tsc and all49 files/395 tests passed; hook ownership/initialization order reviewed.",
+  "files": "| File | Change |\n|------|--------|\n| **ApiPanel.tsx** | 1906降至983行 |\n| **useApiRequest.tsx**、**useApiLoadTests.tsx** | 请求与压测独立生命周期 |\n| **useApiProjectActions.tsx**、**useApiCollectionExport.tsx** | 项目管理与导出职责 |\n| **ApiEndpointTree.tsx** | 拥有折叠状态的接口树，通过6个明确输入/回调交互 |\n| **Api*Selector/Editor/Sidebar/Toolbar等.tsx**、**ApiPanel.*.tsx** | typed视图和纯模型边界 |",
+  "status": "已验证",
+  "paths": [
+    "src/components/api/ApiPanel.MoveModuleModal.tsx",
+    "src/components/api/ApiPanel.model.tsx",
+    "src/components/api/ApiPanel.tsx",
+    "src/components/api/ApiProjectSelector.tsx",
+    "src/components/api/ApiEnvironmentSelector.tsx",
+    "src/components/api/ApiCollectionActions.tsx",
+    "src/components/api/ApiTemplateInheritanceMenu.tsx",
+    "src/components/api/ApiRequestBodyEditor.tsx",
+    "src/components/api/ApiExtractRulesEditor.tsx",
+    "src/components/api/ApiSidebarTabs.tsx",
+    "src/components/api/ApiSidebarContent.tsx",
+    "src/components/api/ApiSidebarResizeHandle.tsx",
+    "src/components/api/ApiEndpointMetadata.tsx",
+    "src/components/api/ApiRequestHeadersEditor.tsx",
+    "src/components/api/ApiResponseToolbar.tsx",
+    "src/components/api/ApiEndpointTree.tsx",
+    "src/components/api/useApiRequest.tsx",
+    "src/components/api/useApiLoadTests.tsx",
+    "src/components/api/useApiProjectActions.tsx",
+    "src/components/api/useApiCollectionExport.tsx"
+  ],
+  "validation": "Agent tsc and all49 files/395 tests passed; hook ownership/initialization order reviewed."
+}
