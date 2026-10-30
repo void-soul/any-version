@@ -1,0 +1,28 @@
+{
+  "qid": "Q-0556",
+  "parent_task": "Q-0506",
+  "question": "导图命令与扫描混合文档、AI路由、工具执行、附件、目录索引和缓存。",
+  "root_cause": "独立领域算法与存储/运行编排缺少文件职责边界。",
+  "solution": "按完整Rust AST声明提取具名职责子模块，保留原公开facade、共享状态/模型唯一所有权和原回归。只调整Rust路径token层级，保留字符串和注释；私有函数仅提升到父模块可见。\n主agent验收：Main lib compiled. All 54 mindmap tests passed, including coupling_rust_crate. Every output <1000 lines; literal content retained during token path adjustment.",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/mindmap/scan.rs**及同领域原入口 | 兼容公开入口与唯一状态 |\n| 对应具名职责子模块 | 完整声明与原回归 |",
+  "status": "已验证",
+  "paths": [
+    "src-tauri/src/commands/mindmap/commands/documents.rs",
+    "src-tauri/src/commands/mindmap/commands/validation.rs",
+    "src-tauri/src/commands/mindmap/commands/transport.rs",
+    "src-tauri/src/commands/mindmap/commands/routing.rs",
+    "src-tauri/src/commands/mindmap/commands/agent_tools.rs",
+    "src-tauri/src/commands/mindmap/commands/agent_session.rs",
+    "src-tauri/src/commands/mindmap/commands/project_files.rs",
+    "src-tauri/src/commands/mindmap/commands/regenerate.rs",
+    "src-tauri/src/commands/mindmap/commands/tests.rs",
+    "src-tauri/src/commands/mindmap/commands/agent_tests.rs",
+    "src-tauri/src/commands/mindmap/commands.rs",
+    "src-tauri/src/commands/mindmap/scan/import_graph.rs",
+    "src-tauri/src/commands/mindmap/scan/deep_read.rs",
+    "src-tauri/src/commands/mindmap/scan/cache.rs",
+    "src-tauri/src/commands/mindmap/scan/tests.rs",
+    "src-tauri/src/commands/mindmap/scan.rs"
+  ],
+  "validation": "Main lib compiled. All 54 mindmap tests passed, including coupling_rust_crate. Every output <1000 lines; literal content retained during token path adjustment."
+}
