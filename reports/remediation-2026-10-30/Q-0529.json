@@ -1,0 +1,10 @@
+{
+  "qid": "Q-0529",
+  "audit_id": "AUDIT-20261030-024",
+  "question": "CI 未单独检查随包发布的证书接收端",
+  "root_cause": "**cert-receiver** 是独立 Cargo 包，主应用的 **cargo check/test --manifest-path src-tauri/Cargo.toml** 不会验证接收端。",
+  "solution": "1. 在 Windows CI 中加入独立接收端的 **cargo check --locked** 与 **cargo test --locked**。\n2. 主应用强制检查也使用 **--locked**，避免CI静默改锁文件。",
+  "files": "| File | Change |\n|------|--------|\n| **.github/workflows/ci.yml** | 独立接收端检查与测试、锁文件一致性 |",
+  "status": "已验证",
+  "validation": "Primary workflow review: receiver check/test explicitly target its separate manifest, all hard Cargo checks use --locked. Receiver tests are also run locally during final acceptance."
+}
