@@ -11,10 +11,12 @@
 //! ⑨ 模型伪装回填 C → ⑩ 统计落库(强制)
 
 use super::{
-    convert, google, optimizers, reasoning_fallback, session_headers::SessionIds, sse,
-    stream_guard, transform, upstream_error,
-    upstream_error::UpstreamErrorKind,
+    convert, google, optimizers, reasoning_fallback,
+    session_headers::SessionIds,
+    sse, stream_guard, transform,
     types::{ProxyConfig, UpstreamHeader},
+    upstream_error,
+    upstream_error::UpstreamErrorKind,
 };
 use axum::{
     body::Body,
@@ -26,390 +28,12 @@ use axum::{
     Json, Router,
 };
 use serde_json::{json, Value};
+use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 use tauri::Emitter;
 use tokio::sync::RwLock;
-
-/// 记录使用量到 SQLite 数据库（线程安全）。携带真实 tool_id / provider_id。
-///
-/// `duration_ms` / `first_token_ms` 供输出速度（t/s）统计（抄自 cc-switch dc0febe5）：
-/// 生成窗口 = 总耗时 − 首字延迟；非流式没有首字延迟传 0，窗口即总耗时。
-/// 两个值都为 0 表示未测量，该记录不参与 t/s 聚合。
-///
-/// `cache_read_tokens` / `cache_write_tokens` 供缓存命中率统计：只有能从响应体
-/// 读到缓存的路径才传非 0（流式透传路径目前拿不到，按 0 记，不参与命中率）。
-#[allow(clippy::too_many_arguments)]
-fn record_proxy_usage(
-    tool_id: &str,
-    provider_id: &str,
-    model: &str,
-    input_tokens: u64,
-    output_tokens: u64,
-    cache_read_tokens: u64,
-    cache_write_tokens: u64,
-    duration_ms: u64,
-    first_token_ms: u64,
-) {
-    super::hooks::current().record_usage(super::hooks::UsageRecord {
-        tool_id, provider_id, model, input_tokens, output_tokens,
-        cache_read_tokens, cache_write_tokens, duration_ms, first_token_ms,
-    });
-}
-
-/// 打印代理网络请求日志（统一前缀，不打印任何敏感头/密钥）。
-///
-/// **同时落一份到滚动日志文件**（`<数据目录>/logs/any-version.log.<日期>`，走 tracing）：
-/// 控制台会被顶掉，排查「注入是否发生」这类问题时只能靠文件回溯
-/// —— 2026-10-06 排查方言提示注入时，用户手动复制控制台只能拿到尾部，现场全丢。
-fn log_proxy(msg: &str) {
-    let ts = chrono::Local::now().format("%H:%M:%S%.3f");
-    println!("[proxy] {} {}", ts, msg);
-    tracing::info!("[proxy] {} {}", ts, msg);
-}
-
-// ─── 请求日志（供 Buddy/2API 面板展示） ───
-
-/// 一条请求日志。`source` 区分代理来源（`2api` = 2API 服务 / `ai` = AI 工具模型代理），
-/// 面板按来源过滤展示。
-#[derive(Clone, serde::Serialize)]
-pub struct RequestLogEntry {
-    pub ts: String,
-    pub source: String,
-    pub message: String,
-}
-
-/// 请求日志内存环形缓冲：UI 轮询读取；上限 1000 条，超出时丢最旧的。
-static REQUEST_LOG: Mutex<VecDeque<RequestLogEntry>> = Mutex::new(VecDeque::new());
-const REQUEST_LOG_CAP: usize = 1000;
-
-/// 追加一条请求日志到内存缓冲。`source` 取自 `ProxyConfig.source`。
-pub fn push_request_log(source: &str, message: impl Into<String>) {
-    let mut q = REQUEST_LOG.lock().unwrap();
-    if q.len() >= REQUEST_LOG_CAP {
-        q.pop_front();
-    }
-    q.push_back(RequestLogEntry {
-        ts: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
-        source: source.to_string(),
-        message: message.into(),
-    });
-}
-
-/// 读取请求日志；`source_filter` 非空时只返回匹配来源的。
-pub fn get_request_logs(source_filter: &str) -> Vec<RequestLogEntry> {
-    REQUEST_LOG
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|e| source_filter.is_empty() || e.source == source_filter)
-        .cloned()
-        .collect()
-}
-
-/// 清空请求日志缓冲。
-pub fn clear_request_logs() {
-    REQUEST_LOG.lock().unwrap().clear();
-}
-
-/// 是否启用代理「完整日志」。
-/// 设置环境变量 ANY_VERSION_PROXY_DEBUG=1 开启后，会把入站/出站的完整请求体、
-/// 上游完整响应体、流式完整文本打印到控制台，便于排查配置与模型生效问题。
-/// 不设置时仅打印精简预览，避免正常使用时日志刷屏。
-fn proxy_debug_enabled() -> bool {
-    std::env::var("ANY_VERSION_PROXY_DEBUG")
-        .map(|v| !v.is_empty() && v != "0")
-        .unwrap_or(false)
-}
-
-/// 打印完整 JSON 体（仅在 debug 开启时由调用方判断后使用）。
-/// 超大响应体截断到 200KB 并注明总长，避免一次性刷屏卡死终端。
-fn log_proxy_json_full(msg: &str, value: &Value) {
-    match serde_json::to_string(value) {
-        Ok(s) => log_proxy_raw(msg, &s),
-        Err(e) => log_proxy(&format!("{}: <序列化失败: {}>", msg, e)),
-    }
-}
-
-/// 打印完整原始字符串（同上，用于流式完整文本等）。
-fn log_proxy_raw(msg: &str, s: &str) {
-    if s.len() > 200_000 {
-        // 必须按字符边界截断：流式完整文本常含中文，`&s[..200_000]` 会 panic。
-        log_proxy(&format!(
-            "{}: {}...(truncated, total {} bytes)",
-            msg,
-            crate::commands::foundation::truncate_utf8(s, 200_000),
-            s.len()
-        ));
-    } else {
-        log_proxy(&format!("{}: {}", msg, s));
-    }
-}
-
-/// 全局请求日志中间件：记录每一个进入代理的请求（方法 + 路径）与最终响应状态。
-/// 即使路径未匹配（axum 返回 404）也会被记录，便于排查「not found」等静默失败。
-/// 同时写进内存缓冲（带 `ProxyConfig.source` 来源标识），供 Buddy/2API 面板展示。
-async fn log_requests_mw(
-    State(state): State<ProxyState>,
-    req: Request,
-    next: axum::middleware::Next,
-) -> Response {
-    let method = req.method().clone();
-    let path = req.uri().path().to_string();
-    let source = state.config.read().await.source.clone();
-    log_proxy(&format!("→ 收到请求: {} {}", method, path));
-    push_request_log(&source, format!("→ {} {}", method, path));
-    let start = Instant::now();
-    let resp = next.run(req).await;
-    let status = resp.status().as_u16();
-    let ms = start.elapsed().as_millis();
-    log_proxy(&format!("← 响应: {} {} ({}ms)", status, path, ms));
-    push_request_log(&source, format!("← {} {} ({}ms)", status, path, ms));
-    resp
-}
-
-/// 未匹配路由的兜底处理：明确打印 404 路径（而非 axum 默认静默 404）。
-async fn catch_all_handler(OriginalUri(uri): OriginalUri) -> impl IntoResponse {
-    log_proxy(&format!("✗ 404 未匹配路由: {}", uri.path()));
-    (StatusCode::NOT_FOUND, "not found")
-}
-
-/// 本地代理鉴权中间件：配置了 auth_token 时，`/v1*`、`/messages`、`/chat/completions`
-/// 等数据路由必须携带正确 token（Authorization: Bearer / x-api-key / x-goog-api-key 三者
-/// 任一匹配即可，覆盖 Anthropic/OpenAI/Google 三种 SDK 的凭据注入习惯）。
-/// `/health` 与 `/collab/*`（有独立 X-Collab-Token 校验）免鉴权。
-async fn require_proxy_token_mw(
-    State(state): State<ProxyState>,
-    req: Request,
-    next: middleware::Next,
-) -> Response {
-    let path = req.uri().path().to_string();
-    let expected = state.config.read().await.auth_token.clone();
-    if expected.is_empty() || path == "/health" || super::hooks::current().independently_authenticated(&path) {
-        return next.run(req).await;
-    }
-    let headers = req.headers();
-    let bearer = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .map(|v| v.strip_prefix("Bearer ").unwrap_or(v))
-        .unwrap_or("");
-    let x_api_key = headers.get("x-api-key").and_then(|h| h.to_str().ok()).unwrap_or("");
-    let x_goog = headers.get("x-goog-api-key").and_then(|h| h.to_str().ok()).unwrap_or("");
-    if bearer == expected || x_api_key == expected || x_goog == expected {
-        next.run(req).await
-    } else {
-        log_proxy(&format!("✗ 鉴权失败: 缺少有效 token: {}", path));
-        (StatusCode::UNAUTHORIZED, "unauthorized").into_response()
-    }
-}
-
-/// 向前端 emit 协同代理事件（仅在协同上下文存在时发送）
-fn emit_proxy_event(state: &ProxyState, event: &str, payload: Value) {
-    if let (Some(app), Some(room_id)) = (&state.app_handle, &state.collab_room_id) {
-        // 从全局表获取当前 msg_id（支持代理复用，动态更新）
-        if let Some(msg_id) = get_collab_msg_id(room_id, &state.tool_id) {
-            let mut full_payload = payload;
-            if let Some(obj) = full_payload.as_object_mut() {
-                obj.insert("room_id".into(), json!(room_id));
-                obj.insert("msg_id".into(), json!(msg_id));
-            }
-            let _ = app.emit(event, full_payload);
-        }
-    }
-}
-
-// ─── 协同代理响应文本缓存（供 collab dispatch_to_tool 回退使用）───
-/// msg_id → 代理提取的完整响应文本
-static PROXY_TEXT: OnceLock<std::sync::Mutex<HashMap<String, String>>> = OnceLock::new();
-
-// ─── 协同上下文：room_id::tool_id → 当前 msg_id（支持代理复用时动态更新）───
-static COLLAB_MSG_ID: OnceLock<std::sync::Mutex<HashMap<String, String>>> = OnceLock::new();
-
-/// collab dispatch_to_tool 开始时设置当前 msg_id
-pub fn set_collab_msg_id(room_id: &str, tool_id: &str, msg_id: String) {
-    let key = format!("{}::{}", room_id, tool_id);
-    let map = COLLAB_MSG_ID.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
-    map.lock().unwrap().insert(key, msg_id);
-}
-
-/// collab dispatch_to_tool 结束时清除
-pub fn clear_collab_msg_id(room_id: &str, tool_id: &str) {
-    let key = format!("{}::{}", room_id, tool_id);
-    if let Some(map) = COLLAB_MSG_ID.get() {
-        map.lock().unwrap().remove(&key);
-    }
-}
-
-/// 代理层运行时查询当前 msg_id（优先于 ProxyState 中的静态 msg_id）
-fn get_collab_msg_id(room_id: &str, tool_id: &str) -> Option<String> {
-    let key = format!("{}::{}", room_id, tool_id);
-    COLLAB_MSG_ID.get()?.lock().unwrap().get(&key).cloned()
-}
-
-/// 代理层在响应完成时存储文本（使用当前 msg_id）
-fn store_proxy_text_for(state: &ProxyState, text: &str) {
-    if let Some(room_id) = &state.collab_room_id {
-        store_proxy_text_with(room_id, &state.tool_id, text);
-    }
-}
-
-/// 流式路径中使用（不需要 state 引用）
-fn store_proxy_text_with(room_id: &str, tool_id: &str, text: &str) {
-    if let Some(msg_id) = get_collab_msg_id(room_id, tool_id) {
-        let map_lock = PROXY_TEXT.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
-        let mut map = map_lock.lock().unwrap();
-        // 限制最大缓存容量 (最多保留 100 条未提取响应，超出自动淘汰最旧项，防内存泄漏)
-        if map.len() >= 100 {
-            if let Some(first_key) = map.keys().next().cloned() {
-                map.remove(&first_key);
-            }
-        }
-        map.insert(msg_id.clone(), text.to_string());
-        eprintln!("[proxy] ✓ 代理响应已缓存: msg={}, text_len={}", msg_id, text.len());
-    }
-}
-
-/// collab dispatch_to_tool 回退取用代理文本（取后删除）
-pub fn take_proxy_text(msg_id: &str) -> Option<String> {
-    PROXY_TEXT.get()?.lock().unwrap().remove(msg_id)
-}
-
-/// 从入站协议形态的 SSE chunk 中提取文本增量
-fn extract_inbound_delta_text(inbound: &str, cj: &Value) -> Option<String> {
-    match inbound {
-        "openai" => {
-            // OpenAI: choices[0].delta.content
-            cj.get("choices")
-                .and_then(|c| c.as_array())
-                .and_then(|a| a.first())
-                .and_then(|c| c.get("delta"))
-                .and_then(|d| d.get("content"))
-                .and_then(|t| t.as_str())
-                .map(|s| s.to_string())
-        }
-        "anthropic" => {
-            // Anthropic: content_block_delta.delta.text
-            match cj.get("type").and_then(|t| t.as_str()) {
-                Some("content_block_delta") => {
-                    cj.get("delta")
-                        .and_then(|d| d.get("text"))
-                        .and_then(|t| t.as_str())
-                        .map(|s| s.to_string())
-                }
-                _ => None,
-            }
-        }
-        "google" => {
-            // Google: candidates[0].content.parts[*].text
-            cj.get("candidates")
-                .and_then(|c| c.as_array())
-                .and_then(|a| a.first())
-                .and_then(|c| c.get("content"))
-                .and_then(|c| c.get("parts"))
-                .and_then(|p| p.as_array())
-                .and_then(|parts| {
-                    let texts: Vec<String> = parts.iter()
-                        .filter_map(|p| p.get("text").and_then(|t| t.as_str()).map(|s| s.to_string()))
-                        .collect();
-                    if texts.is_empty() { None } else { Some(texts.join("")) }
-                })
-        }
-        _ => None,
-    }
-}
-
-/// 从入站协议形态的非流式响应中提取完整文本
-fn extract_inbound_full_text(inbound: &str, resp: &Value) -> String {
-    match inbound {
-        "openai" => {
-            resp.get("choices")
-                .and_then(|c| c.as_array())
-                .and_then(|a| a.first())
-                .and_then(|c| c.get("message"))
-                .and_then(|m| m.get("content"))
-                .and_then(|t| t.as_str())
-                .unwrap_or("")
-                .to_string()
-        }
-        "anthropic" => {
-            resp.get("content")
-                .and_then(|c| c.as_array())
-                .map(|parts| {
-                    parts.iter()
-                        .filter_map(|p| {
-                            if p.get("type").and_then(|t| t.as_str()) == Some("text") {
-                                p.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
-                            } else { None }
-                        })
-                        .collect::<Vec<_>>().join("")
-                })
-                .unwrap_or_default()
-        }
-        "google" => {
-            resp.get("candidates")
-                .and_then(|c| c.as_array())
-                .and_then(|a| a.first())
-                .and_then(|c| c.get("content"))
-                .and_then(|c| c.get("parts"))
-                .and_then(|p| p.as_array())
-                .map(|parts| {
-                    parts.iter()
-                        .filter_map(|p| p.get("text").and_then(|t| t.as_str()).map(|s| s.to_string()))
-                        .collect::<Vec<_>>().join("")
-                })
-                .unwrap_or_default()
-        }
-        _ => String::new(),
-    }
-}
-
-/// 运行中代理实例的配置句柄注册表（按监听端口索引）。
-///
-/// `serve_proxy` 会把 `ProxyConfig` 封进内部的 `Arc<RwLock<_>>`，外部拿不到，
-/// 因此**无法**在服务运行期间换配置。2API 需要这一点：Buddy 切号后要立刻把新的
-/// 鉴权头换进去，而不是重启服务。这里登记一份句柄，让外部能按端口找到它。
-static RUNNING_CONFIGS: std::sync::LazyLock<
-    std::sync::Mutex<Vec<(u16, Arc<RwLock<ProxyConfig>>)>>,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new()));
-
-/// 热更新某个运行中实例的配置。返回是否找到该实例。
-///
-/// 找不到通常意味着服务没在跑（尚未启动 / 已停止），调用方应视作"无需更新"。
-///
-/// 注意：注册表用 `std::sync::Mutex` 保护，但取出句柄后就释放锁，再 `.write().await`
-/// —— 不能把同步锁的 guard 带过 await 点，否则会卡住整个 runtime。
-pub async fn update_running_config(
-    port: u16,
-    f: impl FnOnce(&mut ProxyConfig),
-) -> bool {
-    let handle = {
-        let Ok(guard) = RUNNING_CONFIGS.lock() else {
-            return false;
-        };
-        guard
-            .iter()
-            .find(|(p, _)| *p == port)
-            .map(|(_, cfg)| cfg.clone())
-    };
-    match handle {
-        Some(cfg) => {
-            let mut w = cfg.write().await;
-            f(&mut w);
-            true
-        }
-        None => false,
-    }
-}
-
-/// 注销某个端口的实例（服务停止时调用，避免句柄残留）
-pub fn unregister_running(port: u16) {
-    if let Ok(mut guard) = RUNNING_CONFIGS.lock() {
-        guard.retain(|(p, _)| *p != port);
-    }
-}
 
 /// 代理服务器共享状态
 #[derive(Clone)]
@@ -434,13 +58,17 @@ pub struct ProxyStats {
 /// 调用方必须持有监听器直到 `serve_proxy` 接管，避免端口被其它进程抢占。
 pub fn bind_free_port(listen_address: &str) -> Result<(u16, std::net::TcpListener), String> {
     let addr = format!("{}:0", listen_address);
-    let listener = std::net::TcpListener::bind(&addr).map_err(|e| format!("绑定空闲端口失败: {}", e))?;
+    let listener =
+        std::net::TcpListener::bind(&addr).map_err(|e| format!("绑定空闲端口失败: {}", e))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     Ok((port, listener))
 }
 
 /// 在已绑定的监听器上启动代理服务（内部使用，不入站 Async 绑定）。
-pub async fn serve_proxy(config: ProxyConfig, listener: std::net::TcpListener) -> Result<(), String> {
+pub async fn serve_proxy(
+    config: ProxyConfig,
+    listener: std::net::TcpListener,
+) -> Result<(), String> {
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
     let tokio_listener = tokio::net::TcpListener::from_std(listener).map_err(|e| e.to_string())?;
 
@@ -501,9 +129,16 @@ pub async fn serve_proxy(config: ProxyConfig, listener: std::net::TcpListener) -
             other => return Err(format!("未知入站协议: {}", other)),
         }
     }
-    let app = super::hooks::current().extend_routes(app)
-        .layer(middleware::from_fn_with_state(state.clone(), require_proxy_token_mw))
-        .layer(middleware::from_fn_with_state(state.clone(), log_requests_mw))
+    let app = super::hooks::current()
+        .extend_routes(app)
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_proxy_token_mw,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            log_requests_mw,
+        ))
         .fallback(catch_all_handler)
         .with_state(state.clone());
 
@@ -544,1352 +179,10 @@ fn classify_bind_error(addr: &str, error: &std::io::Error) -> String {
 /// 启动代理服务器（按 config.listen_port 绑定，用于手动/独立启动场景）。
 pub async fn start_proxy_server(config: ProxyConfig) -> Result<(), String> {
     let addr = format!("{}:{}", config.listen_address, config.listen_port);
-    let listener = std::net::TcpListener::bind(&addr).map_err(|e| classify_bind_error(&addr, &e))?;
+    let listener =
+        std::net::TcpListener::bind(&addr).map_err(|e| classify_bind_error(&addr, &e))?;
     log_proxy(&format!("启动代理服务器: {}", addr));
     serve_proxy(config, listener).await
-}
-
-/// GET /health
-async fn health_handler() -> Json<Value> {
-    Json(json!({"status": "ok", "service": "any-version-proxy"}))
-}
-
-/// GET /v1/models — OpenAI 入站时透传到上游 OpenAI 的 /models（用于工具列举可用模型）
-async fn models_handler(State(state): State<ProxyState>, headers: HeaderMap) -> Response {
-    let config = state.config.read().await.clone();
-    // 模型目录路径可配：OpenAI 惯例是 /models，但有些后端（WorkBuddy）在别的路径上，
-    // 配错的话客户端一个模型都枚举不到。
-    let models_path = if config.models_path.is_empty() {
-        "/models"
-    } else {
-        config.models_path.as_str()
-    };
-    let url = format!(
-        "{}{}",
-        config.upstream_base_url.trim_end_matches('/'),
-        models_path
-    );
-    log_proxy(&format!("← IN   /v1/models  → OUT GET {}", url));
-
-    let mut req = state.client.get(&url);
-    // 与其它端点一致地注入自定义头：有些上游（如 WorkBuddy 后端）的模型目录同样要鉴权，
-    // 只发 provider key 会 401/404。用户显式配了 Authorization 时不再叠加 Bearer。
-    req = crate::proxy::headers::apply(req, &config.upstream_headers);
-    if !crate::proxy::headers::has_authorization(&config.upstream_headers) {
-        req = req.header("Authorization", format!("Bearer {}", config.upstream_api_key));
-    }
-    if let Some(ct) = headers.get(header::CONTENT_TYPE) {
-        if let Ok(v) = ct.to_str() {
-            req = req.header(header::CONTENT_TYPE, v);
-        }
-    }
-    if let Some(ua) = headers.get(header::USER_AGENT) {
-        if let Ok(v) = ua.to_str() {
-            req = req.header(header::USER_AGENT, v);
-        }
-    }
-
-    match req.send().await {
-        Ok(resp) => {
-            let status = resp.status();
-            let ct = resp.headers().get(header::CONTENT_TYPE).cloned();
-            let bytes = match resp.bytes().await {
-                Ok(b) => b,
-                Err(e) => {
-                    return (StatusCode::BAD_GATEWAY, Json(json!({"error": {"message": format!("读取上游响应失败: {}", e)}})))
-                        .into_response();
-                }
-            };
-            // 上游不一定是 OpenAI 形状（WorkBuddy 返回 data.models），归一后再给客户端，
-            // 否则客户端按 {object:"list",data:[…]} 解析会拿到空列表。
-            let normalized_bytes: Vec<u8> = match serde_json::from_slice::<Value>(&bytes) {
-                Ok(body) => {
-                    let normalized = convert::normalize_models_response(body, config.models_filter_non_chat);
-                    serde_json::to_vec(&normalized).unwrap_or_else(|_| bytes.to_vec())
-                }
-                // 不是 JSON 就原样透传（例如上游返回纯文本错误）
-                Err(_) => bytes.to_vec(),
-            };
-            let bytes = normalized_bytes;
-            let mut out = Response::new(Body::from(bytes));
-            *out.status_mut() = status;
-            out.headers_mut()
-                .insert(header::CONTENT_TYPE, ct.unwrap_or(header::HeaderValue::from_static("application/json")));
-            out
-        }
-        Err(e) => (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({"error": {"message": format!("上游请求失败: {}", e)}})),
-        )
-            .into_response(),
-    }
-}
-
-/// POST /v1/messages/count_tokens — Anthropic 入站时返回估算值
-async fn count_tokens_handler(State(state): State<ProxyState>, Json(body): Json<Value>) -> Json<Value> {
-    let _ = state;
-    let text_len = body
-        .get("messages")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|m| {
-                    m.get("content").and_then(|c| match c {
-                        Value::String(s) => Some(s.len()),
-                        Value::Array(parts) => Some(
-                            parts
-                                .iter()
-                                .filter_map(|p| p.get("text").and_then(|t| t.as_str()).map(|s| s.len()))
-                                .sum(),
-                        ),
-                        _ => None,
-                    })
-                })
-                .sum::<usize>()
-        })
-        .unwrap_or(0);
-    Json(json!({ "input_tokens": (text_len / 4).max(1) }))
-}
-
-/// POST /v1/messages — Anthropic 入站
-async fn messages_handler(State(state): State<ProxyState>, headers: HeaderMap, Json(body): Json<Value>) -> Response {
-    let claimed = body
-        .get("model")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown")
-        .to_string();
-    process_request(&state, &headers, "anthropic", claimed, false, body).await
-}
-
-/// POST /v1/chat/completions — OpenAI 入站
-async fn chat_completions_handler(State(state): State<ProxyState>, headers: HeaderMap, Json(body): Json<Value>) -> Response {
-    let claimed = body
-        .get("model")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown")
-        .to_string();
-    process_request(&state, &headers, "openai", claimed, false, body).await
-}
-
-/// POST /v1beta/models/{model}:generateContent | :streamGenerateContent — Google 入站
-/// 路由用通配 {*path} 捕获（axum 不支持参数与字面量同段），在此解析 model（声明名 C）。
-/// 流式由 URL 中是否含 `streamGenerateContent` 判定。
-async fn google_handler(
-    State(state): State<ProxyState>,
-    OriginalUri(uri): OriginalUri,
-    headers: HeaderMap,
-    Json(body): Json<Value>,
-) -> Response {
-    let path = uri.path();
-    let is_stream = path.contains("streamGenerateContent");
-    // 从 "/models/" 之后取 model：形如 "gemini-2.5-pro:generateContent" 或
-    // "gemini-2.5-pro:streamGenerateContent?alt=sse"，取冒号前部分。
-    let model = path
-        .split("/models/")
-        .nth(1)
-        .map(|rest| rest.split([':', '?']).next().unwrap_or("").to_string())
-        .unwrap_or_default();
-    process_request(&state, &headers, "google", model, is_stream, body).await
-}
-
-/// POST /v1/responses — OpenAI **Responses API** 入站。
-///
-/// 为什么必须有：新版 ChatGPT Desktop / Codex（26.901 起，openai/codex discussion #7782）
-/// 不再支持 `wire_api = "chat"`，只会往 `{base_url}/responses` 发请求。缺这条路由的表现就是
-/// `unexpected status 404 Not Found: not found, url: http://127.0.0.1:<port>/responses`。
-///
-/// 设计：**Responses 只做「入口 / 出口方言」** —— 请求先转成 Chat Completions 形态交给
-/// [`process_request`]（模型伪装、协议转换、整流器、出站 SSE 全部复用），返回时再转回
-/// Responses。不为一个端点复制一整套转发管线。
-async fn responses_handler(
-    State(state): State<ProxyState>,
-    headers: HeaderMap,
-    Json(body): Json<Value>,
-) -> Response {
-    let is_stream = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
-    let claimed = body
-        .get("model")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown")
-        .to_string();
-    let chat_body = crate::proxy::responses::responses_to_chat(&body);
-    // 工具调用方言还原的开关来自整流器配置（与「协议整流器」分组里的两个勾选对应）
-    let (dialects, truncation_guard) = {
-        let cfg = state.config.read().await;
-        (
-            crate::proxy::xml_tools::dialects_from(
-                cfg.rectifier_enabled && cfg.rectifier_toolcall_dialect,
-            ),
-            cfg.stream_truncation_guard,
-        )
-    };
-    let upstream = process_request(&state, &headers, "openai", claimed, false, chat_body).await;
-
-    // 非 2xx 原样透传：Chat 的错误体 `{"error":{message,type,code}}` 正是 Codex 期望的形状，
-    // 再包一层 Responses 结构反而让 Codex 读不到 message（只显示一个空错误）。
-    if !upstream.status().is_success() {
-        return upstream;
-    }
-    if is_stream {
-        wrap_chat_stream_as_responses(upstream, &body, &dialects, truncation_guard)
-    } else {
-        wrap_chat_json_as_responses(upstream, &body, &dialects).await
-    }
-}
-
-/// 非流式：Chat 响应体 → Responses 响应体。
-async fn wrap_chat_json_as_responses(
-    upstream: Response,
-    request: &Value,
-    dialects: &[crate::proxy::xml_tools::Dialect],
-) -> Response {
-    let status = upstream.status();
-    let bytes = match axum::body::to_bytes(upstream.into_body(), 32 * 1024 * 1024).await {
-        Ok(b) => b,
-        Err(e) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({
-                    "error": { "message": format!("读取上游响应失败: {e}"), "type": "proxy_error" }
-                })),
-            )
-                .into_response();
-        }
-    };
-    let Ok(chat) = serde_json::from_slice::<Value>(&bytes) else {
-        // 不是 JSON（畸形响应）：原样返回，让 Codex 自己把错误显出来
-        return Response::builder()
-            .status(status)
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(bytes))
-            .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response());
-    };
-    // 上游可能不把工具调用翻回标准 `tool_calls`（实测：WorkBuddy space-bunny 背后是
-    // MiniMax），那样 content 里只有文本，Codex 会判定轮次结束而不再执行工具。
-    let mut chat = chat;
-    crate::proxy::xml_tools::apply_tool_calls(&mut chat, &dialects);
-    let responses = crate::proxy::responses::chat_to_responses(&chat, request);
-    (status, Json(responses)).into_response()
-}
-
-/// 流式：把上游的 Chat SSE 逐帧翻译成 Responses 事件流。
-fn wrap_chat_stream_as_responses(
-    upstream: Response,
-    request: &Value,
-    dialects: &[crate::proxy::xml_tools::Dialect],
-    truncation_guard: bool,
-) -> Response {
-    use axum::body::Bytes;
-    use futures_util::StreamExt;
-    let model = request
-        .get("model")
-        .and_then(|m| m.as_str())
-        .unwrap_or("")
-        .to_string();
-    let stream = upstream.into_body().into_data_stream();
-    // 复制一份所有权：async_stream 生成的流会 move 住捕获的量，不能借用入参
-    let dialects = dialects.to_vec();
-    let sse = async_stream::stream! {
-        tokio::pin!(stream);
-        let mut conv =
-            crate::proxy::responses::ResponsesStreamConverter::with_dialects(&model, &dialects);
-        let mut buffer = String::new();
-        // 收尾判定：有内容但没 finish_reason / [DONE] = 截断（不能补 response.completed）
-        let mut progress = stream_guard::StreamProgress::new();
-        while let Some(item) = stream.next().await {
-            let bytes = match item {
-                Ok(b) => b,
-                Err(e) => {
-                    // 传输层断流：必须标记失败，否则 finish() 会补发 response.completed，
-                    // 把残缺内容伪装成一次成功完成（Codex 会当作完整答案收下）
-                    log_proxy(&format!("  ✗ Responses 上游流中断: {}", e));
-                    for ev in conv.fail(&format!("upstream stream transport error: {e}")) {
-                        yield Ok::<_, std::convert::Infallible>(Bytes::from(ev));
-                    }
-                    return;
-                }
-            };
-            buffer.push_str(&String::from_utf8_lossy(&bytes));
-            // SSE 帧以空行分隔；一帧里可能有 `event:` 与 `data:` 多行
-            while let Some(idx) = buffer.find("\n\n") {
-                let frame: String = buffer.drain(..idx + 2).collect();
-                if let Some(chunk) = parse_sse_json(&frame) {
-                    progress.observe_value("openai", &chunk);
-                    for ev in conv.push_chunk(&chunk) {
-                        yield Ok::<_, std::convert::Infallible>(Bytes::from(ev));
-                    }
-                }
-            }
-        }
-        // 末帧可能没以空行收尾，别把最后一段 delta 丢掉
-        if !buffer.trim().is_empty() {
-            if let Some(chunk) = parse_sse_json(&buffer) {
-                progress.observe_value("openai", &chunk);
-                for ev in conv.push_chunk(&chunk) {
-                    yield Ok::<_, std::convert::Infallible>(Bytes::from(ev));
-                }
-            }
-        }
-        if truncation_guard && progress.is_truncated() {
-            // 上游 200、已转出内容，但既没有 finish_reason 也没有 [DONE]：
-            // 按失败收尾（response.failed），不能补 response.completed —— 那会让
-            // Codex 把半截答案当完整结果收下、不再续跑。
-            log_proxy("  ✗ Responses 上游流被截断，按失败收尾");
-            for ev in conv.fail("upstream stream ended before completion (truncated)") {
-                yield Ok::<_, std::convert::Infallible>(Bytes::from(ev));
-            }
-        } else {
-            for ev in conv.finish() {
-                yield Ok::<_, std::convert::Infallible>(Bytes::from(ev));
-            }
-        }
-        // 「模型只吐计划就停」这类问题要分清是上游没给工具调用、还是给了被我们丢了
-        if proxy_debug_enabled() {
-            log_proxy(&format!("  ↩ 上游流式汇总: {}", conv.upstream_debug()));
-        }
-    };
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/event-stream")
-        .body(Body::from_stream(sse))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
-}
-
-/// 从一帧 SSE 文本里取出 `data:` 的 JSON（`[DONE]` 与空行忽略）。
-fn parse_sse_json(frame: &str) -> Option<Value> {
-    for line in frame.lines() {
-        let Some(rest) = line.strip_prefix("data:") else {
-            continue;
-        };
-        let payload = rest.trim();
-        if payload.is_empty() || payload == "[DONE]" {
-            continue;
-        }
-        if let Ok(v) = serde_json::from_str::<Value>(payload) {
-            return Some(v);
-        }
-    }
-    None
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  统一处理管线
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-/// 请求处理统一入口。
-/// - `inbound`：工具说话的协议（"anthropic" | "openai" | "google"）
-/// - `claimed_model`：声明名 C（anthropic/openai 来自 body.model；google 来自 URL path）
-/// - `google_is_stream`：仅 google 入站有意义
-/// - `body`：P_in 形态请求体
-async fn process_request(
-    state: &ProxyState,
-    headers: &HeaderMap,
-    inbound: &str,
-    claimed_model: String,
-    google_is_stream: bool,
-    mut body: Value,
-) -> Response {
-    {
-        let mut stats = state.stats.write().await;
-        stats.total_requests += 1;
-    }
-    let start = Instant::now();
-
-    let config = state.config.read().await.clone();
-    let outbound = config.outbound_protocol.clone();
-    let aliases = build_aliases(&config);
-    let log_source = config.source.clone();
-
-    log_proxy(&format!(
-        "← IN   [{}] model={}  → OUT [{}]  (转换: {})",
-        inbound, claimed_model, outbound, config.conversion_mode
-    ));
-    push_request_log(
-        &log_source,
-        format!("IN [{}] model={} → OUT [{}]", inbound, claimed_model, outbound),
-    );
-
-    // ─── 详细请求日志 ───
-    let is_stream = if inbound == "google" {
-        google_is_stream
-    } else {
-        body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false)
-    };
-    let msg_count = body.get("messages").and_then(|m| m.as_array()).map(|a| a.len()).unwrap_or(0);
-    let first_msg_preview = body.get("messages")
-        .and_then(|m| m.as_array())
-        .and_then(|a| a.last())
-        .and_then(|m| {
-            m.get("content").and_then(|c| {
-                match c {
-                    Value::String(s) => Some(s.as_str()),
-                    Value::Array(parts) => parts.iter().find_map(|p| p.get("text").and_then(|t| t.as_str())),
-                    _ => None,
-                }
-            })
-        })
-        .unwrap_or("");
-    let preview: String = first_msg_preview.chars().take(80).collect();
-    log_proxy(&format!("  请求详情: messages={}, stream={}, preview=\"{}\"", msg_count, is_stream, preview));
-
-    // ─── emit collab:proxy-request ───
-    emit_proxy_event(&state, "collab:proxy-request", json!({
-        "model": claimed_model,
-        "messages": msg_count,
-        "stream": is_stream,
-    }));
-
-    // 会话头族（WorkBuddy 专用）：**必须在 body 被改写之前**算 ——
-    // 轮级锚点是「入站原始 messages 里最后一条 user 消息」，伪装/转换后就不再是它了。
-    // 会话级与轮级全轮恒定（含整流、协议回退、渠道校验换路径），消息级与 trace 每次出站新生成。
-    let session = if config.workbuddy_session_headers {
-        Some(SessionIds::from_request(&body, headers))
-    } else {
-        None
-    };
-
-    // ② 模型伪装：C → B（替换 body.model，google 入站不写 body）
-    let actual_model = apply_masquerade(inbound, &mut body, &claimed_model, aliases.as_ref());
-
-    // ③ 协议转换：P_in → P_out（已在 body 写入 B）
-    let mut out_body = convert_request(inbound, &outbound, &body, &actual_model);
-
-    // ③.5 角色归一化：出站 OpenAI 时把 `developer` 改成 `system`。
-    // Codex 的 Responses 请求把系统提示拆成多条 `role: "developer"` 塞在 input 里，
-    // 转换时会被原样搬过来；只认老角色的第三方网关（实测 WorkBuddy）会回 400
-    // `11128 Illegal API invocation from an unapproved channel`，报文像是渠道问题，
-    // 实际是角色不认。放在优化器之前，整流器看到的也是归一化后的角色。
-    if outbound == "openai" {
-        crate::proxy::convert::normalize_openai_message_roles(&mut out_body);
-        crate::proxy::convert::collapse_system_messages_to_head(&mut out_body);
-        crate::proxy::convert::normalize_image_data_urls_for_model(&mut out_body, &actual_model);
-    }
-
-    // ④ 优化器（P_out 形态）
-    optimizers::apply_optimizers(&mut out_body, &outbound, &config);
-
-    // ⑤ 预防式整流（P_out 形态）
-    optimizers::apply_preventive_rectifiers(&mut out_body, &outbound, &config);
-
-    // ⑥ 转发
-    // 出站为 OpenAI / Anthropic 时，确保请求体带 stream 字段：
-    // Google 入站（流式靠 URL 判定）以及跨协议转换后的 body 可能未写入 `stream`，
-    // 而 OpenAI / Anthropic 上游依赖 body 中的 stream 字段决定是否流式返回。
-    //
-    // `upstream_stream` 与 `is_stream` 分开：前者是「发给上游要不要流式」，
-    // 后者是「客户端要不要流式」。配置了 force_upstream_stream 的上游只收流式，
-    // 此时即使客户端要非流式也强发流式，响应再由 process_response 聚合回去。
-    let upstream_stream = is_stream || config.force_upstream_stream;
-    if upstream_stream && (outbound == "openai" || outbound == "anthropic") {
-        if let Some(o) = out_body.as_object_mut() {
-            o.insert("stream".into(), json!(true));
-        }
-    }
-    let (upstream_url, auth_name, route_api_key, route_headers) =
-        build_upstream_url(&config, &outbound, &actual_model, upstream_stream);
-    if upstream_url.is_empty() {
-        let mut stats = state.stats.write().await;
-        stats.failed_requests += 1;
-        return (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({"error": {"message": "未配置对应出站协议的上游 URL"}})),
-        )
-            .into_response();
-    }
-
-    log_proxy(&format!("→ OUT  POST {} auth={}", upstream_url, auth_name));
-    log_proxy(&format!("  出站体: model={}, stream={}", actual_model, is_stream));
-    if proxy_debug_enabled() {
-        log_proxy_json_full("  入站完整请求体(P_in)", &body);
-        log_proxy_json_full("  出站完整请求体(P_out)", &out_body);
-    }
-
-    let req = build_upstream_request(&state.client, headers, &upstream_url, &auth_name, &route_api_key, &route_headers, &out_body, session.as_ref());
-    let upstream_resp = match req.send().await {
-        Ok(r) => r,
-        Err(e) => {
-            let mut stats = state.stats.write().await;
-            stats.failed_requests += 1;
-            log_proxy(&format!("✗ OUT  POST {} 请求失败: {}  ({}ms)", upstream_url, e, start.elapsed().as_millis()));
-            push_request_log(&log_source, format!("✗ 上游请求失败: {e}"));
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({"error": {"message": format!("上游请求失败: {}", e)}})),
-            )
-                .into_response();
-        }
-    };
-
-    let mut status = upstream_resp.status();
-    log_proxy(&format!("← UPSTREAM {}  ({}ms)", status.as_u16(), start.elapsed().as_millis()));
-    push_request_log(&log_source, format!("← 上游 {} ({}ms)", status.as_u16(), start.elapsed().as_millis()));
-
-    // ─── emit collab:proxy-response-start ───
-    emit_proxy_event(&state, "collab:proxy-response-start", json!({
-        "status": status.as_u16(),
-        "elapsed_ms": start.elapsed().as_millis(),
-    }));
-
-    if !status.is_success() {
-        let mut error_body = upstream_resp.text().await.unwrap_or_default();
-        let mut kind = upstream_error::classify(status.as_u16(), &error_body);
-        let mut err_label = upstream_error::label(kind, status.as_u16(), &error_body);
-        log_proxy(&format!(
-            "✗ UPSTREAM {} [{}] error: {}",
-            status.as_u16(),
-            err_label,
-            error_body.chars().take(300).collect::<String>()
-        ));
-        push_request_log(
-            &log_source,
-            format!("✗ 上游 {} {}", status.as_u16(), err_label),
-        );
-
-        // ─── emit collab:proxy-error ───
-        emit_proxy_event(&state, "collab:proxy-error", json!({
-            "status": status.as_u16(),
-            "error": error_body.chars().take(500).collect::<String>(),
-        }));
-
-        // ⑦-0 渠道校验：换路径重发。**只换 URL**，body 与认证一律不动
-        //（实测校验对象是 URL + 会话头族，往 body 塞 conversationId 无效）。
-        // 只有 2API 填了 `channel_check_alt_base_url` 才启用 —— 通用代理与聚合不受影响。
-        // 换路径失败就接着走下面的整流/协议回退，不新增硬失败点。
-        if kind == UpstreamErrorKind::ChannelCheck && !config.upstream_is_aggregate {
-            if let Some(alt) = config
-                .channel_check_alt_base_url
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                let (alt_url, alt_auth) = super::upstream::resolve_url(
-                    &outbound,
-                    alt,
-                    &actual_model,
-                    upstream_stream,
-                    Some(false),
-                );
-                if !alt_url.is_empty() && alt_url != upstream_url {
-                    log_proxy(&format!(
-                        "↻ 渠道校验 → 换路径: POST {} auth={}",
-                        alt_url, alt_auth
-                    ));
-                    push_request_log(&log_source, format!("↻ 渠道校验命中，换路径重试 {alt_url}"));
-                    let alt_req = build_upstream_request(
-                        &state.client,
-                        headers,
-                        &alt_url,
-                        alt_auth,
-                        &route_api_key,
-                        &route_headers,
-                        &out_body,
-                        session.as_ref(),
-                    );
-                    match alt_req.send().await {
-                        Ok(alt_resp) if alt_resp.status().is_success() => {
-                            log_proxy(&format!(
-                                "✓ 换路径成功  ({}ms)",
-                                start.elapsed().as_millis()
-                            ));
-                            push_request_log(&log_source, "✓ 渠道校验兜底成功".to_string());
-                            return process_response(
-                                state, alt_resp, &config, inbound, &outbound,
-                                &claimed_model, &actual_model, is_stream, upstream_stream,
-                            )
-                            .await;
-                        }
-                        Ok(alt_resp) => {
-                            status = alt_resp.status();
-                            error_body = alt_resp.text().await.unwrap_or_default();
-                            kind = upstream_error::classify(status.as_u16(), &error_body);
-                            // 回退路径上的 11102 只说明「这条路没这个模型」，不是模型真不存在：
-                            // 既不能对外宣称模型不可用，也不值得再整流/再回退。
-                            if kind == UpstreamErrorKind::ModelMissing {
-                                kind = UpstreamErrorKind::FallbackModelMissing;
-                            }
-                            err_label =
-                                upstream_error::label(kind, status.as_u16(), &error_body);
-                            log_proxy(&format!(
-                                "✗ 换路径也失败: {} [{}]",
-                                status.as_u16(),
-                                err_label
-                            ));
-                            push_request_log(
-                                &log_source,
-                                format!("✗ 换路径失败 {} {}", status.as_u16(), err_label),
-                            );
-                        }
-                        Err(e) => {
-                            log_proxy(&format!("✗ 换路径请求失败: {e}"));
-                            push_request_log(&log_source, format!("✗ 换路径请求失败: {e}"));
-                        }
-                    }
-                }
-            }
-        }
-
-        // ⑦ 反应式整流：修正后重试一次
-        // 上游是聚合时跳过：聚合自己会按失败类别重试/切换/冷却，代理再整流重试是重复放大。
-        // 业务码已定性为「不是字段问题」时同样跳过（401/11148/渠道校验…重发只是多打一次上游）。
-        if !config.upstream_is_aggregate && kind.worth_rectify() {
-            if let Some(rectified) = optimizers::try_reactive_rectify(status.as_u16(), &error_body, &out_body, &config, &outbound) {
-                let retry_req = build_upstream_request(&state.client, headers, &upstream_url, &auth_name, &route_api_key, &route_headers, &rectified, session.as_ref());
-                if let Ok(retry_resp) = retry_req.send().await {
-                    if retry_resp.status().is_success() {
-                        log_proxy(&format!("↻ retry succeeded after rectify  ({}ms)", start.elapsed().as_millis()));
-                        return process_response(state, retry_resp, &config, inbound, &outbound, &claimed_model, &actual_model, is_stream, upstream_stream).await;
-                    }
-                }
-            }
-        }
-
-        // ⑦½ 协议回退整流（参考 cc-switch 的 with_fallback 哲学）：
-        // anthropic 出站遇 401/404 且配置了 openai 回退端点时，说明该供应商的
-        // anthropic_url 实际并不兼容 Anthropic 协议（仅 OpenAI 兼容，如
-        // longcat/sensenova）。用"另一协议"端点以 openai 出站（a2o 转换）重发一次。
-        // 上游是聚合时同样跳过：聚合自己会做协议转换与切换。
-        if outbound == "anthropic"
-            && (status == StatusCode::UNAUTHORIZED || status == StatusCode::NOT_FOUND)
-            && !config.fallback_base_url.is_empty()
-            && !config.upstream_is_aggregate
-        {
-            let mut fb_config = config.clone();
-            fb_config.outbound_protocol = "openai".to_string();
-            // 清空按模型查的 anthropic 路由，强制走 fallback_base_url（openai 端点），
-            // 否则 build_upstream_url 会命中 model_routes 里仍为 anthropic 的端点。
-            fb_config.model_routes.clear();
-            fb_config.upstream_base_url = config.fallback_base_url.clone();
-            fb_config.upstream_api_key = config.fallback_api_key.clone();
-            // 用原始（已伪装但未转换的）body 重新做 a2o 转换
-            let mut fb_body = convert_request(inbound, "openai", &body, &actual_model);
-            optimizers::apply_optimizers(&mut fb_body, "openai", &fb_config);
-            optimizers::apply_preventive_rectifiers(&mut fb_body, "openai", &fb_config);
-            if is_stream && (fb_config.outbound_protocol == "openai") {
-                if let Some(o) = fb_body.as_object_mut() {
-                    o.insert("stream".into(), json!(true));
-                }
-            }
-            let (fb_url, fb_auth, fb_key, fb_headers) = build_upstream_url(&fb_config, "openai", &actual_model, is_stream);
-            if !fb_url.is_empty() {
-                log_proxy(&format!(
-                    "↻ protocol fallback anthropic→openai: POST {} auth={}",
-                    fb_url, fb_auth
-                ));
-                let fb_req = build_upstream_request(&state.client, headers, &fb_url, &fb_auth, &fb_key, &fb_headers, &fb_body, session.as_ref());
-                if let Ok(fb_resp) = fb_req.send().await {
-                    if fb_resp.status().is_success() {
-                        log_proxy(&format!("↻ fallback succeeded  ({}ms)", start.elapsed().as_millis()));
-                        return process_response(state, fb_resp, &fb_config, inbound, "openai", &claimed_model, &actual_model, is_stream, fb_config.force_upstream_stream).await;
-                    }
-                    log_proxy(&format!("↻ fallback also failed: {}", fb_resp.status().as_u16()));
-                }
-            }
-        }
-
-        {
-            let mut stats = state.stats.write().await;
-            stats.failed_requests += 1;
-        }
-        // 失败落账（整流/回退都失败后才到这里）：按模型的成功率靠它做分母，
-        // 也顺带把失败类别记下来，便于在用量统计里看出「哪个供应商在报什么错」。
-        // 业务码优先：11102 → model_unavailable、14018 → billing、11128 → transient…
-        // 业务码不明时才退回按状态码判（保持 AI 模块的既有统计口径）。
-        let failure_class = upstream_error::to_failure_class(kind, status.as_u16(), &error_body);
-        super::hooks::current().record_failure(
-            &config.tool_id,
-            &actual_model,
-            &config.provider_id,
-            failure_class.as_str(),
-        );
-        return (
-            StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
-            Json(json!({
-                "error": { "message": format!("上游返回错误 ({}): {}", status, error_body) }
-            })),
-        )
-            .into_response();
-    }
-
-    process_response(state, upstream_resp, &config, inbound, &outbound, &claimed_model, &actual_model, is_stream, upstream_stream).await
-}
-
-/// 处理成功的上游响应（流式 / 非流式）
-/// - `claimed_model`：声明名 C，用于响应转换回填（⑧⑨）
-/// - `actual_model`：实际模型 B，用于用量统计落库（⑩）
-async fn process_response(
-    state: &ProxyState,
-    upstream_resp: reqwest::Response,
-    config: &ProxyConfig,
-    inbound: &str,
-    outbound: &str,
-    claimed_model: &str,
-    actual_model: &str,
-    is_stream: bool,
-    upstream_stream: bool,
-) -> Response {
-    let start = Instant::now();
-    if is_stream {
-        return stream_response(state, upstream_resp, config, inbound, outbound, claimed_model, actual_model).await;
-    }
-    if upstream_stream {
-        // 客户端要非流式、上游却只给流式：收集 SSE 聚合成单个 chat.completion
-        return aggregate_upstream_stream(state, upstream_resp, config, inbound, outbound, claimed_model, actual_model).await;
-    }
-
-    let content_type = upstream_resp.headers().get(header::CONTENT_TYPE).cloned();
-    let resp_json: Value = match upstream_resp.json().await {
-        Ok(v) => v,
-        Err(e) => {
-            let mut stats = state.stats.write().await;
-            stats.failed_requests += 1;
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({"error": {"message": format!("解析上游响应失败: {}", e)}})),
-            )
-                .into_response();
-        }
-    };
-
-    // ⑧ 协议转换响应：P_out → P_in
-    // 先把上游可能写进 content 的方言工具调用还原成 tool_calls（见 xml_tools 文档）
-    let mut resp_json = resp_json;
-    if outbound == "openai" {
-        let dialects = crate::proxy::xml_tools::dialects_from(
-            config.rectifier_enabled && config.rectifier_toolcall_dialect,
-        );
-        if crate::proxy::xml_tools::apply_tool_calls(&mut resp_json, &dialects)
-            && proxy_debug_enabled()
-        {
-            log_proxy("  ↩ 已把正文里的工具调用还原成 tool_calls（方言适配层）");
-        }
-    }
-    // 纯思考轮次：把思考原文补成正文（`reasoning_content` 原样保留）。
-    // 放在 xml_tools **之后** —— 先把正文里的方言工具调用还原成 tool_calls，
-    // 才能正确判断「这轮到底有没有工具调用」。转换器会把补出的 content 变成对应协议形态。
-    if config.reasoning_as_content
-        && reasoning_fallback::patch_chat_response(&mut resp_json) > 0
-    {
-        log_proxy("  ↩ 纯思考轮次：已把思考原文作为正文补发");
-    }
-    let mut in_resp = convert_response(outbound, inbound, &resp_json, claimed_model);
-
-    // ⑨ 模型伪装回填：响应 model 字段写回声明名 C
-    set_response_model(&mut in_resp, claimed_model, inbound);
-
-    // ⑩ 统计落库（记录实际模型 B，而非声明名 C）；非流式无首字延迟，传 0
-    record_usage_from_response(
-        state,
-        config,
-        inbound,
-        &in_resp,
-        actual_model,
-        start.elapsed().as_millis() as u64,
-    );
-
-    if proxy_debug_enabled() {
-        log_proxy_json_full("  上游完整响应体(P_out)", &resp_json);
-        log_proxy_json_full("  回写完整响应体(P_in)", &in_resp);
-    }
-
-    // ─── 提取并日志/emit 响应文本 ───
-    let full_text = extract_inbound_full_text(inbound, &in_resp);
-    let text_preview: String = full_text.chars().take(100).collect();
-    log_proxy(&format!("✓ 非流式响应: text_len={}, preview=\"{}\"", full_text.len(), text_preview));
-    if !full_text.is_empty() {
-        emit_proxy_event(state, "collab:proxy-delta", json!({
-            "delta": full_text,
-        }));
-        emit_proxy_event(state, "collab:proxy-complete", json!({
-            "text": full_text,
-            "elapsed_ms": start.elapsed().as_millis(),
-        }));
-        // 存入代理文本缓存（供 collab 回退）
-        store_proxy_text_for(state, &full_text);
-    } else {
-        emit_proxy_event(state, "collab:proxy-complete", json!({
-            "text": "",
-            "elapsed_ms": start.elapsed().as_millis(),
-        }));
-        store_proxy_text_for(state, "");
-    }
-
-    let mut stats = state.stats.write().await;
-    stats.success_requests += 1;
-
-    // 同协议透传时保持原始 content-type；转换后的 JSON 用 application/json
-    if outbound == inbound {
-        let mut out = Response::new(Body::from(serde_json::to_vec(&in_resp).unwrap_or_default()));
-        *out.status_mut() = StatusCode::OK;
-        if let Some(ct) = content_type {
-            out.headers_mut().insert(header::CONTENT_TYPE, ct);
-        }
-        out
-    } else {
-        Json(in_resp).into_response()
-    }
-}
-
-/// 强制上游流式、但客户端要非流式时的响应路径：把上游 SSE 收集聚合成普通 JSON。
-///
-/// 上游只收流式时（如 WorkBuddy 后端对非流式直接返回
-/// `Non-stream chat request is currently not supported`），而客户端发了非流式请求，
-/// 代理就把上游的 SSE 收集起来聚合成一个 `chat.completion` —— 客户端看不出中间发生过什么。
-///
-/// 只有 `force_upstream_stream` 打开且入站非流式时才会走到这里；其余情况走原来的两条路。
-async fn aggregate_upstream_stream(
-    state: &ProxyState,
-    upstream_resp: reqwest::Response,
-    config: &ProxyConfig,
-    inbound: &str,
-    outbound: &str,
-    claimed_model: &str,
-    actual_model: &str,
-) -> Response {
-    use futures_util::StreamExt;
-    let start = Instant::now();
-
-    // 逐帧收集上游的 chat.completion.chunk
-    let mut chunks: Vec<Value> = Vec::new();
-    let mut buffer = String::new();
-    let mut byte_stream = upstream_resp.bytes_stream();
-    while let Some(item) = byte_stream.next().await {
-        let Ok(bytes) = item else { break };
-        buffer = sse::append_utf8_safe(&buffer, &bytes);
-        loop {
-            // take_sse_block 返回的 rest 借用 buffer，这里立刻转成 owned 再回写 buffer
-            let Some((block, rest_owned)) =
-                sse::take_sse_block(&buffer).map(|(b, r)| (b, r.to_string()))
-            else {
-                break;
-            };
-            buffer = rest_owned;
-            let Some(data) = sse::extract_sse_data(&block) else { continue };
-            let trimmed = data.trim();
-            if trimmed.is_empty() || trimmed == "[DONE]" {
-                continue;
-            }
-            if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
-                chunks.push(v);
-            }
-        }
-    }
-    // 流末尾可能还挂着没分隔符的半帧
-    if let Some(data) = sse::extract_sse_data(&buffer) {
-        let trimmed = data.trim();
-        if !trimmed.is_empty() && trimmed != "[DONE]" {
-            if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
-                chunks.push(v);
-            }
-        }
-    }
-
-    if chunks.is_empty() {
-        let mut stats = state.stats.write().await;
-        stats.failed_requests += 1;
-        return (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({
-                "error": {"message": "上游流式响应为空（已强制流式但没收到任何数据）"}
-            })),
-        )
-            .into_response();
-    }
-
-    // 聚合成单个 chat.completion，再按入站协议回填
-    let mut aggregated = sse::aggregate_chat_chunks(&chunks, actual_model);
-    if outbound == "openai" {
-        let dialects = crate::proxy::xml_tools::dialects_from(
-            config.rectifier_enabled && config.rectifier_toolcall_dialect,
-        );
-        crate::proxy::xml_tools::apply_tool_calls(&mut aggregated, &dialects);
-    }
-    // 纯思考轮次兜底（聚合路径同非流式）
-    if config.reasoning_as_content
-        && reasoning_fallback::patch_chat_response(&mut aggregated) > 0
-    {
-        log_proxy("  ↩ 纯思考轮次：已把思考原文作为正文补发");
-    }
-    let mut in_resp = convert_response(outbound, inbound, &aggregated, claimed_model);
-    set_response_model(&mut in_resp, claimed_model, inbound);
-
-    // 统计落库（与流式分支不同：没有首字延迟，整体耗时记为延迟）
-    record_usage_from_response(
-        state,
-        config,
-        inbound,
-        &in_resp,
-        actual_model,
-        start.elapsed().as_millis() as u64,
-    );
-
-    let full_text = extract_inbound_full_text(inbound, &in_resp);
-    log_proxy(&format!(
-        "✓ 聚合流式响应（非流式入站）: {} 帧, text_len={}, {}ms",
-        chunks.len(),
-        full_text.len(),
-        start.elapsed().as_millis()
-    ));
-    if !full_text.is_empty() {
-        store_proxy_text_for(state, &full_text);
-    }
-    emit_proxy_event(state, "collab:proxy-complete", json!({
-        "text": full_text,
-        "elapsed_ms": start.elapsed().as_millis(),
-    }));
-
-    let mut stats = state.stats.write().await;
-    stats.success_requests += 1;
-
-    // 聚合后是普通 JSON，与转换后的非流式响应同样用 application/json
-    Json(in_resp).into_response()
-}
-
-/// 流式响应：把上游（出站协议）SSE 转换为入站协议 SSE。
-/// - `claimed_model`：声明名 C（用于转换器回填）
-/// - `actual_model`：实际模型 B（用于流式用量统计落库）
-async fn stream_response(
-    state: &ProxyState,
-    upstream_resp: reqwest::Response,
-    config: &ProxyConfig,
-    inbound: &str,
-    outbound: &str,
-    claimed_model: &str,
-    actual_model: &str,
-) -> Response {
-    let tool_id = config.tool_id.clone();
-    let provider_id = config.provider_id.clone();
-    let claimed = claimed_model.to_string();
-    let actual = actual_model.to_string();
-
-    // 同协议透传：原样转发字节，同时抽取 SSE 中的 usage 落库
-    if inbound == outbound {
-        let stats = state.stats.clone();
-        let ct = upstream_resp.headers().get(header::CONTENT_TYPE).cloned();
-        let tid = tool_id.clone();
-        let pid = provider_id.clone();
-        let act = actual.clone();
-        let proto = inbound.to_string();
-        let guard = config.stream_truncation_guard;
-        let reasoning_guard = config.reasoning_as_content;
-        let ls = config.source.clone();
-        let stream = upstream_resp.bytes_stream();
-        // 协同上下文（用于 emit 事件）
-        let collab_ctx = (state.app_handle.clone(), state.collab_room_id.clone());
-        let collab_tool_id = state.tool_id.clone();
-        let sse = async_stream::stream! {
-            use futures_util::StreamExt;
-            tokio::pin!(stream);
-            let mut buffer = String::new();
-            let mut acc_in: u64 = 0;
-            let mut acc_out: u64 = 0;
-            let mut acc_text = String::new();
-            let mut chunk_count: u64 = 0;
-            // 收尾判定：有内容 / 有 finish_reason / 有 [DONE]
-            let mut progress = stream_guard::StreamProgress::new();
-            // 传输层是否出过错（`yield Err` 之后 break 的情况）
-            let mut transport_failed = false;
-            // 纯思考轮次兜底：需要把补帧插到 finish 之前，所以见到 finish 后先把原始
-            // 字节缓冲起来，流结束时按需「补帧 → 原样吐出」。
-            let mut fb = reasoning_fallback::ReasoningTracker::new();
-            let mut tailing = false;
-            let mut tail: Vec<axum::body::Bytes> = Vec::new();
-            let mut first_id: Option<String> = None;
-            // 首个文本增量到达的时刻：t/s 统计要从生成窗口中扣掉首字等待（抄自 cc-switch dc0febe5）
-            let mut first_token_ms: u64 = 0;
-            let stream_start = Instant::now();
-            while let Some(r) = stream.next().await {
-                let chunk = match r {
-                    Ok(c) => c,
-                    Err(e) => {
-                        transport_failed = true;
-                        yield Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
-                        break;
-                    }
-                };
-                // 边转发边解析 usage（不改动原始字节）
-                buffer = sse::append_utf8_safe(&buffer, &chunk);
-                while let Some((block, remainder)) = sse::take_sse_block(&buffer) {
-                    buffer = remainder.to_string();
-                    if let Some(data_str) = sse::extract_sse_data(&block) {
-                        if data_str != "[DONE]" {
-                            if let Ok(cj) = serde_json::from_str::<Value>(&data_str) {
-                                progress.observe_value(&proto, &cj);
-                                fb.observe(&cj);
-                                if first_id.is_none() {
-                                    first_id = cj
-                                        .get("id")
-                                        .and_then(|v| v.as_str())
-                                        .map(str::to_string);
-                                }
-                                let (i, o) = extract_stream_usage(&proto, &cj);
-                                if i > 0 { acc_in = i; }
-                                if o > 0 { acc_out = o; }
-                                // 提取文本增量
-                                if let Some(text) = extract_inbound_delta_text(&proto, &cj) {
-                                    if !text.is_empty() {
-                                        if first_token_ms == 0 {
-                                            first_token_ms = stream_start.elapsed().as_millis() as u64;
-                                        }
-                                        chunk_count += 1;
-                                        acc_text.push_str(&text);
-                                        if chunk_count <= 5 {
-                                            let preview: String = text.chars().take(50).collect();
-                                            log_proxy(&format!("  ▸ SSE chunk #{}: text=\"{}\" (len={})", chunk_count, preview, text.len()));
-                                        }
-                                        // emit collab:proxy-delta
-                                        if let (Some(app), Some(rid)) = &collab_ctx {
-                                            if let Some(mid) = get_collab_msg_id(rid, &collab_tool_id) {
-                                                let _ = app.emit("collab:proxy-delta", json!({
-                                                    "room_id": rid, "msg_id": mid, "delta": text,
-                                                }));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            progress.observe_done();
-                            log_proxy("  ▸ SSE [DONE]");
-                        }
-                    }
-                }
-                // 纯思考轮次兜底：只要还有可能补正文（没出现过正文/工具），
-                // 一旦见到 finish_reason 就把后续原始字节攒住，等确认后再插帧。
-                // 不需要补时这些字节会**原样**吐出，客户端看到的字节与上游一致。
-                if reasoning_guard && fb.may_backfill() && (tailing || progress.saw_finish()) {
-                    tailing = true;
-                    tail.push(chunk);
-                    continue;
-                }
-                yield Ok::<_, std::io::Error>(chunk);
-            }
-            // 截断判定：已转发内容、但既无 finish_reason 也无 [DONE]。
-            // 这是「上游 200 之后被掐断」，不是「模型说完」——见 stream_guard 模块头。
-            let truncated = guard && !transport_failed && progress.is_truncated();
-            if truncated {
-                log_proxy(&format!(
-                    "✗ 流被截断（{} chunks 后无 finish_reason/[DONE]），已补 error 帧",
-                    chunk_count
-                ));
-                if !ls.is_empty() {
-                    push_request_log(&ls, "✗ 上游流被截断，已补 error 帧".to_string());
-                }
-                yield Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
-                    stream_guard::TRUNCATED_STREAM_FRAME.as_bytes(),
-                ));
-            } else {
-                // 纯思考轮次：把思考原文补成一帧正文。
-                // **必须在这里**（缓冲的 finish 帧吐出之前）—— 客户端见到 finish_reason
-                // 就停止累积，补在它后面等于没发。
-                if tailing {
-                    if let Some(text) = fb.take_backfill_text() {
-                        log_proxy(&format!(
-                            "  ↩ 纯思考轮次：已把思考作为正文补发（{} 字）",
-                            text.chars().count()
-                        ));
-                        if !ls.is_empty() {
-                            push_request_log(&ls, "↩ 纯思考轮次：已把思考作为正文补发".to_string());
-                        }
-                        let id = first_id.take().unwrap_or_else(|| "chatcmpl-kira".to_string());
-                        yield Ok::<_, std::io::Error>(axum::body::Bytes::from(
-                            reasoning_fallback::build_frame(
-                                &id,
-                                chrono::Local::now().timestamp(),
-                                &text,
-                            ),
-                        ));
-                    }
-                }
-                log_proxy(&format!("✓ 流式完成: {} chunks, {} chars text, {}ms",
-                    chunk_count, acc_text.len(), stream_start.elapsed().as_millis()));
-            }
-            // 缓冲的收尾字节原样吐出（截断时同样要吐：里面有 finish_reason）
-            for buffered in tail.drain(..) {
-                yield Ok::<_, std::io::Error>(buffered);
-            }
-            if proxy_debug_enabled() {
-                log_proxy_raw("  流式完整文本", &acc_text);
-            }
-            // emit collab:proxy-complete
-            if let (Some(app), Some(rid)) = &collab_ctx {
-                if let Some(mid) = get_collab_msg_id(rid, &collab_tool_id) {
-                    let _ = app.emit("collab:proxy-complete", json!({
-                        "room_id": rid, "msg_id": mid,
-                        "text": acc_text,
-                        "elapsed_ms": stream_start.elapsed().as_millis(),
-                    }));
-                }
-                // 存入代理文本缓存（供 collab 回退）
-                store_proxy_text_with(rid, &collab_tool_id, &acc_text);
-            }
-            if acc_in > 0 || acc_out > 0 {
-                record_proxy_usage(
-                    &tid,
-                    &pid,
-                    &act,
-                    acc_in,
-                    acc_out,
-                    0,
-                    0,
-                    stream_start.elapsed().as_millis() as u64,
-                    first_token_ms,
-                );
-            }
-            let mut s = stats.write().await;
-            if transport_failed || truncated {
-                // 截断/断流不计成功：否则日志里只剩一条 tok 正常的假成功
-                //（参考侧原话：这正是这类问题长期查不出来的原因）
-                s.failed_requests += 1;
-            } else {
-                s.success_requests += 1;
-            }
-        };
-        let mut out = Response::new(Body::from_stream(sse));
-        *out.status_mut() = StatusCode::OK;
-        if let Some(c) = ct {
-            out.headers_mut().insert(header::CONTENT_TYPE, c);
-        }
-        return out;
-    }
-
-    // 不同协议：按 (inbound, outbound) 选择转换器
-    macro_rules! run_stream {
-        ($conv:expr) => {{
-            let mut conv = $conv;
-            let stats = state.stats.clone();
-            let guard = config.stream_truncation_guard;
-            let ls = config.source.clone();
-            let (tid, pid, cm) = (tool_id.clone(), provider_id.clone(), actual.clone());
-            // 协同上下文（用于 emit 事件）
-            let collab_ctx = (state.app_handle.clone(), state.collab_room_id.clone());
-            let collab_tool_id = state.tool_id.clone();
-            let out_proto = outbound.to_string();
-            let stream = upstream_resp.bytes_stream();
-            let sse = async_stream::stream! {
-                use futures_util::StreamExt;
-                let mut buffer = String::new();
-                tokio::pin!(stream);
-                let mut acc_text = String::new();
-                let mut chunk_count: u64 = 0;
-                // 上游是否已发过 [DONE]：OpenAI/Google 出站下它就是完整终止标记，
-                // 补收尾会重复发一次；Anthropic 出站下它不算终止，仍需补 message_stop
-                let mut sent_done = false;
-                // 收尾判定：有内容 / 有终止标记（finish_reason、message_stop…）/ 有 [DONE]
-                let mut progress = stream_guard::StreamProgress::new();
-                let mut transport_failed = false;
-                // 首个文本增量到达的时刻：t/s 统计要从生成窗口中扣掉首字等待
-                let mut first_token_ms: u64 = 0;
-                let stream_start = Instant::now();
-                while let Some(r) = stream.next().await {
-                    let chunk = match r {
-                        Ok(c) => c,
-                        Err(e) => {
-                            transport_failed = true;
-                            // 上游断流：先把已打开的 content block 闭合，**不要**发
-                            // message_stop（那等于声称正常结束），随后补一条 error 事件。
-                            // 若流已终止（终止事件已发出），只记日志不再写任何事件 ——
-                            // 否则会产出「message_stop 之后又来一个 error」的畸形流。
-                            for ev in conv.close_open_blocks() {
-                                let mut event = Event::default();
-                                for line in ev.lines() {
-                                    if let Some(rest) = line.strip_prefix("event:") {
-                                        event = event.event(rest.trim());
-                                    } else if let Some(rest) = line.strip_prefix("data:") {
-                                        event = event.data(rest.trim());
-                                    }
-                                }
-                                yield Ok::<_, Infallible>(event);
-                            }
-                            if conv.is_terminated() {
-                                log_proxy(&format!("  ✗ 上游在终止事件之后断流，丢弃错误事件: {}", e));
-                            } else {
-                                log_proxy(&format!("  ✗ 上游流中断: {}", e));
-                                yield Ok::<_, Infallible>(Event::default().data(format!("{{\"error\":\"{}\"}}", e)));
-                            }
-                            break;
-                        }
-                    };
-                    buffer = sse::append_utf8_safe(&buffer, &chunk);
-                    while let Some((block, remainder)) = sse::take_sse_block(&buffer) {
-                        buffer = remainder.to_string();
-                        let data_str = match sse::extract_sse_data(&block) {
-                            Some(d) => d,
-                            None => continue,
-                        };
-                        if data_str == "[DONE]" {
-                            sent_done = true;
-                            progress.observe_done();
-                            yield Ok::<_, Infallible>(Event::default().data("[DONE]"));
-                            // 部分上游只发 [DONE] 而不带 finish_reason：Anthropic 出站
-                            // 在这里补收尾，否则客户端永远等不到 message_stop（会挂住）
-                            if out_proto == "anthropic" {
-                                for ev in conv.finish() {
-                                    let mut event = Event::default();
-                                    for line in ev.lines() {
-                                        if let Some(rest) = line.strip_prefix("event:") {
-                                            event = event.event(rest.trim());
-                                        } else if let Some(rest) = line.strip_prefix("data:") {
-                                            event = event.data(rest.trim());
-                                        }
-                                    }
-                                    yield Ok::<_, Infallible>(event);
-                                }
-                            }
-                            continue;
-                        }
-                        if let Ok(cj) = serde_json::from_str::<Value>(&data_str) {
-                            progress.observe_value(&out_proto, &cj);
-                            // 从出站协议形态的 chunk 提取文本
-                            if let Some(text) = extract_inbound_delta_text(&out_proto, &cj) {
-                                if !text.is_empty() {
-                                    if first_token_ms == 0 {
-                                        first_token_ms = stream_start.elapsed().as_millis() as u64;
-                                    }
-                                    chunk_count += 1;
-                                    acc_text.push_str(&text);
-                                    if chunk_count <= 5 {
-                                        let preview: String = text.chars().take(50).collect();
-                                        log_proxy(&format!("  ▸ SSE chunk #{}: text=\"{}\" (len={})", chunk_count, preview, text.len()));
-                                    }
-                                    // emit collab:proxy-delta
-                                    if let (Some(app), Some(rid)) = &collab_ctx {
-                                        if let Some(mid) = get_collab_msg_id(rid, &collab_tool_id) {
-                                            let _ = app.emit("collab:proxy-delta", json!({
-                                                "room_id": rid, "msg_id": mid, "delta": text,
-                                            }));
-                                        }
-                                    }
-                                }
-                            }
-                            for ev in conv.convert_chunk(&cj) {
-                                let mut event = Event::default();
-                                for line in ev.lines() {
-                                    if let Some(rest) = line.strip_prefix("event:") {
-                                        event = event.event(rest.trim());
-                                    } else if let Some(rest) = line.strip_prefix("data:") {
-                                        event = event.data(rest.trim());
-                                    }
-                                }
-                                yield Ok::<_, Infallible>(event);
-                            }
-                        }
-                    }
-                }
-                // 循环结束。两种可能必须分开：
-                // ① 上游已经发了终止标记 → 正常收尾；
-                // ② 转发过内容、却没有任何终止标记 → **截断**：只能闭合块 + 补 error 事件，
-                //    绝不能调 finish()（那是 end_turn + message_stop，等于声称「模型说完了」）。
-                let truncated = guard && !transport_failed && progress.is_truncated();
-                if truncated {
-                    for ev in conv.close_open_blocks() {
-                        let mut event = Event::default();
-                        for line in ev.lines() {
-                            if let Some(rest) = line.strip_prefix("event:") {
-                                event = event.event(rest.trim());
-                            } else if let Some(rest) = line.strip_prefix("data:") {
-                                event = event.data(rest.trim());
-                            }
-                        }
-                        yield Ok::<_, Infallible>(event);
-                    }
-                    log_proxy(&format!(
-                        "  ✗ 跨协议流被截断（{} chunks 后无终止标记），已补 error 事件",
-                        chunk_count
-                    ));
-                    if !ls.is_empty() {
-                        push_request_log(&ls, "✗ 上游流被截断，已补 error 事件".to_string());
-                    }
-                    yield Ok::<_, Infallible>(Event::default().data(
-                        "{\"error\":{\"message\":\"upstream stream ended before completion (truncated)\",\"type\":\"upstream_error\",\"code\":\"upstream_parse\"}}",
-                    ));
-                } else if !sent_done {
-                    // 已终止但没见到 [DONE]（部分上游如此）：补收尾，
-                    // 否则客户端拿到的是未闭合的 content block
-                    for ev in conv.finish() {
-                        let mut event = Event::default();
-                        for line in ev.lines() {
-                            if let Some(rest) = line.strip_prefix("event:") {
-                                event = event.event(rest.trim());
-                            } else if let Some(rest) = line.strip_prefix("data:") {
-                                event = event.data(rest.trim());
-                            }
-                        }
-                        yield Ok::<_, Infallible>(event);
-                    }
-                }
-                if !truncated {
-                    log_proxy(&format!("✓ 跨协议流式完成: {} chunks, {} chars text, {}ms",
-                        chunk_count, acc_text.len(), stream_start.elapsed().as_millis()));
-                }
-                if proxy_debug_enabled() {
-                    log_proxy_raw("  跨协议流式完整文本", &acc_text);
-                }
-                // emit collab:proxy-complete
-                if let (Some(app), Some(rid)) = &collab_ctx {
-                    if let Some(mid) = get_collab_msg_id(rid, &collab_tool_id) {
-                        let _ = app.emit("collab:proxy-complete", json!({
-                            "room_id": rid, "msg_id": mid,
-                            "text": acc_text,
-                            "elapsed_ms": stream_start.elapsed().as_millis(),
-                        }));
-                    }
-                    // 存入代理文本缓存（供 collab 回退）
-                    store_proxy_text_with(rid, &collab_tool_id, &acc_text);
-                }
-                let (in_t, out_t) = conv.usage();
-                if in_t > 0 || out_t > 0 {
-                    record_proxy_usage(
-                        &tid,
-                        &pid,
-                        &cm,
-                        in_t,
-                        out_t,
-                        0,
-                        0,
-                        stream_start.elapsed().as_millis() as u64,
-                        first_token_ms,
-                    );
-                }
-                let mut s = stats.write().await;
-                if truncated || transport_failed {
-                    s.failed_requests += 1;
-                } else {
-                    s.success_requests += 1;
-                }
-            };
-            return Sse::new(sse).into_response();
-        }};
-    }
-
-    match (inbound, outbound) {
-        ("anthropic", "openai") => {
-            run_stream!(transform::StreamConverter::new(claimed.clone()));
-        }
-        ("openai", "anthropic") => {
-            run_stream!(transform::AnthropicToOpenaiStreamConverter::new(claimed.clone()));
-        }
-        ("google", "openai") => {
-            run_stream!(google::GoogleStreamConverter::new("openai", &claimed));
-        }
-        ("google", "anthropic") => {
-            run_stream!(google::GoogleStreamConverter::new("anthropic", &claimed));
-        }
-        ("anthropic", "google") => {
-            run_stream!(google::GoogleToAnthropicStreamConverter::new(&claimed));
-        }
-        ("openai", "google") => {
-            run_stream!(google::GoogleToOpenaiStreamConverter::new(&claimed));
-        }
-        _ => {
-            let mut stats = state.stats.write().await;
-            stats.failed_requests += 1;
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({"error": {"message": format!("不支持的流式转换组合: {} -> {}", inbound, outbound)}})),
-            )
-                .into_response()
-        }
-    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1909,7 +202,12 @@ fn build_aliases(config: &ProxyConfig) -> Option<transform::ModelAliases> {
 
 /// ② 模型伪装：声明名 C → 实际模型 B。anthropic/openai 入站写回 body.model。
 /// 匹配时忽略 [1m]/[1M] 上下文后缀，使「声明名」与代理持有的 masquerade key 一致。
-fn apply_masquerade(inbound: &str, body: &mut Value, claimed: &str, aliases: Option<&transform::ModelAliases>) -> String {
+fn apply_masquerade(
+    inbound: &str,
+    body: &mut Value,
+    claimed: &str,
+    aliases: Option<&transform::ModelAliases>,
+) -> String {
     let normalize = |s: &str| s.replace("[1m]", "").replace("[1M]", "").trim().to_string();
     let actual = match aliases {
         Some(a) => {
@@ -1919,7 +217,11 @@ fn apply_masquerade(inbound: &str, body: &mut Value, claimed: &str, aliases: Opt
                 mapped
             } else {
                 let n = normalize(claimed);
-                if n != claimed { transform::map_model_name(&n, a) } else { claimed.to_string() }
+                if n != claimed {
+                    transform::map_model_name(&n, a)
+                } else {
+                    claimed.to_string()
+                }
             }
         }
         None => claimed.to_string(),
@@ -1985,18 +287,39 @@ fn record_usage_from_response(
 ) {
     let (in_t, out_t) = match inbound {
         "anthropic" => (
-            resp.get("usage").and_then(|u| u.get("input_tokens")).and_then(|v| v.as_u64()).unwrap_or(0),
-            resp.get("usage").and_then(|u| u.get("output_tokens")).and_then(|v| v.as_u64()).unwrap_or(0),
+            resp.get("usage")
+                .and_then(|u| u.get("input_tokens"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            resp.get("usage")
+                .and_then(|u| u.get("output_tokens"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
         ),
         "openai" => (
-            resp.get("usage").and_then(|u| u.get("prompt_tokens")).and_then(|v| v.as_u64()).unwrap_or(0),
-            resp.get("usage").and_then(|u| u.get("completion_tokens")).and_then(|v| v.as_u64()).unwrap_or(0),
+            resp.get("usage")
+                .and_then(|u| u.get("prompt_tokens"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            resp.get("usage")
+                .and_then(|u| u.get("completion_tokens"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
         ),
         "google" => {
             let um = resp.get("usageMetadata");
-            let i = um.and_then(|u| u.get("promptTokenCount")).and_then(|v| v.as_u64()).unwrap_or(0);
-            let cand = um.and_then(|u| u.get("candidatesTokenCount")).and_then(|v| v.as_u64()).unwrap_or(0);
-            let thought = um.and_then(|u| u.get("thoughtsTokenCount")).and_then(|v| v.as_u64()).unwrap_or(0);
+            let i = um
+                .and_then(|u| u.get("promptTokenCount"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let cand = um
+                .and_then(|u| u.get("candidatesTokenCount"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let thought = um
+                .and_then(|u| u.get("thoughtsTokenCount"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
             (i, cand + thought)
         }
         _ => (0, 0),
@@ -2060,9 +383,18 @@ fn extract_stream_usage(inbound: &str, cj: &Value) -> (u64, u64) {
         ),
         "google" => {
             let um = cj.get("usageMetadata");
-            let i = um.and_then(|u| u.get("promptTokenCount")).and_then(|v| v.as_u64()).unwrap_or(0);
-            let cand = um.and_then(|u| u.get("candidatesTokenCount")).and_then(|v| v.as_u64()).unwrap_or(0);
-            let thought = um.and_then(|u| u.get("thoughtsTokenCount")).and_then(|v| v.as_u64()).unwrap_or(0);
+            let i = um
+                .and_then(|u| u.get("promptTokenCount"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let cand = um
+                .and_then(|u| u.get("candidatesTokenCount"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let thought = um
+                .and_then(|u| u.get("thoughtsTokenCount"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
             (i, cand + thought)
         }
         _ => (0, 0),
@@ -2080,15 +412,27 @@ fn build_upstream_url(
     model: &str,
     is_stream: bool,
 ) -> (String, String, String, Vec<UpstreamHeader>) {
-    let (base, api_key, headers, include_v1) = config.model_routes.get(model)
-        .map(|r| (r.base_url.clone(), r.api_key.clone(), r.headers.clone(), r.include_v1))
-        .unwrap_or_else(|| (
-            config.upstream_base_url.clone(),
-            config.upstream_api_key.clone(),
-            config.upstream_headers.clone(),
-            config.upstream_include_v1,
-        ));
-    let (url, auth_name) = super::upstream::resolve_url(outbound, &base, model, is_stream, include_v1);
+    let (base, api_key, headers, include_v1) = config
+        .model_routes
+        .get(model)
+        .map(|r| {
+            (
+                r.base_url.clone(),
+                r.api_key.clone(),
+                r.headers.clone(),
+                r.include_v1,
+            )
+        })
+        .unwrap_or_else(|| {
+            (
+                config.upstream_base_url.clone(),
+                config.upstream_api_key.clone(),
+                config.upstream_headers.clone(),
+                config.upstream_include_v1,
+            )
+        });
+    let (url, auth_name) =
+        super::upstream::resolve_url(outbound, &base, model, is_stream, include_v1);
     (url, auth_name.to_string(), api_key, headers)
 }
 
@@ -2106,7 +450,12 @@ fn build_upstream_request(
     body: &Value,
     session: Option<&SessionIds>,
 ) -> reqwest::RequestBuilder {
-    let mut req = super::upstream::inject_auth(client.post(upstream_url), auth_name, api_key, custom_headers);
+    let mut req = super::upstream::inject_auth(
+        client.post(upstream_url),
+        auth_name,
+        api_key,
+        custom_headers,
+    );
     if let Some(beta) = headers.get("anthropic-beta") {
         if let Ok(val) = beta.to_str() {
             req = req.header("anthropic-beta", val);
@@ -2131,7 +480,10 @@ mod tests {
 
     #[test]
     fn classify_bind_error_explains_addr_in_use() {
-        let msg = classify_bind_error("127.0.0.1:15721", &Error::new(ErrorKind::AddrInUse, "in use"));
+        let msg = classify_bind_error(
+            "127.0.0.1:15721",
+            &Error::new(ErrorKind::AddrInUse, "in use"),
+        );
         assert!(msg.contains("被占用"));
         assert!(msg.contains("127.0.0.1:15721"));
     }
@@ -2195,3 +547,29 @@ mod tests {
         super::clear_request_logs();
     }
 }
+
+mod observability;
+use observability::{
+    catch_all_handler, emit_proxy_event, extract_inbound_delta_text, extract_inbound_full_text,
+    get_collab_msg_id, log_proxy, log_proxy_json_full, log_proxy_raw, log_requests_mw,
+    proxy_debug_enabled, record_proxy_usage, require_proxy_token_mw, store_proxy_text_for,
+    store_proxy_text_with, COLLAB_MSG_ID, PROXY_TEXT, REQUEST_LOG, REQUEST_LOG_CAP,
+    RUNNING_CONFIGS,
+};
+pub use observability::{
+    clear_collab_msg_id, clear_request_logs, get_request_logs, push_request_log, set_collab_msg_id,
+    take_proxy_text, unregister_running, update_running_config, RequestLogEntry,
+};
+
+mod inbound;
+use inbound::{
+    chat_completions_handler, count_tokens_handler, google_handler, health_handler,
+    messages_handler, models_handler, parse_sse_json, responses_handler,
+    wrap_chat_json_as_responses, wrap_chat_stream_as_responses,
+};
+
+mod dispatch;
+use dispatch::process_request;
+
+mod response;
+use response::{aggregate_upstream_stream, process_response, stream_response};

@@ -46,11 +46,17 @@ pub fn responses_to_chat(body: &Value) -> Value {
         }
     }
 
-    let stream = body.get("stream").and_then(|s| s.as_bool()).unwrap_or(false);
+    let stream = body
+        .get("stream")
+        .and_then(|s| s.as_bool())
+        .unwrap_or(false);
     if stream {
         out.insert("stream".to_string(), json!(true));
         // 不请求 usage 的话，流末拿不到 token 统计（Codex 的用量显示会空）
-        out.insert("stream_options".to_string(), json!({ "include_usage": true }));
+        out.insert(
+            "stream_options".to_string(),
+            json!({ "include_usage": true }),
+        );
     }
 
     // max_output_tokens → max_tokens / max_completion_tokens
@@ -140,7 +146,10 @@ fn push_input_messages(messages: &mut Vec<Value>, input: Option<&Value>) {
             // reasoning 块要挂到「下一条 assistant 消息」上，先暂存
             let mut pending_reasoning: Option<String> = None;
             for item in items {
-                let kind = item.get("type").and_then(|t| t.as_str()).unwrap_or("message");
+                let kind = item
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("message");
                 match kind {
                     "reasoning" => {
                         if let Some(text) = reasoning_text(item) {
@@ -164,7 +173,8 @@ fn push_input_messages(messages: &mut Vec<Value>, input: Option<&Value>) {
                         // 连续的 function_call 合成同一条 assistant 消息的 tool_calls
                         match messages.last_mut() {
                             Some(last)
-                                if last.get("role").and_then(|r| r.as_str()) == Some("assistant")
+                                if last.get("role").and_then(|r| r.as_str())
+                                    == Some("assistant")
                                     && last.get("tool_calls").is_some() =>
                             {
                                 if let Some(arr) =
@@ -174,7 +184,8 @@ fn push_input_messages(messages: &mut Vec<Value>, input: Option<&Value>) {
                                 }
                             }
                             _ => {
-                                let mut msg = json!({ "role": "assistant", "content": Value::Null });
+                                let mut msg =
+                                    json!({ "role": "assistant", "content": Value::Null });
                                 if let Some(rc) = pending_reasoning.take() {
                                     msg["reasoning_content"] = json!(rc);
                                 }
@@ -288,10 +299,14 @@ fn message_content(content: Option<&Value>) -> Value {
                         has_image = true;
                         let url = part
                             .get("image_url")
-                            .and_then(|v| v.as_str().map(str::to_string).or_else(|| {
-                                v.get("url").and_then(|u| u.as_str()).map(str::to_string)
-                            }))
-                            .or_else(|| part.get("url").and_then(|u| u.as_str()).map(str::to_string))
+                            .and_then(|v| {
+                                v.as_str().map(str::to_string).or_else(|| {
+                                    v.get("url").and_then(|u| u.as_str()).map(str::to_string)
+                                })
+                            })
+                            .or_else(|| {
+                                part.get("url").and_then(|u| u.as_str()).map(str::to_string)
+                            })
                             .or_else(|| {
                                 part.get("image_url")
                                     .and_then(|v| v.get("url"))
@@ -334,7 +349,10 @@ fn convert_tools(tools: Option<&Value>) -> Vec<Value> {
     tools
         .iter()
         .filter_map(|tool| {
-            let kind = tool.get("type").and_then(|t| t.as_str()).unwrap_or("function");
+            let kind = tool
+                .get("type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("function");
             if kind != "function" {
                 // web_search / computer_use 这类内置工具第三方上游不认，直接跳过
                 return None;
@@ -366,7 +384,10 @@ fn is_o_series(model: &str) -> bool {
 
 /// Chat Completions 响应（非流式）→ Responses 响应。
 pub fn chat_to_responses(chat: &Value, request: &Value) -> Value {
-    let chat_id = chat.get("id").and_then(|v| v.as_str()).unwrap_or("chatcmpl");
+    let chat_id = chat
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("chatcmpl");
     let response_id = format!("resp_{chat_id}");
     let created = chat.get("created").and_then(|v| v.as_i64()).unwrap_or(0);
     let model = chat
@@ -375,7 +396,10 @@ pub fn chat_to_responses(chat: &Value, request: &Value) -> Value {
         .unwrap_or_else(|| request.get("model").and_then(|m| m.as_str()).unwrap_or(""));
 
     let choice = chat.get("choices").and_then(|c| c.get(0));
-    let message = choice.and_then(|c| c.get("message")).cloned().unwrap_or(Value::Null);
+    let message = choice
+        .and_then(|c| c.get("message"))
+        .cloned()
+        .unwrap_or(Value::Null);
     let mut output = Vec::new();
 
     if let Some(rc) = message
@@ -495,7 +519,10 @@ pub fn usage_to_responses(usage: Option<&Value>) -> Value {
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
     let output = usage
-        .and_then(|u| u.get("completion_tokens").or_else(|| u.get("output_tokens")))
+        .and_then(|u| {
+            u.get("completion_tokens")
+                .or_else(|| u.get("output_tokens"))
+        })
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
     let reasoning = usage
@@ -514,898 +541,5 @@ pub fn usage_to_responses(usage: Option<&Value>) -> Value {
         "total_tokens": input + output
     })
 }
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  流式：Chat SSE → Responses SSE
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-/// 一个 SSE 事件（`event:` 与 `data:` 两行都要有，Codex 按 `event:` 分派）。
-fn sse(event: &str, data: Value) -> String {
-    format!("event: {event}\ndata: {data}\n\n")
-}
-
-/// 流式转换器：把 Chat 的 delta chunk 逐条翻译成 Responses 事件序列。
-///
-/// 事件顺序（抄 CodexPlusPlus `protocol_proxy.rs:2155-2411`）：
-/// `response.created` → `response.in_progress` →（reasoning 块）→（message 块）→
-/// `response.output_text.delta`* →（tool_calls）→ 各 `*.done` → `response.completed` → `[DONE]`。
-///
-/// 不生成 `sequence_number`：Codex 接受缺失（参考实现同样不生成）。
-#[derive(Debug)]
-pub struct ResponsesStreamConverter {
-    response_id: String,
-    model: String,
-    created_at: i64,
-    started: bool,
-    next_output_index: usize,
-    msg_index: Option<usize>,
-    msg_id: String,
-    msg_text: String,
-    reasoning_index: Option<usize>,
-    reasoning_id: String,
-    reasoning_text: String,
-    /// tool_call 序号 → (output_index, item_id, call_id, name, arguments)
-    tools: Vec<(usize, String, String, String, String)>,
-    /// 正文里已出现工具标记，之后的文本都进 `xml_buf` 而不发给客户端
-    xml_mode: bool,
-    /// 启用的工具调用方言（整流器开关决定）
-    dialects: Vec<crate::proxy::xml_tools::Dialect>,
-    /// 末尾可能是标记前缀、先扣住不发的一小段（见 [`Self::absorb_text`]）
-    xml_hold: String,
-    /// 进入标记之后累积的原始 XML，流末一次性解析
-    xml_buf: String,
-    usage: Option<Value>,
-    finish_reason: Option<String>,
-    failed: bool,
-}
-
-impl ResponsesStreamConverter {
-    /// `dialects`：启用哪些工具调用方言（由 ProxyConfig 的整流器开关决定，见 `proxy::xml_tools`）
-    pub fn new(model: &str) -> Self {
-        Self::with_dialects(model, &crate::proxy::xml_tools::dialects_from(true))
-    }
-
-    pub fn with_dialects(model: &str, dialects: &[crate::proxy::xml_tools::Dialect]) -> Self {
-        Self {
-            response_id: "resp_stream".to_string(),
-            model: model.to_string(),
-            created_at: 0,
-            started: false,
-            next_output_index: 0,
-            msg_index: None,
-            msg_id: String::new(),
-            msg_text: String::new(),
-            reasoning_index: None,
-            reasoning_id: String::new(),
-            reasoning_text: String::new(),
-            tools: Vec::new(),
-            dialects: dialects.to_vec(),
-            xml_mode: false,
-            xml_hold: String::new(),
-            xml_buf: String::new(),
-            usage: None,
-            finish_reason: None,
-            failed: false,
-        }
-    }
-
-    /// 吸收一段正文增量，返回**可以发给客户端**的那部分。
-    ///
-    /// 上游把工具调用写成 XML 方言时（见 `proxy::xml_tools`），整段 XML 只能等收全了才能解析，
-    /// 但标记**之前**的正文必须照常逐字发出去 —— 否则用户会盯着空白等到整轮结束。
-    /// 因此：
-    /// - 没见到标记：正常转发，只把末尾「可能还是标记前缀」的一小段扣住（最多
-    ///   `MAX_MARKER_LEN` 个字符），避免把半个 `<tool_call` 显示出来；
-    /// - 见到标记：切到 xml_mode，之后的文本全部扣下，流末再解析成 function_call。
-    fn absorb_text(&mut self, text: &str) -> String {
-        if self.xml_mode {
-            self.xml_buf.push_str(text);
-            return String::new();
-        }
-        // 先归一化再去掉零宽字符：标记里混着 U+200B，不归一化永远匹配不上
-        let (norm, _) = crate::proxy::xml_tools::normalize(text);
-        let combined = format!("{}{}", self.xml_hold, norm);
-        self.xml_hold.clear();
-        let Some(pos) = crate::proxy::xml_tools::find_marker(&combined, &self.dialects) else {
-            return self.hold_tail(&combined);
-        };
-        self.xml_mode = true;
-        self.xml_buf.push_str(&combined[pos.0..]);
-        combined[..pos.0].to_string()
-    }
-
-    /// 扣住末尾可能还是标记前缀的一段，其余原样发出
-    fn hold_tail(&mut self, s: &str) -> String {
-        let max = crate::proxy::xml_tools::MAX_MARKER_LEN;
-        let from = s.len().saturating_sub(max);
-        for k in (from..s.len()).rev() {
-            if !s.is_char_boundary(k) {
-                continue;
-            }
-            if crate::proxy::xml_tools::could_be_marker_prefix(&s[k..], &self.dialects) {
-                self.xml_hold = s[k..].to_string();
-                return s[..k].to_string();
-            }
-        }
-        s.to_string()
-    }
-
-    /// 流末：把扣下的 XML 解析成标准 function_call。
-    ///
-    /// **解析不成也必须把原文还给客户端** —— 扣住是为了还原，不是为了吞掉内容：
-    /// 误判成工具调用的普通文本（用户在问 `<invoke>` 语法之类）会原样出现，
-    /// 而不是凭空消失。
-    fn flush_xml_tools(&mut self) -> Vec<String> {
-        let mut events = Vec::new();
-        let mut push_text = |events: &mut Vec<String>, text: &str, this: &mut Self| {
-            if text.is_empty() {
-                return;
-            }
-            events.extend(this.ensure_message_block());
-            this.msg_text.push_str(text);
-            events.push(sse(
-                "response.output_text.delta",
-                json!({
-                    "type": "response.output_text.delta",
-                    "item_id": this.msg_id,
-                    "output_index": this.msg_index.unwrap_or(0),
-                    "content_index": 0,
-                    "delta": text
-                }),
-            ));
-        };
-
-        if self.xml_mode && !self.xml_buf.is_empty() {
-            let buf = std::mem::take(&mut self.xml_buf);
-            self.xml_mode = false;
-            match crate::proxy::xml_tools::split_tool_calls(&buf, &self.dialects) {
-                Some(split) => {
-                    // 工具调用之后模型可能又说了话，那段也要给客户端
-                    push_text(&mut events, &split.prose_after, self);
-                    for (i, call) in split.calls.iter().enumerate() {
-                        let index = self.take_index();
-                        let call_id = format!("call_xml_{i}");
-                        let item_id = format!("fc_{call_id}");
-                        events.push(sse(
-                            "response.output_item.added",
-                            json!({
-                                "type": "response.output_item.added",
-                                "output_index": index,
-                                "item": {
-                                    "id": item_id,
-                                    "type": "function_call",
-                                    "status": "in_progress",
-                                    "call_id": call_id,
-                                    "name": call.name,
-                                    "arguments": ""
-                                }
-                            }),
-                        ));
-                        events.push(sse(
-                            "response.function_call_arguments.delta",
-                            json!({
-                                "type": "response.function_call_arguments.delta",
-                                "item_id": item_id,
-                                "output_index": index,
-                                "delta": call.arguments
-                            }),
-                        ));
-                        self.tools.push((
-                            index,
-                            item_id,
-                            call_id,
-                            call.name.clone(),
-                            call.arguments.clone(),
-                        ));
-                    }
-                }
-                // 没能还原（标记误判 / 上游格式又变了）：一个字都不丢，原样发回去
-                None => push_text(&mut events, &buf, self),
-            }
-        }
-        // 流结束时还扣着的那一小段：它没能长成标记，就是普通正文，补发出来
-        if !self.xml_hold.is_empty() {
-            let tail = std::mem::take(&mut self.xml_hold);
-            push_text(&mut events, &tail, self);
-        }
-        events
-    }
-
-    fn base_response(&self, status: &str) -> Value {
-        let mut resp = json!({
-            "id": self.response_id,
-            "object": "response",
-            "created_at": self.created_at,
-            "status": status,
-            "model": self.model,
-            "output": [],
-            "usage": usage_to_responses(self.usage.as_ref())
-        });
-        if status == "incomplete" {
-            resp["incomplete_details"] = json!({ "reason": "max_output_tokens" });
-        }
-        resp
-    }
-
-    fn take_index(&mut self) -> usize {
-        let idx = self.next_output_index;
-        self.next_output_index += 1;
-        idx
-    }
-
-    /// 首个 chunk 到达时补发 `created` / `in_progress`，并取用上游的 id / model / created。
-    fn ensure_started(&mut self, chunk: &Value) -> Vec<String> {
-        if let Some(id) = chunk.get("id").and_then(|v| v.as_str()) {
-            self.response_id = format!("resp_{id}");
-            self.msg_id = format!("msg_{}", message_item_suffix(&self.response_id));
-            self.reasoning_id = format!("rs_{}", self.response_id);
-        }
-        if let Some(model) = chunk.get("model").and_then(|v| v.as_str()) {
-            self.model = model.to_string();
-        }
-        if let Some(created) = chunk.get("created").and_then(|v| v.as_i64()) {
-            self.created_at = created;
-        }
-        if self.started {
-            return Vec::new();
-        }
-        self.started = true;
-        vec![
-            sse(
-                "response.created",
-                json!({ "type": "response.created", "response": self.base_response("in_progress") }),
-            ),
-            sse(
-                "response.in_progress",
-                json!({ "type": "response.in_progress", "response": self.base_response("in_progress") }),
-            ),
-        ]
-    }
-
-    fn ensure_reasoning_block(&mut self) -> Vec<String> {
-        if self.reasoning_index.is_some() {
-            return Vec::new();
-        }
-        let index = self.take_index();
-        self.reasoning_index = Some(index);
-        vec![
-            sse(
-                "response.output_item.added",
-                json!({
-                    "type": "response.output_item.added",
-                    "output_index": index,
-                    "item": {
-                        "id": self.reasoning_id,
-                        "type": "reasoning",
-                        "status": "in_progress",
-                        "reasoning_content": "",
-                        "summary": []
-                    }
-                }),
-            ),
-            sse(
-                "response.reasoning_summary_part.added",
-                json!({
-                    "type": "response.reasoning_summary_part.added",
-                    "item_id": self.reasoning_id,
-                    "output_index": index,
-                    "summary_index": 0,
-                    "part": { "type": "summary_text", "text": "" }
-                }),
-            ),
-        ]
-    }
-
-    fn ensure_message_block(&mut self) -> Vec<String> {
-        if self.msg_index.is_some() {
-            return Vec::new();
-        }
-        let index = self.take_index();
-        self.msg_index = Some(index);
-        vec![
-            sse(
-                "response.output_item.added",
-                json!({
-                    "type": "response.output_item.added",
-                    "output_index": index,
-                    "item": {
-                        "id": self.msg_id,
-                        "type": "message",
-                        "status": "in_progress",
-                        "role": "assistant",
-                        "content": []
-                    }
-                }),
-            ),
-            sse(
-                "response.content_part.added",
-                json!({
-                    "type": "response.content_part.added",
-                    "item_id": self.msg_id,
-                    "output_index": index,
-                    "content_index": 0,
-                    "part": { "type": "output_text", "text": "", "annotations": [] }
-                }),
-            ),
-        ]
-    }
-
-    /// 诊断用（仅 `ANY_VERSION_PROXY_DEBUG=1` 时打印）：这一轮上游到底给了什么。
-    ///
-    /// 「模型只吐了一段计划就停」这类问题分不清是「上游没给工具调用」还是
-    /// 「给了但被我们丢了」，没有这段日志就只能靠猜。
-    pub fn upstream_debug(&self) -> String {
-        let head = |s: &str| s.chars().take(400).collect::<String>();
-        format!(
-            "finish={:?} tools={} xml_mode={} 正文({}字)={:?} 扣留({}字)={:?}",
-            self.finish_reason,
-            self.tools.len(),
-            self.xml_mode,
-            self.msg_text.chars().count(),
-            head(&self.msg_text),
-            self.xml_buf.chars().count(),
-            head(&self.xml_buf),
-        )
-    }
-
-    /// 标记本次响应失败并产出 `response.failed` + `[DONE]`。
-    /// 之后 `push_chunk` / `finish` 都不再产出任何事件（Codex 收不到「成功完成」的假象）。
-    ///
-    /// 两条调用路径：流内 `error` chunk（上游自己报错）、传输层断流（`body` 提前结束）。
-    /// 后者以前直接 `break` 导致 `failed` 仍为 false，`finish()` 补发
-    /// `response.completed` + `[DONE]` —— **上游断流被伪装成一次成功完成**，
-    /// Codex 会把残缺内容当作完整答案收下。
-    pub fn fail(&mut self, message: &str) -> Vec<String> {
-        if self.failed {
-            return Vec::new();
-        }
-        self.failed = true;
-        vec![
-            sse(
-                "response.failed",
-                json!({
-                    "type": "response.failed",
-                    "response": {
-                        "id": self.response_id,
-                        "object": "response",
-                        "status": "failed",
-                        "error": { "message": message, "type": "upstream_error" }
-                    }
-                }),
-            ),
-            "data: [DONE]\n\n".to_string(),
-        ]
-    }
-
-    /// 处理一个 Chat SSE chunk（已解析的 JSON），返回要写回客户端的事件文本。
-    pub fn push_chunk(&mut self, chunk: &Value) -> Vec<String> {
-        if self.failed {
-            return Vec::new();
-        }
-        // 流内错误：转成 response.failed 并停止后续事件
-        if let Some(err) = chunk.get("error") {
-            let message = err
-                .get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("upstream stream error")
-                .to_string();
-            return self.fail(&message);
-        }
-
-        let mut events = self.ensure_started(chunk);
-
-        if let Some(usage) = chunk.get("usage").filter(|u| !u.is_null()) {
-            self.usage = Some(usage.clone());
-        }
-
-        let Some(choice) = chunk.get("choices").and_then(|c| c.get(0)) else {
-            return events;
-        };
-        let delta = choice.get("delta").cloned().unwrap_or(Value::Null);
-
-        // reasoning 文本（DeepSeek / Moonshot 等用 reasoning_content）
-        if let Some(rc) = delta
-            .get("reasoning_content")
-            .or_else(|| delta.get("reasoning"))
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-        {
-            events.extend(self.ensure_reasoning_block());
-            self.reasoning_text.push_str(rc);
-            events.push(sse(
-                "response.reasoning_summary_text.delta",
-                json!({
-                    "type": "response.reasoning_summary_text.delta",
-                    "item_id": self.reasoning_id,
-                    "output_index": self.reasoning_index.unwrap_or(0),
-                    "summary_index": 0,
-                    "delta": rc
-                }),
-            ));
-        }
-
-        if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
-            if !text.is_empty() {
-                // 走 absorb_text：标记之前的正文照常逐字发，标记（及其后的 XML）扣到流末解析
-                let emit = self.absorb_text(text);
-                if !emit.is_empty() {
-                    events.extend(self.ensure_message_block());
-                    self.msg_text.push_str(&emit);
-                    events.push(sse(
-                        "response.output_text.delta",
-                        json!({
-                            "type": "response.output_text.delta",
-                            "item_id": self.msg_id,
-                            "output_index": self.msg_index.unwrap_or(0),
-                            "content_index": 0,
-                            "delta": emit
-                        }),
-                    ));
-                }
-            }
-        }
-
-        if let Some(tool_calls) = delta.get("tool_calls").and_then(|v| v.as_array()) {
-            for call in tool_calls {
-                let seq = call.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                let call_id = call.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let name = call
-                    .get("function")
-                    .and_then(|f| f.get("name"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let args = call
-                    .get("function")
-                    .and_then(|f| f.get("arguments"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let existing = self.tools.iter().position(|(i, _, _, _, _)| *i == seq);
-                let index = match existing {
-                    Some(pos) => {
-                        let entry = &mut self.tools[pos];
-                        if !call_id.is_empty() {
-                            entry.2 = call_id.clone();
-                        }
-                        if !name.is_empty() {
-                            entry.3 = name.clone();
-                        }
-                        entry.4.push_str(&args);
-                        entry.0
-                    }
-                    None => {
-                        let output_index = self.take_index();
-                        let item_id = if call_id.is_empty() {
-                            format!("fc_{output_index}")
-                        } else {
-                            format!("fc_{call_id}")
-                        };
-                        events.push(sse(
-                            "response.output_item.added",
-                            json!({
-                                "type": "response.output_item.added",
-                                "output_index": output_index,
-                                "item": {
-                                    "id": item_id,
-                                    "type": "function_call",
-                                    "status": "in_progress",
-                                    "call_id": call_id,
-                                    "name": name,
-                                    "arguments": ""
-                                }
-                            }),
-                        ));
-                        self.tools.push((seq, item_id, call_id, name, args.clone()));
-                        output_index
-                    }
-                };
-                if !args.is_empty() {
-                    let item_id = self.tools[existing.unwrap_or(self.tools.len() - 1)]
-                        .1
-                        .clone();
-                    events.push(sse(
-                        "response.function_call_arguments.delta",
-                        json!({
-                            "type": "response.function_call_arguments.delta",
-                            "item_id": item_id,
-                            "output_index": index,
-                            "delta": args
-                        }),
-                    ));
-                }
-            }
-        }
-
-        if let Some(reason) = choice.get("finish_reason").and_then(|v| v.as_str()) {
-            self.finish_reason = Some(reason.to_string());
-        }
-        events
-    }
-
-    /// 流结束：补发各块的 `*.done`、`response.completed` 与 `[DONE]`。
-    pub fn finish(&mut self) -> Vec<String> {
-        if self.failed {
-            return Vec::new();
-        }
-        let mut events = Vec::new();
-        if !self.started {
-            // 一个 delta 都没来（上游直接空响应）：仍要给 Codex 一个完整响应
-            let placeholder = json!({});
-            events.extend(self.ensure_started(&placeholder));
-        }
-
-        // XML 方言的工具调用在这里还原：正文已发完，补上 function_call 与扣住的尾巴
-        events.extend(self.flush_xml_tools());
-
-        if let Some(index) = self.reasoning_index {
-            events.push(sse(
-                "response.reasoning_summary_text.done",
-                json!({
-                    "type": "response.reasoning_summary_text.done",
-                    "item_id": self.reasoning_id,
-                    "output_index": index,
-                    "summary_index": 0,
-                    "text": self.reasoning_text
-                }),
-            ));
-            events.push(sse(
-                "response.reasoning_summary_part.done",
-                json!({
-                    "type": "response.reasoning_summary_part.done",
-                    "item_id": self.reasoning_id,
-                    "output_index": index,
-                    "summary_index": 0,
-                    "part": { "type": "summary_text", "text": self.reasoning_text }
-                }),
-            ));
-            events.push(sse(
-                "response.output_item.done",
-                json!({
-                    "type": "response.output_item.done",
-                    "output_index": index,
-                    "item": {
-                        "id": self.reasoning_id,
-                        "type": "reasoning",
-                        "status": "completed",
-                        "reasoning_content": self.reasoning_text,
-                        "summary": [{ "type": "summary_text", "text": self.reasoning_text }]
-                    }
-                }),
-            ));
-        }
-
-        let mut items: Vec<(usize, Value)> = Vec::new();
-
-        if let Some(index) = self.msg_index {
-            events.push(sse(
-                "response.output_text.done",
-                json!({
-                    "type": "response.output_text.done",
-                    "item_id": self.msg_id,
-                    "output_index": index,
-                    "content_index": 0,
-                    "text": self.msg_text
-                }),
-            ));
-            events.push(sse(
-                "response.content_part.done",
-                json!({
-                    "type": "response.content_part.done",
-                    "item_id": self.msg_id,
-                    "output_index": index,
-                    "content_index": 0,
-                    "part": { "type": "output_text", "text": self.msg_text, "annotations": [] }
-                }),
-            ));
-            let item = json!({
-                "id": self.msg_id,
-                "type": "message",
-                "status": "completed",
-                "role": "assistant",
-                "content": [{ "type": "output_text", "text": self.msg_text, "annotations": [] }]
-            });
-            events.push(sse(
-                "response.output_item.done",
-                json!({ "type": "response.output_item.done", "output_index": index, "item": item }),
-            ));
-            items.push((index, item));
-        }
-
-        if let Some(index) = self.reasoning_index {
-            items.push((
-                index,
-                json!({
-                    "id": self.reasoning_id,
-                    "type": "reasoning",
-                    "status": "completed",
-                    "reasoning_content": self.reasoning_text,
-                    "summary": [{ "type": "summary_text", "text": self.reasoning_text }]
-                }),
-            ));
-        }
-
-        for (index, item_id, call_id, name, args) in self.tools.clone() {
-            events.push(sse(
-                "response.function_call_arguments.done",
-                json!({
-                    "type": "response.function_call_arguments.done",
-                    "item_id": item_id,
-                    "output_index": index,
-                    "arguments": args
-                }),
-            ));
-            let item = json!({
-                "id": item_id,
-                "type": "function_call",
-                "status": "completed",
-                "call_id": call_id,
-                "name": name,
-                "arguments": if args.is_empty() { "{}".to_string() } else { args }
-            });
-            events.push(sse(
-                "response.output_item.done",
-                json!({ "type": "response.output_item.done", "output_index": index, "item": item }),
-            ));
-            items.push((index, item));
-        }
-
-        items.sort_by_key(|(index, _)| *index);
-        let status = if self.finish_reason.as_deref() == Some("length") {
-            "incomplete"
-        } else {
-            "completed"
-        };
-        let mut completed = self.base_response(status);
-        completed["output"] = json!(items.into_iter().map(|(_, item)| item).collect::<Vec<_>>());
-        events.push(sse(
-            "response.completed",
-            json!({ "type": "response.completed", "response": completed }),
-        ));
-        events.push("data: [DONE]\n\n".to_string());
-        events
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn codex_request() -> Value {
-        json!({
-            "model": "gpt-5",
-            "instructions": "You are a coding agent.",
-            "input": [
-                { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "hi" }] },
-                { "type": "function_call", "call_id": "call_1", "name": "shell", "arguments": "{\"cmd\":\"ls\"}" },
-                { "type": "function_call_output", "call_id": "call_1", "output": "a.txt" }
-            ],
-            "tools": [{ "type": "function", "name": "shell", "description": "run", "parameters": { "type": null, "properties": {} } }],
-            "tool_choice": "auto",
-            "parallel_tool_calls": true,
-            "max_output_tokens": 8192,
-            "reasoning": { "effort": "high" },
-            "stream": true,
-            "store": false,
-            "previous_response_id": "resp_prev"
-        })
-    }
-
-    #[test]
-    fn responses_to_chat_builds_messages_and_drops_session_fields() {
-        let chat = responses_to_chat(&codex_request());
-        assert_eq!(chat["model"], json!("gpt-5"));
-        assert_eq!(chat["messages"][0]["role"], json!("system"));
-        assert_eq!(chat["messages"][0]["content"], json!("You are a coding agent."));
-        assert_eq!(chat["messages"][1]["content"], json!("hi"), "纯文本块要塌缩成字符串");
-        // function_call 与它的输出配对：assistant.tool_calls + role=tool
-        assert_eq!(chat["messages"][2]["role"], json!("assistant"));
-        assert_eq!(chat["messages"][2]["tool_calls"][0]["function"]["name"], json!("shell"));
-        assert_eq!(chat["messages"][3]["role"], json!("tool"));
-        assert_eq!(chat["messages"][3]["tool_call_id"], json!("call_1"));
-        // 严格上游不允许 `type: null`
-        assert_eq!(chat["tools"][0]["function"]["parameters"]["type"], json!("object"));
-        assert_eq!(chat["tools"][0]["type"], json!("function"));
-        assert_eq!(chat["reasoning_effort"], json!("high"));
-        assert_eq!(chat["max_tokens"], json!(8192));
-        assert_eq!(chat["stream_options"]["include_usage"], json!(true));
-        // 会话字段必须丢弃
-        assert!(chat.get("store").is_none(), "{chat}");
-        assert!(chat.get("previous_response_id").is_none(), "{chat}");
-        assert!(chat.get("instructions").is_none(), "{chat}");
-    }
-
-    #[test]
-    fn o_series_uses_max_completion_tokens() {
-        let mut body = codex_request();
-        body["model"] = json!("o3-mini");
-        let chat = responses_to_chat(&body);
-        assert_eq!(chat["max_completion_tokens"], json!(8192));
-        assert!(chat.get("max_tokens").is_none(), "{chat}");
-    }
-
-    #[test]
-    fn chat_to_responses_shapes_items_and_usage() {
-        let chat = json!({
-            "id": "chatcmpl-1",
-            "created": 1730000000,
-            "model": "gpt-5",
-            "choices": [{
-                "finish_reason": "tool_calls",
-                "message": {
-                    "role": "assistant",
-                    "content": "let me check",
-                    "reasoning_content": "thinking…",
-                    "tool_calls": [{ "id": "call_9", "type": "function", "function": { "name": "shell", "arguments": "{\"cmd\":\"ls\"}" } }]
-                }
-            }],
-            "usage": { "prompt_tokens": 10, "completion_tokens": 5, "prompt_tokens_details": { "cached_tokens": 3 } }
-        });
-        let resp = chat_to_responses(&chat, &codex_request());
-        assert_eq!(resp["id"], json!("resp_chatcmpl-1"));
-        assert_eq!(resp["status"], json!("completed"));
-        // message item 的 id 必须是 msg_ + 去掉 resp_ 的 body（Codex 会校验）
-        assert_eq!(resp["output"][1]["id"], json!("msg_chatcmpl-1"));
-        assert_eq!(resp["output"][0]["type"], json!("reasoning"));
-        assert_eq!(resp["output"][2]["type"], json!("function_call"));
-        assert_eq!(resp["output"][2]["call_id"], json!("call_9"));
-        assert_eq!(resp["usage"]["input_tokens"], json!(10));
-        assert_eq!(resp["usage"]["output_tokens_details"]["reasoning_tokens"], json!(0));
-        assert_eq!(resp["usage"]["input_tokens_details"]["cached_tokens"], json!(3));
-        // 请求侧字段回写
-        assert_eq!(resp["instructions"], json!("You are a coding agent."));
-    }
-
-    #[test]
-    fn length_finish_marks_incomplete() {
-        let chat = json!({
-            "id": "c1",
-            "choices": [{ "finish_reason": "length", "message": { "content": "x" } }]
-        });
-        let resp = chat_to_responses(&chat, &json!({}));
-        assert_eq!(resp["status"], json!("incomplete"));
-        assert_eq!(resp["incomplete_details"]["reason"], json!("max_output_tokens"));
-    }
-
-    #[test]
-    fn stream_emits_created_then_text_then_completed() {
-        let mut conv = ResponsesStreamConverter::new("gpt-5");
-        let mut out = conv.push_chunk(&json!({
-            "id": "chatcmpl-abc",
-            "created": 1730000000,
-            "model": "gpt-5",
-            "choices": [{ "delta": { "content": "He" } }]
-        }));
-        out.extend(conv.push_chunk(&json!({
-            "choices": [{ "delta": { "content": "llo" }, "finish_reason": "stop" }]
-        })));
-        out.extend(conv.push_chunk(&json!({
-            "choices": [],
-            "usage": { "prompt_tokens": 7, "completion_tokens": 2 }
-        })));
-        out.extend(conv.finish());
-        let joined = out.join("");
-
-        // 事件序列与顺序
-        let order: Vec<&str> = vec![
-            "event: response.created",
-            "event: response.in_progress",
-            "event: response.output_item.added",
-            "event: response.content_part.added",
-            "event: response.output_text.delta",
-            "event: response.output_text.done",
-            "event: response.content_part.done",
-            "event: response.output_item.done",
-            "event: response.completed",
-        ];
-        let mut cursor = 0usize;
-        for name in order {
-            let found = joined[cursor..]
-                .find(name)
-                .unwrap_or_else(|| panic!("缺少事件 {name}\n{joined}"));
-            cursor += found + name.len();
-        }
-        assert!(joined.ends_with("data: [DONE]\n\n"), "{joined}");
-        assert!(joined.contains(r#""delta":"He""#), "{joined}");
-        assert!(joined.contains(r#""text":"Hello""#), "收尾要带上完整文本: {joined}");
-        assert!(joined.contains(r#""input_tokens":7"#), "usage 要落到 completed: {joined}");
-        // message item id 用上游 id 去掉 resp_ 前缀
-        assert!(joined.contains(r#""id":"msg_chatcmpl-abc""#), "{joined}");
-    }
-
-    /// 上游把工具调用写成 XML 方言时（见 `proxy::xml_tools`）：标记之前的正文照常逐字
-    /// 流出，XML 本身扣到流末还原成 function_call —— 否则 Codex 会判定轮次结束而停住。
-    #[test]
-    fn stream_recovers_xml_dialect_tool_calls() {
-        let sample = "先梳理结构。]<]minimax[>[<tool_call>\n]<]minimax[>[<invoke name=\"shell_command\">\
-            <workdir>E:\\x</workdir><command>dir</command></invoke>\n]<]minimax[>[</tool_call>";
-        let mut conv = ResponsesStreamConverter::new("gpt-5");
-        let mut out = Vec::new();
-        // 切成 7 字一片喂进去：真实流里标记会被拆散在各个 delta 中
-        let chars: Vec<char> = sample.chars().collect();
-        for piece in chars.chunks(7) {
-            let piece: String = piece.iter().collect();
-            out.extend(conv.push_chunk(&json!({
-                "id": "c1",
-                "choices": [{ "delta": { "content": piece } }]
-            })));
-        }
-        out.extend(conv.finish());
-        let joined = out.join("");
-
-        assert!(joined.contains("先梳理结构。"), "正文要照常发出来：{joined}");
-        assert!(!joined.contains("<invoke"), "原始 XML 不该透传给客户端：{joined}");
-        assert!(!joined.contains("minimax"), "上游塞的分隔符要剥掉：{joined}");
-        assert!(joined.contains("\"type\":\"function_call\""), "要还原成 function_call：{joined}");
-        assert!(joined.contains("\"name\":\"shell_command\""), "{joined}");
-        // 参数在 SSE 里是 JSON 字符串内嵌，直接查会被转义干扰，改查转换器的结果
-        assert_eq!(conv.tools.len(), 1, "应还原出 1 个工具调用：{:?}", conv.tools);
-        assert_eq!(conv.tools[0].3, "shell_command");
-        assert!(
-            conv.tools[0].4.contains("\"command\":\"dir\""),
-            "参数要还原：{}",
-            conv.tools[0].4
-        );
-        assert!(!conv.msg_text.contains("minimax"), "正文里不该留 XML：{}", conv.msg_text);
-    }
-
-    /// 反向护栏：普通正文里的尖括号不能被扣住不发（hold 只保留「可能还是标记前缀」的一小段）
-    #[test]
-    fn stream_does_not_swallow_plain_angle_brackets() {
-        let mut conv = ResponsesStreamConverter::new("gpt-5");
-        let out = conv.push_chunk(&json!({
-            "id": "c1",
-            "choices": [{ "delta": { "content": "比较 a < b 且 c > d 的大小" } }]
-        }));
-        let joined = out.join("");
-        assert!(joined.contains("比较 a < b 且 c > d 的大小"), "正文不能被吞：{joined}");
-    }
-
-    /// 扣住是为了还原，不是为了吞：出现工具标记但**解析不出** invoke 时，
-    /// 原文必须原样回到客户端（否则用户在问 `<invoke>` 语法时内容会凭空消失）
-    #[test]
-    fn stream_returns_unparsable_xml_text_to_the_client() {
-        let mut conv = ResponsesStreamConverter::new("gpt-5");
-        let text = "讲一下 <tool_call> 这个标签怎么用";
-        let mut out = conv.push_chunk(&json!({
-            "id": "c1",
-            "choices": [{ "delta": { "content": text } }]
-        }));
-        out.extend(conv.finish());
-        let joined = out.join("");
-        assert!(joined.contains("<tool_call>"), "原文要还回来：{joined}");
-        assert!(!joined.contains("function_call"), "没解析出工具就不该造 function_call：{joined}");
-    }
-
-    /// 模型「调完工具又补一句话」时，那句话不能被吞
-    #[test]
-    fn stream_keeps_text_emitted_after_the_tool_call() {
-        let mut conv = ResponsesStreamConverter::new("gpt-5");
-        let sample = "先读。<tool_call><invoke name=\"read_file\"><path>a.txt</path></invoke></tool_call>读完继续。";
-        let chars: Vec<char> = sample.chars().collect();
-        let mut out = Vec::new();
-        for piece in chars.chunks(9) {
-            let piece: String = piece.iter().collect();
-            out.extend(conv.push_chunk(&json!({
-                "id": "c1",
-                "choices": [{ "delta": { "content": piece } }]
-            })));
-        }
-        out.extend(conv.finish());
-        let joined = out.join("");
-        assert!(joined.contains("读完继续。"), "工具调用之后的正文要发出来：{joined}");
-        assert_eq!(conv.tools.len(), 1);
-    }
-
-    #[test]
-    fn stream_reports_upstream_error_as_response_failed() {
-        let mut conv = ResponsesStreamConverter::new("gpt-5");
-        let out = conv.push_chunk(&json!({ "error": { "message": "boom" } }));
-        let joined = out.join("");
-        assert!(joined.contains("event: response.failed"), "{joined}");
-        assert!(joined.contains("boom"), "{joined}");
-        assert!(joined.ends_with("data: [DONE]\n\n"), "{joined}");
-        // 失败之后不再产出任何事件
-        assert!(conv.finish().is_empty());
-    }
-}
+mod stream;
+pub use stream::ResponsesStreamConverter;
