@@ -3587,7 +3587,7 @@
     "tabNodes": "部署方式",
     "tabCreds": "DNS凭据",
     "tabSched": "调度日志",
-    "tabReceiver": "接收端",
+    "tabReceiver": "证书接收",
     "rcvLoading": "正在读取接收端配置…",
     "rcvMigrated": "已从 cert-receiver.toml 迁移配置（原文件保留，可回退）",
     "rcvRunning": "运行中",

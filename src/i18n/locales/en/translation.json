@@ -3581,7 +3581,7 @@
     "tabNodes": "Deploy Methods",
     "tabCreds": "DNS Credentials",
     "tabSched": "Scheduler Log",
-    "tabReceiver": "Receiver",
+    "tabReceiver": "Cert Receiver",
     "rcvLoading": "Loading receiver settings…",
     "rcvMigrated": "Settings migrated from cert-receiver.toml (the old file is kept for rollback)",
     "rcvRunning": "Running",
