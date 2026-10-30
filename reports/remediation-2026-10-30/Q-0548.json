@@ -1,0 +1,26 @@
+{
+  "qid": "Q-0548",
+  "parent_task": "Q-0506",
+  "question": "node_manager.rs原文件超过1000行，多项职责和单元测试混在同一模块，降低独立维护和审查效率。",
+  "root_cause": "历史功能持续累积，注册表、路径、运行状态、安装和测试缺少模块内职责边界。",
+  "solution": "按实际职责拆为 models, registry, versions, process_io, package_tools, python_install, build_tools, docker, install_commands, process_lifecycle, browser, status_commands, tests。原路径保留公开facade，以正常Rust子模块与reexport保持原公开API及Tauri命令宏。私有共享辅助限制为pub(super)，保留既有测试，不引入include片段。 测试资源include_str使用CARGO_MANIFEST_DIR锚定，避免子模块移动后路径失效。\n主agent验收：Main lib compiled; corresponding 40 inherited tests passed across sandbox + exact Windows temporary-fixture validation. All output paths <1000 lines; SDK fixture paths anchored to CARGO_MANIFEST_DIR.",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/node_manager.rs** | 兼容facade和子模块声明 |\n| **src-tauri/src/commands/node_manager/** | 按职责独立实现与原有回归测试 |",
+  "status": "已验证",
+  "paths": [
+    "src-tauri/src/commands/node_manager.rs",
+    "src-tauri/src/commands/node_manager/models.rs",
+    "src-tauri/src/commands/node_manager/registry.rs",
+    "src-tauri/src/commands/node_manager/versions.rs",
+    "src-tauri/src/commands/node_manager/process_io.rs",
+    "src-tauri/src/commands/node_manager/package_tools.rs",
+    "src-tauri/src/commands/node_manager/python_install.rs",
+    "src-tauri/src/commands/node_manager/build_tools.rs",
+    "src-tauri/src/commands/node_manager/docker.rs",
+    "src-tauri/src/commands/node_manager/install_commands.rs",
+    "src-tauri/src/commands/node_manager/process_lifecycle.rs",
+    "src-tauri/src/commands/node_manager/browser.rs",
+    "src-tauri/src/commands/node_manager/status_commands.rs",
+    "src-tauri/src/commands/node_manager/tests.rs"
+  ],
+  "validation": "Main lib compiled; corresponding 40 inherited tests passed across sandbox + exact Windows temporary-fixture validation. All output paths <1000 lines; SDK fixture paths anchored to CARGO_MANIFEST_DIR."
+}
