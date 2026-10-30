@@ -1,68 +1,16 @@
+import { ProviderModelParameters } from "./ProviderModelParameters";
+import { ProviderProtocolFields } from "./ProviderProtocolFields";
+import { ProviderDetailsDialog } from "./ProviderDetailsDialog";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import {
-  Plus,
-  Trash2,
-  Zap,
-  CheckCircle,
-  AlertTriangle,
-  RefreshCw,
-  Globe,
-  Key,
-  Server,
-  Search,
-  Laptop,
-  Wallet,
-  X,
-  Settings2,
-  ExternalLink,
-  Eye,
-  EyeOff,
-  FolderOpen,
-} from "lucide-react";
+import { Plus, Trash2, Zap, CheckCircle, AlertTriangle, RefreshCw, Globe, Key, Server, Search, Laptop, Wallet, X, Settings2, ExternalLink, Eye, EyeOff, FolderOpen } from "lucide-react";
 import type { ModelEntry, AiProvider, AiConfig, ModelCustomParam, UpstreamHeader, ProviderPromotion } from "../../contracts/ai";
 import { filterProviders } from "./providerSearch";
 import { promotionCountdown, promotionState, prunePromotions } from "../shared/ai/promotions";
-import { PARAM_PRESETS } from "./paramPresets";
 import { theamedAlert } from "../shared/ThemedAlert";
-
-type Preset = {
-  id: string; name: string; category: string;
-  website: string; openai_url: string; anthropic_url: string;
-  google_url: string;
-};
-
-const EMPTY_PROVIDER: AiProvider = {
-  id: "", name: "", category: "provider", api_key: "", website: "",
-  openai_url: "", anthropic_url: "", google_url: "",
-  models: [], active_model_id: null, custom_headers: [],
-  openai_include_v1: null, anthropic_include_v1: null,
-  promotions: [],
-};
-
-/// 「是否包含 /v1」三态 → 下拉框字符串（null 即自动）。
-function v1ToSelect(v?: boolean | null): string {
-  return v === true ? "yes" : v === false ? "no" : "auto";
-}
-function selectToV1(s: string): boolean | null {
-  return s === "yes" ? true : s === "no" ? false : null;
-}
-
-/// 传输层 / 逐跳头：由 HTTP 客户端按实际报文决定，后端也会拒绝，这里提前拦。
-const FORBIDDEN_HEADER_NAMES = new Set([
-  "host", "content-length", "transfer-encoding", "connection", "keep-alive",
-  "proxy-connection", "te", "trailer", "upgrade", "expect",
-]);
-
-/// RFC 7230 token 字符集（HTTP 头名称的合法字符）
-const HEADER_NAME_RE = /^[A-Za-z0-9!#$%&'*+\-.^_`|~]+$/;
-
-/// 从预设（可能含多个协议端点）取出全部协议 URL
-function presetUrls(p: Preset): { openai_url: string; anthropic_url: string; google_url: string } {
-  return { openai_url: p.openai_url, anthropic_url: p.anthropic_url, google_url: p.google_url };
-}
+import { EMPTY_PROVIDER, FORBIDDEN_HEADER_NAMES, HEADER_NAME_RE, presetUrls, type Preset } from "./ModelConfig.model";
 
 export default function ModelConfig() {
   const { t } = useTranslation();
@@ -791,105 +739,15 @@ export default function ModelConfig() {
       {/* ─── 供应商详情弹窗 ─── */}
       {detailProvider && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 modal-mask flex items-center justify-center p-4" onClick={() => setDetailId(null)}>
-          <div className="w-full max-w-md bg-slate-950/95 border border-white/10 rounded-panel shadow-2xl flex flex-col max-h-[85vh] overflow-hidden" onClick={e => e.stopPropagation()}>
-            {/* Header */}
-            <div className="p-4 border-b border-white/5 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <h3 className="text-body font-bold text-slate-200 truncate">{detailProvider.name}</h3>
-                <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold flex-shrink-0 ${detailProvider.category === "relay" ? "bg-cyan-500/15 text-cyan-400" : detailProvider.category === "local" ? "bg-[var(--module-accent)]/15 text-[var(--module-accent)]" : "bg-emerald-500/15 text-emerald-400"}`}>
-                  {detailProvider.category === "relay" ? t("modelcfg.relay") : detailProvider.category === "local" ? t("modelcfg.local") : t("modelcfg.vendor")}
-                </span>
-                {detailProvider.website && (
-                  <a href={detailProvider.website} target="_blank" rel="noopener noreferrer"
-                    onClick={(e) => { e.preventDefault(); void openUrl(detailProvider.website); }}
-                    className="text-blue-400 hover:text-blue-300 transition-colors flex-shrink-0" title={t("modelcfg.openSite")}>
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
-                )}
-              </div>
-              <button onClick={() => setDetailId(null)} className="text-slate-500 hover:text-slate-300 cursor-pointer flex-shrink-0"><X className="w-4 h-4" /></button>
-            </div>
-
-            {/* Body */}
-            <div className="flex-grow overflow-y-auto p-4 space-y-4">
-              {/* 余额 */}
-              {BALANCE_CAPABLE.has(detailProvider.id) && (
-                <div className="p-3 rounded-ctl bg-slate-900/50 border border-white/5 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-tiny text-slate-400 font-semibold">{t("modelcfg.balance")}</label>
-                    <button onClick={() => void runBalance(detailProvider)} disabled={balanceState?.pid === detailProvider.id && balanceState.loading}
-                      className="px-2 py-0.5 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-micro font-semibold text-emerald-400 cursor-pointer transition-all flex items-center gap-0.5 disabled:opacity-40 disabled:cursor-not-allowed">
-                      <RefreshCw className={`w-3 h-3 ${balanceState?.pid === detailProvider.id && balanceState.loading ? "animate-spin" : ""}`} />
-                      {t("modelcfg.balanceQuery")}
-                    </button>
-                  </div>
-                  {balanceState?.pid === detailProvider.id && balanceState.loading && (
-                    <p className="text-tiny text-slate-500">{t("modelcfg.loading")}</p>
-                  )}
-                  {balanceState?.pid === detailProvider.id && balanceState.error && (
-                    <p className="text-tiny text-red-400 whitespace-pre-line">{balanceState.error}</p>
-                  )}
-                  {balanceState?.pid === detailProvider.id && !balanceState.loading && !balanceState.error && (
-                    <div className="space-y-1">
-                      {balanceState.items.map((it) => (
-                        <div key={it.key} className="flex items-center justify-between text-tiny">
-                          <span className="text-slate-500">{balanceLabel(it.key)}</span>
-                          <span className="font-mono text-slate-200">{it.value === "ok" ? t("modelcfg.balOk") : it.value === "disabled" ? t("modelcfg.balDisabled") : it.value}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* 协议端点 */}
-              <div className="p-3 rounded-ctl bg-slate-900/50 border border-white/5 space-y-1.5">
-                <label className="text-tiny text-slate-400 font-semibold">{t("modelcfg.endpoints")}</label>
-                {([
-                  [t("modelcfg.openaiUrl"), detailProvider.openai_url, "text-blue-300", detailProvider.openai_include_v1 ?? null],
-                  [t("modelcfg.anthropicUrl"), detailProvider.anthropic_url, "text-amber-300", detailProvider.anthropic_include_v1 ?? null],
-                  [t("modelcfg.googleUrl"), detailProvider.google_url, "text-green-300", null],
-                ] as const).map(([label, url, cls, includeV1]) => url ? (
-                  <div key={label} className="flex items-start gap-2 text-tiny">
-                    <span className={`${cls} font-semibold flex-shrink-0 w-24`}>{label}</span>
-                    <span className="font-mono text-slate-400 break-all">{url}</span>
-                    {/* 只有显式改过才标出来：「自动」是默认行为，写出来反而像配置项丢了 */}
-                    {includeV1 !== null && (
-                      <span className="flex-shrink-0 px-1 py-px rounded bg-white/5 text-[8px] text-slate-400">
-                        /v1 {includeV1 ? t("modelcfg.v1Yes") : t("modelcfg.v1No")}
-                      </span>
-                    )}
-                  </div>
-                ) : null)}
-              </div>
-
-              {/* 模型列表 */}
-              <div>
-                <label className="text-tiny text-slate-500 font-semibold block mb-1.5">
-                  {t("modelcfg.modelList", { count: detailProvider.models.length })}
-                </label>
-                {detailProvider.models.length === 0 ? (
-                  <div className="text-tiny text-slate-600 py-2 text-center">{t("modelcfg.noModelsHint")}</div>
-                ) : (
-                  <div className="max-h-48 overflow-y-auto rounded-ctl border border-white/5 divide-y divide-white/[0.03]">
-                    {detailProvider.models.map((model) => (
-                      <div key={model.id} className="px-2.5 py-1 text-tiny bg-white/[0.02]">
-                        <span className="font-mono text-slate-300">{model.id}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="p-4 border-t border-white/5 bg-slate-900/20 flex justify-end gap-2">
-              <button onClick={() => { setDetailId(null); openEditModal(detailProvider); }}
-                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-300 hover:text-white text-tiny font-semibold cursor-pointer">{t("modelcfg.edit")}</button>
-              <button onClick={() => setDetailId(null)}
-                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-tiny font-semibold cursor-pointer">{t("modelcfg.cancel")}</button>
-            </div>
-          </div>
+          <ProviderDetailsDialog
+            detailProvider={detailProvider}
+            setDetailId={setDetailId}
+            BALANCE_CAPABLE={BALANCE_CAPABLE}
+            runBalance={runBalance}
+            balanceState={balanceState}
+            balanceLabel={balanceLabel}
+            openEditModal={openEditModal}
+          />
         </div>
       )}
 
@@ -983,54 +841,10 @@ export default function ModelConfig() {
               </div>
 
               {/* 协议端点 URL（每个支持的协议一个地址） */}
-              <div className="p-3 rounded-ctl bg-slate-900/50 border border-white/5 space-y-3">
-                <label className="text-tiny text-slate-400 font-semibold block">{t("modelcfg.endpoints")}</label>
-                <p className="text-micro text-slate-600">{t("modelcfg.endpointsHint")}</p>
-
-                <div className="space-y-1">
-                  <label className="text-micro text-blue-300 font-semibold block">{t("modelcfg.openaiUrl")}</label>
-                  <input value={form.openai_url} onChange={e => setForm({ ...form, openai_url: e.target.value })}
-                    placeholder="https://api.openai.com/v1"
-                    className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 font-mono focus:outline-none focus:border-blue-500" />
-                  {/* 兼容层差异：有的端点要 `{base}/v1/chat/completions`，有的是 `{base}/chat/completions` */}
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-micro text-slate-500">{t("modelcfg.includeV1")}</span>
-                    <select value={v1ToSelect(form.openai_include_v1)}
-                      onChange={e => setForm({ ...form, openai_include_v1: selectToV1(e.target.value) })}
-                      className="ui-input rounded px-1.5 py-0.5 text-micro text-slate-300 cursor-pointer focus:outline-none focus:border-blue-500"
-                      title={t("modelcfg.includeV1Hint")}>
-                      <option value="auto">{t("modelcfg.v1Auto")}</option>
-                      <option value="yes">{t("modelcfg.v1Yes")}</option>
-                      <option value="no">{t("modelcfg.v1No")}</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-micro text-amber-300 font-semibold block">{t("modelcfg.anthropicUrl")}</label>
-                  <input value={form.anthropic_url} onChange={e => setForm({ ...form, anthropic_url: e.target.value })}
-                    placeholder="https://api.anthropic.com"
-                    className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 font-mono focus:outline-none focus:border-amber-500" />
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-micro text-slate-500">{t("modelcfg.includeV1")}</span>
-                    <select value={v1ToSelect(form.anthropic_include_v1)}
-                      onChange={e => setForm({ ...form, anthropic_include_v1: selectToV1(e.target.value) })}
-                      className="ui-input rounded px-1.5 py-0.5 text-micro text-slate-300 cursor-pointer focus:outline-none focus:border-amber-500"
-                      title={t("modelcfg.includeV1Hint")}>
-                      <option value="auto">{t("modelcfg.v1Auto")}</option>
-                      <option value="yes">{t("modelcfg.v1Yes")}</option>
-                      <option value="no">{t("modelcfg.v1No")}</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-micro text-green-300 font-semibold block">{t("modelcfg.googleUrl")}</label>
-                  <input value={form.google_url} onChange={e => setForm({ ...form, google_url: e.target.value })}
-                    placeholder="https://generativelanguage.googleapis.com"
-                    className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 font-mono focus:outline-none focus:border-green-500" />
-                </div>
-              </div>
+              <ProviderProtocolFields
+                form={form}
+                setForm={setForm}
+              />
 
               {/* 模型列表 */}
               <div>
@@ -1061,85 +875,14 @@ export default function ModelConfig() {
 
               {/* 模型自定义启动参数 */}
               {modelsText.split("\n").map(l => l.trim()).filter(Boolean).length > 0 && (
-                <div className="rounded-ctl border border-white/5 bg-slate-900/30 p-3 space-y-3">
-                  <div className="text-tiny text-slate-500 font-semibold">
-                    {t("modelcfg.customParams")}
-                    <span className="text-slate-600 font-normal">{t("modelcfg.customParamsHint")}</span>
-                  </div>
-                  {modelsText.split("\n").map(l => l.trim()).filter(Boolean).map((mid) => (
-                    <div key={mid} className="rounded-md border border-white/5 bg-slate-900/40 p-2.5">
-                      <div className="text-tiny text-[var(--module-accent)] font-mono mb-2">{mid}</div>
-                      {(modelParams[mid] || []).map((cp, ci) => (
-                        <div key={ci} className="mb-2 p-2 rounded bg-slate-800/40 border border-white/5 space-y-1.5">
-                          <div className="flex gap-1.5">
-                            <input value={cp.label} onChange={e => updateModelParam(mid, ci, { label: e.target.value })}
-                              placeholder={t("modelcfg.paramNamePh")} className="w-37 min-w-0 ui-input rounded px-2 py-1 text-tiny text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
-                            <input value={cp.key} onChange={e => updateModelParam(mid, ci, { key: e.target.value })}
-                              placeholder={t("modelcfg.paramKeyPh")} className="flex-1 min-w-0 ui-input rounded px-2 py-1 text-tiny text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
-                            <button onClick={() => removeModelParam(mid, ci)}
-                              className="shrink-0 w-6 h-6 flex items-center justify-center rounded bg-red-500/10 hover:bg-red-500/20 text-caption text-red-400">×</button>
-                          </div>
-                          <div className="flex gap-1.5 items-stretch">
-                            <div className="flex items-center gap-1.5 shrink-0 rounded-md border border-cyan-500/20 bg-cyan-500/5 px-2 py-1">
-                              <div className="flex items-center gap-1 mr-2">
-                                {([["enum", t("modelcfg.paramEnum")],["text", t("modelcfg.paramText")],["bool", t("modelcfg.paramBool")]] as const).map(([v,l]) => (
-                                  <button key={v} type="button" onClick={() => updateModelParam(mid, ci, { paramType: v })}
-                                    className={`px-2 py-0.5 rounded-full text-tiny border transition-colors ${cp.paramType === v ? "bg-cyan-500/20 border-cyan-500 text-cyan-200" : "bg-slate-900 border-white/10 text-slate-400 hover:border-white/20"}`}>
-                                    {l}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                            {cp.paramType === "enum" && (
-                              <input value={(cp.options || []).join(",")} onChange={e => updateModelParam(mid, ci, { options: e.target.value.split(",").map(s => s.trim()).filter(Boolean) })}
-                                placeholder={t("modelcfg.paramValuesPh")} className="flex-1 min-w-0 ui-input rounded px-2 py-1 text-tiny text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
-                            )}
-                            <input value={cp.defaultValue || ""} onChange={e => updateModelParam(mid, ci, { defaultValue: e.target.value })}
-                              placeholder={t("modelcfg.paramDefaultPh")} className="w-24 ui-input rounded px-2 py-1 text-tiny text-slate-200 focus:outline-none focus:border-[var(--module-accent)]" />
-                          </div>
-                          <div className="flex gap-1.5 items-stretch">
-                            <div className="flex items-center gap-1.5 shrink-0 rounded-md border border-amber-500/20 bg-amber-500/5 px-2 py-1">
-                              <div className="flex items-center gap-1">
-                                {([["env", t("modelcfg.paramEnv")],["config", t("modelcfg.paramConfig")]] as const).map(([v,l]) => (
-                                  <button key={v} type="button" onClick={() => updateModelParam(mid, ci, { target: v })}
-                                    className={`px-2 py-0.5 rounded-full text-tiny border transition-colors ${cp.target === v ? "bg-amber-500/20 border-amber-500 text-amber-200" : "bg-slate-900 border-white/10 text-slate-400 hover:border-white/20"}`}>
-                                    {l}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                            <input value={cp.target === "config" ? (cp.configPath || "") : (cp.envKey || "")}
-                              onChange={e => cp.target === "config"
-                                ? updateModelParam(mid, ci, { configPath: e.target.value })
-                                : updateModelParam(mid, ci, { envKey: e.target.value })}
-                              placeholder={cp.target === "config" ? t("modelcfg.paramTargetPh") : t("modelcfg.paramEnvPh")}
-                              className="flex-1 min-w-0 ui-input rounded px-2 py-1 text-tiny text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]" />
-                          </div>
-                        </div>
-                      ))}
-                      <div className="flex items-center gap-2">
-                        <button onClick={() => addModelParam(mid)}
-                          className="text-tiny text-[var(--module-accent)] hover:text-[var(--module-accent-strong)] cursor-pointer">{t("modelcfg.addParam")}</button>
-                        {/* 从预设添加：把高频参数做成模板，选中即生成一条完整参数（见 paramPresets.ts） */}
-                        <select
-                          value=""
-                          onChange={(e) => {
-                            const id = e.target.value;
-                            if (!id) return;
-                            const preset = PARAM_PRESETS.find(p => p.id === id);
-                            if (preset) addModelParamFromPreset(mid, preset.param);
-                          }}
-                          className="text-tiny text-slate-400 bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 focus:outline-none focus:border-[var(--module-accent)] cursor-pointer"
-                        >
-                          <option value="">{t("modelcfg.presetAdd")}</option>
-                          {PARAM_PRESETS.map(p => (
-                            <option key={p.id} value={p.id}>{t(p.nameKey)}（{t(p.scopeKey)}）</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <ProviderModelParameters
+                  modelsText={modelsText}
+                  modelParams={modelParams}
+                  updateModelParam={updateModelParam}
+                  removeModelParam={removeModelParam}
+                  addModelParam={addModelParam}
+                  addModelParamFromPreset={addModelParamFromPreset}
+                />
               )}
 
               {/* Error */}

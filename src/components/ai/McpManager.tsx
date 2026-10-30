@@ -1,147 +1,15 @@
-﻿import { useState, useEffect, useCallback } from "react";
+import { McpManagedSourceEditor } from "./McpManagedSourceEditor";
+import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { useProjects, type SkillProject } from "./useProjects";
 import { useTranslation } from "react-i18next";
-import {
-  Plug,
-  Plus,
-  Trash2,
-  RefreshCw,
-  Server,
-  Edit3,
-  Link2,
-  Check,
-  Search,
-  FolderOpen,
-  ChevronDown,
-  Wand2,
-} from "lucide-react";
+import { Plug, Plus, Trash2, RefreshCw, Server, Edit3, Link2, Check, Search, FolderOpen, ChevronDown, Wand2 } from "lucide-react";
 import { alertError, theamedAlert } from "../shared/ThemedAlert";
 import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
 import { SharedModal } from "../shared/Modal";
-
-/** 后端 resolve_mcp_source 的草稿（camelCase） */
-interface McpSourceDraft {
-  /** npx | repo | local | http */
-  kind: string;
-  name: string;
-  transport: string;
-  command: string;
-  args: string[];
-  url: string;
-  localPath: string;
-  /** 探测说明（探测不到时提示用户自己填命令） */
-  note: string;
-}
-
-/** 托管安装来源：从 GitHub Release 下载发行包并解压到本应用数据目录 */
-interface McpManagedSource {
-  /** owner/repo */
-  repo: string;
-  /** tag 模板，如 v{version} */
-  tagTemplate: string;
-  /** 资产名前缀模板，如 name-{version} */
-  assetPrefix: string;
-  /** 资产名后缀，如 .zip */
-  assetSuffix: string;
-  /** 解压后要进入的子目录模板（空 = 自动剥掉唯一顶层目录） */
-  extractSubdir: string;
-  /** 可执行文件相对安装根的路径，如 bin/xxx.bat */
-  executable: string;
-}
-
-interface McpManagedStatus {
-  installedVersions: string[];
-  /** 当前 command 指向的文件是否存在（决定能否装到项目） */
-  executableExists: boolean;
-  command: string;
-}
-
-interface McpServer {
-  id: string;
-  name: string;
-  transport: string; // stdio | http | sse
-  command: string;
-  args: string[];
-  env: Record<string, string>;
-  cwd: string | null;
-  url: string;
-  headers: Record<string, string>;
-  enabled: boolean;
-  enabledTools: string[];
-  description: string | null;
-  installMethod: string;
-  /** 有值时由本应用下载安装（command 指向解压出来的可执行文件） */
-  managed?: McpManagedSource | null;
-}
-
-/** 项目里已装的 MCP（后端 list_project_mcps） */
-interface ProjectMcp {
-  /** 在 `<项目>/.mcp.json` 里的键名 */
-  name: string;
-  transport: string;
-  command: string;
-  args: string[];
-  url: string;
-  /** 仓库里有同名定义 = 受管；否则是用户手写的「项目自带」 */
-  managed: boolean;
-}
-
-interface DiscoveredMcp {
-  toolId: string;
-  name: string;
-  transport: string;
-  command: string;
-  args: string[];
-  env: Record<string, string>;
-  cwd: string | null;
-  url: string;
-  headers: Record<string, string>;
-  alreadyManaged: boolean;
-}
-
-/** MCP 服务器预设：只用于预填表单，不直接落库（命令/地址用户通常还要改）。 */
-interface McpPreset {
-  id: string;
-  name: string;
-  description: string;
-  transport: string;
-  command: string;
-  args: string[];
-  url: string;
-  /** 依赖的本地服务 id（如 wigolo）；空表示无依赖 */
-  serviceId: string;
-  /** 预设自带托管来源：添加后可直接点「安装」 */
-  managed?: McpManagedSource | null;
-}
-
-// 将 "KEY=VALUE" 多行文本解析为对象
-function parseKV(text: string): Record<string, string> {
-  const obj: Record<string, string> = {};
-  for (const line of text.split("\n")) {
-    const t = line.trim();
-    if (!t || t.startsWith("#")) continue;
-    const idx = t.indexOf("=");
-    if (idx <= 0) continue;
-    const k = t.slice(0, idx).trim();
-    const v = t.slice(idx + 1).trim();
-    if (k) obj[k] = v;
-  }
-  return obj;
-}
-
-// 将对象序列化为 "KEY=VALUE" 多行文本
-function serializeKV(obj: Record<string, string>): string {
-  return Object.entries(obj).map(([k, v]) => `${k}=${v}`).join("\n");
-}
-
-const TRANSPORT_KEY: Record<string, string> = {
-  stdio: "transportStdio",
-  http: "http",
-  sse: "sse",
-};
+import { TRANSPORT_KEY, parseKV, serializeKV, type DiscoveredMcp, type McpManagedSource, type McpManagedStatus, type McpPreset, type McpServer, type McpSourceDraft, type ProjectMcp } from "./McpManager.model";
 
 export default function McpManager() {
   const { t } = useTranslation();
@@ -582,7 +450,7 @@ export default function McpManager() {
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-sm font-bold text-white">{t("mcp.title")}</h3>
-          
+
         </div>
         <div className="flex gap-2">
           <button
@@ -772,76 +640,11 @@ export default function McpManager() {
           {/* 托管安装：不是 npm 包的 MCP 服务器（发行包 + bin）在这登记一次，
               由本应用下载解压，命令自动指向解压出来的可执行文件。 */}
           {fTransport === "stdio" && (
-            <div className="rounded-ctl border border-white/10 bg-black/20 p-2.5 space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <label className="text-micro text-slate-500">{t("mcp.managedTitle")}</label>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setFManaged(
-                      fManaged
-                        ? null
-                        : {
-                            repo: "",
-                            tagTemplate: "v{version}",
-                            assetPrefix: "",
-                            assetSuffix: ".zip",
-                            extractSubdir: "",
-                            executable: "",
-                          },
-                    )
-                  }
-                  className="px-2 py-0.5 rounded text-micro bg-white/5 border border-white/10 text-slate-300 hover:text-white cursor-pointer"
-                >
-                  {fManaged ? t("mcp.managedDisable") : t("mcp.managedEnable")}
-                </button>
-              </div>
-              {fManaged ? (
-                <>
-                  <input
-                    value={fManaged.repo}
-                    onChange={(e) => patchManaged({ repo: e.target.value })}
-                    placeholder="owner/repo"
-                    className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
-                  />
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <input
-                      value={fManaged.tagTemplate}
-                      onChange={(e) => patchManaged({ tagTemplate: e.target.value })}
-                      placeholder="v{version}"
-                      className="ui-input rounded-ctl px-2.5 py-1.5 text-tiny text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
-                    />
-                    <input
-                      value={fManaged.assetSuffix}
-                      onChange={(e) => patchManaged({ assetSuffix: e.target.value })}
-                      placeholder=".zip"
-                      className="ui-input rounded-ctl px-2.5 py-1.5 text-tiny text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
-                    />
-                    <input
-                      value={fManaged.assetPrefix}
-                      onChange={(e) => patchManaged({ assetPrefix: e.target.value })}
-                      placeholder="name-{version}"
-                      className="ui-input rounded-ctl px-2.5 py-1.5 text-tiny text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
-                    />
-                    <input
-                      value={fManaged.extractSubdir}
-                      onChange={(e) => patchManaged({ extractSubdir: e.target.value })}
-                      placeholder={t("mcp.managedExtractPh")}
-                      className="ui-input rounded-ctl px-2.5 py-1.5 text-tiny text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
-                    />
-                  </div>
-                  <input
-                    value={fManaged.executable}
-                    onChange={(e) => patchManaged({ executable: e.target.value })}
-                    placeholder="bin/xxx.bat"
-                    className="w-full ui-input rounded-ctl px-2.5 py-1.5 text-body text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]"
-                  />
-                  <p className="text-micro text-slate-500 leading-relaxed">{t("mcp.managedHint")}</p>
-                </>
-              ) : (
-                <p className="text-micro text-slate-500 leading-relaxed">{t("mcp.managedOffHint")}</p>
-              )}
-            </div>
+            <McpManagedSourceEditor
+              setFManaged={setFManaged}
+              fManaged={fManaged}
+              patchManaged={patchManaged}
+            />
           )}
 
           <div>
