@@ -207,7 +207,7 @@ pub struct ModelRoute {
     pub include_v1: Option<bool>,
     /// 用户显式声明的「该模型是否支持图片输入」（None = 自动）。
     ///
-    /// 与 [`crate::commands::ai::models::RouteCandidate::supports_image`] 同源：
+    /// 与应用层聚合候选的 supports_image 使用同一配置含义：
     /// 聚合候选与代理路由都从这里取「显式声明」，优先级高于注册表启发式
     /// （三态判定见 [`super::optimizers::resolve_image_input_capability`]）。
     #[serde(default)]

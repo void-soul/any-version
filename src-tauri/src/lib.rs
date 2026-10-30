@@ -232,6 +232,7 @@ fn init_tracing_and_panic_hook() {
 pub fn run() {
     exit_log::exit_log("=== app 启动 run() ===");
     init_tracing_and_panic_hook();
+    let _ = proxy::hooks::install(std::sync::Arc::new(commands::ai::proxy_hooks::AppProxyHooks));
     // Pending restore/migration must finish before any configuration-derived path
     // or database connection is opened. Failure keeps the plan for retry.
     if let Err(error) = commands::storage_maintenance::apply_pending_operations() {

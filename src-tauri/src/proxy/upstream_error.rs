@@ -17,7 +17,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use crate::commands::ai::aggregate::{classify_failure, FailureClass};
+use super::failure::{classify_failure, FailureClass};
 
 /// 上游失败的业务种类。
 ///

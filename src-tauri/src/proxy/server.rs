@@ -53,14 +53,10 @@ fn record_proxy_usage(
     duration_ms: u64,
     first_token_ms: u64,
 ) {
-    use crate::commands::ai::usage::{log_usage_entry, UsageEntry};
-    let entry = UsageEntry::success(tool_id, model, Some(provider_id))
-        .tokens(input_tokens, output_tokens)
-        .cache(cache_read_tokens, cache_write_tokens)
-        .timing(duration_ms, first_token_ms);
-    if let Err(e) = log_usage_entry(&entry) {
-        eprintln!("[proxy] 记录用量失败: {}", e);
-    }
+    super::hooks::current().record_usage(super::hooks::UsageRecord {
+        tool_id, provider_id, model, input_tokens, output_tokens,
+        cache_read_tokens, cache_write_tokens, duration_ms, first_token_ms,
+    });
 }
 
 /// 打印代理网络请求日志（统一前缀，不打印任何敏感头/密钥）。
@@ -144,7 +140,7 @@ fn log_proxy_raw(msg: &str, s: &str) {
         log_proxy(&format!(
             "{}: {}...(truncated, total {} bytes)",
             msg,
-            crate::commands::utils::truncate_utf8(s, 200_000),
+            crate::commands::foundation::truncate_utf8(s, 200_000),
             s.len()
         ));
     } else {
@@ -191,7 +187,7 @@ async fn require_proxy_token_mw(
 ) -> Response {
     let path = req.uri().path().to_string();
     let expected = state.config.read().await.auth_token.clone();
-    if expected.is_empty() || path == "/health" || path.starts_with("/collab") {
+    if expected.is_empty() || path == "/health" || super::hooks::current().independently_authenticated(&path) {
         return next.run(req).await;
     }
     let headers = req.headers();
@@ -505,10 +501,7 @@ pub async fn serve_proxy(config: ProxyConfig, listener: std::net::TcpListener) -
             other => return Err(format!("未知入站协议: {}", other)),
         }
     }
-    let app = app
-        .route("/collab/agent/send", post(collab_agent_send_handler))
-        .route("/collab/agent/message", post(collab_agent_message_handler))
-        .route("/collab/agent/task", post(collab_agent_task_handler))
+    let app = super::hooks::current().extend_routes(app)
         .layer(middleware::from_fn_with_state(state.clone(), require_proxy_token_mw))
         .layer(middleware::from_fn_with_state(state.clone(), log_requests_mw))
         .fallback(catch_all_handler)
@@ -518,73 +511,6 @@ pub async fn serve_proxy(config: ProxyConfig, listener: std::net::TcpListener) -
         .await
         .map_err(|e| format!("代理服务器错误: {}", e))?;
     Ok(())
-}
-
-// ─── 协同 agent 总线端点（C/D/E：agent 主动互聊 / 消息 / 任务流） ───
-// 鉴权：X-Collab-Token 必须等于该房间的 bus token（由 dispatch_to_tool 注入到被派发 agent 的环境）。
-
-async fn collab_agent_send_handler(
-    State(state): State<ProxyState>,
-    headers: HeaderMap,
-    Json(body): Json<Value>,
-) -> impl IntoResponse {
-    let room_id = body.get("room_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let token = headers.get("X-Collab-Token").and_then(|h| h.to_str().ok()).unwrap_or("");
-    if token != crate::commands::ai::collab::room_bus_token(&room_id) {
-        return (StatusCode::FORBIDDEN, "invalid token").into_response();
-    }
-    let app = match &state.app_handle {
-        Some(a) => a.clone(),
-        None => return (StatusCode::INTERNAL_SERVER_ERROR, "no app handle").into_response(),
-    };
-    let from = body.get("from").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let to = body.get("to").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let message = body.get("message").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let parent = body.get("parent").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let request_id = crate::commands::ai::collab::agent_delegate(app, &room_id, &from, &to, &message, parent.as_deref()).await;
-    match crate::commands::ai::collab::await_delegation(&request_id, 1800).await {
-        Some((status, result)) => Json(json!({ "status": status, "result": result })).into_response(),
-        None => (StatusCode::REQUEST_TIMEOUT, "delegation not found").into_response(),
-    }
-}
-
-async fn collab_agent_message_handler(
-    State(state): State<ProxyState>,
-    headers: HeaderMap,
-    Json(body): Json<Value>,
-) -> impl IntoResponse {
-    let room_id = body.get("room_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let token = headers.get("X-Collab-Token").and_then(|h| h.to_str().ok()).unwrap_or("");
-    if token != crate::commands::ai::collab::room_bus_token(&room_id) {
-        return (StatusCode::FORBIDDEN, "invalid token").into_response();
-    }
-    let app = match &state.app_handle {
-        Some(a) => a.clone(),
-        None => return (StatusCode::INTERNAL_SERVER_ERROR, "no app handle").into_response(),
-    };
-    let from = body.get("from").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let message = body.get("message").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let parent = body.get("parent").and_then(|v| v.as_str()).map(|s| s.to_string());
-    crate::commands::ai::collab::collab_post_message(app, &room_id, &from, &message, parent.as_deref());
-    Json(json!({ "ok": true })).into_response()
-}
-
-async fn collab_agent_task_handler(
-    State(state): State<ProxyState>,
-    headers: HeaderMap,
-    Json(body): Json<Value>,
-) -> impl IntoResponse {
-    let room_id = body.get("room_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let token = headers.get("X-Collab-Token").and_then(|h| h.to_str().ok()).unwrap_or("");
-    if token != crate::commands::ai::collab::room_bus_token(&room_id) {
-        return (StatusCode::FORBIDDEN, "invalid token").into_response();
-    }
-    let app = match &state.app_handle {
-        Some(a) => a.clone(),
-        None => return (StatusCode::INTERNAL_SERVER_ERROR, "no app handle").into_response(),
-    };
-    let res = crate::commands::ai::collab::collab_task_op(app, &room_id, &body);
-    Json(res).into_response()
 }
 
 /// 把 bind 失败翻译成可操作的提示（抄自 CodexPlusPlus 0e9a86a）。
@@ -1269,10 +1195,10 @@ async fn process_request(
         // 业务码优先：11102 → model_unavailable、14018 → billing、11128 → transient…
         // 业务码不明时才退回按状态码判（保持 AI 模块的既有统计口径）。
         let failure_class = upstream_error::to_failure_class(kind, status.as_u16(), &error_body);
-        let _ = crate::commands::ai::usage::log_usage_failure(
+        super::hooks::current().record_failure(
             &config.tool_id,
             &actual_model,
-            Some(&config.provider_id),
+            &config.provider_id,
             failure_class.as_str(),
         );
         return (
@@ -2078,7 +2004,7 @@ fn record_usage_from_response(
     // 缓存命中：Anthropic 走 cache_read_input_tokens，OpenAI 系走 prompt_tokens_details.cached_tokens
     let (cache_read, cache_write) = resp
         .get("usage")
-        .map(crate::commands::ai::usage::cache_tokens_from_json)
+        .map(super::metering::cache_tokens_from_json)
         .unwrap_or((0, 0));
     if in_t > 0 || out_t > 0 || cache_read > 0 {
         record_proxy_usage(

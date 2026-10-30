@@ -1,0 +1,9 @@
+{
+  "qid": "Q-0522",
+  "question": "共享AI请求通道和协议proxy反向依赖AI业务模型、usage数据库和协作服务，模块禁用边界不清晰。",
+  "root_cause": "公共传输实现位于业务目录并直接接受AiProvider；proxy直接调用业务持久化与collab HTTP handler，同时从聚合业务导入纯失败分类。",
+  "solution": "1. 把AI传输迁到公共proxy/channel，以ChannelProvider最小endpoint契约替代业务模型；ai/channel保留兼容重导出和AiProvider适配。\n2. 公共ApplicationHooks注入用量持久化和应用专属路由，lib组合根安装应用适配；无注入时无业务数据库副作用。\n3. 纯失败分类和cache usage解析只保留一份公共实现，业务入口兼容重导出。\n4. 代理鉴权仅对应用明确注册的三个协作端点豁免，未知collab路径不再自动跳过。\n主agent验收：Main lib compiled; hooks1 + application hooks1 + channel12 + upstream_error13 + aggregate32 = 59 tests passed. Proxy has no AI business imports; application hooks installed only at composition root.",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/proxy/** | Public transport contracts, usage parsing, failure classification and application hook injection |\n| **src-tauri/src/commands/ai/{channel,aggregate,usage,proxy_hooks,mod}.rs** | Application adapters and backward compatible facades |\n| **src-tauri/src/lib.rs** | Install application hook at composition root |",
+  "status": "已验证",
+  "validation": "Main lib compiled; hooks1 + application hooks1 + channel12 + upstream_error13 + aggregate32 = 59 tests passed. Proxy has no AI business imports; application hooks installed only at composition root."
+}
