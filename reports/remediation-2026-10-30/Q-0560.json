@@ -1,0 +1,22 @@
+{
+  "qid": "Q-0560",
+  "parent_task": "Q-0506",
+  "question": "播放输出、队列切换、解码探测、快照与周期任务需要明确文件所有权。",
+  "root_cause": "播放输出、队列切换、解码探测、快照与周期任务需要明确文件所有权。 原模块长期追加实现，领域辅助和单例没有清晰文件边界。",
+  "solution": "保留原模块公开facade及Tauri命令宏，通过正常私有子模块按职责划分实现；保留原单例静态状态的唯一所有权、运行时任务生命周期和所有原有测试。同模块辅助最小提升pub(super)，原pub(super)按旧祖先pub(in ...)保留可见范围。\n主agent验收：Main lib compiled; Music117 tests passed. Original function inventory and singleton ownership preserved.",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/music/player.rs** | 兼容facade与职责声明 |\n| **src-tauri/src/commands/music/player/** | 独立职责实现与原有回归 |",
+  "status": "已验证",
+  "paths": [
+    "src-tauri/src/commands/music/player.rs",
+    "src-tauri/src/commands/music/player/models.rs",
+    "src-tauri/src/commands/music/player/diagnostics.rs",
+    "src-tauri/src/commands/music/player/output.rs",
+    "src-tauri/src/commands/music/player/queue.rs",
+    "src-tauri/src/commands/music/player/playback.rs",
+    "src-tauri/src/commands/music/player/snapshot.rs",
+    "src-tauri/src/commands/music/player/tasks.rs",
+    "src-tauri/src/commands/music/player/decode_probe_tests.rs",
+    "src-tauri/src/commands/music/player/tests.rs"
+  ],
+  "validation": "Main lib compiled; Music117 tests passed. Original function inventory and singleton ownership preserved."
+}
