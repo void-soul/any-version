@@ -2,381 +2,15 @@
 //! 参考 EchoBird 的 tools/ 目录结构：每个工具一个 config.json + paths.json。
 //! 新增工具 = 在 ai-tools/ 目录下添加 JSON 文件，零代码改动。
 
+use super::ai::skills::skills_dir;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use super::ai::skills::skills_dir;
 
 // ─── JSON 类型定义 ───
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ToolConfig {
-    pub id: String,
-    pub display_name: String,
-    /// 协同模式中显示的头像（emoji 或文字，如 "🤖"）。为空时由前端按 id 回退。
-    #[serde(default)]
-    pub avatar: Option<String>,
-    /// 协同模式中显示的昵称覆盖（为空时使用 display_name）。
-    #[serde(default)]
-    pub nickname: Option<String>,
-    #[serde(default)]
-    pub category: String,
-    #[serde(default)]
-    pub website: String,
-    /// 官网地址（优先于 website；website 可能指向 GitHub 仓库）
-    #[serde(default)]
-    pub homepage: Option<String>,
-    /// GitHub 仓库地址（homepage / website 均缺省时兜底）
-    #[serde(default)]
-    pub github: Option<String>,
-    /// 工具「原生」协议（兼容旧逻辑：one_m 后缀、配置清理判定）。
-    /// 新逻辑以 supports_openai/anthropic/google 三标志为准。
-    #[serde(default)]
-    pub api_protocol: String,
-    #[serde(default)]
-    pub support_model: bool,
-    #[serde(default)]
-    pub support_fallback_model: bool,
-    #[serde(default)]
-    pub support_one_m_context: bool,
-    /// 工具支持的入站协议（代理为这些协议都注册路由）。
-    #[serde(default)]
-    pub supports_openai: bool,
-    #[serde(default)]
-    pub supports_anthropic: bool,
-    #[serde(default)]
-    pub supports_google: bool,
-    /// 内置模型名称列表（伪装模型名的预设值 C）。
-    /// 非空时用户可把所选取的供应商模型 B「伪装」成其中某项 C。
-    ///
-    /// **必须按「新 → 旧」排序**：两个桌面端（Claude Desktop / ChatGPT 桌面端）在
-    /// 「用户没填伪装名」时，会自动拿**清单第一项**当兜底声明名 —— 写死的兜底名迟早
-    /// 会变成已废弃的型号，而用户看不出任何异常。清单是唯一的退役入口：官方下架一个
-    /// 型号就从这里删掉，新型号加在最前面。
-    #[serde(default)]
-    pub builtin_models: Vec<String>,
-    /// 该工具是否支持请求优化（启动页可开关）
-    #[serde(default)]
-    pub supports_optimizer: bool,
-    /// 该工具是否支持抹平协议差异（整流器，启动页可开关）
-    #[serde(default)]
-    pub supports_rectifier: bool,
-    /// 该工具是否使用官方**插件市场**（Codex 系是 `~/.codex/config.toml` 的
-    /// `[marketplaces.*]`，Claude Code 是 `~/.claude/settings.json` 的 `extraKnownMarketplaces`）。
-    #[serde(default)]
-    pub supports_plugin_marketplace: bool,
-    /// 插件市场走哪套后端：`"codex"`（`codex plugin`）或 `"claude"`（`claude plugin`）。
-    ///
-    /// 未声明时按 `"codex"` 处理 —— 向后兼容：Claude 接入之前，这个开关只有 Codex 系在用。
-    #[serde(default)]
-    pub plugin_marketplace_kind: Option<String>,
-    pub resume_cmd: Option<String>,
-    pub continue_cmd: Option<String>,
-    /// 分叉命令模板（带 `{session_id}` 占位）：从指定会话复制一份新会话再进入，原会话不动。
-    /// 只有 CLI 自己实现了 fork 才有意义（如 claude `--resume {session_id} --fork-session`）；
-    /// 未声明的工具前端不显示「分叉」入口。
-    #[serde(default)]
-    pub fork_cmd: Option<String>,
-    // 以下都是「可有可无」的声明。必须给 `#[serde(default)]`：漏一个字段整份 config.json
-    // 就解析失败，而这个工具会被**整个从注册表里丢掉**（表现为「列表里莫名少了一个工具」，
-    // 只有 stderr 上一行 parse 失败，界面完全看不出来）。现状：omp 因为少写 cacheDirs
-    // 一直没进注册表。
-    #[serde(default)]
-    pub cache_dirs: Vec<String>,
-    #[serde(default)]
-    pub pkg_manager: Option<String>,
-    #[serde(default)]
-    pub pkg_name: Option<String>,
-    #[serde(default)]
-    pub config_file: Option<ConfigFileDef>,
-    #[serde(default)]
-    pub model_format: Option<ModelFormatDef>,
-    #[serde(default)]
-    pub sessions: Option<SessionScanDef>,
-    #[serde(default)]
-    pub skills_dir: Option<String>,
-    /// 非交互派发命令模板（协同模式）：`{prompt_file}` 占位符会被替换为提示词文件路径（已加引号）。
-    #[serde(default)]
-    pub dispatch_cmd: Option<String>,
-    /// 续聊派发命令模板：同一房间内对同一工具的后续派发走此模板（如 claude --continue），实现上下文连续。
-    #[serde(default)]
-    pub dispatch_continue_cmd: Option<String>,
-    /// 续聊派发命令模板（带 {session_id} 占位，按工具原生会话 id 精确恢复上下文）。
-    #[serde(default)]
-    pub dispatch_resume_cmd: Option<String>,
-    /// 派发运行模式："stream-json"(claude) / "codex-json"(codex) / "opencode-json"(opencode)，省略则一次性读取输出（兜底）。
-    #[serde(default)]
-    pub runner: Option<String>,
-    /// 提示词传入方式："file"(--input-file 占位) / "stdin"(子进程 stdin 喂临时文件) / "arg"(`{prompt}` 内联)，省略默认 file。
-    #[serde(default)]
-    pub prompt_mode: Option<String>,
-    #[serde(default)]
-    pub skills_dir_xdg: Option<String>,
-}
-
-impl ToolConfig {
-    /// 工具支持的入站协议列表（用于代理为每种协议注册路由）。
-    /// 若三个标志都为空（旧配置），按 `api_protocol` 回退推导。
-    pub fn inbound_protocols(&self) -> Vec<String> {
-        let mut v = Vec::new();
-        if self.supports_openai { v.push("openai".to_string()); }
-        if self.supports_anthropic { v.push("anthropic".to_string()); }
-        if self.supports_google { v.push("google".to_string()); }
-        if v.is_empty() {
-            // 旧配置兜底：both → anthropic
-            match self.api_protocol.as_str() {
-                "anthropic" | "both" => v.push("anthropic".to_string()),
-                "google" => v.push("google".to_string()),
-                _ => v.push("openai".to_string()),
-            }
-        }
-        v
-    }
-
-    /// 工具的「原生」协议：用于协议转换消息展示与 one_m 后缀判定。
-    pub fn native_protocol(&self) -> String {
-        if self.supports_anthropic { "anthropic".to_string() }
-        else if self.supports_google { "google".to_string() }
-        else { "openai".to_string() }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConfigFileDef {
-    pub path: String,
-    pub format: String,
-    #[serde(default)]
-    pub schema: Option<String>,
-    pub write: Option<HashMap<String, String>>,
-    /// 自定义写入器：schema 复杂到「路径 → 值」表达不了的（Claude Desktop 的 3P 网关要
-    /// 跨 `Claude-3p/configLibrary/<id>.json` 与 `_meta.json` 互相引用），交给 Rust 侧整份生成。
-    ///
-    /// 抄 EchoBird：它的 `tools/*/config.json` 用 `"custom": true` 标记，实际写入在
-    /// `src-tauri/src/services/tool_config_manager/<tool>.rs`（我们对应
-    /// `commands/ai/tool_config_custom.rs`）。`true` = 用工具 id 当写入器名；也可以写字符串
-    /// 显式指定（多个工具复用同一个写入器时用，只是路径不同）。
-    #[serde(default, alias = "customWriter")]
-    pub custom: Option<CustomWriter>,
-    /// 目录级环境变量覆盖（按顺序取第一个非空值作为配置目录）：如 OpenCode v2 的
-    /// `OPENCODE_CONFIG_DIR`。目录确定后文件名沿用 `path` 的文件名。
-    /// 抄自 EchoBird c6f4bc25。
-    #[serde(default, alias = "pathEnvDirs")]
-    pub path_env_dirs: Vec<String>,
-    /// 用 `XDG_CONFIG_HOME` 拼接的子目录名（如 `opencode`），在 `path_env_dirs` 之后生效。
-    #[serde(default, alias = "xdgSubdir")]
-    pub xdg_subdir: Option<String>,
-    /// 同 stem 的其它扩展名文件已存在时优先沿用它（如 OpenCode v2 的 `opencode.jsonc`）。
-    #[serde(default, alias = "preferExistingExtensions")]
-    pub prefer_existing_extensions: Vec<String>,
-    /// 写入前**先删掉**的键（点分路径，支持 `文件#子路径`）。
-    ///
-    /// 用途：声明改过时，旧键会**留在用户文件里**——写入侧是语义合并，只替换受管键、
-    /// 其余原样保留，旧键于是继续生效。典型例子：Codex 早期用
-    /// `model_providers.X.env_key` 指向环境变量，现在改走 `auth.json` + 
-    /// `requires_openai_auth`；不删掉残留的 `env_key`，Codex 仍会去环境变量找 key 并报错。
-    /// （CodexPlusPlus 同样维护了一份待清理键列表，`relay_config.rs` 的 `remove_root_key`。）
-    #[serde(default, alias = "removeKeys")]
-    pub remove_keys: Vec<String>,
-}
-
-/// `configFile.custom` 的两种写法（untagged：`true` 或 `"workbuddy"`）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum CustomWriter {
-    Flag(bool),
-    Key(String),
-}
-
-impl ConfigFileDef {
-    /// 该工具要用的自定义写入器名（None = 走通用的「路径 → 值」写入）。
-    pub fn custom_writer(&self, tool_id: &str) -> Option<String> {
-        match self.custom.as_ref()? {
-            // `"custom": true` → 工具 id 就是写入器名（EchoBird 的写法）
-            CustomWriter::Flag(true) => Some(tool_id.to_string()),
-            CustomWriter::Flag(false) => None,
-            CustomWriter::Key(key) => {
-                let key = key.trim();
-                if key.is_empty() {
-                    None
-                } else {
-                    Some(key.to_string())
-                }
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelFormatDef {
-    pub prefix: Option<String>,
-    #[serde(default)]
-    pub extract_last: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionScanDef {
-    #[serde(rename = "type")]
-    pub scan_type: String,
-    #[serde(default)]
-    pub dirs: Vec<String>,
-}
-
-/// 非标准安装路径的检测提示。各字段仅在对应平台上生效。
-/// 用于 GUI/桌面应用在 paths.json 硬编码路径之外的检测：
-/// Windows 扫描注册表 Uninstall 键、macOS 查找 /Applications、Linux 扫描 .desktop。
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct InstallHints {
-    /// Windows: 匹配注册表 `DisplayName`（精确、大小写不敏感）。
-    #[serde(default)]
-    pub windows_display_names: Vec<String>,
-    /// Windows: 前缀匹配（用于 DisplayName 内嵌版本号的应用，如 "WorkBuddy 4.24.2"）。
-    #[serde(default)]
-    pub windows_display_name_prefixes: Vec<String>,
-    /// Windows: 可选的 `Publisher` 过滤（消歧义）。
-    #[serde(default)]
-    pub windows_publisher: Option<String>,
-    /// macOS: 要搜索的 `.app` 名称（在 /Applications 与 ~/Applications 下查找）。
-    #[serde(default)]
-    pub macos_app_name: Option<String>,
-    /// Linux: 匹配 .desktop 文件 `Name=` 的名称列表。
-    #[serde(default)]
-    pub linux_desktop_names: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PathConfig {
-    #[serde(default)]
-    pub name: String,
-    #[serde(default)]
-    pub category: String,
-    #[serde(default)]
-    pub api_protocol: Vec<String>,
-    #[serde(default)]
-    pub command: String,
-    #[serde(default)]
-    pub start_command: String,
-    #[serde(default)]
-    pub detect_cmd: String,
-    #[serde(default)]
-    pub install_cmd: String,
-    #[serde(default)]
-    pub uninstall_cmd: Option<String>,
-    #[serde(default)]
-    pub paths: HashMap<String, Vec<String>>,
-    /// MSIX/Store 应用启动 URI（如 "shell:AppsFolder\\Claude_...!Claude"），
-    /// 用于没有普通 .exe 路径的应用启动与检测。
-    #[serde(default)]
-    pub launch_uri: Option<String>,
-    /// 非标准安装路径的检测提示（注册表 / Applications / .desktop）。
-    #[serde(default)]
-    pub install_hints: Option<InstallHints>,
-}
-
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProviderPreset {
-    pub id: String,
-    pub name: String,
-    pub category: String,
-    pub website: String,
-    pub openai_url: String,
-    pub anthropic_url: String,
-    #[serde(default)]
-    pub google_url: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SkillsScanConfig {
-    pub description: String,
-    pub base_skills_dir: String,
-    pub tool_skills_dirs: HashMap<String, Vec<String>>,
-    /// 会主动读取 canonical 目录（~/.agents/skills）的工具列表。
-    /// 这些工具不应再对其自身 skills 目录建 junction，否则同一批技能
-    /// 会被「原生目录(junction→canonical)」和「canonical 直读」各读一遍 → 重复告警。
-    #[serde(default)]
-    pub reads_agents_skills: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McpToolConfig {
-    /// 该工具的中心 MCP 配置文件路径（支持 ~ 与 %VAR%）
-    pub config_path: String,
-    /// 配置格式：`claude`(Claude Code) | `gemini`(Qwen/Gemini) | `opencode`(OpenCode 系)
-    pub format: String,
-    /// 外部指定的 MCP 根 Key（如 "mcp" 或 "mcpServers"）
-    #[serde(default)]
-    pub mcp_key: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct McpConfig {
-    pub description: String,
-    pub tools: HashMap<String, McpToolConfig>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TerminalsConfig {
-    pub description: String,
-    pub terminals: HashMap<String, TerminalDef>,
-    pub proxy_settings: ProxySettingsDef,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TerminalDef {
-    pub name: String,
-    pub exe_names: Vec<String>,
-    #[serde(default)]
-    pub exe_path: Option<String>,
-    #[serde(default)]
-    pub always: bool,
-    #[serde(default)]
-    pub launch_args: Option<Vec<String>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProxySettingsDef {
-    pub default_port: u16,
-    pub listen_address: String,
-    pub timeout_seconds: u32,
-}
-
 // ─── 编译后嵌入的运行时结构 ───
-
-/// 与前端交互的 Provider 预设 DTO。
-///
-/// 注意：**不要**加 `rename_all = "camelCase"`。前端 `Preset` 类型与 AI 配置面
-/// （`AiProvider`）一致按 snake_case 读 `openai_url` 等字段；一旦序列化成
-/// `openaiUrl`，前端取不到 URL → 「添加预设供应商」只剩名称和官网。
-/// （camelCase rename 只属于上面反序列化 `providers.json` 的 `ProviderPreset`。）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderPresetDto {
-    pub id: String,
-    pub name: String,
-    pub category: String,
-    pub website: String,
-    pub openai_url: String,
-    pub anthropic_url: String,
-    pub google_url: String,
-}
-
-/// 工具配置文件的简要信息（给前端看「模型会写到哪里」）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolConfigFileDto {
-    pub path: String,
-    pub format: String,
-}
 
 /// 由 paths.json 的形态分类推导粗粒度归类（CLI / 桌面端 / 其它）。
 ///
@@ -491,7 +125,8 @@ impl AiToolRegistry {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if path.is_dir() {
-                        let tool_id = path.file_name()
+                        let tool_id = path
+                            .file_name()
                             .and_then(|n| n.to_str())
                             .unwrap_or("")
                             .to_string();
@@ -501,34 +136,49 @@ impl AiToolRegistry {
                         let config_path = path.join("config.json");
                         let paths_path = path.join("paths.json");
                         if !config_path.exists() || !paths_path.exists() {
-                            eprintln!("[ai_registry] 跳过 {}: config.json 或 paths.json 不存在", tool_id);
+                            eprintln!(
+                                "[ai_registry] 跳过 {}: config.json 或 paths.json 不存在",
+                                tool_id
+                            );
                             continue;
                         }
                         let config_str = match fs::read_to_string(&config_path) {
                             Ok(s) => s,
                             Err(e) => {
-                                eprintln!("[ai_registry] 读取 config.json 失败 [{}]: {}", tool_id, e);
+                                eprintln!(
+                                    "[ai_registry] 读取 config.json 失败 [{}]: {}",
+                                    tool_id, e
+                                );
                                 continue;
                             }
                         };
                         let paths_str = match fs::read_to_string(&paths_path) {
                             Ok(s) => s,
                             Err(e) => {
-                                eprintln!("[ai_registry] 读取 paths.json 失败 [{}]: {}", tool_id, e);
+                                eprintln!(
+                                    "[ai_registry] 读取 paths.json 失败 [{}]: {}",
+                                    tool_id, e
+                                );
                                 continue;
                             }
                         };
                         let config = match serde_json::from_str::<ToolConfig>(&config_str) {
                             Ok(c) => c,
                             Err(e) => {
-                                eprintln!("[ai_registry] 解析 config.json 失败 [{}]: {}", tool_id, e);
+                                eprintln!(
+                                    "[ai_registry] 解析 config.json 失败 [{}]: {}",
+                                    tool_id, e
+                                );
                                 continue;
                             }
                         };
                         let paths = match serde_json::from_str::<PathConfig>(&paths_str) {
                             Ok(p) => p,
                             Err(e) => {
-                                eprintln!("[ai_registry] 解析 paths.json 失败 [{}]: {}", tool_id, e);
+                                eprintln!(
+                                    "[ai_registry] 解析 paths.json 失败 [{}]: {}",
+                                    tool_id, e
+                                );
                                 continue;
                             }
                         };
@@ -540,52 +190,50 @@ impl AiToolRegistry {
         }
 
         // 加载 providers.json
-        let providers = Self::load_json::<Vec<ProviderPreset>>(
-            &registry_dir.join("providers.json"),
-        ).unwrap_or_else(|_| {
-            eprintln!("[ai_registry] 无法加载 providers.json，使用空列表");
-            Vec::new()
-        });
+        let providers =
+            Self::load_json::<Vec<ProviderPreset>>(&registry_dir.join("providers.json"))
+                .unwrap_or_else(|_| {
+                    eprintln!("[ai_registry] 无法加载 providers.json，使用空列表");
+                    Vec::new()
+                });
 
         // 加载 skills-scan.json
-        let skills_scan = Self::load_json::<SkillsScanConfig>(
-            &registry_dir.join("skills-scan.json"),
-        ).unwrap_or_else(|_| {
-            eprintln!("[ai_registry] 无法加载 skills-scan.json，使用默认配置");
-            SkillsScanConfig {
-                description: String::new(),
-                base_skills_dir: "~/.agents/skills".to_string(),
-                tool_skills_dirs: HashMap::new(),
-                reads_agents_skills: Vec::new(),
-            }
-        });
+        let skills_scan =
+            Self::load_json::<SkillsScanConfig>(&registry_dir.join("skills-scan.json"))
+                .unwrap_or_else(|_| {
+                    eprintln!("[ai_registry] 无法加载 skills-scan.json，使用默认配置");
+                    SkillsScanConfig {
+                        description: String::new(),
+                        base_skills_dir: "~/.agents/skills".to_string(),
+                        tool_skills_dirs: HashMap::new(),
+                        reads_agents_skills: Vec::new(),
+                    }
+                });
 
         // 加载 mcp-config.json
-        let mcp = Self::load_json::<McpConfig>(
-            &registry_dir.join("mcp-config.json"),
-        ).unwrap_or_else(|_| {
-            eprintln!("[ai_registry] 无法加载 mcp-config.json，使用默认配置");
-            McpConfig {
-                description: String::new(),
-                tools: HashMap::new(),
-            }
-        });
+        let mcp = Self::load_json::<McpConfig>(&registry_dir.join("mcp-config.json"))
+            .unwrap_or_else(|_| {
+                eprintln!("[ai_registry] 无法加载 mcp-config.json，使用默认配置");
+                McpConfig {
+                    description: String::new(),
+                    tools: HashMap::new(),
+                }
+            });
 
         // 加载 terminals.json
-        let terminals = Self::load_json::<TerminalsConfig>(
-            &registry_dir.join("terminals.json"),
-        ).unwrap_or_else(|_| {
-            eprintln!("[ai_registry] 无法加载 terminals.json，使用默认配置");
-            TerminalsConfig {
-                description: String::new(),
-                terminals: HashMap::new(),
-                proxy_settings: ProxySettingsDef {
-                    default_port: 15721,
-                    listen_address: "127.0.0.1".to_string(),
-                    timeout_seconds: 300,
-                },
-            }
-        });
+        let terminals = Self::load_json::<TerminalsConfig>(&registry_dir.join("terminals.json"))
+            .unwrap_or_else(|_| {
+                eprintln!("[ai_registry] 无法加载 terminals.json，使用默认配置");
+                TerminalsConfig {
+                    description: String::new(),
+                    terminals: HashMap::new(),
+                    proxy_settings: ProxySettingsDef {
+                        default_port: 15721,
+                        listen_address: "127.0.0.1".to_string(),
+                        timeout_seconds: 300,
+                    },
+                }
+            });
 
         eprintln!(
             "[ai_registry] 加载完成: {} 个工具, {} 个 provider 预设",
@@ -593,7 +241,13 @@ impl AiToolRegistry {
             providers.len()
         );
 
-        Self { tools, providers, skills_scan, mcp, terminals }
+        Self {
+            tools,
+            providers,
+            skills_scan,
+            mcp,
+            terminals,
+        }
     }
 
     /// 查找 ai-tools 注册表目录。
@@ -603,15 +257,15 @@ impl AiToolRegistry {
     pub(crate) fn find_registry_dir() -> PathBuf {
         let mut search_dirs: Vec<PathBuf> = Vec::new();
 
-            // 开发构建优先用仓库源目录（原因见 `utils::dev_repo_root`）
-            if let Some(repo) = crate::commands::utils::dev_repo_root() {
-                search_dirs.push(repo);
-            }
+        // 开发构建优先用仓库源目录（原因见 `utils::dev_repo_root`）
+        if let Some(repo) = crate::commands::utils::dev_repo_root() {
+            search_dirs.push(repo);
+        }
 
-            // 优先在 Tauri 2 打包后的官方资源目录下查找
-            if let Some(res_dir) = crate::commands::utils::get_resource_dir() {
-                search_dirs.push(res_dir);
-            }
+        // 优先在 Tauri 2 打包后的官方资源目录下查找
+        if let Some(res_dir) = crate::commands::utils::get_resource_dir() {
+            search_dirs.push(res_dir);
+        }
 
         // exe 同目录及向上 5 层
         if let Ok(exe) = std::env::current_exe() {
@@ -647,22 +301,23 @@ impl AiToolRegistry {
 
         // Fallback: 使用默认路径
         eprintln!("[ai_registry] 未找到 ai-tools 目录，使用默认路径");
-        search_dirs.first().cloned().unwrap_or_else(|| PathBuf::from("ai-tools"))
+        search_dirs
+            .first()
+            .cloned()
+            .unwrap_or_else(|| PathBuf::from("ai-tools"))
     }
 
     fn load_json<T: serde::de::DeserializeOwned>(path: &PathBuf) -> Result<T, String> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| {
-                let msg = format!("[ai_registry] 读取文件失败 {}: {}", path.display(), e);
-                eprintln!("{}", msg);
-                msg
-            })?;
-        serde_json::from_str(&content)
-            .map_err(|e| {
-                let msg = format!("[ai_registry] JSON 解析失败 {}: {}", path.display(), e);
-                eprintln!("{}", msg);
-                msg
-            })
+        let content = fs::read_to_string(path).map_err(|e| {
+            let msg = format!("[ai_registry] 读取文件失败 {}: {}", path.display(), e);
+            eprintln!("{}", msg);
+            msg
+        })?;
+        serde_json::from_str(&content).map_err(|e| {
+            let msg = format!("[ai_registry] JSON 解析失败 {}: {}", path.display(), e);
+            eprintln!("{}", msg);
+            msg
+        })
     }
 
     // ─── 查询方法 ───
@@ -712,13 +367,21 @@ impl AiToolRegistry {
             .unwrap_or_else(|_| home.join(".config"));
         let entry = self.mcp.tools.get(tool_id)?;
         let resolved = if entry.config_path.starts_with("~/.config/") {
-            let relative = entry.config_path.strip_prefix("~/.config/").unwrap_or("").trim_start_matches('/');
+            let relative = entry
+                .config_path
+                .strip_prefix("~/.config/")
+                .unwrap_or("")
+                .trim_start_matches('/');
             config_home.join(relative)
         } else {
             Self::resolve_path(&entry.config_path, &home)
         };
         let mcp_key = entry.mcp_key.clone().unwrap_or_else(|| {
-            if entry.format == "opencode" { "mcp".to_string() } else { "mcpServers".to_string() }
+            if entry.format == "opencode" {
+                "mcp".to_string()
+            } else {
+                "mcpServers".to_string()
+            }
         });
         Some((resolved, entry.format.clone(), mcp_key))
     }
@@ -734,7 +397,12 @@ impl AiToolRegistry {
     // ─── 构建 DTO ───
 
     /// 将 ToolConfig 转换为前端使用的 AiToolDefDto
-    pub fn to_dto(config: &ToolConfig, paths: &PathConfig, installed: bool, version: Option<String>) -> AiToolDefDto {
+    pub fn to_dto(
+        config: &ToolConfig,
+        paths: &PathConfig,
+        installed: bool,
+        version: Option<String>,
+    ) -> AiToolDefDto {
         let pkg_name = config.pkg_name.as_deref().unwrap_or(&config.id);
         let upgrade_cmd = match config.pkg_manager.as_deref() {
             Some("npm") => format!("npm install -g {}@latest", pkg_name),
@@ -859,12 +527,16 @@ impl AiToolRegistry {
                 return Self::resolve_path(dir, &home).join(skill_id);
             }
             if let Some(dir) = &config.skills_dir_xdg {
-                return config_home.join(dir.trim_start_matches("~/.config/")).join(skill_id);
+                return config_home
+                    .join(dir.trim_start_matches("~/.config/"))
+                    .join(skill_id);
             }
         }
 
         // Fallback: ~/.{tool_id}/skills/{skill_id}
-        home.join(format!(".{}", tool_id)).join("skills").join(skill_id)
+        home.join(format!(".{}", tool_id))
+            .join("skills")
+            .join(skill_id)
     }
 
     // ─── 工具函数 ───
@@ -885,9 +557,15 @@ impl AiToolRegistry {
         let resolved_str = resolved.to_string_lossy().to_string();
         let final_str = resolved_str
             .replace("%APPDATA%", &std::env::var("APPDATA").unwrap_or_default())
-            .replace("%LOCALAPPDATA%", &std::env::var("LOCALAPPDATA").unwrap_or_default())
+            .replace(
+                "%LOCALAPPDATA%",
+                &std::env::var("LOCALAPPDATA").unwrap_or_default(),
+            )
             .replace("%USERPROFILE%", &home.to_string_lossy())
-            .replace("%PROGRAMFILES%", &std::env::var("ProgramFiles").unwrap_or_default());
+            .replace(
+                "%PROGRAMFILES%",
+                &std::env::var("ProgramFiles").unwrap_or_default(),
+            );
         PathBuf::from(final_str)
     }
 
@@ -962,218 +640,7 @@ pub fn update_tool_category(tool_id: String, category: String) -> Result<(), Str
     Ok(())
 }
 
+mod models;
+pub use models::*;
 #[cfg(test)]
-mod tests {
-    use super::{registry, tool_kind_of, ProviderPreset, ProviderPresetDto};
-
-    /// dsh 已从 **AI 工具** 里移除（2026-10-04）。
-    ///
-    /// 它仍然作为 **Node 服务**存在（`node-projects/harness.json` + `node_manager.rs`），
-    /// 那部分不受影响 —— 这里只保证它不会再出现在 AI 工具列表里。
-    /// 删掉 `ai-tools/dsh/` 就够了：工具注册表是配置驱动的，目录没了自然读不到。
-    #[test]
-    fn dsh_is_not_an_ai_tool_anymore() {
-        assert!(
-            registry().get_tool("dsh").is_none(),
-            "dsh 不该再注册为 AI 工具（ai-tools/dsh/ 是否被加回来了？）"
-        );
-    }
-
-    /// 回归：DTO 一旦被标上 `rename_all = "camelCase"`，URL 会序列化成
-    /// `openaiUrl`，前端按 `openai_url` 读取全部落空 → 添加预设只剩名称/官网。
-    #[test]
-    fn desktop_tools_are_registered_and_classified_as_desktop() {
-        // 从 EchoBird 移植进来的桌面端工具（category=Desktop）：
-        // 注册表读得到、且被归到 desktop —— 否则工具列表的「桌面端」分组永远是空的。
-        let reg = registry();
-        for id in [
-            "claudedesktop",
-            "chatgptdesktop",
-            "mimodesktop",
-            "kimidesktop",
-            "opencodedesktop",
-            "openscience",
-            "zcode",
-        ] {
-            let Some((config, paths)) = reg.get_tool(id) else {
-                panic!("注册表里没有桌面端工具 {}（ai-tools/{}/ 是否完整？）", id, id);
-            };
-            assert_eq!(
-                tool_kind_of(Some(&paths.category)),
-                "desktop",
-                "{} 的形态是 {}，没被归到桌面端",
-                id,
-                paths.category
-            );
-            // 声明了 configFile 才允许显示「设置模型」入口，两者必须一致
-            assert_eq!(
-                config.config_file.is_some(),
-                config.support_model,
-                "{} 的 configFile 与 supportModel 不一致（会成为点了没效果的假入口）",
-                id
-            );
-        }
-    }
-
-    /// **数据契约**：两个桌面端的 `builtinModels` 就是它们伪装名的**唯一来源**。
-    ///
-    /// 用户没填伪装名时，`tool_config_custom::effective_claimed_model` 会拿清单第一项
-    /// 当兜底声明名（写死的兜底名迟早变成已废弃型号，而用户看不出异常）。所以：
-    ///
-    /// 1. 清单不能空 —— 空了这两个工具就退化成「不伪装」，等于功能没上线；
-    /// 2. 每一项都必须**通过该工具的合法性校验** —— 不合法的项会被跳过，
-    ///    排在它后面的型号才会被选中，清单就白维护了；
-    /// 3. 清单按「新 → 旧」排序（第一项 = 当前在售最新），退役的型号要删掉。
-    #[test]
-    fn desktop_masquerade_lists_are_usable_as_fallback_source() {
-        use crate::commands::ai::tool_config_custom::{
-            is_legal_claudedesktop_model, is_legal_openai_model,
-        };
-
-        let reg = registry();
-        for (id, is_legal) in [
-            ("claudedesktop", is_legal_claudedesktop_model as fn(&str) -> bool),
-            ("chatgptdesktop", is_legal_openai_model as fn(&str) -> bool),
-        ] {
-            let cfg = reg
-                .get_tool_config(id)
-                .unwrap_or_else(|| panic!("注册表里没有 {id}"));
-            assert!(
-                !cfg.builtin_models.is_empty(),
-                "{id} 的 builtinModels 是空的：它在用户没填伪装名时拿不到兜底声明名，\
-                 自动伪装等于没上线（ai-tools/{id}/config.json）"
-            );
-            for (i, name) in cfg.builtin_models.iter().enumerate() {
-                assert!(
-                    is_legal(name),
-                    "{id} 的 builtinModels[{i}] = `{name}` 会被该工具的模型名校验剔除，\
-                     兜底时会跳过它 —— 清单里不该留这种项"
-                );
-            }
-        }
-    }
-
-    /// 回归：只要工具支持「设置模型」，就必须同时声明支持优化器 / 整流器。
-    ///
-    /// 这两组能力是代理侧的协议层能力（cache 注入、thinking 自适应、报错后改写重试…），
-    /// 与工具是 CLI 还是桌面端无关 —— 通过 Kira 启动时写进工具配置的就是本地代理地址，
-    /// 流量必然过代理。早先桌面端一律 `false`（保守默认），导致「桌面端选了模型
-    /// 却看不到这两组开关」，看起来像能力缺失。
-    #[test]
-    fn model_capable_tools_allow_optimizer_and_rectifier() {
-        let reg = registry();
-        for (id, (config, _)) in reg.tool_iter() {
-            if !config.support_model {
-                continue;
-            }
-            assert!(
-                config.supports_optimizer && config.supports_rectifier,
-                "{} 支持设置模型（流量走本地代理），却声明 supports_optimizer={} / supports_rectifier={}\
-                 → 启动页看不到「请求优化器 / 协议整流器」，请检查 ai-tools/{}/config.json",
-                id,
-                config.supports_optimizer,
-                config.supports_rectifier,
-                id,
-            );
-        }
-    }
-
-    /// 每个工具目录都必须能加载进注册表。
-    ///
-    /// 回归的是「少写一个字段 → 整份 config.json 解析失败 → 工具被静默丢掉」：
-    /// omp 就因为没有 `cacheDirs` 一直没出现在列表里，只在 stderr 留了一行 parse 失败。
-    #[test]
-    fn every_tool_directory_loads_into_the_registry() {
-        let dir = super::AiToolRegistry::find_registry_dir();
-        let mut dirs: Vec<String> = std::fs::read_dir(&dir)
-            .unwrap_or_else(|e| panic!("读不到 ai-tools 目录 {}: {e}", dir.display()))
-            .flatten()
-            .filter(|e| e.path().is_dir())
-            .map(|e| e.file_name().to_string_lossy().to_string())
-            .collect();
-        dirs.sort();
-        assert!(!dirs.is_empty(), "{} 下没有工具目录", dir.display());
-
-        let reg = registry();
-        let missing: Vec<String> = dirs
-            .iter()
-            .filter(|id| reg.get_tool_config(id).is_none())
-            .cloned()
-            .collect();
-        assert!(
-            missing.is_empty(),
-            "这些工具目录没能加载（config.json 多半缺字段，解析失败会被整个丢掉）: {missing:?}"
-        );
-    }
-
-    #[test]
-    fn tool_kind_normalizes_cli_and_desktop_categories() {
-        // 列表要按「CLI / 桌面端」分组（抄 EchoBird 的维度）：
-        // EchoBird 的 category 取值更细，这里归一层，前端只认 cli/desktop/other
-        assert_eq!(tool_kind_of(Some("CLI Code")), "cli");
-        assert_eq!(tool_kind_of(Some("cli code")), "cli");
-        assert_eq!(tool_kind_of(Some("Desktop")), "desktop");
-        assert_eq!(tool_kind_of(Some("IDE")), "desktop");
-        // 认不出的分类不会让分组崩掉，只是落到 other
-        assert_eq!(tool_kind_of(None), "other");
-        assert_eq!(tool_kind_of(Some("")), "other");
-        assert_eq!(tool_kind_of(Some("Science")), "other");
-    }
-
-    #[test]
-    fn provider_preset_dto_serializes_urls_as_snake_case() {
-        let dto = ProviderPresetDto {
-            id: "workbuddy2api".into(),
-            name: "WorkBuddy2API 本地转换".into(),
-            category: "relay".into(),
-            website: "https://example.com".into(),
-            openai_url: "http://127.0.0.1:8788/v1".into(),
-            anthropic_url: "http://127.0.0.1:8788".into(),
-            google_url: String::new(),
-        };
-        let value = serde_json::to_value(&dto).expect("序列化失败");
-        assert!(value.get("openai_url").is_some(), "缺少 openai_url 键: {value}");
-        assert!(value.get("anthropic_url").is_some(), "缺少 anthropic_url 键: {value}");
-        assert!(value.get("google_url").is_some(), "缺少 google_url 键: {value}");
-        assert!(value.get("openaiUrl").is_none(), "不应输出驼峰键: {value}");
-    }
-
-    /// providers.json 健全性：id 唯一、name 非空、category 仅取已知值、
-    /// 至少一个协议端点非空。新增预设时防止手误破坏前端过滤与展示。
-    #[test]
-    fn providers_json_entries_are_valid_and_unique() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../ai-tools/providers.json");
-        let raw = std::fs::read_to_string(&path).expect("providers.json 读取失败");
-        let presets: Vec<ProviderPreset> = serde_json::from_str(&raw).expect("providers.json 解析失败");
-        assert!(presets.len() >= 40, "预设数量异常: {}", presets.len());
-
-        let mut seen = std::collections::HashSet::new();
-        for p in &presets {
-            assert!(!seen.contains(&p.id), "重复预设 id: {}", p.id);
-            seen.insert(p.id.clone());
-            assert!(!p.name.trim().is_empty(), "预设 {} 名称为空", p.id);
-            assert!(
-                matches!(p.category.as_str(), "provider" | "relay" | "local"),
-                "预设 {} 分类未知: {}（前端过滤只认 provider/relay/local）",
-                p.id,
-                p.category
-            );
-            assert!(
-                !p.openai_url.is_empty() || !p.anthropic_url.is_empty() || !p.google_url.is_empty(),
-                "预设 {} 没有任何协议端点",
-                p.id
-            );
-            for url in [&p.openai_url, &p.anthropic_url, &p.google_url] {
-                if !url.is_empty() {
-                    assert!(
-                        url.starts_with("http://") || url.starts_with("https://"),
-                        "预设 {} 端点不是 http(s) URL: {}",
-                        p.id,
-                        url
-                    );
-                }
-            }
-        }
-    }
-}
+mod tests;

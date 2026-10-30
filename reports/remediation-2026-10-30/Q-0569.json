@@ -1,0 +1,15 @@
+{
+  "qid": "Q-0569",
+  "parent_task": "Q-0506",
+  "question": "工具注册表的配置协议模型与注册表读取、配置转换和回归混合，元数据契约缺少文件边界。",
+  "root_cause": "不同领域或组合职责长期堆积在单一文件，修改范围和测试定位不清晰。",
+  "solution": "按完整Rust AST声明拆成具名职责子模块，普通mod/pub use保留原公开路径与单例所有权；路径迁移仅作用于Rust token，字符串不变。修正同名来源适配器冲突；进度源码约束覆盖所有拆出的生产模块。IPC组合函数完整保留原注册表达式。\n主agent验收：Main lib compiled; Registry8 tests passed. All outputs <1000 lines.",
+  "files": "| File | Change |\n|------|--------|\n| 对应原公开入口 | 保留API和状态所有权 |\n| 具名职责子模块（精确清单见paths） | 完整AST声明、正常模块和原回归 |",
+  "status": "已验证",
+  "paths": [
+    "src-tauri/src/commands/ai_registry/models.rs",
+    "src-tauri/src/commands/ai_registry/tests.rs",
+    "src-tauri/src/commands/ai_registry.rs"
+  ],
+  "validation": "Main lib compiled; Registry8 tests passed. All outputs <1000 lines."
+}
