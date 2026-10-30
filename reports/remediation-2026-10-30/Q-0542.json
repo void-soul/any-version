@@ -1,0 +1,14 @@
+{
+  "qid": "Q-0542",
+  "question": "Windows监听端口自有PID回归真实失败，端口冲突探测可能漏报。",
+  "root_cause": "端口所有者查询依赖外部netstat文本、可执行文件搜索路径、语言和协议筛选，无法可靠枚举Windows双栈TCP监听表。",
+  "solution": "1. Windows改为GetExtendedTcpTable原生IP Helper API查询IPv4和IPv6监听所有者。\n2. 使用DWORD对齐缓冲区，检查返回长度/行数，缓冲区增长最多重试4次并限制16MiB。\n3. 保留非Windows旧实现及公开API。\n4. 拆出utils测试文件，使生产文件低于1000行；新增原生IPv4/IPv6回环真实监听测试。\n主agent验收：Main lib compiled; both existing port ownership regression and new IPv4/IPv6 native table tests passed outside socket-restricted sandbox; only ephemeral listeners and OS table queries.",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/utils.rs** | Windows端口实现委派，兼容API及测试声明 |\n| **src-tauri/src/commands/utils/windows_ports.rs** | 原生监听表及双栈回归 |\n| **src-tauri/src/commands/utils/tests.rs** | 原有测试独立归档 |",
+  "status": "已验证",
+  "validation": "Main lib compiled; both existing port ownership regression and new IPv4/IPv6 native table tests passed outside socket-restricted sandbox; only ephemeral listeners and OS table queries.",
+  "paths": [
+    "src-tauri/src/commands/utils.rs",
+    "src-tauri/src/commands/utils/windows_ports.rs",
+    "src-tauri/src/commands/utils/tests.rs"
+  ]
+}

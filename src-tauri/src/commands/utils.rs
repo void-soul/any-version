@@ -1,12 +1,12 @@
-pub use super::foundation::{get_home_dir, set_resource_dir, get_resource_dir, dev_repo_root};
 pub use super::foundation::expand_path as expand_home;
 pub use super::foundation::truncate_utf8;
+pub use super::foundation::{dev_repo_root, get_home_dir, get_resource_dir, set_resource_dir};
 
-use std::path::{Path, PathBuf};
+use super::project::types::PackageManagerDef;
 use std::fs;
 use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use super::project::types::PackageManagerDef;
 
 /// 获取用户主目录（统一入口，避免各模块重复实现）
 
@@ -103,7 +103,9 @@ pub fn validate_subst_value(v: &str) -> Result<(), String> {
     if v.trim().is_empty() {
         return Err("值不能为空".to_string());
     }
-    let dangerous = ['\'', '"', ';', '&', '|', '<', '>', '`', '$', '(', ')', '\r', '\n'];
+    let dangerous = [
+        '\'', '"', ';', '&', '|', '<', '>', '`', '$', '(', ')', '\r', '\n',
+    ];
     if let Some(c) = v.chars().find(|c| dangerous.contains(c)) {
         return Err(format!(
             "值包含不允许的字符 {:?}（已拒绝，防止命令注入；URL 参数请用百分号编码）",
@@ -126,7 +128,7 @@ pub fn validate_subst_value(v: &str) -> Result<(), String> {
 /// Generic configuration-file based cache resolver
 pub fn resolve_custom_cache_path(pm: &PackageManagerDef) -> Option<String> {
     let source = pm.cache_config_source.as_ref()?;
-    
+
     // 1. Check environment variables if specified
     for env_var in &source.env_vars {
         if let Ok(val) = std::env::var(env_var) {
@@ -135,22 +137,27 @@ pub fn resolve_custom_cache_path(pm: &PackageManagerDef) -> Option<String> {
                 let mut resolved = val_trimmed.to_string();
                 if let Some(ref suffix) = source.suffix {
                     if !resolved.ends_with(suffix) {
-                        resolved = Path::new(&resolved).join(suffix).to_string_lossy().to_string();
+                        resolved = Path::new(&resolved)
+                            .join(suffix)
+                            .to_string_lossy()
+                            .to_string();
                     }
                 }
                 return Some(resolved);
             }
         }
     }
-    
+
     // 2. Check the config files in path order
     let user_home = expand_home("{home}");
     let links_dir = crate::commands::config::load_config().links_dir;
-    
+
     for raw_path in &source.paths {
         // Expand standard placeholders
-        let mut expanded = raw_path.replace("{home}", &user_home).replace("{links_dir}", &links_dir);
-        
+        let mut expanded = raw_path
+            .replace("{home}", &user_home)
+            .replace("{links_dir}", &links_dir);
+
         // Match other env vars in path: e.g. {MAVEN_HOME}
         if let Ok(re_var) = regex::Regex::new(r"\{([^}]+)\}") {
             for cap in re_var.captures_iter(raw_path) {
@@ -162,7 +169,7 @@ pub fn resolve_custom_cache_path(pm: &PackageManagerDef) -> Option<String> {
                 }
             }
         }
-        
+
         let file_path = Path::new(&expanded);
         if file_path.exists() {
             if let Ok(content) = fs::read_to_string(file_path) {
@@ -174,7 +181,10 @@ pub fn resolve_custom_cache_path(pm: &PackageManagerDef) -> Option<String> {
                             let clean_content = re_comment.replace_all(&content, "");
                             if let Ok(re_tag) = regex::Regex::new(pattern) {
                                 if let Some(caps) = re_tag.captures(&clean_content) {
-                                    resolved_val = caps.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
+                                    resolved_val = caps
+                                        .get(1)
+                                        .map(|m| m.as_str().to_string())
+                                        .unwrap_or_default();
                                 }
                             }
                         }
@@ -182,7 +192,10 @@ pub fn resolve_custom_cache_path(pm: &PackageManagerDef) -> Option<String> {
                 } else if source.parser_type.eq_ignore_ascii_case("properties") {
                     for line in content.lines() {
                         let trimmed = line.trim();
-                        if trimmed.starts_with('#') || trimmed.starts_with(';') || trimmed.is_empty() {
+                        if trimmed.starts_with('#')
+                            || trimmed.starts_with(';')
+                            || trimmed.is_empty()
+                        {
                             continue;
                         }
                         if let Some(pos) = trimmed.find('=') {
@@ -195,18 +208,27 @@ pub fn resolve_custom_cache_path(pm: &PackageManagerDef) -> Option<String> {
                         }
                     }
                 }
-                
-                let mut resolved = resolved_val.trim_matches('"').trim_matches('\'').trim().to_string();
+
+                let mut resolved = resolved_val
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .trim()
+                    .to_string();
                 if !resolved.is_empty() {
                     // Apply replacements
                     for (from, to) in &source.replacements {
-                        let to_expanded = to.replace("{home}", &user_home).replace("{links_dir}", &links_dir);
+                        let to_expanded = to
+                            .replace("{home}", &user_home)
+                            .replace("{links_dir}", &links_dir);
                         resolved = resolved.replace(from, &to_expanded);
                     }
                     // Apply suffix if specified
                     if let Some(ref suffix) = source.suffix {
                         if !resolved.ends_with(suffix) {
-                            resolved = Path::new(&resolved).join(suffix).to_string_lossy().to_string();
+                            resolved = Path::new(&resolved)
+                                .join(suffix)
+                                .to_string_lossy()
+                                .to_string();
                         }
                     }
                     return Some(resolved);
@@ -214,7 +236,7 @@ pub fn resolve_custom_cache_path(pm: &PackageManagerDef) -> Option<String> {
             }
         }
     }
-    
+
     None
 }
 
@@ -222,7 +244,10 @@ pub fn resolve_custom_cache_path(pm: &PackageManagerDef) -> Option<String> {
 /// 未配置 JSON 字段时保持传统的纯文本路径行为；配置后只接受 JSON 字段中的字符串值。
 pub fn resolve_detected_path(output: &str, json_path: Option<&str>) -> Option<String> {
     let trimmed = output.trim().trim_matches('"').trim_matches('\'').trim();
-    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("undefined") || trimmed.eq_ignore_ascii_case("null") {
+    if trimmed.is_empty()
+        || trimmed.eq_ignore_ascii_case("undefined")
+        || trimmed.eq_ignore_ascii_case("null")
+    {
         return None;
     }
 
@@ -237,7 +262,10 @@ pub fn resolve_detected_path(output: &str, json_path: Option<&str>) -> Option<St
         trimmed.to_string()
     };
 
-    if value.is_empty() || value.eq_ignore_ascii_case("undefined") || value.eq_ignore_ascii_case("null") {
+    if value.is_empty()
+        || value.eq_ignore_ascii_case("undefined")
+        || value.eq_ignore_ascii_case("null")
+    {
         None
     } else {
         Some(value)
@@ -279,7 +307,9 @@ pub fn split_simple_command(command: &str) -> Result<Vec<String>, String> {
 /// configuration commands such as `pnpm config get/set cache-dir`.
 pub fn run_simple_command_checked(command: &str) -> Result<String, String> {
     let args = split_simple_command(command)?;
-    let (program, arguments) = args.split_first().expect("split_simple_command guarantees a program");
+    let (program, arguments) = args
+        .split_first()
+        .expect("split_simple_command guarantees a program");
     let program_path = if program.contains('/') || program.contains('\\') {
         PathBuf::from(program)
     } else {
@@ -327,7 +357,7 @@ pub fn cache_detect_evidence_dynamic(
     pm_def: &crate::commands::project::types::PackageManagerDef,
 ) -> (String, String) {
     let display_name = &pm_def.display_name;
-    
+
     if let Some(ref cmd) = pm_def.cache_detect_cmd {
         (
             format!("命令 `{}` 的输出", cmd),
@@ -364,7 +394,8 @@ pub fn write_xml_config_key(config_path: &str, key: &str, new_value: &str) -> Re
         return Ok(()); // 文件不存在，静默跳过
     }
 
-    let content = fs::read_to_string(path).map_err(|e| format!("读取 {} 失败: {}", config_path, e))?;
+    let content =
+        fs::read_to_string(path).map_err(|e| format!("读取 {} 失败: {}", config_path, e))?;
 
     // 构造匹配目标 key 的正则，替换其 value 属性
     let pattern = format!(
@@ -377,9 +408,11 @@ pub fn write_xml_config_key(config_path: &str, key: &str, new_value: &str) -> Re
         return Ok(()); // key 不存在，静默跳过
     }
 
-    let new_content = re.replace_all(&content, |caps: &regex::Captures| {
-        format!("{}{}{}", &caps[1], new_value, &caps[2])
-    }).to_string();
+    let new_content = re
+        .replace_all(&content, |caps: &regex::Captures| {
+            format!("{}{}{}", &caps[1], new_value, &caps[2])
+        })
+        .to_string();
 
     if new_content != content {
         fs::write(path, new_content).map_err(|e| format!("写入 {} 失败: {}", config_path, e))?;
@@ -393,7 +426,10 @@ pub fn write_xml_config_key(config_path: &str, key: &str, new_value: &str) -> Re
 ///
 /// `base_path`：迁移目标的根目录（junction 指向的目录）。
 /// 每个 write_key 的实际值 = base_path / value_suffix（或直接 base_path）。
-pub fn apply_cache_config_writes(pm: &crate::commands::project::types::PackageManagerDef, base_path: &str) {
+pub fn apply_cache_config_writes(
+    pm: &crate::commands::project::types::PackageManagerDef,
+    base_path: &str,
+) {
     let source = match &pm.cache_config_source {
         Some(s) => s,
         None => return,
@@ -406,7 +442,9 @@ pub fn apply_cache_config_writes(pm: &crate::commands::project::types::PackageMa
     let user_home = expand_home("{home}");
 
     // 找到第一个存在的配置文件路径
-    let config_path = source.paths.iter()
+    let config_path = source
+        .paths
+        .iter()
         .map(|p| p.replace("{home}", &user_home))
         .find(|p| std::path::Path::new(p).exists());
 
@@ -438,8 +476,6 @@ pub fn apply_cache_config_writes(pm: &crate::commands::project::types::PackageMa
     }
 }
 
-
-
 /// 设置打包环境下的静态资源目录
 
 /// 获取打包环境下的静态资源目录
@@ -466,7 +502,10 @@ pub fn expand_user_path(raw: &str) -> std::path::PathBuf {
         home.clone()
     } else {
         raw.replace("%USERPROFILE%", &home)
-            .replace("%LOCALAPPDATA%", &std::env::var("LOCALAPPDATA").unwrap_or_default())
+            .replace(
+                "%LOCALAPPDATA%",
+                &std::env::var("LOCALAPPDATA").unwrap_or_default(),
+            )
             .replace("%APPDATA%", &std::env::var("APPDATA").unwrap_or_default())
     };
     std::path::PathBuf::from(expanded)
@@ -560,11 +599,23 @@ pub fn bin_tool_path(tool: &str) -> Option<PathBuf> {
 /// 注意：`TcpListener::bind("0.0.0.0", port)` 的试探绑定**检测不到**回环地址上的
 /// 具体绑定（Windows 上 `127.0.0.1:port` 被其他进程占用时，通配绑定依然成功），
 /// 因此必须解析 netstat（Q-0095：Android 模拟器抢占 127.0.0.1:8554）。
+#[cfg(windows)]
+#[path = "utils/windows_ports.rs"]
+mod windows_ports;
+
+#[cfg(windows)]
+pub fn port_owner_pids(port: u16) -> Vec<u32> {
+    windows_ports::port_owner_pids(port)
+}
+
+#[cfg(not(windows))]
 pub fn port_owner_pids(port: u16) -> Vec<u32> {
     // netstat 在连接数极多时输出无上界，走带上限的读取（超限也只是少匹配几行，不会撑爆内存）
     let mut netstat = super::hidden_cmd::hidden_cmd("netstat");
     netstat.args(["-ano", "-p", "tcp"]);
-    let Ok(output) = super::hidden_cmd::output_capped(netstat, super::hidden_cmd::DEFAULT_OUTPUT_CAP) else {
+    let Ok(output) =
+        super::hidden_cmd::output_capped(netstat, super::hidden_cmd::DEFAULT_OUTPUT_CAP)
+    else {
         return Vec::new();
     };
     let stdout = output.stdout;
@@ -618,7 +669,10 @@ pub fn process_name_by_pid(pid: u32) -> Option<String> {
     let output =
         super::hidden_cmd::output_capped(tasklist, super::hidden_cmd::DEFAULT_OUTPUT_CAP).ok()?;
     let first = output.stdout.lines().next().unwrap_or("").to_string();
-    first.split(',').next().map(|p| p.trim_matches('"').to_string())
+    first
+        .split(',')
+        .next()
+        .map(|p| p.trim_matches('"').to_string())
 }
 
 // ================= 运行组件（bin 资产）检测与按需下载 =================
@@ -835,8 +889,7 @@ pub async fn download_bin_assets(app: tauri::AppHandle) -> Result<(), String> {
 /// 解压 zip 到目标目录（zip 内顶层为 ffmpeg/lego/mediamtx/mihomo 四个目录）。
 fn unzip_to_dir(zip_path: &Path, dest: &Path) -> Result<(), String> {
     let file = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
-    let mut archive =
-        zip::ZipArchive::new(file).map_err(|e| format!("压缩包解析失败: {}", e))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("压缩包解析失败: {}", e))?;
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
@@ -937,7 +990,10 @@ pub fn sync_mihomo_geo() {
         };
         if need_copy {
             match std::fs::copy(&src, &dst) {
-                Ok(_) => log(format!("geo 文件缺失/为空，已复制 {f} -> {}", dst.display())),
+                Ok(_) => log(format!(
+                    "geo 文件缺失/为空，已复制 {f} -> {}",
+                    dst.display()
+                )),
                 Err(e) => log(format!("复制 geo 文件 {f} 失败: {e}")),
             }
         } else {
@@ -965,127 +1021,6 @@ pub fn with_git_long_paths(args: &[&str]) -> Vec<String> {
     out
 }
 
-
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn validate_subst_value_accepts_safe_url_and_path() {
-        assert!(validate_subst_value("https://mirror.example.com/npm/").is_ok());
-        assert!(validate_subst_value(r"D:\any-version-caches\npm").is_ok());
-        assert!(validate_subst_value("https://user:p%40ss@host:8080").is_ok());
-        assert!(validate_subst_value("https://host:8080?token=abc").is_ok());
-    }
-
-    #[test]
-    fn truncate_utf8_keeps_char_boundaries() {
-        // ASCII：正好切在 4 字节处
-        assert_eq!(truncate_utf8("abcdefgh", 4), "abcd");
-        // 短于上限：原样返回
-        assert_eq!(truncate_utf8("abc", 10), "abc");
-        // 上限为 0
-        assert_eq!(truncate_utf8("中文", 0), "");
-        // 中文（3 字节/字）：上限 4 落在第二个字中间 → 回退到 3
-        let s = "中文测试";
-        assert_eq!(truncate_utf8(s, 4), "中");
-        assert_eq!(truncate_utf8(s, 3), "中");
-        assert_eq!(truncate_utf8(s, 6), "中文");
-        assert_eq!(truncate_utf8(s, s.len()), s);
-    }
-
-    #[test]
-    fn truncate_utf8_never_panics_on_any_prefix() {
-        // 对任意字节上限都必须安全 —— 这正是 `&s[..n]` 会 panic 的场景
-        let s = "上游返回错误 (401): 令牌无效 — 请检查 key";
-        for n in 0..=s.len() + 4 {
-            let out = truncate_utf8(s, n);
-            assert!(s.starts_with(out), "截断结果必须是原串前缀: n={}", n);
-            assert!(out.len() <= n.min(s.len()), "截断结果不能超上限: n={}", n);
-        }
-    }
-
-    #[test]
-    fn validate_subst_value_rejects_injection_chars() {
-        for bad in ["'; rm -rf /; '", "x\"&calc", "`id`", "$(whoami)", "a;b", "a|b", "a&b", "a<b", "a(b", "a\nb", "a\rb"] {
-            assert!(validate_subst_value(bad).is_err(), "应拒绝: {:?}", bad);
-        }
-    }
-
-    #[test]
-    fn validate_subst_value_rejects_empty() {
-        assert!(validate_subst_value("").is_err());
-        assert!(validate_subst_value("   ").is_err());
-    }
-
-    #[test]
-    fn with_git_long_paths_enables_core_longpaths_on_windows() {
-        // Windows 的 MAX_PATH(260) 会让深目录仓库 clone/checkout 直接失败；
-        // `-c core.longpaths=true` 让 git 改用 \\?\ 前缀的长路径。
-        // 抄自 ai-toolbox 95bdfdf3（`fix: Windows端clone仓库path过深的问题`）。
-        let args = with_git_long_paths(&["clone", "--depth", "1", "url", "dest"]);
-        let expected: Vec<String> = if cfg!(windows) {
-            vec!["-c", "core.longpaths=true", "clone", "--depth", "1", "url", "dest"]
-        } else {
-            vec!["clone", "--depth", "1", "url", "dest"]
-        }
-        .into_iter()
-        .map(str::to_string)
-        .collect();
-        assert_eq!(args, expected);
-    }
-
-    #[test]
-    fn with_git_long_paths_keeps_original_args_intact() {
-        // 前缀不得吞掉或改写原有参数（顺序敏感：git 的全局选项必须在子命令之前）。
-        let args = with_git_long_paths(&["pull"]);
-        assert_eq!(args.last().map(String::as_str), Some("pull"));
-        assert_eq!(args.len(), if cfg!(windows) { 3 } else { 1 });
-        if cfg!(windows) {
-            assert_eq!(args[0], "-c");
-            assert_eq!(args[1], "core.longpaths=true");
-        }
-    }
-
-    #[test]
-    fn resolve_detected_path_parses_json_field_without_leaking_json() {
-        let output = serde_json::json!({
-            "global_cache_dir": r"D:\zig-cache",
-            "version": "0.15.1"
-        }).to_string();
-        assert_eq!(
-            resolve_detected_path(&output, Some("global_cache_dir")).as_deref(),
-            Some(r"D:\zig-cache")
-        );
-        assert!(resolve_detected_path(&output, Some("missing")).is_none());
-        assert_eq!(resolve_detected_path(r"D:\plain-cache", None).as_deref(), Some(r"D:\plain-cache"));
-    }
-
-    // ─── 端口占用检测（Q-0095：Android 模拟器抢占 127.0.0.1:8554 导致 RTSP 假启动） ───
-
-    #[test]
-    fn port_conflict_detects_own_listener() {
-        let me = std::process::id();
-
-        // 回环地址监听必须被识别（qemu 场景：占用 127.0.0.1:8554，通配绑定"成功"掩盖冲突）
-        let loopback = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let lport = loopback.local_addr().unwrap().port();
-        assert!(
-            port_owner_pids(lport).contains(&me),
-            "自建回环监听（端口 {}）必须被检测到",
-            lport
-        );
-        let desc = port_conflict_description(lport).expect("端口被占用时应返回占用者描述");
-        assert!(
-            desc.contains(&format!("PID {}", me)),
-            "描述应包含占用进程 PID: {}",
-            desc
-        );
-
-        // 通配地址监听同样要能被检测到
-        let wildcard = std::net::TcpListener::bind(("0.0.0.0", 0)).unwrap();
-        let wport = wildcard.local_addr().unwrap().port();
-        assert!(port_owner_pids(wport).contains(&me));
-    }
-}
+#[path = "utils/tests.rs"]
+mod tests;
