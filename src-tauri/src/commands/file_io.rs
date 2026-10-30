@@ -118,12 +118,12 @@ pub struct MarkdownAssocStatus {
 pub fn set_markdown_assoc(register: bool) -> Result<String, String> {
     #[cfg(windows)]
     {
-        use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
+        use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
         use winreg::RegKey;
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let cmd = format!("\"{}\" \"%1\"", exe.to_string_lossy());
         let classes = RegKey::predef(HKEY_CURRENT_USER)
-            .open_subkey_with_flags("Software\\Classes", KEY_SET_VALUE)
+            .open_subkey_with_flags("Software\\Classes", KEY_READ | KEY_WRITE)
             .map_err(|e| format!("打开 HKCU\\Software\\Classes 失败: {}", e))?;
         if register {
             let (progkey, _) = classes.create_subkey("AnyMarkdown.Document")
@@ -142,19 +142,26 @@ pub fn set_markdown_assoc(register: bool) -> Result<String, String> {
         } else {
             let mut removed = 0;
             for ext in [".md", ".markdown"] {
-                if let Ok(k) = classes.open_subkey_with_flags(ext, KEY_SET_VALUE) {
-                    if let Ok(cur) = k.get_value::<String, _>("") {
+                match classes.open_subkey_with_flags(ext, KEY_READ | KEY_WRITE) {
+                    Ok(k) => {
+                      match k.get_value::<String, _>("") {
+                       Ok(cur) => {
                         if cur == "AnyMarkdown.Document" {
                             k.delete_value("").map_err(|e| e.to_string())?;
                             removed += 1;
                         }
+                       }
+                       Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                       Err(e) => return Err(format!("读取 {} 关联失败: {}", ext, e)),
+                      }
                     }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(format!("打开 {} 关联失败: {}", ext, e)),
                 }
             }
-            let _ = classes.delete_subkey_all("AnyMarkdown.Document\\shell\\open\\command");
-            let _ = classes.delete_subkey_all("AnyMarkdown.Document\\shell\\open");
-            let _ = classes.delete_subkey_all("AnyMarkdown.Document\\shell");
-            let _ = classes.delete_subkey_all("AnyMarkdown.Document");
+            if let Err(e) = classes.delete_subkey_all("AnyMarkdown.Document") {
+                if e.kind() != std::io::ErrorKind::NotFound { return Err(format!("清理 Markdown 关联失败: {}", e)); }
+            }
             Ok(format!("已解除关联（清理了 {} 项）", removed))
         }
     }
