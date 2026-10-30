@@ -1,0 +1,30 @@
+{
+  "results": [
+    {
+      "source": "src/components/node/NodeManagerPanel.tsx",
+      "declarations": 21,
+      "outputs": 6
+    },
+    {
+      "source": "src/components/OtpPanel.tsx",
+      "declarations": 18,
+      "outputs": 7
+    },
+    {
+      "source": "src/components/PickyPanel.tsx",
+      "declarations": 19,
+      "outputs": 12
+    },
+    {
+      "source": "src/components/SystemTools/CertManager.tsx",
+      "declarations": 42,
+      "outputs": 15
+    },
+    {
+      "source": "src/components/mindmap/agentShared.tsx",
+      "declarations": 49,
+      "outputs": 8
+    }
+  ],
+  "issues": []
+}

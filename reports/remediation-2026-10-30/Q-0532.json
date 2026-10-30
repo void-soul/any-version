@@ -1,0 +1,10 @@
+{
+  "qid": "Q-0532",
+  "parent_task": "Q-0506",
+  "question": "Node管理、OTP、Picky、证书管理和思维导图工作台在单文件集中定义独立的表单、列表卡片、调度视图及共享状态，文件达到1256至2226行，修改任一职责都需审阅无关组件。",
+  "root_cause": "已存在的独立顶层组件、类型与纯工具函数没有建立文件边界，工作台事件存储和界面装配放在同一文件。",
+  "solution": "1. 依据TS7 AST提取完整顶层声明，分离**NodeManagerPanel.ProjectCard**、Docker配置表单、OTP卡片和表单、Picky书签及同步弹窗、证书列表/部署/凭据/监控视图。\n2. 思维导图工作台分离会话栏、阶段步骤、活动行、结果卡、询问表单和工作台组件，公共事件缓冲与消息存储仍只有一份。\n3. 保留原始函数体、局部闭包、hook顺序和props签名；原有公开导出通过入口兼容重导出。\n4. **persistedTab**和**agentDraft**保留在实际组件模块中持有，避免跨ES模块给导入绑定赋值。\n5. 所有这批新分片均小于1000行，前端类型及全部测试通过。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/node/NodeManagerPanel*.tsx** | Separate project card, Docker config and shared models |\n| **src/components/OtpPanel*.tsx**, **src/components/PickyPanel*.tsx** | Separate cards, forms, reading and sync dialogs |\n| **src/components/SystemTools/CertManager*.tsx** | Separate certificate, deployment, monitoring and credentials views |\n| **src/components/mindmap/agentShared*.tsx** | Single event store and separate workbench views |",
+  "validation": "Primary review confirmed original declaration bodies in all 48 output files after whitespace/export normalization; singleton event buffers and mutable draft/tab ownership remain unique. Agent tsc and full 49 files / 395 tests passed.",
+  "status": "已验证"
+}
