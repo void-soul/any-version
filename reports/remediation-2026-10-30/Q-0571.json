@@ -1,0 +1,30 @@
+{
+  "qid": "Q-0571",
+  "parent_task": "Q-0506",
+  "question": "DbDesignerPanel原3192行，设计编辑、AI生成/流式事件、会话持久化、画布缓存、文件操作与底部编辑器集中。",
+  "root_cause": "文档、会话、画布与AI不同生命周期没有独立所有权，复杂功能耦合在页面局部状态中。",
+  "solution": "提取7个真实领域hook：文档字段/索引/关系编辑、AI流式生成、会话缓存、画布节点/边与布局、校验/导出、文件新建打开保存/逆向工程、底部dock交互。使用明确领域回调applyGeneratedDoc/fitCanvas、chat snapshot读写、document adoption/identity处理跨领域更新，未传宽泛controller/context。保持module级dbd事件buffer单例、聊天读取序号保护、坐标缓存、原文件保存和加载顺序。独立typed索引/关系/外观/表导航/文档工具栏视图，canvasTypes提供导航行契约。\n主agent验收：Agent tsc and all49 files/395 tests passed; primary reviewed buffer singleton, partial document/fit order and position flush ownership.",
+  "files": "| File | Change |\n|------|--------|\n| **DbDesignerPanel.tsx** | 3192降至986行主装配 |\n| **useDbAiRunner.tsx**、**useDbChatSessions.tsx** | 501/256行AI与会话领域，输入7/6项 |\n| **useDbCanvasGraph.tsx** | 596行画布缓存/边与节点/布局/定位信号，8项输入 |\n| **useDbDocumentEditing.tsx**、**useDbDocumentFiles.tsx**、**useDbDesignExport.tsx**、**useDbEditorDock.tsx** | 文档命令、文件生命周期、校验导出、面板交互 |\n| **Db*Editor/Toolbar/NavigationList.tsx**、**canvasTypes.ts**、**DbDesignerPanel.*.tsx** | typed视图、导航契约与完整顶层控件 |",
+  "status": "已验证",
+  "paths": [
+    "src/components/dbdesigner/DbDesignerPanel.FitOnSignal.tsx",
+    "src/components/dbdesigner/DbDesignerPanel.CenterOnSignal.tsx",
+    "src/components/dbdesigner/DbDesignerPanel.TablePreviewBody.tsx",
+    "src/components/dbdesigner/DbDesignerPanel.model.tsx",
+    "src/components/dbdesigner/DbDesignerPanel.tsx",
+    "src/components/dbdesigner/DbTableNavigationList.tsx",
+    "src/components/dbdesigner/DbNodeAppearanceEditor.tsx",
+    "src/components/dbdesigner/DbIndexesEditor.tsx",
+    "src/components/dbdesigner/DbRelationsEditor.tsx",
+    "src/components/dbdesigner/DbDocumentToolbar.tsx",
+    "src/components/dbdesigner/canvasTypes.ts",
+    "src/components/dbdesigner/useDbDocumentEditing.tsx",
+    "src/components/dbdesigner/useDbAiRunner.tsx",
+    "src/components/dbdesigner/useDbChatSessions.tsx",
+    "src/components/dbdesigner/useDbCanvasGraph.tsx",
+    "src/components/dbdesigner/useDbDesignExport.tsx",
+    "src/components/dbdesigner/useDbDocumentFiles.tsx",
+    "src/components/dbdesigner/useDbEditorDock.tsx"
+  ],
+  "validation": "Agent tsc and all49 files/395 tests passed; primary reviewed buffer singleton, partial document/fit order and position flush ownership."
+}
