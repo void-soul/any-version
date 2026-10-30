@@ -1,0 +1,20 @@
+{
+  "qid": "Q-0561",
+  "parent_task": "Q-0506",
+  "question": "Node插件桥接进程、包安装、沙箱能力检测与插件调用缺少独立职责文件。",
+  "root_cause": "Node插件桥接进程、包安装、沙箱能力检测与插件调用缺少独立职责文件。 原模块长期追加实现，领域辅助和单例没有清晰文件边界。",
+  "solution": "1. 保留原模块公开facade及Tauri命令宏，通过正常私有子模块按职责划分实现。\n2. 保留原单例静态状态的唯一所有权、运行时任务生命周期和所有原有测试。\n3. 同模块辅助最小提升pub(super)，原pub(super)按旧祖先pub(in ...)保留可见范围。\n4. 编译资源使用CARGO_MANIFEST_DIR锚定，避免源码位置耦合。\n主agent验收：Main lib compiled; Music117 tests passed. Original function inventory and singleton ownership preserved.",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/music/plugin_host.rs** | 兼容facade与职责声明 |\n| **src-tauri/src/commands/music/plugin_host/** | 独立职责实现与原有回归 |",
+  "status": "已验证",
+  "paths": [
+    "src-tauri/src/commands/music/plugin_host.rs",
+    "src-tauri/src/commands/music/plugin_host/layout.rs",
+    "src-tauri/src/commands/music/plugin_host/toolchain.rs",
+    "src-tauri/src/commands/music/plugin_host/sandbox.rs",
+    "src-tauri/src/commands/music/plugin_host/dependencies.rs",
+    "src-tauri/src/commands/music/plugin_host/bridge.rs",
+    "src-tauri/src/commands/music/plugin_host/invocation.rs",
+    "src-tauri/src/commands/music/plugin_host/tests.rs"
+  ],
+  "validation": "Main lib compiled; Music117 tests passed. Original function inventory and singleton ownership preserved."
+}
