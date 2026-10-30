@@ -1,12 +1,12 @@
 //! any-version 统一数据配置备份与同步。
 //!
 //! 各模块平时仍使用各自的存储（config.json / *.db 等），但备份层面统一为
-//! **一个快照文件**：把 data_dir 下所有模块的配置与数据打包进单个 JSON
+//! **一个快照文件**：按 storage_assets 的模块资产声明打包配置与数据进单个 JSON
 //! （文件内容 base64），本地导出时再整体 gzip 压缩，可导入/导出，也可同步到
 //! S3（独立于 Picky 的同步，使用自己的 S3 配置与对象 key，互不影响）。
 //!
-//! 全量打包（无勾选）：含 picky 数据库（含其云同步版本号 lastSyncAt）、剪贴板图片、
-//! mihomo 配置、自定义字体、环境备份目录等所有数据。
+//! 完整打包已声明模块的可备份数据，包括 Buddy、Suno、设计器会话、任务图片、
+//! picky 数据库、剪贴板图片、mihomo 配置、自定义字体和环境备份。
 //! 刻意排除：`sdk/`（体积大，另行管理）、`version_cache/`（可重建的缓存）、
 //! mihomo 的 geo/日志/内核（可重新下载）。
 
@@ -21,62 +21,8 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 use crate::commands::config::{get_base_dir, get_data_dir};
 use crate::commands::secrets::{decrypt_secret, encrypt_secret};
 
-/// 快照打包的固定文件（相对 data_dir；config.json / settings.json 例外，始终位于 base_dir）。
-const MANAGED_FILES: &[&str] = &[
-    "config.json",
-    // config.json 只存数据路径，其余选项（SDK 托管、RSS、外观、托盘…）在 settings.json，
-    // 少打任何一个都会让「全量导入」后设置对不上。
-    "settings.json",
-    "backups.json",
-    "mindmap_settings.json",
-    "favorites_settings.json",
-    "music/settings.json",
-    "music/library.json",
-    // 音乐插件的登记表（启用/排序/来源/自述快照）。插件本体在下面的 MANAGED_DIRS 里。
-    "music/plugins/registry.json",
-    "translate_history.json",
-    "ai_config.json",
-    "ai_sessions.json",
-    "last_launch_configs.json",
-    "collab.json",
-    "skills.json",
-    "mcp.json",
-    "translate_config.json",
-    "sync_state_config.json",
-    "tasks.db",
-    "launcher.db",
-    "ai_usage.db",
-    "api.db",
-    "mindmap.db",
-    "otp/otp.db",
-    "clipboard/clipboard.db",
-    "picky/picky.db",
-    "favorites.db",
-];
-
-/// 快照打包的整目录（相对 data_dir，递归收集其下所有文件）。
-///
-/// **`music/plugins/scripts` 只装用户的 `.js` 插件**，所以整个收进来是合适的。
-/// 刻意**不含**同级的另两样：
-/// - `music/plugins/node_modules`（约 10.6 MB，导入后 `npm install` 就能重建）
-/// - `music/plugins/bridge.js`（随 app 资产释放，且升级时必须用新版本）
-const MANAGED_DIRS: &[&str] = &[
-    "certs",
-    "clipboard/images",
-    "backup",
-    "fonts",
-    "mihomo/profiles",
-    "mihomo/override",
-    "music/plugins/scripts",
-];
-
-/// 快照打包的 mihomo 配置文件（用户订阅/代理配置，不包含可重新下载的 geo/日志/内核）。
-const MIHOMO_FILES: &[&str] = &[
-    "mihomo/app.json",
-    "mihomo/controled.json",
-    "mihomo/profile.json",
-    "mihomo/override.json",
-];
+use super::storage_assets;
+use super::storage_maintenance;
 
 
 // ─── S3 同步配置（独立于 Picky） ───
@@ -230,28 +176,32 @@ pub fn state_sync_save_config(config: StateSyncConfig) -> Result<(), String> {
 
 // ─── 快照构建 / 恢复 ───
 
-fn collect_dir_files(data_dir: &Path, rel_dir: &str) -> Vec<String> {
+fn collect_dir_files(data_dir: &Path, rel_dir: &str) -> Result<Vec<String>, String> {
     let root = data_dir.join(rel_dir);
     let mut out = Vec::new();
     if !root.is_dir() {
-        return out;
+        return Ok(out);
     }
     let mut stack = vec![root];
     while let Some(dir) = stack.pop() {
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for entry in entries.flatten() {
+        storage_maintenance::checked_target(data_dir, &dir.strip_prefix(data_dir).map_err(|e| e.to_string())?.to_string_lossy())?;
+        let entries = std::fs::read_dir(&dir).map_err(|e| format!("读取备份目录失败 {}: {e}", dir.display()))?;
+            for entry in entries {
+                let entry = entry.map_err(|e| e.to_string())?;
                 let path = entry.path();
+                let rel = path.strip_prefix(data_dir).map_err(|e| e.to_string())?.to_string_lossy().replace('\\', "/");
+                storage_maintenance::checked_target(data_dir, &rel)?;
                 if path.is_dir() {
                     stack.push(path);
                 } else if path.is_file() {
                     if let Ok(rel) = path.strip_prefix(data_dir) {
-                        out.push(rel.to_string_lossy().to_string());
+                        let rel = rel.to_string_lossy().replace('\\', "/");
+                        if !rel.ends_with(".db-wal") && !rel.ends_with(".db-shm") && !rel.ends_with(".vscdb-wal") && !rel.ends_with(".vscdb-shm") { out.push(rel); }
                     }
                 }
             }
-        }
     }
-    out
+    Ok(out)
 }
 
 /// config.json 是数据入口，固定留在 base_dir（即使 data_dir 被改到其它盘）。
@@ -285,24 +235,11 @@ fn build_snapshot_with_progress(mut on_progress: impl FnMut(usize, usize)) -> Re
     let mut count = 0usize;
     let mut total = 0usize;
 
-    let mut rels: Vec<String> = MANAGED_FILES.iter().map(|s| s.to_string()).collect();
-    rels.extend(MIHOMO_FILES.iter().map(|s| s.to_string()));
-    for dir in MANAGED_DIRS {
-        rels.extend(collect_dir_files(&data_dir, dir));
+    let mut rels: Vec<String> = std::iter::once("config.json").chain(storage_assets::snapshot_files()).map(str::to_string).collect();
+    for dir in storage_assets::snapshot_directories() {
+        rels.extend(collect_dir_files(&data_dir, dir)?);
     }
-    // WAL 兼容：SQLite 主库存在同名 `-wal` 时一并打包（WAL 模式下最新数据在 wal 文件里，
-    // 只拷主库会丢失最近写入；恢复时一并写回，SQLite 会自动合并）。
-    let mut rels_with_wal: Vec<String> = Vec::with_capacity(rels.len());
-    for rel in rels {
-        rels_with_wal.push(rel.clone());
-        if rel.ends_with(".db") {
-            let wal_rel = format!("{}-wal", rel);
-            if resolve_snapshot_path(&wal_rel).is_file() {
-                rels_with_wal.push(wal_rel);
-            }
-        }
-    }
-    let rels = rels_with_wal;
+    rels.sort(); rels.dedup();
 
     let total_files = rels.len().max(1);
     for rel in rels {
@@ -310,7 +247,15 @@ fn build_snapshot_with_progress(mut on_progress: impl FnMut(usize, usize)) -> Re
         if !path.is_file() {
             continue;
         }
-        let bytes = std::fs::read(&path).map_err(|e| format!("读取 {} 失败: {}", rel, e))?;
+        let root = if rel == "config.json" { get_base_dir() } else { data_dir.clone() };
+        storage_maintenance::checked_target(&root, &rel)?;
+        if std::fs::metadata(&path).map_err(|e| e.to_string())?.len() > storage_maintenance::MAX_SNAPSHOT_BYTES as u64 {
+            return Err(format!("备份文件过大，请先单独备份: {rel}"));
+        }
+        let bytes = storage_maintenance::snapshot_file_bytes(&path)?;
+        if total.checked_add(bytes.len()).is_none_or(|size| size > storage_maintenance::MAX_SNAPSHOT_BYTES) {
+            return Err("备份数据超过1 GiB，请分批备份".into());
+        }
         total += bytes.len();
         files.insert(rel, JsonValue::String(general_purpose::STANDARD.encode(&bytes)));
         count += 1;
@@ -318,20 +263,21 @@ fn build_snapshot_with_progress(mut on_progress: impl FnMut(usize, usize)) -> Re
     }
 
     Ok(serde_json::json!({
-        "version": 1,
+        "version": 2,
         "type": "any-version-state",
         "createdAt": now_iso(),
         "fileCount": count,
         "sizeBytes": total,
         "files": files,
+        "modules": storage_assets::MODULE_ASSETS.iter().map(|m| m.module).collect::<Vec<_>>(),
+        "excluded": ["SDK installations", "Node project working directories", "rebuildable caches and runtime binaries", "music plugin dependencies and bundled bridge"],
+        "containsCredentials": true,
     }))
 }
 
 /// 校验相对路径安全（不允许绝对路径 / 越界 ..）。
 fn is_safe_rel(rel: &str) -> bool {
-    !rel.is_empty()
-        && !Path::new(rel).is_absolute()
-        && !rel.split(['/', '\\']).any(|c| c == "..")
+    storage_maintenance::normalize_relative_path(rel).is_ok()
 }
 
 /// 从快照 JSON 恢复文件，返回恢复的文件数。
@@ -340,37 +286,7 @@ fn restore_snapshot(
     state: &JsonValue,
     selected: Option<&std::collections::HashSet<String>>,
 ) -> Result<usize, String> {
-    if state.get("type").and_then(|v| v.as_str()) != Some("any-version-state") {
-        return Err("不是有效的 any-version 数据快照（type 不匹配）".to_string());
-    }
-    let files = state
-        .get("files")
-        .and_then(|v| v.as_object())
-        .ok_or_else(|| "快照缺少 files 字段".to_string())?;
-
-    let mut restored = 0usize;
-    for (rel, val) in files {
-        let rel_str = rel.as_str();
-        if let Some(sel) = selected {
-            if !sel.contains(rel_str) {
-                continue;
-            }
-        }
-        if !is_safe_rel(rel_str) {
-            return Err(format!("快照包含非法路径，已中止: {}", rel_str));
-        }
-        let b64 = val.as_str().ok_or_else(|| format!("快照文件 {} 内容非法", rel_str))?;
-        let bytes = general_purpose::STANDARD
-            .decode(b64)
-            .map_err(|e| format!("快照文件 {} 解码失败: {}", rel_str, e))?;
-        let path = resolve_snapshot_path(rel_str);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败 {}: {}", parent.display(), e))?;
-        }
-        std::fs::write(&path, &bytes).map_err(|e| format!("写入 {} 失败: {}", rel_str, e))?;
-        restored += 1;
-    }
-    Ok(restored)
+    storage_maintenance::stage_restore(&get_base_dir(), &get_data_dir(), state, selected)
 }
 
 // ─── 命令：本地导出 / 导入 ───
@@ -387,9 +303,11 @@ fn gunzip_if_needed(data: &[u8]) -> Result<Vec<u8>, String> {
     if data.len() >= 2 && data[0] == 0x1f && data[1] == 0x8b {
         let mut decoder = flate2::read::GzDecoder::new(data);
         let mut out = Vec::new();
-        decoder.read_to_end(&mut out).map_err(|e| format!("解压快照失败: {}", e))?;
+        decoder.take(storage_maintenance::MAX_SNAPSHOT_BYTES as u64 + 1).read_to_end(&mut out).map_err(|e| format!("解压快照失败: {}", e))?;
+        if out.len() > storage_maintenance::MAX_SNAPSHOT_BYTES { return Err("快照解压后超过1 GiB，请分批导入".into()); }
         Ok(out)
     } else {
+        if data.len() > storage_maintenance::MAX_SNAPSHOT_BYTES { return Err("快照超过1 GiB，请分批导入".into()); }
         Ok(data.to_vec())
     }
 }
@@ -405,6 +323,9 @@ fn parse_snapshot(data: &[u8]) -> Result<JsonValue, String> {
 pub fn state_sync_export(target_path: String) -> Result<serde_json::Value, String> {
     let snapshot = build_snapshot()?;
     let raw = serde_json::to_vec(&snapshot).map_err(|e| format!("序列化快照失败: {}", e))?;
+    if raw.len() > storage_maintenance::MAX_SNAPSHOT_BYTES {
+        return Err("备份超过大小上限，请先单独归档大型文件后重试".into());
+    }
     let compressed = gzip_bytes(&raw)?;
     let path = PathBuf::from(&target_path);
     if let Some(parent) = path.parent() {
@@ -428,11 +349,14 @@ pub fn state_sync_import(path: String, files: Option<Vec<String>>) -> Result<Str
     if !p.is_file() {
         return Err(format!("快照文件不存在: {}", path));
     }
+    if std::fs::metadata(&p).map_err(|e| e.to_string())?.len() > storage_maintenance::MAX_SNAPSHOT_BYTES as u64 {
+        return Err("快照超过1 GiB，请分批导入".into());
+    }
     let data = std::fs::read(&p).map_err(|e| format!("读取快照失败: {}", e))?;
     let state = parse_snapshot(&data)?;
     let selection = files.map(|v| v.into_iter().collect::<std::collections::HashSet<_>>());
     let restored = restore_snapshot(&state, selection.as_ref())?;
-    Ok(format!("恢复完成：已还原 {} 个配置文件/数据库（{}）", restored, path))
+    Ok(format!("已校验并暂存 {} 个配置文件/数据库，重启后应用；当前数据未覆盖，本机路径设置保留", restored))
 }
 
 // ─── 命令：S3 同步（独立于 Picky） ───
@@ -481,7 +405,7 @@ mod tests {
             "api.db",
             "picky/picky.db",
         ] {
-            assert!(MANAGED_FILES.contains(&must), "快照清单缺少 {}", must);
+            assert!(storage_assets::allows_snapshot_path(must), "快照清单缺少 {}", must);
         }
     }
 
@@ -489,14 +413,10 @@ mod tests {
     /// 不能进：前者让快照白白胖 10 MB，后者会让恢复出来的桥版本与 app 对不上。
     #[test]
     fn plugins_are_archived_but_not_their_dependencies() {
-        assert!(MANAGED_FILES.contains(&"music/plugins/registry.json"));
-        assert!(MANAGED_DIRS.contains(&"music/plugins/scripts"));
+        assert!(storage_assets::snapshot_files().any(|p| p == "music/plugins/registry.json"));
+        assert!(storage_assets::snapshot_directories().any(|p| p == "music/plugins/scripts"));
 
-        let all: Vec<&str> = MANAGED_FILES
-            .iter()
-            .chain(MANAGED_DIRS.iter())
-            .copied()
-            .collect();
+        let all: Vec<&str> = storage_assets::snapshot_files().chain(storage_assets::snapshot_directories()).collect();
         for forbidden in [
             "music/plugins",
             "music/plugins/node_modules",
@@ -519,6 +439,8 @@ mod tests {
         assert!(!is_safe_rel("..\\config.json"));
         assert!(!is_safe_rel("C:\\abs\\config.json"));
         assert!(!is_safe_rel("\\\\server\\share\\x"));
+        assert!(!is_safe_rel("\\outside\\x"));
+        assert!(!is_safe_rel("C:relative"));
         assert!(!is_safe_rel(""));
     }
 }

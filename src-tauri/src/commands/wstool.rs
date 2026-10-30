@@ -30,6 +30,13 @@ pub struct WsState {
     raw: Mutex<HashMap<String, RawConn>>,
 }
 
+pub fn close_all(state: &WsState) {
+    let sessions=std::mem::take(&mut *state.sessions.lock().unwrap_or_else(|e|e.into_inner()));
+    let raw=std::mem::take(&mut *state.raw.lock().unwrap_or_else(|e|e.into_inner()));
+    for (_,session) in sessions {for handle in session.handles {handle.abort();}}
+    for (_,connection) in raw {for handle in connection.handles {handle.abort();}}
+}
+
 /// 原始 TCP/UDP 会话。
 struct RawConn {
     #[allow(dead_code)] // 保留对端地址供后续扩展（如 UDP 重定向目标）
@@ -53,6 +60,7 @@ enum WsOut {
 
 fn insert_session(state: &WsState, id: &str, target: String, tx: Option<mpsc::UnboundedSender<WsOut>>, handle: tokio::task::JoinHandle<()>) {
     let mut map = state.sessions.lock().unwrap_or_else(|e| e.into_inner());
+    if !crate::runtime_tasks::is_enabled("wsDebugger") {handle.abort();return;}
     // **同 id 重连必须先 abort 旧会话**：直接 insert 只是把旧 Session 从表里挤掉，
     // 而 `JoinHandle` 的 Drop 只 detach 不 abort —— 旧的读写任务会继续跑，
     // 旧连接活着，旧 tx 被 drop 后它的写任务还会推一条 `wstool://closed`，
@@ -87,6 +95,7 @@ pub async fn ws_connect(
     url: String,
     headers: Option<Vec<Vec<String>>>,
 ) -> Result<(), String> {
+    crate::runtime_tasks::require_enabled("wsDebugger")?;
     let mut request = url
         .as_str()
         .into_client_request()
@@ -279,6 +288,7 @@ pub async fn net_connect_core(
     host: String,
     port: u16,
 ) -> Result<(), String> {
+    crate::runtime_tasks::require_enabled("wsDebugger")?;
     match protocol.as_str() {
         "tcp" => {
             let stream = tokio::time::timeout(

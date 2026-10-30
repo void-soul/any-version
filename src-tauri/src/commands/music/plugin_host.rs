@@ -670,6 +670,11 @@ impl Bridge {
 
 static HOST: Mutex<Option<Bridge>> = Mutex::new(None);
 
+pub fn stop_host() -> Result<(),String> {
+    if let Some(mut bridge)=host_lock()?.take() {bridge.kill();}
+    Ok(())
+}
+
 fn host_lock() -> Result<std::sync::MutexGuard<'static, Option<Bridge>>, String> {
     HOST.lock()
         .map_err(|_| "插件宿主状态损坏（上一次调用可能 panic）".to_string())

@@ -1,3 +1,5 @@
+pub use super::foundation::{get_home_dir, set_resource_dir, get_resource_dir, dev_repo_root};
+pub use super::foundation::expand_path as expand_home;
 
 use std::path::{Path, PathBuf};
 use std::fs;
@@ -6,19 +8,6 @@ use std::sync::OnceLock;
 use super::project::types::PackageManagerDef;
 
 /// 获取用户主目录（统一入口，避免各模块重复实现）
-pub fn get_home_dir() -> PathBuf {
-    let home = std::env::var("USERPROFILE").unwrap_or_default();
-    let home = if home.is_empty() {
-        std::env::var("HOME").unwrap_or_default()
-    } else {
-        home
-    };
-    if home.is_empty() {
-        PathBuf::from(".")
-    } else {
-        PathBuf::from(home)
-    }
-}
 
 /// 按**字节上限**截断字符串，并保证切点落在 UTF-8 字符边界上。
 ///
@@ -142,16 +131,6 @@ pub fn validate_subst_value(v: &str) -> Result<(), String> {
 ///
 /// 该函数是项目路径模板的统一展开入口（数据目录 / 缓存目录 / 配置文件候选 /
 /// 服务启动命令参数等），因此新增根只需改 `dirs::ROOTS` 一处。
-pub fn expand_home(path: &str) -> String {
-    let mut s = path.to_string();
-    if s.contains("{home}") {
-        s = s.replace("{home}", &get_home_dir().to_string_lossy());
-    }
-    if s.contains("{data_dir}") {
-        s = s.replace("{data_dir}", &crate::commands::config::get_data_dir().to_string_lossy());
-    }
-    crate::commands::project::dirs::expand(&s)
-}
 
 /// Generic configuration-file based cache resolver
 pub fn resolve_custom_cache_path(pm: &PackageManagerDef) -> Option<String> {
@@ -468,17 +447,11 @@ pub fn apply_cache_config_writes(pm: &crate::commands::project::types::PackageMa
     }
 }
 
-static RESOURCE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
 
 /// 设置打包环境下的静态资源目录
-pub fn set_resource_dir(path: PathBuf) {
-    let _ = RESOURCE_DIR.set(path);
-}
 
 /// 获取打包环境下的静态资源目录
-pub fn get_resource_dir() -> Option<PathBuf> {
-    RESOURCE_DIR.get().cloned()
-}
 
 /// 展开用户目录与环境变量：把 `~/x`、`%USERPROFILE%\x` 变成绝对路径。
 ///
@@ -516,14 +489,6 @@ pub fn expand_user_path(raw: &str) -> std::path::PathBuf {
 /// 资源目录，新加的定义就读不到 —— 表现为「新加的服务 / 工具 / 项目不出现」，而且没有任何报错。
 ///
 /// 生产构建没有仓库源目录，仍走资源目录。
-pub fn dev_repo_root() -> Option<PathBuf> {
-    if !cfg!(debug_assertions) {
-        return None;
-    }
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(|p| p.to_path_buf())
-}
 
 /// 查找 bin/ 目录下的可执行文件或关联文件（如 ffmpeg.exe, mediamtx.exe, mediamtx.yml 等）
 /// 单一路径策略：只在 data_dir/bin 下查找，从程序根目录读取。

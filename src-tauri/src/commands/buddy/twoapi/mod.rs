@@ -474,7 +474,7 @@ async fn fetch_catalog_count(account: &credentials::Account) -> Result<usize, St
 }
 
 /// 运行中的服务任务（停止时 abort，socket 随之释放）
-static SERVER_TASK: LazyLock<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>> =
+static SERVER_TASK: LazyLock<Mutex<Option<tokio::task::AbortHandle>>> =
     LazyLock::new(|| Mutex::new(None));
 
 /// 启动 2API：**先自检，不过就不监听**。
@@ -483,6 +483,7 @@ static SERVER_TASK: LazyLock<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>
 /// 那正是 2026-10-03 那个故障最难发现的原因（/health 等旁路全绿）。
 #[tauri::command]
 pub async fn buddy2api_start(port: Option<u16>) -> Result<TwoApiStatus, String> {
+    crate::runtime_tasks::require_enabled("buddy")?;
     let port = port.unwrap_or_else(configured_port);
     if status().phase == "running" {
         return Ok(status());
@@ -507,7 +508,7 @@ pub async fn buddy2api_start(port: Option<u16>) -> Result<TwoApiStatus, String> 
         s.account = Some(account.display_name());
     });
 
-    let handle = tauri::async_runtime::spawn(async move {
+    let handle = crate::runtime_tasks::spawn_owned("buddy","2api-server",async move {
         if let Err(e) = crate::proxy::server::start_proxy_server(cfg).await {
             eprintln!("[2api] 服务退出：{e}");
             set_status(|s| {
@@ -515,7 +516,7 @@ pub async fn buddy2api_start(port: Option<u16>) -> Result<TwoApiStatus, String> 
                 s.last_error = Some(e);
             });
         }
-    });
+    }).ok_or("2API已在运行或模块已禁用")?;
     if let Ok(mut guard) = SERVER_TASK.lock() {
         *guard = Some(handle);
     }
@@ -613,7 +614,7 @@ pub fn note_sync_error(err: &str) {
 pub const WATCH_INTERVAL_MS: u64 = 30_000;
 
 /// 巡查任务句柄（停止服务时 abort，避免残留一轮）
-static WATCHER_TASK: LazyLock<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>> =
+static WATCHER_TASK: LazyLock<Mutex<Option<tokio::task::AbortHandle>>> =
     LazyLock::new(|| Mutex::new(None));
 
 /// 巡查的纯判定：这份凭据是否与上次写进服务的那份不同。
@@ -642,7 +643,7 @@ fn start_credentials_watcher(
     initial: (String, String),
 ) {
     let mut applied: Option<(String, String)> = Some(initial);
-    let handle = tauri::async_runtime::spawn(async move {
+    let Some(handle) = crate::runtime_tasks::spawn_owned("buddy","2api-credentials",async move {
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(WATCH_INTERVAL_MS)).await;
             // ensure_fresh 内部先走 current()（含 reload_if_changed），所以客户端切号
@@ -670,7 +671,7 @@ fn start_credentials_watcher(
             applied = Some((account.uid.clone(), account.access_token.clone()));
             eprintln!("[2api] 巡查：账号已变，鉴权头热更新（uid={}）", account.uid);
         }
-    });
+    }) else {return;};
     if let Ok(mut guard) = WATCHER_TASK.lock() {
         *guard = Some(handle);
     }

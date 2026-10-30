@@ -95,7 +95,9 @@ pub fn recover(root: &Path) -> Result<(), String> {
     if !root.exists() {
         return Ok(());
     }
-    recover_pending(&root.canonicalize().map_err(|e| e.to_string())?)
+    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    let _lock = OutputLock::try_acquire(&root)?;
+    recover_pending(&root)
 }
 
 pub struct Deployment {
@@ -104,6 +106,32 @@ pub struct Deployment {
     operations: Vec<Operation>,
     finished: bool,
     preserve: bool,
+    _output_lock: OutputLock,
+}
+
+/// OS file lock shared by the embedded and standalone receiver processes.
+pub struct OutputLock {
+    _file: std::fs::File,
+}
+impl OutputLock {
+    pub fn try_acquire(root: &Path) -> Result<Self, String> {
+        std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
+        let root = root.canonicalize().map_err(|e| e.to_string())?;
+        let path = root.join(".receiver-deployment.lock");
+        if path.exists() && is_link(&path)? {
+            return Err("证书目录锁不能是链接".into());
+        }
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+            .map_err(|e| e.to_string())?;
+        fs2::FileExt::try_lock_exclusive(&file)
+            .map_err(|e| format!("其它接收端正在使用此证书目录，请稍后重试: {e}"))?;
+        Ok(Self { _file: file })
+    }
 }
 
 fn is_link(path: &Path) -> Result<bool, String> {
@@ -167,8 +195,9 @@ impl Deployment {
     pub fn new(root: &Path) -> Result<Self, String> {
         std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
         let root = root.canonicalize().map_err(|e| e.to_string())?;
+        let output_lock = OutputLock::try_acquire(&root)?;
         recover_pending(&root)?;
-        let staging = root.join(format!(".receiver-stage-{}", crate::config::random_hex(16)));
+        let staging = root.join(format!(".receiver-stage-{}", crate::random_hex(16)));
         std::fs::create_dir(&staging).map_err(|e| e.to_string())?;
         Ok(Self {
             root,
@@ -176,6 +205,7 @@ impl Deployment {
             operations: vec![],
             finished: false,
             preserve: false,
+            _output_lock: output_lock,
         })
     }
 
@@ -339,11 +369,48 @@ impl Drop for Deployment {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn the_same_output_directory_cannot_have_two_deployers() {
+        let root = Root::new();
+        let first = OutputLock::try_acquire(&root.0).unwrap();
+        assert!(OutputLock::try_acquire(&root.0).is_err());
+        drop(first);
+        assert!(OutputLock::try_acquire(&root.0).is_ok());
+    }
+    #[test]
+    fn child_process_cannot_acquire_an_active_output_lock() {
+        let root = Root::new();
+        let _lock = OutputLock::try_acquire(&root.0).unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args([
+                "--exact",
+                "deployment::tests::output_lock_child_probe",
+                "--nocapture",
+            ])
+            .env("CERT_DEPLOYMENT_LOCK_PROBE", &root.0);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            child.creation_flags(0x08000000);
+        }
+        let output = child.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+    #[test]
+    fn output_lock_child_probe() {
+        if let Some(path) = std::env::var_os("CERT_DEPLOYMENT_LOCK_PROBE") {
+            assert!(OutputLock::try_acquire(Path::new(&path)).is_err());
+        }
+    }
     struct Root(PathBuf);
     impl Root {
         fn new() -> Self {
-            let p = std::env::temp_dir()
-                .join(format!("receiver-deploy-{}", crate::config::random_hex(12)));
+            let p = std::env::temp_dir().join(format!("receiver-deploy-{}", crate::random_hex(12)));
             std::fs::create_dir(&p).unwrap();
             Self(p)
         }

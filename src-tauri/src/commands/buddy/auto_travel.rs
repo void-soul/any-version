@@ -1004,7 +1004,7 @@ fn next_retry_delay(current: Duration) -> Duration {
 /// 启动后台自动旅行调度（仅 WorkBuddy：旅行是 WorkBuddy 专属活动）。
 pub fn start_auto_travel_scheduler(app: AppHandle) {
     let wake = scheduler_wake();
-    tauri::async_runtime::spawn(async move {
+    crate::runtime_tasks::spawn_task("buddy", "auto-travel", async move {
         eprintln!("[BuddyAutoTravel] 后台自动旅行调度服务已启动");
         let mut next_delay = Duration::ZERO;
         let mut retry_delay = INITIAL_RETRY_DELAY;

@@ -22,10 +22,8 @@ fn run_with_timeout(
     cwd: Option<&str>,
     timeout: Duration,
 ) -> Result<String, String> {
-    let scratch = Scratch(std::env::temp_dir().join(format!(
-        "receiver-command-{}",
-        crate::config::random_hex(12)
-    )));
+    let scratch =
+        Scratch(std::env::temp_dir().join(format!("receiver-command-{}", crate::random_hex(12))));
     std::fs::create_dir(&scratch.0).map_err(|e| e.to_string())?;
     let stdout = std::fs::File::create(scratch.0.join("stdout")).map_err(|e| e.to_string())?;
     let stderr = std::fs::File::create(scratch.0.join("stderr")).map_err(|e| e.to_string())?;

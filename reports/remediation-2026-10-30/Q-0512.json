@@ -1,0 +1,14 @@
+{
+  "qid": "Q-0512",
+  "root_cause": "迁移源固定为 **base_dir**，没有使用实际旧 **data_dir**；资产清单和失败传播不完整。",
+  "solution": "1. **update_config** 只安排重启迁移，实际旧根与目标根必须为不互相包含的绝对路径。\n2. 启动独占存储锁下按模块资产复制所有已声明数据及SDK，源目录完整保留；数据库生成一致主库，链接不递归跟随。\n3. 目标旧数据先备份，出现错误回滚目标和配置/SDK环境变量；只有复制完成后才切换数据入口。\n4. 提取可注入配置/环境适配的文件事务核心，新增临时目录成功切根、旧目标备份、中途失败回滚三项实际测试。\n5. 保留原 **MigrateResult** 形状，前端显示已安排及重启提示。\n主agent验收：主应用测试编译通过；Windows提升隔离环境storage16项（含junction2、事务回滚、WAL和配置拒绝）、foundation6项全部通过；既有state_sync5项通过。仅操作临时fixture。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/config.rs** | 迁移入口改为排队，不在活跃连接上移动文件 |\n| **src-tauri/src/commands/storage_migration.rs** | 完整资产迁移、路径替换和回滚 |\n| **src-tauri/src/commands/storage_migration_transaction.rs** | 可注入文件事务及三项实际迁移回归 |\n| **src-tauri/src/commands/storage_assets.rs** | 统一的迁移资产清单 |",
+  "status": "已验证",
+  "validation": "Compiled c5bed827f96e762d; storage16 + foundation6 + existing state_sync5 passed. Startup hook reviewed before all database initialization.",
+  "paths": [
+    "src-tauri/src/commands/config.rs",
+    "src-tauri/src/commands/storage_migration.rs",
+    "src-tauri/src/commands/storage_migration_transaction.rs",
+    "src-tauri/src/commands/storage_assets.rs"
+  ]
+}

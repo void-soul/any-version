@@ -560,13 +560,14 @@ async fn auto_update_profiles(app: &AppHandle, inner: &Arc<MihomoInner>) {
 }
 
 pub fn start_scheduler(_app: AppHandle, inner: Arc<MihomoInner>) {
+    if !crate::runtime_tasks::is_enabled("mihomo") {return;}
     if inner.scheduler_running.load(Ordering::SeqCst) {
         return;
     }
     inner.scheduler_running.store(true, Ordering::SeqCst);
     // 流量采样下沉到主进程：渲染进程那套（切页/关窗就断采）只作补充
     crate::commands::mihomo::traffic::start_recorder(Arc::clone(&inner));
-    tauri::async_runtime::spawn(async move {
+    crate::runtime_tasks::spawn_task("mihomo", "scheduler", async move {
         // 启动即刷新：对齐 clash-party `autoUpdateProfileOnStart`。
         // 不开的话订阅只在间隔/cron 到期才更新，刚开机那段时间用的是几天前的节点。
         let refresh_on_start = inner.app_config.lock().unwrap().auto_update_profile_on_start;

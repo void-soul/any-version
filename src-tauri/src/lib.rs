@@ -2,6 +2,7 @@ pub mod commands;
 pub mod proxy;
 mod tray;
 pub mod exit_log;
+pub mod runtime_tasks;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Manager, Emitter, Listener};
@@ -231,6 +232,19 @@ fn init_tracing_and_panic_hook() {
 pub fn run() {
     exit_log::exit_log("=== app 启动 run() ===");
     init_tracing_and_panic_hook();
+    // Pending restore/migration must finish before any configuration-derived path
+    // or database connection is opened. Failure keeps the plan for retry.
+    if let Err(error) = commands::storage_maintenance::apply_pending_operations() {
+        tracing::error!("启动前存储维护失败: {error}");
+        exit_log::exit_log(&format!("startup storage maintenance failed: {error}"));
+        #[cfg(windows)] {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+            let text: Vec<u16> = "存储维护未完成，应用没有启动。请检查数据目录权限和日志后重试。\0".encode_utf16().collect();
+            let title: Vec<u16> = "Kira 存储维护\0".encode_utf16().collect();
+            unsafe { MessageBoxW(std::ptr::null_mut(), text.as_ptr(), title.as_ptr(), MB_OK | MB_ICONERROR); }
+        }
+        std::process::exit(1);
+    }
     // 对既有主密钥文件收紧 ACL（旧版本创建时未限权）
     {
         let key_path = crate::commands::config::get_data_dir().join("certs").join(".master_key");
@@ -240,6 +254,7 @@ pub fn run() {
     }
     cleanup_legacy_env_vars();
     sync_process_path();
+    commands::module_lifecycle::initialize();
 
     let builder = tauri::Builder::default();
 
@@ -334,7 +349,7 @@ pub fn run() {
             commands::cert::start_scheduler(app.handle().clone());
             // 内嵌证书接收端：注入 AppHandle（事件推送需要）+ 按配置自启
             commands::cert_receiver::init(app.handle().clone());
-            commands::cert_receiver::start_on_boot();
+            if runtime_tasks::is_enabled("cert") {commands::cert_receiver::start_on_boot();}
             let mihomo_state = commands::mihomo::init_state();
             app.manage(mihomo_state.clone());
             commands::mihomo::start_scheduler(app.handle().clone(), mihomo_state.clone());
@@ -354,8 +369,8 @@ pub fn run() {
                 let auto_start_services = config_clone.auto_start_services.clone();
 
                 // 1. Mihomo 代理自启 (兼顾 auto_start_core 与 auto_start_services.contains("mihomo"))
-                let mihomo_enabled = auto_start_services.contains("mihomo")
-                    || s_mihomo.app_config.lock().map(|c| c.auto_start_core).unwrap_or(false);
+                let mihomo_enabled = runtime_tasks::is_enabled("mihomo") && (auto_start_services.contains("mihomo")
+                    || s_mihomo.app_config.lock().map(|c| c.auto_start_core).unwrap_or(false));
                 if mihomo_enabled {
                     exit_log::exit_log("[autostart] 正在自启 Mihomo 代理服务...");
                     let _ = commands::mihomo::launch_core(&h, s_mihomo).await;
@@ -363,7 +378,7 @@ pub fn run() {
 
                 // 1.4 2API 自启（Buddy → 2API 面板里勾选「随 Kira 启动」后生效）
                 // 与其它服务同一待遇：失败只记日志，不影响其余服务自启。
-                if auto_start_services.contains("buddy2api") {
+                if runtime_tasks::is_enabled("buddy") && auto_start_services.contains("buddy2api") {
                     exit_log::exit_log("[autostart] 正在自启 2API 服务...");
                     match crate::commands::buddy::twoapi::buddy2api_start(None).await {
                         Ok(_) => exit_log::exit_log("[autostart] 2API 自启成功"),
@@ -374,7 +389,7 @@ pub fn run() {
                 }
 
                 // 1.5 聚合服务自启（AI「聚合」页可勾选）
-                if auto_start_services.contains("aggregate") {
+                if runtime_tasks::is_enabled("ai") && auto_start_services.contains("aggregate") {
                     exit_log::exit_log("[autostart] 正在自启聚合服务...");
                     match crate::commands::ai::aggregate::start_aggregate_service(h.clone()).await {
                         Ok(st) => {
@@ -395,6 +410,7 @@ pub fn run() {
                     .cloned()
                     .collect();
                 for node_id in node_autostart {
+                    if !runtime_tasks::is_enabled("node") {continue;}
                     let project_id = node_id.trim_start_matches("node:").to_string();
                     match crate::commands::node_manager::find_project(&project_id) {
                         Some(def) if def.installed() => {
@@ -420,6 +436,7 @@ pub fn run() {
                 // 2. SDK 后台服务自启 (MySQL / Redis / MongoDB / PostgreSQL / Nginx / FRPC / FRPS 等)
                 //    注：RTSP 媒体服务已不再提供开机自启（设置入口与自启分支均已移除）。
                 for svc_id in &auto_start_services {
+                    if !runtime_tasks::is_enabled("sdk") {continue;}
                     // mihomo 已在上方单独处理；rtsp 保留跳过以防御历史残留配置；
                     // aggregate 与 node:<id> 也在上方单独处理，避免落入 SDK 服务的查找逻辑报「未找到」。
                     if svc_id == "mihomo"
@@ -464,14 +481,14 @@ pub fn run() {
             let _ = commands::clipboard::init_clipboard_state(app.handle());
             // picky 启动同步：延迟数秒（等自启服务就绪、界面加载完成）后拉取云端一次，
             // 仅当已配置并启用云同步时执行，未配置则静默跳过。
-            tauri::async_runtime::spawn(async move {
+            runtime_tasks::spawn_task("picky", "startup-sync", async move {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 commands::picky::picky_sync_if_enabled().await;
             });
             // Buddy 自动签到调度器（WorkBuddy / CodeBuddy CN 后台签到）
             commands::buddy::start_auto_checkin_scheduler(app.handle().clone());
             // 两平台同邮箱账号的倒计时一次性互相补齐（幂等，无缺失时不写文件）
-            commands::buddy::backfill_expiry_times();
+            if runtime_tasks::is_enabled("buddy") {commands::buddy::backfill_expiry_times();}
             // Buddy 自动派旅行调度器（WorkBuddy 专属活动，随机时间派出 + 领积分）
             commands::buddy::start_auto_travel_scheduler(app.handle().clone());
             // 音乐播放器：后台巡查线程（播完自动切下一首）。
@@ -549,7 +566,7 @@ pub fn run() {
             commands::config::set_motion_preference,
             commands::config::set_density,
             commands::config::set_module_order,
-            commands::config::set_module_layout,
+            commands::module_lifecycle::set_module_layout,
             commands::config::import_custom_font,
             commands::config::clear_custom_font,
             commands::config::list_system_fonts,
@@ -1440,6 +1457,7 @@ commands::node_manager::npm_init,
                         // 最后做 picky 云同步（可能慢/卡，超时 8 秒兜底；未配置/失败静默跳过）。
                         exit_log::exit_log("cleanup thread: picky exit sync...");
                         let _ = tauri::async_runtime::block_on(async {
+                            if !runtime_tasks::is_enabled("picky") {return;}
                             let _ = tokio::time::timeout(
                                 std::time::Duration::from_secs(8),
                                 commands::picky::picky_sync_if_enabled(),

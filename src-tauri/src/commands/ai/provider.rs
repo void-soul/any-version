@@ -213,6 +213,7 @@ pub async fn test_model_connection(
 
 #[tauri::command]
 pub async fn start_proxy(port: u16) -> Result<(), String> {
+    crate::runtime_tasks::require_enabled("ai")?;
     // 端口可被环境变量整体挪走（Windows 保留端口 / Hyper-V 排除区间场景），见 PROXY_PORT_ENV。
     let requested_port = port;
     let port = crate::proxy::resolve_proxy_port(requested_port);
@@ -290,7 +291,11 @@ pub async fn start_proxy(port: u16) -> Result<(), String> {
         app_handle: None,
         collab_room_id: None,
     };
-    crate::proxy::server::start_proxy_server(proxy_config).await?;
+    let address=format!("{}:{}",proxy_config.listen_address,proxy_config.listen_port);
+    let listener=std::net::TcpListener::bind(&address).map_err(|e|format!("绑定代理端口失败 {address}: {e}"))?;
+    if !crate::runtime_tasks::spawn_task("ai",&format!("manual-proxy-{port}"),async move {
+        if let Err(error)=crate::proxy::server::serve_proxy(proxy_config,listener).await {tracing::error!("代理服务退出: {error}");}
+    }) {return Err("该代理已在运行或模块已禁用".into());}
     Ok(())
 }
 

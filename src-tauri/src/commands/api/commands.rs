@@ -762,6 +762,7 @@ pub fn api_start_load_test(
     input_override: Option<SendRequestInput>,
 ) -> Result<String, String> {
     super::loadtest::validate_config(&config)?;
+    crate::runtime_tasks::require_enabled("api")?;
     let input = if let Some(ov) = input_override {
         ov
     } else {

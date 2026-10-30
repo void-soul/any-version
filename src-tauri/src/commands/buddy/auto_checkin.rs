@@ -1171,7 +1171,7 @@ fn next_retry_delay(current: Duration) -> Duration {
 pub fn start_auto_checkin_scheduler(app: AppHandle) {
     let wake = scheduler_wake();
     let platform = BuddyPlatform::Workbuddy;
-    tauri::async_runtime::spawn(async move {
+    crate::runtime_tasks::spawn_task("buddy", "auto-checkin", async move {
         eprintln!(
             "[BuddyAutoCheckin] 后台自动签到调度服务已启动: {}",
             platform.as_str()

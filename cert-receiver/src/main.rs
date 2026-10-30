@@ -11,8 +11,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod config;
-mod deployment;
-mod reload_command;
+use cert_deployment::deployment;
 mod server;
 
 use std::collections::VecDeque;

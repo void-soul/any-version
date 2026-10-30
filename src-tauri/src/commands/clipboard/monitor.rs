@@ -11,12 +11,39 @@ use tauri::{Emitter, Manager};
 use super::db;
 use super::images;
 
+static MONITOR_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static STOP_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static MONITOR_THREAD: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub async fn stop_monitor() -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+    STOP_REQUESTED.store(true, Ordering::SeqCst);
+    let id = MONITOR_THREAD.load(Ordering::SeqCst);
+    if id != 0 {
+        unsafe {
+            windows_sys::Win32::UI::WindowsAndMessaging::PostThreadMessageW(
+                id,
+                windows_sys::Win32::UI::WindowsAndMessaging::WM_QUIT,
+                0,
+                0,
+            );
+        }
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while MONITOR_RUNNING.load(Ordering::SeqCst) {
+        if std::time::Instant::now() >= deadline {
+            return Err("剪贴板监听仍在退出，请稍后重试".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // 全局：唤起窗口前记录前台窗口（供一键粘贴）
 // ---------------------------------------------------------------------------
 
-static PREVIOUS_FOREGROUND: std::sync::atomic::AtomicIsize =
-    std::sync::atomic::AtomicIsize::new(0);
+static PREVIOUS_FOREGROUND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 
 /// 记录当前前台窗口（在全局热键唤起主窗口之前调用，供一键粘贴使用）
 pub(crate) fn remember_previous_window() {
@@ -47,95 +74,180 @@ pub(crate) fn take_previous_window() -> Option<windows_sys::Win32::Foundation::H
 /// 创建 message-only 监听窗口并启动消息循环。
 /// 该线程与主线程完全独立，AppHandle 由窗口 userdata 携带。
 pub fn spawn_monitor(app: tauri::AppHandle) {
-    std::thread::Builder::new()
+    use std::sync::atomic::Ordering;
+    if !crate::runtime_tasks::is_enabled("clipboard")
+        || MONITOR_RUNNING.swap(true, Ordering::SeqCst)
+    {
+        return;
+    }
+    STOP_REQUESTED.store(false, Ordering::SeqCst);
+    if let Err(error) = std::thread::Builder::new()
         .name("clipboard-monitor".into())
         .spawn(move || {
+            struct Reset;
+            impl Drop for Reset {
+                fn drop(&mut self) {
+                    MONITOR_THREAD.store(0, Ordering::SeqCst);
+                    MONITOR_RUNNING.store(false, Ordering::SeqCst);
+                }
+            }
+            let _reset = Reset;
+            MONITOR_THREAD.store(
+                unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() },
+                Ordering::SeqCst,
+            );
+            if STOP_REQUESTED.load(Ordering::SeqCst) {
+                return;
+            }
             if let Err(e) = run_monitor_loop(app.clone()) {
                 tracing::warn!("剪贴板监控线程退出: {}", e);
             }
         })
-        .ok();
+    {
+        MONITOR_RUNNING.store(false, Ordering::SeqCst);
+        tracing::error!("创建剪贴板监听线程失败: {error}");
+    }
+}
+
+struct MonitorWindow {
+    hwnd: windows_sys::Win32::Foundation::HWND,
+    instance: windows_sys::Win32::Foundation::HINSTANCE,
+    class_name: Vec<u16>,
+    listening: bool,
+}
+
+impl MonitorWindow {
+    fn create() -> Result<Self, String> {
+        use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+        use windows_sys::Win32::UI::WindowsAndMessaging::*;
+        let instance = unsafe { GetModuleHandleW(std::ptr::null()) };
+        let class_name: Vec<u16> = "KiraClipboardMonitor\0".encode_utf16().collect();
+        let class = WNDCLASSW {
+            style: 0,
+            lpfnWndProc: Some(monitor_wnd_proc),
+            cbClsExtra: 0,
+            cbWndExtra: 0,
+            hInstance: instance,
+            hIcon: std::ptr::null_mut(),
+            hCursor: std::ptr::null_mut(),
+            hbrBackground: std::ptr::null_mut(),
+            lpszMenuName: std::ptr::null(),
+            lpszClassName: class_name.as_ptr(),
+        };
+        if unsafe { RegisterClassW(&class) } == 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error()
+                != Some(windows_sys::Win32::Foundation::ERROR_CLASS_ALREADY_EXISTS as i32)
+            {
+                return Err(format!("注册剪贴板窗口类失败: {error}"));
+            }
+        }
+        let hwnd = unsafe {
+            CreateWindowExW(
+                0,
+                class_name.as_ptr(),
+                class_name.as_ptr(),
+                0,
+                0,
+                0,
+                0,
+                0,
+                HWND_MESSAGE,
+                std::ptr::null_mut(),
+                instance,
+                std::ptr::null(),
+            )
+        };
+        if hwnd.is_null() {
+            let error = std::io::Error::last_os_error();
+            unsafe {
+                UnregisterClassW(class_name.as_ptr(), instance);
+            }
+            return Err(format!("创建剪贴板窗口失败: {error}"));
+        }
+        Ok(Self {
+            hwnd,
+            instance,
+            class_name,
+            listening: false,
+        })
+    }
+}
+impl Drop for MonitorWindow {
+    fn drop(&mut self) {
+        use windows_sys::Win32::System::DataExchange::RemoveClipboardFormatListener;
+        use windows_sys::Win32::UI::WindowsAndMessaging::*;
+        unsafe {
+            if self.listening {
+                RemoveClipboardFormatListener(self.hwnd);
+            }
+            let pointer = GetWindowLongPtrW(self.hwnd, GWLP_USERDATA) as *mut Arc<tauri::AppHandle>;
+            SetWindowLongPtrW(self.hwnd, GWLP_USERDATA, 0);
+            if !pointer.is_null() {
+                drop(Box::from_raw(pointer));
+            }
+            DestroyWindow(self.hwnd);
+            UnregisterClassW(self.class_name.as_ptr(), self.instance);
+        }
+    }
 }
 
 fn run_monitor_loop(app: tauri::AppHandle) -> Result<(), String> {
-    use windows_sys::Win32::System::DataExchange::{AddClipboardFormatListener, RemoveClipboardFormatListener};
-    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::System::DataExchange::AddClipboardFormatListener;
     use windows_sys::Win32::UI::WindowsAndMessaging::*;
-
-    let instance = unsafe { GetModuleHandleW(std::ptr::null()) };
-
-    // 注册窗口类
-    let class_name: Vec<u16> = "KiraClipboardMonitor\0".encode_utf16().collect();
-    let wc = WNDCLASSW {
-        style: 0,
-        lpfnWndProc: Some(monitor_wnd_proc),
-        cbClsExtra: 0,
-        cbWndExtra: 0,
-        hInstance: instance,
-        hIcon: std::ptr::null_mut(),
-        hCursor: std::ptr::null_mut(),
-        hbrBackground: std::ptr::null_mut(),
-        lpszMenuName: std::ptr::null(),
-        lpszClassName: class_name.as_ptr(),
-    };
-    let atom = unsafe { RegisterClassW(&wc) };
-    if atom == 0 {
-        return Err(format!("注册剪贴板监听窗口类失败: {}", std::io::Error::last_os_error()));
-    }
-
-    // 创建 message-only 窗口
-    let hwnd = unsafe {
-        CreateWindowExW(
-            0,
-            class_name.as_ptr(),
-            class_name.as_ptr(),
-            0,
-            0,
-            0,
-            0,
-            0,
-            HWND_MESSAGE,
-            std::ptr::null_mut(),
-            instance,
-            std::ptr::null(),
-        )
-    };
-    if hwnd.is_null() {
-        return Err(format!("创建剪贴板监听窗口失败: {}", std::io::Error::last_os_error()));
-    }
-
-    // 通过窗口 userdata 携带 AppHandle，供 WndProc 使用
-    let app_box: Box<Arc<tauri::AppHandle>> = Box::new(Arc::new(app.clone()));
+    let mut window = MonitorWindow::create()?;
+    let app_box: Box<Arc<tauri::AppHandle>> = Box::new(Arc::new(app));
     unsafe {
-        SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(app_box) as isize);
+        SetWindowLongPtrW(window.hwnd, GWLP_USERDATA, Box::into_raw(app_box) as isize);
     }
-
-    // 注册剪贴板监听
-    let ok = unsafe { AddClipboardFormatListener(hwnd) };
-    if ok == 0 {
-        return Err(format!("AddClipboardFormatListener 失败: {}", std::io::Error::last_os_error()));
+    if unsafe { AddClipboardFormatListener(window.hwnd) } == 0 {
+        return Err(format!(
+            "注册剪贴板监听失败: {}",
+            std::io::Error::last_os_error()
+        ));
     }
-
-    tracing::info!("剪贴板监控已启动 (hwnd={:p})", hwnd);
-
-    // 消息循环
-    let mut msg: MSG = unsafe { std::mem::zeroed() };
+    window.listening = true;
+    tracing::info!("剪贴板监控已启动 (hwnd={:p})", window.hwnd);
+    let mut message: MSG = unsafe { std::mem::zeroed() };
     unsafe {
-        while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
+        while !STOP_REQUESTED.load(std::sync::atomic::Ordering::SeqCst) {
+            let result = GetMessageW(&mut message, std::ptr::null_mut(), 0, 0);
+            if result == 0 {
+                break;
+            }
+            if result < 0 {
+                return Err(format!(
+                    "剪贴板消息循环失败: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
         }
-        RemoveClipboardFormatListener(hwnd);
-        // 释放 userdata
-        let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Arc<tauri::AppHandle>;
-        if !ptr.is_null() {
-            drop(Box::from_raw(ptr));
-        }
-        DestroyWindow(hwnd);
     }
     Ok(())
 }
 
+#[cfg(test)]
+mod native_window_tests {
+    use super::*;
+    #[test]
+    fn message_only_window_can_be_reused_and_recreated_without_monitoring() {
+        std::thread::spawn(|| {
+            // No ClipboardState, userdata or AddClipboardFormatListener: this
+            // exercises only class/window ownership and never reads clipboard data.
+            let first = MonitorWindow::create().unwrap();
+            let second = MonitorWindow::create().unwrap();
+            drop(first);
+            drop(second);
+            for _ in 0..3 {
+                drop(MonitorWindow::create().unwrap());
+            }
+        })
+        .join()
+        .unwrap();
+    }
+}
 unsafe extern "system" fn monitor_wnd_proc(
     hwnd: windows_sys::Win32::Foundation::HWND,
     msg: u32,
@@ -160,6 +272,9 @@ unsafe extern "system" fn monitor_wnd_proc(
 // ---------------------------------------------------------------------------
 
 fn handle_clipboard_update(app: &tauri::AppHandle) {
+    if !crate::runtime_tasks::is_enabled("clipboard") {
+        return;
+    }
     let state = match app.try_state::<super::ClipboardState>() {
         Some(s) => s.clone(),
         None => return,
@@ -379,9 +494,11 @@ fn read_clipboard_content(
                 if let Ok(img) = image::load_from_memory(&png_bytes) {
                     let rgba = img.to_rgba8();
                     let (w, h) = rgba.dimensions();
-                    return Ok(Some((formats, Vec::new(), Capture::Png(
-                        png_bytes, rgba.to_vec(), w, h,
-                    ))));
+                    return Ok(Some((
+                        formats,
+                        Vec::new(),
+                        Capture::Png(png_bytes, rgba.to_vec(), w, h),
+                    )));
                 }
             }
 
@@ -569,7 +686,9 @@ fn normalize_text(s: &str) -> String {
 fn get_foreground_app_name() -> Option<String> {
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::Threading::*;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowThreadProcessId,
+    };
 
     unsafe {
         let hwnd = GetForegroundWindow();

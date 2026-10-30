@@ -31,3 +31,4 @@ pub use commands::*;
 pub use plugin_commands::*;
 pub use plugin_playback::*;
 pub use player::{start_queue_watcher, AdvanceOutcome, MusicPlayerState, spawn_online_resolve};
+pub use plugin_host::stop_host;

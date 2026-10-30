@@ -236,7 +236,12 @@ pub(crate) fn refresh_global_hotkeys(app: AppHandle) {
             hotkeys.insert(format!("launcher-cat:{}", id), hk);
         }
     }
-    let _ = super::windows::register_global_hotkeys(app, &hotkeys);
+    hotkeys.retain(|id,_| crate::runtime_tasks::is_enabled(match id.as_str() {
+        "selection-translate"=>"translate", "mindmap-quick"|"mindmap-sticker"=>"mindmap",
+        "file-search"=>"launcher", "music-play-pause"|"music-prev"|"music-next"=>"music",
+        id if id.starts_with("launcher-item:")||id.starts_with("launcher-cat:")=>"launcher", id=>id,
+    }));
+    if let Err(error)=super::windows::register_global_hotkeys(app, &hotkeys) {tracing::warn!("注册全局快捷键失败: {error}");}
 }
 
 #[tauri::command]

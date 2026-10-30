@@ -239,6 +239,7 @@ pub(crate) async fn start_tool_proxy_with_collab(
     app_handle: Option<tauri::AppHandle>,
     collab_room_id: Option<String>,
 ) -> (u16, Option<tokio::task::AbortHandle>, String) {
+    if !crate::runtime_tasks::is_enabled("ai") {return (0,None,String::new());}
     let inbound_protocols = tool_config.inbound_protocols();
     let primary_inbound = tool_config.native_protocol();
 
@@ -468,6 +469,9 @@ pub(crate) async fn start_tool_proxy_with_collab(
                         eprintln!("[proxy] ⚠ 代理就绪检查失败, 中止: port={}", port);
                         handle.abort();
                         return (0, None, String::new());
+                    }
+                    if !crate::runtime_tasks::track_task("ai",&format!("tool-proxy-{port}"),handle) {
+                        return (0,None,String::new());
                     }
                 }
                 Err(e) => {

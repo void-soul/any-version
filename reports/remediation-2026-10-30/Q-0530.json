@@ -1,0 +1,8 @@
+{
+  "qid": "Q-0530",
+  "root_cause": "rqrr 0.7传递依赖旧lru，锁文件保留内存安全告警版本。",
+  "solution": "升级 **rqrr 0.11.0**，锁定 **lru 0.18.5**。新增公开rqrr QR矩阵与许可，走与OTP相同的图像检测解码路径；主agent执行integration测试1项通过，主库编译和1454项既有测试通过。RustSec重新扫描已无lru告警；扫描新发现TLS/ZIP/Zstd告警另立任务处理，不能将本条关闭等同全部依赖无风险。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/Cargo.toml**、**src-tauri/Cargo.lock** | 更新QR依赖及lru；新增存储锁和共享部署库依赖 |\n| **src-tauri/tests/qr_decode.rs**、**src-tauri/tests/fixtures/** | QR识别回归与公开fixture许可 |",
+  "validation": "QR integration 1 passed; main lib compiled; refreshed cargo audit has no lru finding.",
+  "status": "已验证"
+}

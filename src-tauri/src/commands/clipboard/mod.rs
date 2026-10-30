@@ -102,6 +102,11 @@ pub fn images_dir() -> std::path::PathBuf {
 
 /// 初始化剪贴板模块（应用启动时调用一次）
 pub fn init_clipboard_state(app: &tauri::AppHandle) -> Result<(), String> {
+    if !crate::runtime_tasks::is_enabled("clipboard") {return Ok(());}
+    if app.try_state::<ClipboardState>().is_some() {
+        monitor::spawn_monitor(app.clone());
+        return Ok(());
+    }
     let dir = clipboard_dir();
     let img_dir = images_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("创建剪贴板目录失败: {}", e))?;
@@ -124,3 +129,5 @@ pub fn init_clipboard_state(app: &tauri::AppHandle) -> Result<(), String> {
 
     Ok(())
 }
+
+pub async fn stop_monitor() -> Result<(), String> {monitor::stop_monitor().await}

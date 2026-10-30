@@ -55,6 +55,8 @@ jobs:
         run: cargo check --locked --manifest-path cert-receiver/Cargo.toml
       - name: cert receiver tests
         run: cargo test --locked --manifest-path cert-receiver/Cargo.toml
+      - name: certificate deployment core tests
+        run: cargo test --locked --manifest-path crates/cert-deployment/Cargo.toml
       # 软性检查：clippy / fmt 仅报告不阻断 CI（应用项目不过度追求零 lint warning）。
       - name: cargo clippy (report only)
         run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -W warnings

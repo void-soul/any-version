@@ -78,6 +78,12 @@ pub struct SerialState {
     connections: Arc<Mutex<HashMap<String, SerialConnection>>>,
 }
 
+pub fn close_all(state: &SerialState, simulation: &SimState) {
+    simulation.active.store(false,Ordering::Relaxed);
+    let connections=std::mem::take(&mut *state.connections.lock().unwrap_or_else(|e|e.into_inner()));
+    for (_,connection) in connections {connection.should_close.store(true,Ordering::Relaxed);}
+}
+
 fn parse_parity(s: &str) -> Parity {
     match s {
         "even" => Parity::Even,
@@ -149,6 +155,7 @@ pub fn serial_open(
     stop_bits: u8,
     flow_control: String,
 ) -> Result<(), String> {
+    crate::runtime_tasks::require_enabled("serial")?;
     if baud_rate == 0 {
         return Err("波特率必须大于 0".into());
     }

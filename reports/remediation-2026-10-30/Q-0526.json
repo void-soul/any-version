@@ -1,9 +1,8 @@
 {
   "qid": "Q-0526",
-  "question": "证书接收端domain布局在请求仅有certificate_id时不写任何文件仍报告成功，domains中的空项还会阻止有效domain回退。",
-  "root_cause": "目标解析只取 **domains.first**，布局校验只检查证书ID和域名不同时为空，未要求domain布局有实际域名。",
-  "solution": "1. 提取 **resolve_target_names**，跳过空白domains项并回退到trim后的domain。\n2. domain布局缺少非空域名立即返回400，零目标也拒绝部署。\n3. 新增缺域名拒绝与空项回退两项纯函数测试。",
-  "files": "| File | Change |\n|------|--------|\n| **cert-receiver/src/server.rs** | 按布局验证部署目标和两项回归测试 |",
-  "status": "已验证",
-  "validation": "Primary reviewed deployment, journal and timeout paths; all 17 receiver tests passed outside sandbox, including certificate/key mismatch, rollback, interrupted journal and process-tree timeout. Embedded receiver duplication discovered and queued for shared-core remediation before final acceptance."
+  "root_cause": "两个Cargo包各自实现 **PushBody**、目标解析、布局、证书写入和命令重载，原部署信号量仅能协调单进程。",
+  "solution": "1. 提取本地Cargo库 **cert-deployment**，共享证书身份验证、Push协议/目标解析/布局、代际journal回滚恢复和有界重载命令；库不依赖Tauri或业务配置。\n2. 内嵌和独立接收端都变成薄配置/HTTP适配器，部署在blocking worker，读取证书与部署使用同一输出目录OS文件锁。\n3. 使用fs2跨进程锁覆盖部署、重载、回滚和恢复，新增同进程与子进程争锁回归。\n4. 共享库14项测试通过，含合法/错配身份、完整协议部署、失败/崩溃恢复、进程超时；两端薄适配需主agent统一验收，独立端旧测试通过不等于内嵌已验证。\n主agent验收：主应用编译通过，内嵌兼容5项、独立端10项、共享库14项全部通过（含子进程争锁）。共享库CI新增独立test步骤。",
+  "files": "| File | Change |\n|------|--------|\n| **crates/cert-deployment/** | Shared protocol, identity validation, journal recovery, process locking, bounded commands and fixtures |\n| **src-tauri/src/commands/cert_receiver.rs**, **cert_receiver/tests.rs** | Embedded adapter and compatibility tests |\n| **cert-receiver/src/** | Standalone adapter; remove duplicate deployment/command implementations |\n| **src-tauri/Cargo.{toml,lock}**, **cert-receiver/Cargo.{toml,lock}** | Shared local dependency and resolved locks |",
+  "validation": "Main compile + embedded 5 + standalone 10 + shared core 14 passed.",
+  "status": "已验证"
 }

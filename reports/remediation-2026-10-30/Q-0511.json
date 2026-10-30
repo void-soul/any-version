@@ -1,0 +1,12 @@
+{
+  "qid": "Q-0511",
+  "root_cause": "备份与迁移各自维护文件名清单，没有统一的模块持久化所有权声明。",
+  "solution": "1. 新增 **ModuleAssets** 公共契约，集中声明每个持久化模块的备份文件、目录及迁移根。\n2. 快照和迁移读取同一清单，补齐Buddy、Suno、设计器、任务图片等资产；明确排除可重建缓存和大型SDK/工作目录。\n3. 新增commands模块必须登记持久化资产或明确无独立存储，否则覆盖测试失败。\n主agent验收：主应用测试编译通过；Windows提升隔离环境storage16项（含junction2、事务回滚、WAL和配置拒绝）、foundation6项全部通过；既有state_sync5项通过。仅操作临时fixture。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/storage_assets.rs** | 模块资产声明与覆盖测试 |\n| **src-tauri/src/commands/state_sync.rs** | 使用资产清单并输出备份覆盖元信息 |",
+  "status": "已验证",
+  "validation": "Compiled c5bed827f96e762d; storage16 + foundation6 + existing state_sync5 passed. Startup hook reviewed before all database initialization.",
+  "paths": [
+    "src-tauri/src/commands/storage_assets.rs",
+    "src-tauri/src/commands/state_sync.rs"
+  ]
+}

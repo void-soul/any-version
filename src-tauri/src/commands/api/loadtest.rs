@@ -284,6 +284,19 @@ pub fn forget_completed(run_id: &str) {
     completed_reports().lock().unwrap_or_else(|e| e.into_inner()).retain(|(id, _)| id != run_id);
 }
 
+pub async fn stop_all_runs() -> Result<(),String> {
+    {
+        let active=runs().lock().unwrap_or_else(|e|e.into_inner());
+        for state in active.values() {state.running.store(false,Ordering::SeqCst);state.cancel.send_replace(true);}
+    }
+    let deadline=Instant::now()+std::time::Duration::from_secs(5);
+    loop {
+        if runs().lock().unwrap_or_else(|e|e.into_inner()).is_empty(){return Ok(());}
+        if Instant::now()>=deadline{return Err("压测仍在收尾，请稍后重试".into());}
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
+
 fn status_from_state(state: &LoadRunState) -> LoadRunStatus {
     let elapsed = state.start.elapsed().as_secs() as u32;
     let total = state.total.load(Ordering::Relaxed);

@@ -16,6 +16,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+cert-deployment = { path = "../crates/cert-deployment" }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
@@ -66,7 +67,7 @@ pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 sha1 = "0.10"
 base64 = "0.22"
 # 二维码解码（OTP 模块「扫码添加」：从图片识别 otpauth URI）
-rqrr = "0.7"
+rqrr = "0.11"
 serde_yaml = "0.9"
 # 解码 cmd/子进程的 GBK（代码页 936）输出，修复 mklink 等中文输出乱码
 encoding_rs = "0.8"
@@ -76,6 +77,8 @@ aes-gcm = "0.10"
 native-tls = "0.2"
 tokio-native-tls = "0.3"
 getrandom = "0.2"
+# Cross-process storage barriers, compatible with the existing Rust 1.88 toolchain.
+fs2 = "0.4.3"
 # 无中毒 Mutex
 parking_lot = "0.12"
 # 串口调试器模块

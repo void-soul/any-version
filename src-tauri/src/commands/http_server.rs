@@ -351,6 +351,7 @@ pub async fn start_http_server(
     // 切勿默认暴露到所有网络接口，否则会把本地目录共享给整个局域网/公网。
     host: Option<String>,
 ) -> Result<String, String> {
+    crate::runtime_tasks::require_enabled("httpServer")?;
     let mut servers = state.servers.lock().await;
     if servers.contains_key(&port) {
         return Err(format!("端口 {} 已在服务中", port));
@@ -423,6 +424,7 @@ pub async fn start_http_server_inner(
     port: u16,
     host: Option<String>,
 ) -> Result<String, String> {
+    crate::runtime_tasks::require_enabled("httpServer")?;
     {
         let map = servers.lock().await;
         if map.contains_key(&port) {

@@ -140,6 +140,7 @@ pub fn clear(data_dir: &Path) -> Result<(), String> {
 /// 只在「核心没停」时采集；核心停了就空转等它起来（避免退出时序上抢锁）。
 /// 用 `RECORDER_GUARD` + `RECORDER_RUNNING` 保证全局只有一个采样任务。
 pub fn start_recorder(inner: std::sync::Arc<super::MihomoInner>) {
+    if !crate::runtime_tasks::is_enabled("mihomo") {return;}
     {
         let _g = match RECORDER_GUARD.lock() {
             Ok(g) => g,
@@ -150,7 +151,7 @@ pub fn start_recorder(inner: std::sync::Arc<super::MihomoInner>) {
         }
         RECORDER_RUNNING.store(true, Ordering::SeqCst);
     }
-    tauri::async_runtime::spawn(async move {
+    crate::runtime_tasks::spawn_task("mihomo", "traffic-recorder", async move {
         loop {
             if inner.stop_flag.load(Ordering::SeqCst) {
                 tokio::time::sleep(std::time::Duration::from_secs(SAMPLE_INTERVAL_SECS)).await;
@@ -182,6 +183,8 @@ pub fn start_recorder(inner: std::sync::Arc<super::MihomoInner>) {
         }
     });
 }
+
+pub fn reset_recorder_after_stop() {RECORDER_RUNNING.store(false,Ordering::SeqCst);}
 
 #[cfg(test)]
 mod tests {

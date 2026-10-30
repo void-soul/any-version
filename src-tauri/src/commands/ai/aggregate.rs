@@ -958,7 +958,7 @@ pub fn apply_frozen_prefix(messages: &[Value], cache: Option<&PrefixSnapshot>) -
 
 struct AggregateEntry {
     port: u16,
-    handle: tokio::task::JoinHandle<()>,
+    handle: tokio::task::AbortHandle,
 }
 
 static AGGREGATE: OnceLock<Mutex<Option<AggregateEntry>>> = OnceLock::new();
@@ -1113,6 +1113,7 @@ pub fn save_aggregate_config(config: AggregateConfig) -> Result<AggregateConfig,
 /// 启动聚合服务。链路支持热更新：启动后修改聚合链无需重启。
 #[tauri::command]
 pub async fn start_aggregate_service(app: tauri::AppHandle) -> Result<AggregateStatus, String> {
+    crate::runtime_tasks::require_enabled("ai")?;
     let config = load_ai_config();
     let port = config.aggregate.port;
     if let Some(p) = running_port() {
@@ -1151,11 +1152,11 @@ pub async fn start_aggregate_service(app: tauri::AppHandle) -> Result<AggregateS
         .await
         .map_err(|e| format!("监听 127.0.0.1:{} 失败: {}", port, e))?;
 
-    let handle = tokio::spawn(async move {
+    let handle = crate::runtime_tasks::spawn_owned("ai","aggregate",async move {
         if let Err(e) = axum::serve(listener, router).await {
             eprintln!("[aggregate] 服务异常退出: {}", e);
         }
-    });
+    }).ok_or("聚合服务已在运行或模块已禁用")?;
     *AGGREGATE.get_or_init(|| Mutex::new(None)).lock().unwrap() =
         Some(AggregateEntry { port, handle });
 

@@ -328,6 +328,7 @@ pub fn start_rtsp_server(
     state: State<'_, RtspServerState>,
     mut config: RtspConfig,
 ) -> Result<RtspServerStatus, String> {
+    crate::runtime_tasks::require_enabled("rtspServer")?;
     let instance_id = config.id.clone().unwrap_or_else(|| format!("server_{}", config.port));
     config.id = Some(instance_id.clone());
 

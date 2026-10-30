@@ -1182,7 +1182,7 @@ pub(super) fn plugin_display_name(file: &str) -> String {
 /// 真要等就得阻塞 250ms 的巡检循环。等待期间由 `Inner.pending` 挡住推进，
 /// 任务完成后自己调 `play_online_resolved` 接上 —— 巡查线程不需要知道结果。
 pub fn spawn_online_resolve(app: tauri::AppHandle, pending: PendingOnline) {
-    tauri::async_runtime::spawn(async move {
+    crate::runtime_tasks::spawn_task("music", &format!("online-{}", pending.seq), async move {
         let seq = pending.seq;
         let outcome =
             super::plugin_playback::materialize(&app, &pending.file, &pending.item, &pending.quality)
@@ -1213,10 +1213,10 @@ pub fn spawn_online_resolve(app: tauri::AppHandle, pending: PendingOnline) {
 /// 必须由后端驱动（而不是前端轮询后切换）：窗口隐藏 / 最小化到托盘后，
 /// WebView2 会节流甚至暂停前端定时器，只有 Rust 侧才能可靠地续播。
 pub fn start_queue_watcher(app: tauri::AppHandle) {
-    std::thread::spawn(move || {
+    crate::runtime_tasks::spawn_task("music", "queue-watcher", async move {
         crate::exit_log!("[音乐] 后台巡查线程已启动（播完自动切下一首）");
         loop {
-            std::thread::sleep(Duration::from_millis(250));
+            tokio::time::sleep(Duration::from_millis(250)).await;
             match app.try_state::<MusicPlayerState>() {
                 Some(state) => state.tick(Some(&app)),
                 // 应用已退出（State 已回收）：结束线程
