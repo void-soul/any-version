@@ -1,0 +1,24 @@
+{
+  "qid": "Q-0537",
+  "parent_task": "Q-0506",
+  "question": "PackageManagerTab将包管理检测、安装、缓存/数据迁移状态机和全部流程视图集中在1528行文件。",
+  "root_cause": "存储变更工作流包含多个阶段、路径输入与执行状态，未作为独立领域功能封装。",
+  "solution": "PackageManagerTab保留兼容导出，实际主页面为PackageManagerWorkspace；usePackageStorageWorkflow集中拥有缓存与数据迁移状态、阶段渲染及执行回调，父页面仅使用openWorkflow/renderWorkflow与当前目标，不传递巨大的props/context；缓存与数据状态卡为独立typed视图，PackageStorageInfo定义最小字段契约。后定义runDetection和确认setter通过惰性回调传入避免TDZ。\n主agent复核：领域hook保留完整状态与命令工作流、输入为明确领域值；技能重载使用延迟回调避免TDZ。tsc与49文件395测试通过，清单每个输出小于1000行。",
+  "files": "| File | Change |\n|------|--------|\n| **PackageManagerTab.tsx**、**PackageManagerWorkspace.tsx** | 兼容入口与914行包管理主页面 |\n| **usePackageStorageWorkflow.tsx** | 546行独立状态机/路径操作/流程渲染 |\n| **PackageCacheStorageCard.tsx**、**PackageDataStorageCard.tsx** | typed存储状态视图 |\n| **packageStorageTypes.ts**、**PackageManagerTab.model.tsx** | 存储位置契约与原检测缓存单例 |",
+  "status": "已验证",
+  "validation": [
+    "npx --no-install tsc --noEmit passed",
+    "npx --no-install vitest run: 49 files, 395 tests passed",
+    "7 exact paths below 1000 lines and trailing whitespace removed",
+    "Shared detection cache stays in one module; workflow retains original state ownership and command ordering"
+  ],
+  "paths": [
+    "src/components/project/tabs/PackageManagerTab.tsx",
+    "src/components/project/tabs/PackageManagerWorkspace.tsx",
+    "src/components/project/tabs/PackageManagerTab.model.tsx",
+    "src/components/project/tabs/usePackageStorageWorkflow.tsx",
+    "src/components/project/tabs/packageStorageTypes.ts",
+    "src/components/project/tabs/PackageCacheStorageCard.tsx",
+    "src/components/project/tabs/PackageDataStorageCard.tsx"
+  ]
+}
