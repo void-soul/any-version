@@ -1,0 +1,30 @@
+{
+  "qid": "Q-0543",
+  "question": "API导入导出和IPC命令分别超过2000/1000行，需要按格式与职责拆分。",
+  "root_cause": "多种格式语法、框架扫描与数据库CRUD、执行和测试命令混合在两份大文件。",
+  "solution": "导入导出按Postman、OpenAPI、框架扫描、cURL、OpenAPI导出和原回归分开；IPC按项目、环境、模块、历史、接口、执行、单测、压测、导入导出、预设Headers拆分。顶层共享模型和EP_COLS保持唯一，公开API通过正常mod/pub use兼容，不改变函数体算法。\n主agent验收：Main lib compiled; API sandbox-safe 25 tests passed; socket RPS test separately passed in earlier exact fixture validation.",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/api/import.rs**、**api/import/** | 各格式解析导出和回归 |\n| **src-tauri/src/commands/api/commands.rs**、**api/commands/** | 各领域命令层 |",
+  "status": "已验证",
+  "validation": "Main lib compiled; API sandbox-safe 25 tests passed; socket RPS test separately passed in earlier exact fixture validation.",
+  "paths": [
+    "src-tauri/src/commands/api/import/postman.rs",
+    "src-tauri/src/commands/api/import/swagger.rs",
+    "src-tauri/src/commands/api/import/framework.rs",
+    "src-tauri/src/commands/api/import/curl.rs",
+    "src-tauri/src/commands/api/import/openapi.rs",
+    "src-tauri/src/commands/api/import/tests.rs",
+    "src-tauri/src/commands/api/import.rs",
+    "src-tauri/src/commands/api/commands/projects.rs",
+    "src-tauri/src/commands/api/commands/environments.rs",
+    "src-tauri/src/commands/api/commands/modules.rs",
+    "src-tauri/src/commands/api/commands/history.rs",
+    "src-tauri/src/commands/api/commands/endpoints.rs",
+    "src-tauri/src/commands/api/commands/execution.rs",
+    "src-tauri/src/commands/api/commands/unit_tests.rs",
+    "src-tauri/src/commands/api/commands/load_tests.rs",
+    "src-tauri/src/commands/api/commands/interchange.rs",
+    "src-tauri/src/commands/api/commands/preset_headers.rs",
+    "src-tauri/src/commands/api/commands.rs"
+  ],
+  "parent_task": "Q-0506"
+}
