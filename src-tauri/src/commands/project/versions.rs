@@ -22,13 +22,13 @@ pub use remote::*;
 mod installation;
 pub use installation::*;
 mod msix;
-pub use msix::*;
+use msix::*;
 mod lifecycle;
 pub use lifecycle::*;
 mod archives;
-pub use archives::*;
+pub(crate) use archives::*;
 mod downloads;
-pub use downloads::*;
+pub(crate) use downloads::*;
 
 #[cfg(test)]
 #[path = "versions/tests.rs"]

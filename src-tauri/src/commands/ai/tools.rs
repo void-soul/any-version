@@ -380,10 +380,10 @@ pub async fn uninstall_ai_tool(
 }
 
 mod process_output;
-pub use process_output::*;
+use process_output::*;
 
 mod package_management;
-pub use package_management::*;
+use package_management::*;
 
 #[cfg(test)]
 mod tests;

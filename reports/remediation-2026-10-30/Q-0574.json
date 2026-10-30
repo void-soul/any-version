@@ -1,0 +1,29 @@
+{
+  "qid": "Q-0574",
+  "root_cause": "facade原先将仅crate/祖先/内部可见的子模块绑定统一标pub use，表达了不真实的公开范围并触发76项编译器诊断。",
+  "solution": "按Rust AST读取每个子模块实际声明的最宽合法域，76处回导出分别使用55处私有use、20处pub(crate)、1处原祖先pub(in ...)；保留原调用范围，外部公开API不扩大。不重写标识符、函数体或字面值。最终test编译与all-targets通过，1459+18回归通过，1483清单不变。",
+  "files": "| File | Change |\n|------|--------|\n| **commands/{cert,service,ai,project,node_manager,buddy,music,picky,suno,mindmap,db_designer,launcher}** | 精确19个facade的76处可见域完善（完整paths附后） |",
+  "status": "已验证",
+  "paths": [
+    "src-tauri/src/commands/service.rs",
+    "src-tauri/src/commands/project/versions.rs",
+    "src-tauri/src/commands/ai/aggregate.rs",
+    "src-tauri/src/commands/ai/launch.rs",
+    "src-tauri/src/commands/ai/tools.rs",
+    "src-tauri/src/commands/ai/collab.rs",
+    "src-tauri/src/commands/cert.rs",
+    "src-tauri/src/commands/mihomo/mod.rs",
+    "src-tauri/src/commands/node_manager.rs",
+    "src-tauri/src/commands/launcher/file_search.rs",
+    "src-tauri/src/commands/buddy/session_transfer/workbuddy.rs",
+    "src-tauri/src/commands/buddy/session_transfer/codebuddy.rs",
+    "src-tauri/src/commands/buddy/sessions.rs",
+    "src-tauri/src/commands/picky/mod.rs",
+    "src-tauri/src/commands/mindmap/scan.rs",
+    "src-tauri/src/commands/mindmap/commands.rs",
+    "src-tauri/src/commands/db_designer/ai.rs",
+    "src-tauri/src/commands/music/player.rs",
+    "src-tauri/src/commands/suno/mod.rs"
+  ],
+  "validation": "Final all-targets check and1483 inventory;1459 sandbox +18 exact Windows fixture tests passed,6 existing ignored. Frontend tsc/50 files397 tests and production build passed; source guard1084 passed."
+}

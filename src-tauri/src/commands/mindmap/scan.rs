@@ -663,7 +663,7 @@ struct ScanCacheEntry {
 }
 
 mod import_graph;
-pub use import_graph::*;
+use import_graph::*;
 mod deep_read;
 pub use deep_read::*;
 mod cache;

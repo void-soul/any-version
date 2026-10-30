@@ -20,9 +20,9 @@ use crate::commands::utils;
 mod models;
 pub use models::*;
 mod storage;
-pub use storage::*;
+use storage::*;
 mod http;
-pub use http::*;
+use http::*;
 mod profiles;
 pub use profiles::*;
 mod download;
@@ -30,7 +30,7 @@ pub use download::*;
 mod parsing;
 pub use parsing::*;
 mod feed;
-pub use feed::*;
+use feed::*;
 
 #[cfg(test)]
 mod tests;

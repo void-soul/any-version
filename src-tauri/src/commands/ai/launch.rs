@@ -189,7 +189,7 @@ async fn wait_for_proxy_ready(listen_address: &str, port: u16) -> bool {
 }
 
 mod proxy_runtime;
-pub use proxy_runtime::*;
+pub(crate) use proxy_runtime::*;
 
 mod applied_models;
 pub use applied_models::*;
@@ -198,13 +198,13 @@ mod process_launch;
 pub use process_launch::*;
 
 mod model_configuration;
-pub use model_configuration::*;
+pub(crate) use model_configuration::*;
 
 mod config_plan;
-pub use config_plan::*;
+pub(crate) use config_plan::*;
 
 mod config_formats;
-pub use config_formats::*;
+pub(crate) use config_formats::*;
 
 #[cfg(test)]
 mod tests;

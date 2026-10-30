@@ -198,9 +198,9 @@ struct QueryScope {
 // ============================ 悬浮窗 ============================
 
 mod database;
-pub use database::*;
+use database::*;
 mod drives;
-pub use drives::*;
+use drives::*;
 mod indexing;
 pub use indexing::*;
 mod query;

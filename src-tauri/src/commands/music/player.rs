@@ -27,7 +27,7 @@ use super::settings::{self, MusicSettings};
 mod models;
 pub use models::*;
 mod diagnostics;
-pub use diagnostics::*;
+use diagnostics::*;
 mod output;
 pub use output::*;
 mod queue;

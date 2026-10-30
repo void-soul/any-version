@@ -286,10 +286,10 @@ mod context;
 pub use context::*;
 
 mod forward;
-pub use forward::*;
+use forward::*;
 
 mod upstream_response;
-pub use upstream_response::*;
+use upstream_response::*;
 
 #[cfg(test)]
 mod tests;
