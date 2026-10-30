@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0565",
+  "parent_task": "Q-0506",
+  "question": "Windows服务管理的安装运行控制和进程处理集中于超长公共服务文件。",
+  "root_cause": "Windows服务管理的安装运行控制和进程处理集中于超长公共服务文件。 原模块长期追加实现，领域辅助和单例没有清晰文件边界。",
+  "solution": "保留原模块公开facade及Tauri命令宏，通过正常私有子模块按职责划分实现；保留原单例静态状态的唯一所有权、运行时任务生命周期和所有原有测试。同模块辅助最小提升pub(super)，原pub(super)按旧祖先pub(in ...)保留可见范围。\n主agent验收：Main lib compiled; No direct service unit tests; public APIs compiled and existing project SDK regressions passed. Original function inventory and singleton ownership preserved.",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/service.rs** | 兼容facade与职责声明 |\n| **src-tauri/src/commands/service/** | 独立职责实现与原有回归 |",
+  "status": "已验证",
+  "paths": [
+    "src-tauri/src/commands/service.rs",
+    "src-tauri/src/commands/service/models.rs",
+    "src-tauri/src/commands/service/config_readers.rs",
+    "src-tauri/src/commands/service/discovery.rs",
+    "src-tauri/src/commands/service/data_dirs.rs",
+    "src-tauri/src/commands/service/status_cache.rs",
+    "src-tauri/src/commands/service/execution.rs",
+    "src-tauri/src/commands/service/commands.rs",
+    "src-tauri/src/commands/service/system_services.rs"
+  ],
+  "validation": "Main lib compiled; No direct service unit tests; public APIs compiled and existing project SDK regressions passed. Original function inventory and singleton ownership preserved."
+}
