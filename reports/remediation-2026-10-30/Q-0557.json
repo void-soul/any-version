@@ -1,0 +1,17 @@
+{
+  "qid": "Q-0557",
+  "parent_task": "Q-0506",
+  "question": "启动器数据库将分类树、项目记录、备份、连接和所有回归集中在1262行文件。",
+  "root_cause": "独立领域算法与存储/运行编排缺少文件职责边界。",
+  "solution": "按完整Rust AST声明提取具名职责子模块，保留原公开facade、共享状态/模型唯一所有权和原回归。只调整Rust路径token层级，保留字符串和注释；私有函数仅提升到父模块可见。\n主agent验收：Main lib compiled. All four launcher database tests passed. Every output <1000 lines; literal content retained during token path adjustment.",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/launcher/db.rs**及同领域原入口 | 兼容公开入口与唯一状态 |\n| 对应具名职责子模块 | 完整声明与原回归 |",
+  "status": "已验证",
+  "paths": [
+    "src-tauri/src/commands/launcher/db/classifications.rs",
+    "src-tauri/src/commands/launcher/db/items.rs",
+    "src-tauri/src/commands/launcher/db/backup.rs",
+    "src-tauri/src/commands/launcher/db/tests.rs",
+    "src-tauri/src/commands/launcher/db.rs"
+  ],
+  "validation": "Main lib compiled. All four launcher database tests passed. Every output <1000 lines; literal content retained during token path adjustment."
+}
