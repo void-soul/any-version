@@ -1,11 +1,12 @@
+mod app_commands;
 pub mod commands;
-pub mod proxy;
-mod tray;
 pub mod exit_log;
+pub mod proxy;
 pub mod runtime_tasks;
+mod tray;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::{Manager, Emitter, Listener};
+use tauri::{Emitter, Listener, Manager};
 
 /// 用户通过托盘「退出」主动请求退出。置位后，即便 Tauri 在窗口销毁流程中
 /// 发出 code=None 的 ExitRequested，也不应拦截真正的退出意图。
@@ -48,8 +49,12 @@ mod tests {
     /// 普通 SDK 目录不能被误判成别名目录，否则防劫持过滤会整体失效。
     #[test]
     fn normal_dir_is_not_alias_dir() {
-        assert!(!is_app_execution_alias_dir(&PathBuf::from(r"D:\any-versions\sdk\winget")));
-        assert!(!is_app_execution_alias_dir(&PathBuf::from(r"D:\tool\go\bin")));
+        assert!(!is_app_execution_alias_dir(&PathBuf::from(
+            r"D:\any-versions\sdk\winget"
+        )));
+        assert!(!is_app_execution_alias_dir(&PathBuf::from(
+            r"D:\tool\go\bin"
+        )));
     }
 }
 
@@ -99,13 +104,19 @@ pub fn sync_process_path() {
                     if let Some(def) = commands::project::registry::find_by_id(managed_id) {
                         for rule in &def.find_rules {
                             match &rule.pattern {
-                                commands::project::types::ResolvePattern::PathContains { path_key, exe_name } => {
+                                commands::project::types::ResolvePattern::PathContains {
+                                    path_key,
+                                    exe_name,
+                                } => {
                                     if p_lower.contains(&path_key.to_lowercase()) {
                                         let mut check_names = vec![exe_name.clone()];
                                         #[cfg(windows)]
                                         {
                                             let exe_lower = exe_name.to_lowercase();
-                                            if !exe_lower.ends_with(".exe") && !exe_lower.ends_with(".cmd") && !exe_lower.ends_with(".bat") {
+                                            if !exe_lower.ends_with(".exe")
+                                                && !exe_lower.ends_with(".cmd")
+                                                && !exe_lower.ends_with(".bat")
+                                            {
                                                 check_names.push(format!("{}.exe", exe_name));
                                                 check_names.push(format!("{}.cmd", exe_name));
                                                 check_names.push(format!("{}.bat", exe_name));
@@ -119,31 +130,40 @@ pub fn sync_process_path() {
                                         }
                                     }
                                 }
-                                commands::project::types::ResolvePattern::FixedPath { path: fixed_path, exe_name }
-                                    if p_lower.contains(&fixed_path.to_lowercase()) => {
-                                        let mut check_names = vec![exe_name.clone()];
-                                        #[cfg(windows)]
+                                commands::project::types::ResolvePattern::FixedPath {
+                                    path: fixed_path,
+                                    exe_name,
+                                } if p_lower.contains(&fixed_path.to_lowercase()) => {
+                                    let mut check_names = vec![exe_name.clone()];
+                                    #[cfg(windows)]
+                                    {
+                                        let exe_lower = exe_name.to_lowercase();
+                                        if !exe_lower.ends_with(".exe")
+                                            && !exe_lower.ends_with(".cmd")
+                                            && !exe_lower.ends_with(".bat")
                                         {
-                                            let exe_lower = exe_name.to_lowercase();
-                                            if !exe_lower.ends_with(".exe") && !exe_lower.ends_with(".cmd") && !exe_lower.ends_with(".bat") {
-                                                check_names.push(format!("{}.exe", exe_name));
-                                                check_names.push(format!("{}.cmd", exe_name));
-                                                check_names.push(format!("{}.bat", exe_name));
-                                            }
-                                        }
-                                        for name in &check_names {
-                                            if p.join(name).exists() {
-                                                matches_managed_rule = true;
-                                                break;
-                                            }
+                                            check_names.push(format!("{}.exe", exe_name));
+                                            check_names.push(format!("{}.cmd", exe_name));
+                                            check_names.push(format!("{}.bat", exe_name));
                                         }
                                     }
+                                    for name in &check_names {
+                                        if p.join(name).exists() {
+                                            matches_managed_rule = true;
+                                            break;
+                                        }
+                                    }
+                                }
                                 _ => {}
                             }
-                            if matches_managed_rule { break; }
+                            if matches_managed_rule {
+                                break;
+                            }
                         }
                     }
-                    if matches_managed_rule { break; }
+                    if matches_managed_rule {
+                        break;
+                    }
                 }
 
                 if !matches_managed_rule {
@@ -179,7 +199,11 @@ fn cleanup_legacy_env_vars() {
         let delegation = config.project_delegations.get(&def.id);
         for var_def in &def.env_vars {
             let env_managed = delegation.is_some_and(|d| d.env_vars.contains(&var_def.name));
-            let should_not_exist = !env_managed || var_def.tier.as_ref().is_some_and(|t| *t == EnvVarTier::Compat);
+            let should_not_exist = !env_managed
+                || var_def
+                    .tier
+                    .as_ref()
+                    .is_some_and(|t| *t == EnvVarTier::Compat);
             if should_not_exist {
                 if let Some(val) = get_registry_env(&var_def.name) {
                     if val.to_lowercase().contains(&links_dir_lower) {
@@ -203,10 +227,7 @@ fn init_tracing_and_panic_hook() {
     // panic hook：记录位置与消息，避免线程静默崩溃无从排查
     std::panic::set_hook(Box::new(|info| {
         let msg = info.to_string();
-        let location = info
-            .location()
-            .map(|l| l.to_string())
-            .unwrap_or_default();
+        let location = info.location().map(|l| l.to_string()).unwrap_or_default();
         eprintln!("[panic] {msg} @ {location}");
         crate::exit_log::exit_log(&format!("[panic] {msg} @ {location}"));
     }));
@@ -232,23 +253,37 @@ fn init_tracing_and_panic_hook() {
 pub fn run() {
     exit_log::exit_log("=== app 启动 run() ===");
     init_tracing_and_panic_hook();
-    let _ = proxy::hooks::install(std::sync::Arc::new(commands::ai::proxy_hooks::AppProxyHooks));
+    let _ = proxy::hooks::install(std::sync::Arc::new(
+        commands::ai::proxy_hooks::AppProxyHooks,
+    ));
     // Pending restore/migration must finish before any configuration-derived path
     // or database connection is opened. Failure keeps the plan for retry.
     if let Err(error) = commands::storage_maintenance::apply_pending_operations() {
         tracing::error!("启动前存储维护失败: {error}");
         exit_log::exit_log(&format!("startup storage maintenance failed: {error}"));
-        #[cfg(windows)] {
+        #[cfg(windows)]
+        {
             use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
-            let text: Vec<u16> = "存储维护未完成，应用没有启动。请检查数据目录权限和日志后重试。\0".encode_utf16().collect();
+            let text: Vec<u16> = "存储维护未完成，应用没有启动。请检查数据目录权限和日志后重试。\0"
+                .encode_utf16()
+                .collect();
             let title: Vec<u16> = "Kira 存储维护\0".encode_utf16().collect();
-            unsafe { MessageBoxW(std::ptr::null_mut(), text.as_ptr(), title.as_ptr(), MB_OK | MB_ICONERROR); }
+            unsafe {
+                MessageBoxW(
+                    std::ptr::null_mut(),
+                    text.as_ptr(),
+                    title.as_ptr(),
+                    MB_OK | MB_ICONERROR,
+                );
+            }
         }
         std::process::exit(1);
     }
     // 对既有主密钥文件收紧 ACL（旧版本创建时未限权）
     {
-        let key_path = crate::commands::config::get_data_dir().join("certs").join(".master_key");
+        let key_path = crate::commands::config::get_data_dir()
+            .join("certs")
+            .join(".master_key");
         if key_path.exists() {
             crate::commands::secrets::restrict_master_key_acl(&key_path);
         }
@@ -342,15 +377,15 @@ pub fn run() {
                 let config = crate::commands::config::load_config();
                 let rebuilt = crate::commands::config::rebuild_sdk_junctions(&config);
                 if !rebuilt.is_empty() {
-                    exit_log::exit_log(&format!(
-                        "[startup] 重建 SDK 锚点 junction: {:?}", rebuilt
-                    ));
+                    exit_log::exit_log(&format!("[startup] 重建 SDK 锚点 junction: {:?}", rebuilt));
                 }
             }
             commands::cert::start_scheduler(app.handle().clone());
             // 内嵌证书接收端：注入 AppHandle（事件推送需要）+ 按配置自启
             commands::cert_receiver::init(app.handle().clone());
-            if runtime_tasks::is_enabled("cert") {commands::cert_receiver::start_on_boot();}
+            if runtime_tasks::is_enabled("cert") {
+                commands::cert_receiver::start_on_boot();
+            }
             let mihomo_state = commands::mihomo::init_state();
             app.manage(mihomo_state.clone());
             commands::mihomo::start_scheduler(app.handle().clone(), mihomo_state.clone());
@@ -370,8 +405,13 @@ pub fn run() {
                 let auto_start_services = config_clone.auto_start_services.clone();
 
                 // 1. Mihomo 代理自启 (兼顾 auto_start_core 与 auto_start_services.contains("mihomo"))
-                let mihomo_enabled = runtime_tasks::is_enabled("mihomo") && (auto_start_services.contains("mihomo")
-                    || s_mihomo.app_config.lock().map(|c| c.auto_start_core).unwrap_or(false));
+                let mihomo_enabled = runtime_tasks::is_enabled("mihomo")
+                    && (auto_start_services.contains("mihomo")
+                        || s_mihomo
+                            .app_config
+                            .lock()
+                            .map(|c| c.auto_start_core)
+                            .unwrap_or(false));
                 if mihomo_enabled {
                     exit_log::exit_log("[autostart] 正在自启 Mihomo 代理服务...");
                     let _ = commands::mihomo::launch_core(&h, s_mihomo).await;
@@ -383,9 +423,7 @@ pub fn run() {
                     exit_log::exit_log("[autostart] 正在自启 2API 服务...");
                     match crate::commands::buddy::twoapi::buddy2api_start(None).await {
                         Ok(_) => exit_log::exit_log("[autostart] 2API 自启成功"),
-                        Err(e) => {
-                            exit_log::exit_log(&format!("[autostart] 2API 自启失败: {e}"))
-                        }
+                        Err(e) => exit_log::exit_log(&format!("[autostart] 2API 自启失败: {e}")),
                     }
                 }
 
@@ -400,7 +438,9 @@ pub fn run() {
                             ));
                             let _ = h.emit("service-status-changed", "aggregate");
                         }
-                        Err(e) => exit_log::exit_log(&format!("[autostart] 聚合服务自启失败: {}", e)),
+                        Err(e) => {
+                            exit_log::exit_log(&format!("[autostart] 聚合服务自启失败: {}", e))
+                        }
                     }
                 }
 
@@ -411,25 +451,45 @@ pub fn run() {
                     .cloned()
                     .collect();
                 for node_id in node_autostart {
-                    if !runtime_tasks::is_enabled("node") {continue;}
+                    if !runtime_tasks::is_enabled("node") {
+                        continue;
+                    }
                     let project_id = node_id.trim_start_matches("node:").to_string();
                     match crate::commands::node_manager::find_project(&project_id) {
                         Some(def) if def.installed() => {
-                            exit_log::exit_log(&format!("[autostart] 正在自启 node 服务: {}", project_id));
-                            if let Err(e) =
-                                crate::commands::node_manager::npm_start(h.clone(), project_id.clone()).await
+                            exit_log::exit_log(&format!(
+                                "[autostart] 正在自启 node 服务: {}",
+                                project_id
+                            ));
+                            if let Err(e) = crate::commands::node_manager::npm_start(
+                                h.clone(),
+                                project_id.clone(),
+                            )
+                            .await
                             {
-                                exit_log::exit_log(&format!("[autostart] 自启 node 服务 {} 失败: {}", project_id, e));
+                                exit_log::exit_log(&format!(
+                                    "[autostart] 自启 node 服务 {} 失败: {}",
+                                    project_id, e
+                                ));
                             } else {
-                                exit_log::exit_log(&format!("[autostart] 自启 node 服务 {} 成功", project_id));
+                                exit_log::exit_log(&format!(
+                                    "[autostart] 自启 node 服务 {} 成功",
+                                    project_id
+                                ));
                                 let _ = h.emit("service-status-changed", node_id.clone());
                             }
                         }
                         Some(_) => {
-                            exit_log::exit_log(&format!("[autostart] node 服务 {} 未安装，跳过自启", project_id));
+                            exit_log::exit_log(&format!(
+                                "[autostart] node 服务 {} 未安装，跳过自启",
+                                project_id
+                            ));
                         }
                         None => {
-                            exit_log::exit_log(&format!("[autostart] node 服务 {} 不存在，跳过自启", project_id));
+                            exit_log::exit_log(&format!(
+                                "[autostart] node 服务 {} 不存在，跳过自启",
+                                project_id
+                            ));
                         }
                     }
                 }
@@ -437,7 +497,9 @@ pub fn run() {
                 // 2. SDK 后台服务自启 (MySQL / Redis / MongoDB / PostgreSQL / Nginx / FRPC / FRPS 等)
                 //    注：RTSP 媒体服务已不再提供开机自启（设置入口与自启分支均已移除）。
                 for svc_id in &auto_start_services {
-                    if !runtime_tasks::is_enabled("sdk") {continue;}
+                    if !runtime_tasks::is_enabled("sdk") {
+                        continue;
+                    }
                     // mihomo 已在上方单独处理；rtsp 保留跳过以防御历史残留配置；
                     // aggregate 与 node:<id> 也在上方单独处理，避免落入 SDK 服务的查找逻辑报「未找到」。
                     if svc_id == "mihomo"
@@ -452,12 +514,14 @@ pub fn run() {
                     let already_running = crate::commands::project::registry::find_by_id(svc_id)
                         .map(|def| {
                             let st = crate::commands::service::service_status_for_def(&def);
-                            st.running
-                                || st.status.as_deref() == Some("port_conflict")
+                            st.running || st.status.as_deref() == Some("port_conflict")
                         })
                         .unwrap_or(false);
                     if already_running {
-                        exit_log::exit_log(&format!("[autostart] 服务 {} 已在运行/端口被占用，跳过自启", svc_id));
+                        exit_log::exit_log(&format!(
+                            "[autostart] 服务 {} 已在运行/端口被占用，跳过自启",
+                            svc_id
+                        ));
                         continue;
                     }
                     exit_log::exit_log(&format!("[autostart] 正在自启 SDK 服务: {}", svc_id));
@@ -489,7 +553,9 @@ pub fn run() {
             // Buddy 自动签到调度器（WorkBuddy / CodeBuddy CN 后台签到）
             commands::buddy::start_auto_checkin_scheduler(app.handle().clone());
             // 两平台同邮箱账号的倒计时一次性互相补齐（幂等，无缺失时不写文件）
-            if runtime_tasks::is_enabled("buddy") {commands::buddy::backfill_expiry_times();}
+            if runtime_tasks::is_enabled("buddy") {
+                commands::buddy::backfill_expiry_times();
+            }
             // Buddy 自动派旅行调度器（WorkBuddy 专属活动，随机时间派出 + 领积分）
             commands::buddy::start_auto_travel_scheduler(app.handle().clone());
             // 音乐播放器：后台巡查线程（播完自动切下一首）。
@@ -529,887 +595,14 @@ pub fn run() {
                     // 白屏问题的兜底：show_main_window 在检测到 WebView2 挂起时会
                     // 尝试 reload；如需彻底规避可后续引入「定期重建窗口」机制。
                     api.prevent_close();
-                    exit_log::exit_log("CloseRequested: hide 主窗口（保留窗口对象，保证托盘菜单事件正常）");
+                    exit_log::exit_log(
+                        "CloseRequested: hide 主窗口（保留窗口对象，保证托盘菜单事件正常）",
+                    );
                     let _ = window.hide();
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![
-                // ---- 开发者工具模块（串口/网络/数据库） ----
-                commands::serialtool::serial_list_ports,
-                commands::serialtool::serial_open,
-                commands::serialtool::serial_close,
-                commands::serialtool::serial_write,
-                commands::serialtool::serial_set_signals,
-                commands::serialtool::serial_sim_start,
-                commands::serialtool::serial_sim_stop,
-                commands::serialtool::serial_sim_write,
-                commands::serialtool::serial_sim_update_rules,
-                commands::wstool::wstool_list,
-                commands::wstool::ws_connect,
-                commands::wstool::ws_send,
-                commands::wstool::ws_ping,
-                commands::wstool::wstool_disconnect,
-                commands::wstool::sse_connect,
-                commands::wstool::net_connect,
-                commands::wstool::net_send,
-                commands::config::get_config,
-            commands::config::update_config,
-            commands::config::get_data_dir_cmd,
-            commands::config::get_sdk_dir_cmd,
-            commands::config::get_auto_start_services,
-            commands::config::set_auto_start_service,
-            commands::config::get_appearance_config,
-            commands::config::set_module_theme_color,
-            commands::config::set_global_font,
-            commands::config::set_background_texture,
-            commands::config::set_language,
-            commands::config::set_motion_preference,
-            commands::config::set_density,
-            commands::config::set_module_order,
-            commands::module_lifecycle::set_module_layout,
-            commands::config::import_custom_font,
-            commands::config::clear_custom_font,
-            commands::config::list_system_fonts,
-            commands::config::get_project_menu_config,
-            commands::config::update_project_menu_config,
-            commands::http_server::start_http_server,
-            commands::http_server::stop_http_server,
-            commands::http_server::get_running_http_servers,
-            commands::img_base64::image_to_base64,
-            commands::img_base64::save_base64_image,
-            commands::config::delete_old_storage_dirs,
-            commands::config::get_app_version,
-            commands::config::get_rss_config,
-            commands::config::set_rss_sources,
-            commands::config::fetch_rss_feed,
-            commands::env::toggle_item_management,
-            commands::env::get_user_configurable_vars,
-            commands::env::set_user_configurable_var,
-            commands::env::delete_user_configurable_var,
-            commands::env::is_admin,
-            commands::autostart_admin::enable_admin_autostart,
-            commands::autostart_admin::disable_admin_autostart,
-            commands::autostart_admin::is_admin_autostart_enabled,
-            commands::env::create_env_backup,
-            commands::env::list_env_backups,
-            commands::env::delete_env_backup,
-            commands::env::restore_env_backup,
-            commands::env::get_path_directories,
-            commands::env::save_path_directories,
-            commands::cache::get_caches_list,
-            commands::cache::migrate_cache_path,
-            commands::hosts::read_hosts,
-            commands::hosts::write_hosts,
-            commands::port::check_port_status,
-            commands::port::kill_port_owner,
-            commands::port::get_reserved_ports,
-            commands::port::add_reserved_ports,
-            commands::port::delete_reserved_ports,
-            commands::port::protect_port_from_reservation,
-            commands::network::net_connections,
-            commands::network::net_adapters,
-            commands::network::net_traffic,
-            commands::network::ping_host,
-            commands::network::dns_lookup,
-            commands::network::tcp_port_test,
-            commands::network::tracert_host,
-            commands::pkg::get_global_packages,
-            commands::pkg::upgrade_global_package,
-            commands::pkg::upgrade_all_global_packages,
-            commands::mirror::get_mirrors_list,
-            commands::mirror::set_mirror,
-            commands::service::get_running_services,
-            commands::service::start_service,
-            commands::service::stop_service,
-            commands::service::force_stop_service,
-            commands::service::read_service_config,
-            commands::service::write_service_config,
-            commands::project::commands::project_list,
-            commands::project::commands::project_list_fast,
-            commands::project::commands::project_status,
-            commands::project::commands::project_detail,
-            commands::project::commands::project_preview_manage,
-            commands::project::commands::project_manage,
-            commands::project::commands::project_repair_env_vars,
-            commands::project::commands::project_get_github_token,
-            commands::project::commands::project_set_github_token,
-            // 音乐播放器
-            commands::music::music_get_library,
-            commands::music::music_add_folder,
-            commands::music::music_remove_folder,
-            commands::music::music_refresh_library,
-            commands::music::music_play,
-            commands::music::music_set_queue,
-            commands::music::music_next,
-            commands::music::music_prev,
-            commands::music::music_toggle,
-            commands::music::music_pause,
-            commands::music::music_resume,
-            commands::music::music_stop,
-            commands::music::music_seek,
-            commands::music::music_set_volume,
-            commands::music::music_get_state,
-            commands::music::music_get_settings,
-            commands::music::music_update_settings,
-            commands::music::music_get_eq,
-            commands::music::music_preview_eq,
-            commands::music::music_list_presets,
-            commands::music::music_parse_eq_curve,
-            commands::music::music_list_builtin_curves,
-            // 音乐插件（MusicFree 音源）：管理与在线搜索
-            commands::music::music_plugin_list,
-            commands::music::music_plugin_install_deps,
-            commands::music::music_plugin_import,
-            commands::music::music_plugin_remove,
-            commands::music::music_plugin_set_enabled,
-            commands::music::music_plugin_set_name,
-            commands::music::music_plugin_reorder,
-            commands::music::music_plugin_refresh_meta,
-            commands::music::music_plugin_open_dir,
-            commands::music::music_plugin_search,
-            // 音乐插件：取流 / 播放 / 下载
-            commands::music::music_plugin_media_source,
-            commands::music::music_plugin_play,
-            commands::music::music_plugin_download,
-            // 下载正在播放的那首在线曲目（播放器记着它的来源，不必回搜索页再点一次）
-            commands::music::music_plugin_download_current,
-            commands::music::music_plugin_clear_cache,
-            commands::music::music_plugin_set_download_dir,
-            commands::music::music_plugin_storage_info,
-            // ---- 收藏 / 星标聚合（只读导入） ----
-            commands::favorites::fav_import_github,
-            commands::favorites::fav_cancel,
-            commands::favorites::fav_classify,
-            commands::favorites::fav_plan_category_moves,
-            commands::favorites::fav_apply_category_moves,
-            commands::favorites::fav_check_gone,
-            commands::favorites::fav_import_zhihu,
-            commands::favorites::fav_credential_status,
-            commands::favorites::fav_get_content,
-            commands::favorites::fav_github_readme,
-            commands::favorites::fav_list,
-                commands::favorites::fav_set_starred,
-            commands::favorites::fav_get_settings,
-            commands::favorites::fav_save_settings,
-            commands::favorites::fav_set_tags,
-            commands::favorites::fav_import_bookmarks,
-            commands::favorites::fav_list_categories,
-            commands::favorites::fav_create_category,
-            commands::favorites::fav_rename_category,
-            commands::favorites::fav_move_category,
-            commands::favorites::fav_delete_category,
-            commands::favorites::fav_reorder_categories,
-            commands::favorites::fav_set_item_categories,
-            commands::favorites::fav_delete,
-            commands::favorites::fav_list_deleted,
-            commands::favorites::fav_restore_deleted,
-            commands::favorites::fav_stats,
-            commands::favorites::fav_import_bilibili,
-            commands::favorites::fav_set_credential,
-            commands::favorites::fav_has_credential,
-            commands::favorites::fav_get_credential,
-            commands::favorites::fav_get_github_token,
-            commands::favorites::fav_set_github_token,
-            // ---- Suno 音频下载（解析主页 → 下载 mp4 → ffmpeg 转 mp3）----
-            commands::suno::suno_parse_profile,
-            commands::suno::suno_download_songs,
-            commands::suno::suno_list_profiles,
-            commands::suno::suno_save_profile,
-            commands::suno::suno_remove_profile,
-            commands::music::music_track_name_suggestion,
-            commands::music::music_rename_track,
-            commands::music::music_delete_tracks,
-            commands::project::commands::project_unmanage,
-            commands::project::commands::project_preview_unmanage,
-            commands::project::commands::project_set_custom_path,
-            commands::project::commands::check_git_repo_status,
-            commands::project::commands::bootstrap_git_repo,
-            commands::project::commands::update_git_repo,
-            commands::project::commands::run_cmd_capture,
-            commands::project::commands::get_pkg_cache_info,
-            commands::project::commands::migrate_pkg_storage,
-            commands::project::commands::project_set_cache_path,
-            commands::project::commands::handle_point_storage_files,
-            commands::project::commands::clean_pkg_cache,
-            commands::project::commands::migrate_data_dir,
-            commands::project::commands::delete_data_dir,
-            commands::project::commands::project_set_data_dir,
-            commands::project::commands::get_legacy_backup,
-            commands::project::versions::project_list_remote_versions,
-            commands::project::versions::project_install_version,
-            commands::project::versions::project_cancel_install,
-            commands::project::versions::project_get_active_installs,
-            commands::project::versions::project_uninstall_version,
-            commands::project::versions::project_use_version,
-            tray::refresh_tray_menu,
-            tray::set_tray_quote,
-            commands::conflict::get_conflict_managers_status,
-            commands::conflict::handle_conflict_manager_action,
-            commands::conflict::preview_conflict_manager_disable,
-            commands::ai::config::get_ai_config,
-            commands::ai::config::save_ai_config,
-            commands::ai::provider::fetch_provider_models,
-            commands::ai::usage::record_usage,
-            commands::ai::usage::get_usage_summary,
-            commands::ai::usage::clear_usage,
-            commands::ai::skills::get_skill_overview,
-            commands::ai::skills::get_skills_dir,
-            commands::ai::skills::set_skills_dir,
-            commands::ai::skills::list_project_skill_counts,
-            commands::ai::skills::get_skill_meta,
-            commands::ai::skills::update_skill_meta,
-            commands::ai::skills::list_projects,
-            commands::ai::skills::add_project,
-            commands::ai::skills::remove_project,
-            commands::ai::skills::install_skill_to_project,
-            commands::ai::skills::remove_skill_from_project,
-            commands::ai::skills::list_project_skills,
-            commands::ai::skills::get_project_skill_md,
-            commands::ai::skills::get_library_skill_md,
-            commands::ai::skills::install_skill,
-            commands::ai::skills::uninstall_skill,
-            commands::ai::skills::get_skill_files,
-            commands::ai::skills::install_skill_from_source,
-            commands::ai::skills::list_builtin_skills,
-            commands::ai::skills::install_builtin_skill,
-                commands::ai::skills::update_builtin_skill,
-            commands::ai::skills::migrate_legacy_skills,
-            commands::ai::config::get_provider_presets,
-            commands::ai::balance::query_provider_balance,
-            commands::node_manager::npm_open_window,
-            commands::ai::headroom::check_headroom_health,
-            commands::ai::headroom::get_headroom_config,
-            commands::ai::headroom::save_headroom_config,
-            commands::ai::route::get_route_chain,
-            commands::ai::route::get_route_chain_health,
-            commands::ai::route::save_route_chain,
-            commands::ai::route::list_route_candidates,
-            commands::ai::ledger::get_tool_config_drift,
-            commands::ai::ledger::list_ledger_tools,
-            commands::ai::aggregate::get_aggregate_config,
-            commands::ai::aggregate::save_aggregate_config,
-            commands::ai::aggregate::start_aggregate_service,
-            commands::ai::aggregate::stop_aggregate_service,
-            commands::ai::aggregate::get_aggregate_status,
-            commands::ai::detect::detect_ai_tools,
-            commands::ai::detect::check_ai_tool_versions,
-
-            commands::ai::mcp::get_mcp_servers,
-            commands::ai::mcp::get_mcp_presets,
-            commands::ai::mcp::save_mcp_server,
-            commands::ai::mcp::delete_mcp_server,
-            // 托管安装：GitHub Release → 下载 → 解压 → command 指向可执行文件
-            commands::ai::mcp::mcp_managed_status,
-            commands::ai::mcp::mcp_list_managed_versions,
-            commands::ai::mcp::mcp_install_managed,
-            commands::ai::mcp::mcp_uninstall_managed,
-            // 项目级安装：写<项目>/.mcp.json，不再全局部署
-            commands::ai::mcp::list_project_mcps,
-            commands::ai::mcp::install_mcp_to_project,
-            commands::ai::mcp::remove_mcp_from_project,
-            // 从来源（npx / owner-repo / 本地路径 / URL）解析启动草稿
-            commands::ai::mcp::resolve_mcp_source,
-            // 一次性迁移：把全局配置里的条目收进仓库并从全局文件删除
-            commands::ai::mcp::list_global_mcp,
-            commands::ai::mcp::migrate_global_mcp,
-            commands::ai::provider::test_model_connection,
-            commands::ai::launch::launch_ai_tool,
-            commands::ai::tool_config_custom::resolve_claimed_model,
-            commands::ai::config::get_last_launch_config,
-            commands::ai::config::get_all_last_launch_configs,
-            commands::ai::config::save_last_launch_config,
-            commands::ai::sessions::get_ai_sessions,
-            commands::ai::sessions::remove_ai_session,
-            commands::ai::provider::start_proxy,
-            commands::ai::launch::restore_ai_tool_config,
-            commands::ai::launch::get_ai_tool_models,
-            commands::ai::skills::get_skill_sources,
-            commands::ai::skills::check_skill_updates,
-            commands::ai::codex_plugins::codex_plugin_marketplace_status,
-            commands::ai::codex_plugins::codex_list_marketplace_plugins,
-            commands::ai::codex_plugins::codex_install_plugin_marketplace,
-            commands::ai::codex_plugins::codex_remove_plugin_marketplace,
-            commands::ai::codex_plugins::codex_install_plugin,
-            commands::ai::codex_plugins::codex_uninstall_plugin,
-            commands::ai::claude_plugins::claude_plugin_status,
-            commands::ai::claude_plugins::claude_list_plugins,
-            commands::ai::claude_plugins::claude_plugin_marketplace_add,
-            commands::ai::claude_plugins::claude_plugin_marketplace_remove,
-            commands::ai::claude_plugins::claude_install_plugin,
-            commands::ai::claude_plugins::claude_uninstall_plugin,
-            commands::ai::install_agent::install_agent_chat,
-            commands::favorites::agent::fav_agent_search,
-            commands::ai::terminal::detect_terminals,
-            commands::ai::sessions::scan_tool_sessions,
-            commands::ai::collab::collab_create_room,
-            commands::ai::collab::collab_list_rooms,
-            commands::ai::collab::collab_get_messages,
-            commands::ai::collab::collab_delete_room,
-            commands::ai::collab::collab_send_message,
-            commands::ai::collab::collab_cancel_dispatch,
-            commands::ai::collab::collab_reset_session,
-            commands::ai::collab::collab_respond_prompt,
-            commands::ai::collab::collab_compact_session,
-            commands::ai::collab::collab_get_snapshot,
-            commands::ai::collab::collab_get_turns,
-            commands::ai::collab::collab_get_agents,
-            commands::ai::collab::collab_list_tasks,
-            commands::ai::collab::collab_task_action,
-            commands::ai::collab::collab_set_input_policy,
-            commands::ai::collab::collab_list_archives,
-            commands::ai::tools::install_ai_tool,
-            commands::ai::tools::upgrade_ai_tool,
-            commands::ai::tools::uninstall_ai_tool,
-            commands::ai::cache::get_ai_tool_cache_info,
-            commands::ai::cache::migrate_ai_tool_cache,
-            commands::ai::cache::clean_ai_tool_cache,
-            commands::ai::cache::open_ai_tool_cache_dir,
-            commands::ai::cache::open_ai_tool_cache_dir_path,
-            commands::ai::skills::install_skill_from_online,
-            commands::ai::sessions::scan_tool_sessions_parallel,
-            commands::ai_registry::reload_ai_registry,
-            commands::ai::tool_paths::get_tool_path_override_file,
-            commands::ai::tool_paths::ai_set_tool_custom_path,
-            commands::ai::translate::translate_text,
-            commands::ai::translate::get_translate_config,
-            commands::ai::translate::save_translate_config,
-            commands::ai::translate::save_global_default_model,
-            commands::ai::translate::trigger_selection_translate,
-            commands::ai::translate::hide_translate_popup,
-            commands::ai::translate::show_translate_result,
-            commands::ai::translate::get_last_translate_result,
-            commands::ai::translate::translate_popup_ready,
-            commands::ai::translate::translate_history_list,
-            commands::ai::translate::translate_history_clear,
-            commands::ai::translate::translate_history_delete,
-            commands::ai::translate::translate_history_pin,
-            commands::tool_version::check_all_tool_versions,
-            commands::tool_version::check_tool_version,
-            commands::tool_version::upgrade_tool,
-
-            // 证书管理（Q-005）
-            commands::cert::cert_list,
-            commands::cert::cert_create,
-            commands::cert::cert_update,
-            commands::cert::cert_update_nodes,
-            commands::cert::cert_update_links,
-            commands::cert::cert_delete,
-            commands::cert::cert_issue_now,
-            commands::cert::cert_deploy_now,
-            commands::cert::deploy_history,
-            commands::cert::cert_issue_log,
-            commands::cert::cert_get_pem,
-            commands::cert::cert_detail,
-            commands::cert::cert_export_zip,
-            commands::cert::deploy_node_list,
-            commands::cert::deploy_node_upsert,
-            commands::cert::deploy_node_delete,
-            commands::cert::deploy_node_test,
-            commands::cert::credential_list,
-            commands::cert::credential_upsert,
-            commands::cert::credential_delete,
-            commands::cert::cert_scheduler_status,
-            commands::cert::cert_scheduler_set,
-            commands::cert::cert_scheduler_run_now,
-            commands::cert::monitor_list,
-            commands::cert::monitor_upsert,
-            commands::cert::monitor_delete,
-            commands::cert::monitor_check,
-            commands::cert::monitor_check_all,
-            commands::cert::notify_channel_list,
-            commands::cert::notify_channel_upsert,
-            commands::cert::notify_channel_delete,
-            commands::cert::notify_channel_test,
-            // 内嵌证书接收端（原 cert-receiver 小工具）
-            commands::cert_receiver::cert_receiver_bootstrap,
-            commands::cert_receiver::cert_receiver_status,
-            commands::cert_receiver::cert_receiver_start,
-            commands::cert_receiver::cert_receiver_stop,
-            commands::cert_receiver::cert_receiver_save_config,
-            commands::cert_receiver::cert_receiver_logs,
-            commands::cert_receiver::cert_receiver_clear_logs,
-            commands::cert_receiver::cert_receiver_stored_certs,
-            commands::cert_receiver::cert_receiver_pull_example,
-
-            // RTSP 服务器
-            commands::rtsp_server::get_rtsp_camera_devices,
-            commands::rtsp_server::start_rtsp_server,
-            commands::rtsp_server::stop_rtsp_server,
-            commands::rtsp_server::stop_all_rtsp_servers,
-            commands::rtsp_server::get_rtsp_server_status,
-            commands::rtsp_server::get_all_rtsp_server_statuses,
-            commands::rtsp_server::get_all_local_ips,
-            commands::file_io::read_text_file,
-            commands::file_io::write_text_file,
-            commands::file_io::file_io_save_text,
-            commands::file_io::list_sibling_markdown,
-            commands::file_io::resolve_markdown_link,
-            commands::file_io::markdown_assoc_status,
-            commands::file_io::set_markdown_assoc,
-            commands::file_io::read_local_image,
-            commands::file_io::take_pending_markdown_files,
-            commands::utils::check_bin_assets,
-            commands::utils::download_bin_assets,
-
-            // Mihomo 代理
-                commands::mihomo::mihomo_get_state,
-                commands::mihomo::mihomo_clear_warnings,
-                commands::mihomo::mihomo_controller_info,
-                commands::mihomo::mihomo_start,
-                commands::mihomo::mihomo_stop,
-                commands::mihomo::mihomo_restart,
-                commands::mihomo::mihomo_set_core_path,
-                commands::mihomo::mihomo_close_all_connections,
-                commands::mihomo::mihomo_get_app_config,
-                commands::mihomo::mihomo_patch_app_config,
-                commands::mihomo::mihomo_get_controled_config,
-                commands::mihomo::mihomo_patch_controled_config,
-                commands::mihomo::mihomo_get_runtime_config,
-                commands::mihomo::mihomo_update_runtime_config,
-                commands::mihomo::mihomo_get_profile_config,
-                commands::mihomo::mihomo_set_profile_config,
-                commands::mihomo::mihomo_get_profile_item,
-                commands::mihomo::mihomo_get_profile_str,
-                commands::mihomo::mihomo_set_profile_str,
-                commands::mihomo::mihomo_add_profile,
-                commands::mihomo::mihomo_remove_profile,
-                commands::mihomo::mihomo_update_profile,
-                commands::mihomo::mihomo_change_current_profile,
-                commands::mihomo::mihomo_get_ssid,
-                commands::mihomo::mihomo_set_ssid_rules,
-                commands::mihomo::mihomo_traffic_overview,
-                commands::mihomo::mihomo_traffic_clear,
-                commands::mihomo::mihomo_get_group_editor,
-                commands::mihomo::mihomo_save_proxy_groups,
-                commands::mihomo::mihomo_clear_proxy_groups,
-                commands::mihomo::mihomo_apply_simple_mode,
-                commands::mihomo::mihomo_update_profile_schedule,
-                commands::mihomo::mihomo_validate_subscription,
-                commands::mihomo::mihomo_import_subscription,
-                commands::mihomo::mihomo_import_file,
-                commands::mihomo::mihomo_update_subscription,
-                commands::mihomo::mihomo_get_profile_status,
-                commands::mihomo::mihomo_get_profile_file_path,
-                commands::mihomo::mihomo_get_override_config,
-                commands::mihomo::mihomo_set_override_config,
-                commands::mihomo::mihomo_get_override_item,
-                commands::mihomo::mihomo_add_override,
-                commands::mihomo::mihomo_remove_override,
-                commands::mihomo::mihomo_update_override,
-                commands::mihomo::mihomo_get_override,
-                commands::mihomo::mihomo_set_override,
-                commands::mihomo::mihomo_api,
-                commands::mihomo::mihomo_version,
-                commands::mihomo::mihomo_proxies,
-                commands::mihomo::mihomo_groups,
-                commands::mihomo::mihomo_rules,
-                commands::mihomo::mihomo_proxy_providers,
-                commands::mihomo::mihomo_rule_providers,
-                commands::mihomo::mihomo_change_proxy,
-                commands::mihomo::mihomo_unfixed_proxy,
-                commands::mihomo::mihomo_proxy_delay,
-                commands::mihomo::mihomo_test_delay,
-                commands::mihomo::mihomo_group_delay,
-                commands::mihomo::mihomo_provider_healthcheck,
-                commands::mihomo::mihomo_update_proxy_provider,
-                commands::mihomo::mihomo_update_rule_provider,
-                commands::mihomo::mihomo_rules_disable,
-                commands::mihomo::mihomo_smart_group_weights,
-                commands::mihomo::mihomo_smart_flush_cache,
-                commands::mihomo::mihomo_patch_config,
-                commands::mihomo::mihomo_hot_reload_config,
-                commands::mihomo::mihomo_set_mode,
-                commands::mihomo::mihomo_select_proxy,
-                commands::mihomo::mihomo_save_secondary_proxies,
-                commands::mihomo::mihomo_set_tun,
-                commands::mihomo::mihomo_close_connection,
-                commands::mihomo::mihomo_get_connections,
-                commands::mihomo::mihomo_get_memory,
-                commands::mihomo::mihomo_get_logs,
-                commands::mihomo::mihomo_set_sys_proxy,
-                commands::mihomo::mihomo_get_sys_proxy,
-                commands::mihomo::mihomo_upgrade,
-                commands::mihomo::mihomo_upgrade_geo,
-                commands::mihomo::mihomo_upgrade_ui,
-                commands::mihomo::mihomo_open_substore,
-                commands::mihomo::mihomo_setup_firewall,
-                commands::mihomo::mihomo_open_uwp_tool,
-                commands::mihomo::mihomo_get_override_exec_log,
-                commands::mihomo::mihomo_get_rule_str,
-                commands::mihomo::mihomo_set_rule_str,
-                commands::mihomo::mihomo_get_rule_override,
-                commands::mihomo::mihomo_set_rule_override,
-                commands::mihomo::mihomo_get_file_str,
-                commands::mihomo::mihomo_set_file_str,
-                commands::mihomo::mihomo_convert_mrs_ruleset,
-                commands::mihomo::mihomo_detach_core,
-                // ---- 内核版本管理 ----
-                commands::mihomo::github::mihomo_core_variants,
-                // ---- 托盘菜单配置 ----
-                commands::config::get_tray_menu_config,
-                commands::config::set_tray_menu_config,
-                commands::mihomo::github::mihomo_download_ui,
-                // ---- 网络信息 ----
-                commands::mihomo::netinfo::mihomo_fetch_ip_info,
-                commands::mihomo::netinfo::mihomo_measure_latency,
-                commands::mihomo::netinfo::mihomo_get_interfaces,
-                // ---- 备份恢复 ----
-                commands::mihomo::backup::mihomo_export_local_backup,
-                commands::mihomo::backup::mihomo_import_local_backup,
-                commands::mihomo::backup::mihomo_webdav_backup,
-                commands::mihomo::backup::mihomo_webdav_list,
-                commands::mihomo::backup::mihomo_webdav_restore,
-                commands::mihomo::backup::mihomo_webdav_delete,
-                // ---- Sub-Store ----
-                commands::mihomo::substore::mihomo_substore_download,
-                commands::mihomo::substore::mihomo_substore_start,
-                commands::mihomo::substore::mihomo_substore_stop,
-                commands::mihomo::substore::mihomo_substore_status,
-                commands::mihomo::substore::mihomo_substore_subs,
-                commands::mihomo::substore::mihomo_substore_collections,
-                // ---- 杂项 ----
-                commands::mihomo::misc::mihomo_check_admin,
-                commands::mihomo::misc::mihomo_restart_as_admin,
-                commands::mihomo::misc::mihomo_check_tun_permissions,
-                commands::mihomo::misc::mihomo_hot_reload,
-                commands::mihomo::misc::mihomo_copy_env,
-                commands::mihomo::misc::mihomo_clear_logs,
-                commands::mihomo::misc::mihomo_open_path,
-                commands::mihomo::misc::mihomo_cleanup_logs,
-                // ---- 任务 ----
-                commands::api::api_init,
-                commands::api::api_list_projects,
-                commands::api::api_create_project,
-                commands::api::api_update_project,
-                commands::api::api_delete_project,
-                commands::api::api_list_environments,
-                commands::api::api_create_environment,
-                commands::api::api_update_environment,
-                commands::api::api_delete_environment,
-                commands::api::api_set_active_env,
-                commands::api::api_list_modules,
-                commands::api::api_create_module,
-                commands::api::api_update_module,
-                commands::api::api_delete_module,
-                commands::api::api_list_endpoints,
-                commands::api::api_get_endpoint,
-                commands::api::api_create_endpoint,
-                commands::api::api_update_endpoint,
-                commands::api::api_delete_endpoint,
-                commands::api::api_send_request,
-                commands::api::api_cancel_request,
-                commands::api::api_list_unit_tests,
-                commands::api::api_save_unit_test,
-                commands::api::api_delete_unit_test,
-                commands::api::api_run_unit_test,
-                commands::api::api_start_load_test,
-                commands::api::api_load_run_status,
-                commands::api::api_stop_load_test,
-                commands::api::api_list_load_runs,
-                commands::api::api_delete_load_run,
-                commands::api::api_import_postman,
-                commands::api::api_export_postman,
-                commands::api::api_import_curl,
-                commands::api::api_export_openapi,
-                commands::api::api_import_swagger,
-                commands::api::api_scan_framework,
-                commands::api::import_ai::api_import_with_ai,
-                commands::api::api_move_module_endpoints,
-                commands::api::api_list_preset_headers,
-                commands::api::api_save_preset_headers,
-                commands::api::api_delete_preset_headers,
-                commands::api::api_list_history,
-                commands::api::api_add_history,
-                commands::api::api_clear_history,
-                commands::api::api_set_favorite,
-                commands::tasks::tasks_init,
-                commands::tasks::tasks_list_by_date,
-                commands::tasks::tasks_list_range,
-                commands::tasks::tasks_search,
-                commands::tasks::tasks_list_overdue,
-                commands::tasks::tasks_create,
-                commands::tasks::tasks_update,
-                commands::tasks::tasks_set_progress,
-                commands::tasks::tasks_move,
-                commands::tasks::tasks_carry_over,
-                commands::tasks::tasks_reorder,
-                commands::tasks::tasks_set_archived,
-                commands::tasks::tasks_delete,
-                commands::tasks::tasks_add_log,
-                commands::tasks::tasks_list_logs,
-                commands::tasks::tasks_list_moves,
-                commands::tasks::tasks_summary,
-                commands::tasks::tasks_day_stats,
-                commands::tasks::tasks_copy_image,
-                commands::tasks::tasks_list_stickers,
-                commands::tasks::tasks_create_sticker,
-                commands::tasks::tasks_update_sticker,
-                commands::tasks::tasks_delete_sticker,
-
-                // ---- 思维导图模块（统一画布：需求 + 任务 + AI） ----
-                commands::mindmap::settings::mm_get_explorer_settings,
-                commands::mindmap::settings::mm_save_explorer_settings,
-                commands::mindmap::mm_init,
-                commands::mindmap::mm_list_documents,
-                commands::mindmap::mm_create_document,
-                commands::mindmap::mm_update_document,
-                commands::mindmap::mm_delete_document,
-                commands::mindmap::mm_load_document,
-                commands::mindmap::mm_import_nodes,
-                commands::mindmap::mm_list_folders,
-                commands::mindmap::mm_create_folder,
-                commands::mindmap::mm_update_folder,
-                commands::mindmap::mm_delete_folder,
-                commands::mindmap::mm_move_folder,
-                commands::mindmap::mm_move_document,
-                commands::mindmap::mm_update_background_texture,
-                commands::mindmap::mm_update_layout_dir,
-                commands::mindmap::mm_upsert_node,
-                commands::mindmap::mm_delete_node,
-                commands::mindmap::mm_update_positions,
-                commands::mindmap::mm_upsert_sticker,
-                commands::mindmap::quick_popup::open_mindmap_quick_popup,
-                commands::mindmap::quick_popup::hide_mindmap_quick_popup,
-                commands::mindmap::quick_popup::open_mindmap_sticker_popup,
-                commands::mindmap::quick_popup::hide_mindmap_sticker_popup,
-                commands::mindmap::quick_popup::take_mindmap_quick_selection,
-                commands::mindmap::mm_delete_sticker,
-                commands::mindmap::mm_upsert_link,
-                commands::mindmap::mm_delete_link,
-                commands::mindmap::mm_export_markdown,
-                commands::mindmap::mm_ai_from_project,
-                commands::mindmap::mm_ai_from_text,
-                commands::mindmap::mm_ai_cancel,
-                commands::mindmap::mm_ai_answer,
-                commands::mindmap::mm_regenerate_node,
-                commands::mindmap::mm_agent_chat,
-                commands::mindmap::mm_agent_get_session,
-                commands::mindmap::mm_agent_list_messages,
-                commands::mindmap::mm_agent_list_sessions,
-                commands::mindmap::mm_agent_new_session,
-                commands::mindmap::mm_agent_delete_session,
-                commands::mindmap::mm_agent_rename_session,
-                commands::mindmap::mm_agent_fork_session,
-                commands::mindmap::mm_bind_document_dir,
-                commands::mindmap::mm_list_project_files,
-
-                // ---- 数据库设计器（纯文件：.dbdesign.json） ----
-                commands::db_designer::commands::dbd_new_document,
-                commands::db_designer::commands::dbd_open_file,
-                commands::db_designer::commands::dbd_save_file,
-                commands::db_designer::commands::dbd_write_file,
-                commands::db_designer::commands::dbd_validate,
-                commands::db_designer::ai::dbd_ai_generate,
-                commands::db_designer::ai::dbd_ai_cancel,
-                commands::db_designer::settings::dbd_get_settings,
-                commands::db_designer::settings::dbd_save_settings,
-                commands::db_designer::chat::dbd_get_chat,
-                commands::db_designer::chat::dbd_save_chat,
-                commands::db_designer::chat::dbd_delete_chat,
-                commands::db_designer::chat::dbd_get_session_index,
-                commands::db_designer::chat::dbd_upsert_session_entry,
-                commands::db_designer::chat::dbd_delete_session,
-                commands::db_designer::commands::dbd_sync_relations,
-                commands::db_designer::commands::dbd_export_sql,
-                commands::db_designer::commands::dbd_export_sql_file,
-                commands::db_designer::commands::dbd_export_sql_to,
-                commands::db_designer::commands::dbd_export_outline,
-                commands::db_designer::commands::dbd_export_outline_file,
-                commands::db_designer::commands::dbd_rename_field,
-                commands::db_designer::commands::dbd_reverse_sqlite,
-                commands::db_designer::commands::dbd_reverse_ddl_text,
-                commands::db_designer::commands::dbd_reverse_ddl_file,
-
-                // ---- Node 项目管理器 ----
-                commands::node_manager::npm_list_projects,
-                commands::node_manager::npm_deps,
-                commands::node_manager::npm_status,
-                commands::node_manager::npm_install,
-                commands::node_manager::npm_upgrade,
-                commands::node_manager::npm_install_deps,
-commands::node_manager::npm_build_native,
-commands::node_manager::npm_exec,
-commands::node_manager::npm_init,
-                commands::node_manager::npm_start,
-                commands::node_manager::npm_stop,
-                commands::node_manager::npm_uninstall,
-                commands::node_manager::npm_open,
-                commands::node_manager::npm_open_devtools,
-                commands::node_manager::npm_console_url,
-                commands::node_manager::get_node_projects_dir,
-                commands::node_manager::update_node_projects_dir,
-                commands::node_manager::npm_check_update,
-                // 服务模块的 Docker 运行方式（环境检测 + 端口/密码配置）
-                commands::node_manager::docker_env_check,
-                commands::node_manager::docker_service_config,
-                commands::node_manager::docker_save_service_config,
-
-                // ---- 启动器模块（复刻 DawnLauncher） ----
-                commands::launcher::commands::launcher_get_classifications,
-                commands::launcher::commands::launcher_save_classification,
-                commands::launcher::commands::launcher_delete_classification,
-                commands::launcher::commands::launcher_reorder_classifications,
-                commands::launcher::commands::launcher_get_items,
-                commands::launcher::commands::launcher_get_all_items,
-                commands::launcher::commands::launcher_save_item,
-                commands::launcher::commands::launcher_batch_add_items,
-                commands::launcher::commands::launcher_delete_item,
-                commands::launcher::commands::launcher_delete_invalid_items,
-                commands::launcher::commands::launcher_reorder_items,
-                commands::launcher::commands::launcher_execute_item,
-                commands::launcher::commands::launcher_execute_raw,
-                commands::launcher::commands::launcher_execute_system_command,
-                commands::launcher::commands::launcher_open_file_location,
-                commands::launcher::commands::launcher_reveal_file,
-                commands::launcher::commands::launcher_open_with_editor,
-                commands::launcher::commands::launcher_extract_icon,
-                commands::launcher::commands::launcher_load_image_as_icon,
-                commands::launcher::commands::launcher_pick_file,
-                commands::launcher::commands::launcher_resolve_shortcut,
-                commands::launcher::commands::launcher_fetch_url_info,
-                commands::launcher::commands::launcher_download_image,
-                commands::launcher::commands::launcher_move_subcategories_to_classification,
-                commands::launcher::commands::launcher_check_items,
-                commands::launcher::commands::launcher_stop_check,
-                commands::launcher::commands::launcher_scan_start_menu,
-                commands::launcher::commands::launcher_scan_appx,
-                commands::launcher::commands::launcher_scan_folder,
-                commands::launcher::commands::launcher_get_settings,
-                commands::launcher::commands::launcher_patch_settings,
-                commands::launcher::commands::launcher_save_settings,
-                commands::launcher::commands::launcher_register_hotkey,
-                commands::launcher::commands::launcher_process_dropped_paths,
-                commands::launcher::commands::launcher_export_backup,
-                commands::launcher::commands::launcher_import_backup,
-                commands::launcher::commands::launcher_take_focus_category,
-                // ---- 文件搜索（Everything 式：按盘符索引 + 悬浮窗） ----
-                commands::launcher::file_search::file_search_list_drives,
-                commands::launcher::file_search::file_search_start_index,
-                commands::launcher::file_search::file_search_cancel_index,
-                commands::launcher::file_search::file_search_delete_index,
-                commands::launcher::file_search::file_search_query,
-                commands::launcher::file_search::open_file_search_popup,
-                commands::launcher::file_search::hide_file_search_popup,
-
-                // ---- 剪贴板管理器（复刻 CopyQ） ----
-                commands::clipboard::clipboard_get_items,
-                commands::clipboard::clipboard_delete_item,
-                commands::clipboard::clipboard_pin_item,
-                commands::clipboard::clipboard_clear_history,
-                commands::clipboard::clipboard_copy_item,
-                commands::clipboard::clipboard_paste_text,
-                commands::clipboard::clipboard_paste_item,
-                commands::clipboard::clipboard_get_settings,
-                commands::clipboard::clipboard_save_settings,
-                commands::clipboard::clipboard_get_ignored_apps,
-                commands::clipboard::clipboard_add_ignored_app,
-                commands::clipboard::clipboard_remove_ignored_app,
-                commands::clipboard::clipboard_remember_window,
-                commands::clipboard::clipboard_get_image,
-                commands::clipboard::clipboard_save_latest_image_for_task,
-                commands::otp::otp_list,
-                commands::otp::otp_add,
-                commands::otp::otp_update,
-                commands::otp::otp_delete,
-                commands::otp::otp_toggle_pin,
-                commands::otp::otp_import_uri,
-                commands::otp::otp_generate_code,
-                commands::otp::otp_remaining_seconds,
-                commands::otp::otp_mark_copied,
-                commands::otp::otp_list_categories,
-                commands::otp::otp_add_category,
-                commands::otp::otp_rename_category,
-                commands::otp::otp_delete_category,
-                commands::otp::otp_set_token_categories,
-                commands::otp::otp_list_brands,
-                commands::otp::otp_match_brand,
-                commands::otp::otp_scan_qr,
-
-                // ---- Buddy 账号管理（WorkBuddy / CodeBuddy CN：切换/用量/签到/会话） ----
-                commands::buddy::buddy_list_accounts,
-                commands::buddy::buddy_delete_account,
-                commands::buddy::buddy_get_account_view,
-                commands::buddy::buddy_set_primary_account,
-                commands::buddy::buddy_set_account_order_mode,
-                commands::buddy::buddy_get_expiry_columns,
-                commands::buddy::buddy_set_expiry_columns,
-                commands::buddy::buddy_set_expiry_times,
-                commands::buddy::buddy_delete_accounts,
-                commands::buddy::buddy_export_accounts,
-                commands::buddy::buddy_import_accounts,
-                commands::buddy::buddy_import_third_party,
-                commands::buddy::buddy_sync_accounts,
-                commands::buddy::buddy_import_from_local,
-                commands::buddy::buddy_get_current_account_id,
-                commands::buddy::buddy_switch_account,
-                // 2API（内嵌的 WorkBuddy → OpenAI/Anthropic 兼容 API）
-                crate::commands::buddy::twoapi::buddy2api_status,
-                crate::commands::buddy::twoapi::buddy2api_preflight,
-                crate::commands::buddy::twoapi::buddy2api_start,
-                crate::commands::buddy::twoapi::buddy2api_stop,
-                crate::commands::buddy::twoapi::buddy2api_set_port,
-                crate::commands::buddy::twoapi::buddy2api_request_logs,
-                crate::commands::buddy::twoapi::buddy2api_clear_request_logs,
-                commands::buddy::buddy_get_paths,
-                commands::buddy::buddy_refresh_token,
-                commands::buddy::buddy_refresh_tokens,
-                commands::buddy::buddy_query_usage,
-                commands::buddy::buddy_query_all_usage,
-                commands::buddy::buddy_oauth_start,
-                commands::buddy::buddy_oauth_complete,
-                commands::buddy::buddy_oauth_cancel,
-                commands::buddy::buddy_add_account_with_token,
-                commands::buddy::buddy_checkin,
-                commands::buddy::buddy_checkin_status,
-                commands::buddy::buddy_auto_checkin_get_config,
-                commands::buddy::buddy_auto_checkin_save_config,
-                commands::buddy::buddy_get_action_logs,
-                commands::buddy::buddy_clear_action_logs,
-                commands::buddy::buddy_auto_checkin_tasks,
-                commands::buddy::buddy_auto_checkin_run,
-                commands::buddy::buddy_auto_travel_get_config,
-                commands::buddy::buddy_auto_travel_save_config,
-                commands::buddy::buddy_auto_travel_run,
-                commands::buddy::buddy_auto_travel_tasks,
-                commands::buddy::buddy_get_daily_records,
-                commands::buddy::growth::buddy_growth_overview,
-                commands::buddy::buddy_list_sessions,
-                commands::buddy::buddy_delete_sessions,
-                commands::buddy::buddy_fork_session,
-                commands::buddy::buddy_move_sessions,
-                commands::buddy::buddy_list_session_conflicts,
-                commands::buddy::buddy_resolve_session_conflict,
-                commands::buddy::buddy_resolve_session_conflicts,
-                commands::buddy::buddy_list_conflict_resolutions,
-                commands::buddy::buddy_read_conflict_messages,
-                commands::buddy::buddy_get_client_paths,
-                commands::buddy::buddy_set_client_path,
-
-                // ---- Picky 收藏/归档（与 Flutter 端同数据接口 + S3 同步） ----
-                commands::picky::picky_get_state,
-                commands::picky::picky_add_bookmark,
-                commands::picky::picky_update_bookmark,
-                commands::picky::picky_set_refined,
-                commands::picky::picky_refetch_metadata,
-                commands::picky::picky_fetch_url_meta,
-                commands::picky::picky_delete_bookmark,
-                commands::picky::picky_add_comment,
-                commands::picky::picky_update_comment,
-                commands::picky::picky_delete_comment,
-                commands::picky::picky_add_tag,
-                commands::picky::picky_delete_tag,
-                commands::picky::picky_toggle_bookmark_tag,
-                commands::picky::picky_get_sync_config,
-                commands::picky::picky_save_sync_config,
-                commands::picky::picky_sync_now,
-
-                // ---- any-version 统一数据快照备份与 S3 同步（独立于 Picky） ----
-                commands::state_sync::state_sync_get_config,
-                commands::state_sync::state_sync_save_config,
-                commands::state_sync::state_sync_export,
-                commands::state_sync::state_sync_import,
-        ])
+        .invoke_handler(app_commands::handler())
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
@@ -1439,7 +632,9 @@ commands::node_manager::npm_init,
                     exit_log::exit_log("ExitRequested: 进入退出分支，启动清理线程 + 兜底强杀");
                     let app_handle = app.clone();
                     std::thread::spawn(move || {
-                        exit_log::exit_log("cleanup thread: start (kill_on_exit / stop_all_rtsp / picky-sync)");
+                        exit_log::exit_log(
+                            "cleanup thread: start (kill_on_exit / stop_all_rtsp / picky-sync)",
+                        );
                         // 关键顺序：先关 mihomo 与 RTSP（同步快速操作，不依赖网络）。
                         // 原先放在最后的 mihomo 关闭会被托盘退出的 500ms 兜底强杀打断——
                         // 一旦前面的 picky 云同步卡在 S3 网络请求（block_on 内 timeout
@@ -1458,7 +653,9 @@ commands::node_manager::npm_init,
                         // 最后做 picky 云同步（可能慢/卡，超时 8 秒兜底；未配置/失败静默跳过）。
                         exit_log::exit_log("cleanup thread: picky exit sync...");
                         let _ = tauri::async_runtime::block_on(async {
-                            if !runtime_tasks::is_enabled("picky") {return;}
+                            if !runtime_tasks::is_enabled("picky") {
+                                return;
+                            }
                             let _ = tokio::time::timeout(
                                 std::time::Duration::from_secs(8),
                                 commands::picky::picky_sync_if_enabled(),
