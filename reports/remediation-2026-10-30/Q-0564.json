@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0564",
+  "parent_task": "Q-0506",
+  "question": "音乐资源的账户配置、HTTP获取、歌曲解析、抓取与下载混合在Suno入口。",
+  "root_cause": "音乐资源的账户配置、HTTP获取、歌曲解析、抓取与下载混合在Suno入口。 原模块长期追加实现，领域辅助和单例没有清晰文件边界。",
+  "solution": "保留原模块公开facade及Tauri命令宏，通过正常私有子模块按职责划分实现；保留原单例静态状态的唯一所有权、运行时任务生命周期和所有原有测试。同模块辅助最小提升pub(super)，原pub(super)按旧祖先pub(in ...)保留可见范围。\n主agent验收：Main lib compiled; Suno11 tests passed. Original function inventory and singleton ownership preserved.",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/suno/mod.rs** | 兼容facade与职责声明 |\n| **src-tauri/src/commands/suno/** | 独立职责实现与原有回归 |",
+  "status": "已验证",
+  "paths": [
+    "src-tauri/src/commands/suno/mod.rs",
+    "src-tauri/src/commands/suno/models.rs",
+    "src-tauri/src/commands/suno/storage.rs",
+    "src-tauri/src/commands/suno/http.rs",
+    "src-tauri/src/commands/suno/profiles.rs",
+    "src-tauri/src/commands/suno/download.rs",
+    "src-tauri/src/commands/suno/parsing.rs",
+    "src-tauri/src/commands/suno/feed.rs",
+    "src-tauri/src/commands/suno/tests.rs"
+  ],
+  "validation": "Main lib compiled; Suno11 tests passed. Original function inventory and singleton ownership preserved."
+}
