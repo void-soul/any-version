@@ -1,0 +1,26 @@
+{
+  "qid": "Q-0562",
+  "parent_task": "Q-0506",
+  "question": "代理内核安装、订阅更新、运行参数与网络配置IPC集中在Mihomo大入口。",
+  "root_cause": "代理内核安装、订阅更新、运行参数与网络配置IPC集中在Mihomo大入口。 原模块长期追加实现，领域辅助和单例没有清晰文件边界。",
+  "solution": "保留原模块公开facade及Tauri命令宏，通过正常私有子模块按职责划分实现；保留原单例静态状态的唯一所有权、运行时任务生命周期和所有原有测试。同模块辅助最小提升pub(super)，原pub(super)按旧祖先pub(in ...)保留可见范围。\n主agent验收：Main lib compiled; Mihomo21 tests passed. Original function inventory and singleton ownership preserved.",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/mihomo/mod.rs** | 兼容facade与职责声明 |\n| **src-tauri/src/commands/mihomo/** | 独立职责实现与原有回归 |",
+  "status": "已验证",
+  "paths": [
+    "src-tauri/src/commands/mihomo/mod.rs",
+    "src-tauri/src/commands/mihomo/state.rs",
+    "src-tauri/src/commands/mihomo/legacy.rs",
+    "src-tauri/src/commands/mihomo/lifecycle.rs",
+    "src-tauri/src/commands/mihomo/download.rs",
+    "src-tauri/src/commands/mihomo/core_commands.rs",
+    "src-tauri/src/commands/mihomo/profiles.rs",
+    "src-tauri/src/commands/mihomo/groups_commands.rs",
+    "src-tauri/src/commands/mihomo/subscriptions.rs",
+    "src-tauri/src/commands/mihomo/overrides_commands.rs",
+    "src-tauri/src/commands/mihomo/controller_commands.rs",
+    "src-tauri/src/commands/mihomo/upgrade.rs",
+    "src-tauri/src/commands/mihomo/rules_commands.rs",
+    "src-tauri/src/commands/mihomo/tray.rs"
+  ],
+  "validation": "Main lib compiled; Mihomo21 tests passed. Original function inventory and singleton ownership preserved."
+}
