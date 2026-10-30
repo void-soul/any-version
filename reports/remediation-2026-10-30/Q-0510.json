@@ -1,7 +1,7 @@
 {
   "qid": "Q-0510",
   "root_cause": "原恢复循环边校验边写文件，未关闭活跃连接；相对路径只检查绝对路径和父目录，未拒绝Windows前缀、设备名和重解析点。",
-  "solution": "1. 导入先全量解码、校验路径/资产/大小及SQLite完整性，写入暂存计划，不改变当前业务数据。\n2. 主应用和CLI持共享存储锁，只有无运行实例的启动阶段可获取独占锁并应用计划。\n3. 提交前备份目标及WAL/SHM，恢复前清理旧sidecar；失败回滚并保留计划，重试可重放。\n4. 导出通过SQLite自身 **VACUUM INTO** 生成一致快照；旧快照WAL仅在暂存目录合并，保留本机路径入口配置。\n5. 新增Windows路径、全量预校验、WAL快照、排队恢复、回滚重试和旧sidecar清理六项隔离测试。\n主agent验收：主应用测试编译通过；Windows提升隔离环境storage16项（含junction2、事务回滚、WAL和配置拒绝）、foundation6项全部通过；既有state_sync5项通过。仅操作临时fixture。",
+  "solution": "1. 导入先全量解码、校验路径/资产/大小及SQLite完整性，写入暂存计划，不改变当前业务数据。\n2. 主应用实例持共享存储锁，只有无运行实例的启动阶段可获取独占锁并应用计划。\n3. 提交前备份目标及WAL/SHM，恢复前清理旧sidecar；失败回滚并保留计划，重试可重放。\n4. 导出通过SQLite自身 **VACUUM INTO** 生成一致快照；旧快照WAL仅在暂存目录合并，保留本机路径入口配置。\n5. 新增Windows路径、全量预校验、WAL快照、排队恢复、回滚重试和旧sidecar清理六项隔离测试。\n主agent验收：主应用测试编译通过；Windows提升隔离环境storage16项（含junction2、事务回滚、WAL和配置拒绝）、foundation6项全部通过；既有state_sync5项通过。仅操作临时fixture。",
   "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/state_sync.rs** | 接入一致快照和排队恢复 |\n| **src-tauri/src/commands/storage_maintenance.rs** | 路径边界、存储锁、恢复计划与回滚 |\n| **src-tauri/src/commands/storage_maintenance_tests.rs** | 隔离的数据库与故障注入回归 |",
   "status": "已验证",
   "validation": "Compiled c5bed827f96e762d; storage16 + foundation6 + existing state_sync5 passed. Startup hook reviewed before all database initialization.",

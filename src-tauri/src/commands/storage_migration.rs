@@ -217,4 +217,3 @@ pub fn rebuild_sdk_junctions(config: &Config) -> Vec<String> {
     }
     rebuilt
 }
-

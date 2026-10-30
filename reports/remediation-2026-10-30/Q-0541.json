@@ -1,0 +1,9 @@
+{
+  "qid": "Q-0541",
+  "question": "测试凭据备份使用真实用户home，且基础UTF8截断函数仍挂在业务工具命名空间。",
+  "root_cause": "测试路径没有独立覆盖；纯字符串函数与业务工具共用入口。",
+  "solution": "仅cfg(test)下将凭据备份目录放入foundation唯一临时数据根，正常应用路径不变；纯truncate_utf8迁到foundation并兼容重导出；清理两个新文件EOF空行。显式设计文件CLI撤回本轮误加存储锁，不改变其独立文件操作原则。\n主agent验收：tool_config_restore seven tests passed in sandbox; main lib compiled; fixture backup paths inspected.",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/ai/tool_config_restore.rs** | 单测凭据备份临时根隔离 |\n| **src-tauri/src/commands/foundation.rs**、**utils.rs** | 公共纯字符串能力 |\n| **foundation/path_templates.rs**、**storage_migration.rs** | 清理EOF空白 |",
+  "status": "已验证",
+  "validation": "tool_config_restore seven tests passed in sandbox; main lib compiled; fixture backup paths inspected."
+}

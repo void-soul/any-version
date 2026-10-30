@@ -1,5 +1,6 @@
 pub use super::foundation::{get_home_dir, set_resource_dir, get_resource_dir, dev_repo_root};
 pub use super::foundation::expand_path as expand_home;
+pub use super::foundation::truncate_utf8;
 
 use std::path::{Path, PathBuf};
 use std::fs;
@@ -14,16 +15,6 @@ use super::project::types::PackageManagerDef;
 /// `&s[..n]` 在 n 落在多字节字符中间时会 panic；中英混排的日志与上游错误体
 /// （HTTP 错误消息、用户输入回显）很容易正好踩在边界上。
 /// 同类缺陷参考 cc-switch「stop mask_url panicking on multi-byte UTF-8 near the truncation boundary」。
-pub fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
-    if s.len() <= max_bytes {
-        return s;
-    }
-    let mut end = max_bytes;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
-}
 
 /// 把 GitHub API 的 HTTP 状态翻成可操作的提示（抄自 CodexPlusPlus 3873d25）。
 ///

@@ -7,6 +7,14 @@ use std::io::Write;
 
 pub mod path_templates;
 
+/// Truncate by byte budget while preserving a valid UTF-8 character boundary.
+pub fn truncate_utf8(text: &str, max_bytes: usize) -> &str {
+    if text.len() <= max_bytes { return text; }
+    let mut end = max_bytes;
+    while end > 0 && !text.is_char_boundary(end) { end -= 1; }
+    &text[..end]
+}
+
 pub fn get_home_dir() -> PathBuf {
     let home = std::env::var("USERPROFILE").ok().filter(|v| !v.is_empty())
         .or_else(|| std::env::var("HOME").ok().filter(|v| !v.is_empty()));

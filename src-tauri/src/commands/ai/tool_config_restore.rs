@@ -253,10 +253,10 @@ fn toml_scalar_text(item: &toml_edit::Item) -> Option<String> {
 }
 
 fn backup_dir(tool_id: &str) -> PathBuf {
-    crate::commands::utils::get_home_dir()
-        .join(".any-version")
-        .join("config-backups")
-        .join(tool_id)
+    #[cfg(test)]
+    { crate::commands::foundation::get_base_dir().join("config-backups").join(tool_id) }
+    #[cfg(not(test))]
+    { crate::commands::utils::get_home_dir().join(".any-version").join("config-backups").join(tool_id) }
 }
 
 /// 写入前备份目标文件（**只在还没有备份时**拷一份，保留最原始的那份）。
