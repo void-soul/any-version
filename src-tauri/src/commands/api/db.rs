@@ -6,8 +6,14 @@ use crate::commands::config::get_data_dir;
 /// 全局数据库连接（Mutex 保护，WAL 模式），与 tasks.db 同一风格。
 static DB_CONN: Mutex<Option<rusqlite::Connection>> = Mutex::new(None);
 
+#[cfg(not(test))]
 fn db_path() -> std::path::PathBuf {
     get_data_dir().join("api.db")
+}
+
+#[cfg(test)]
+fn db_path() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("kira-api-tests-{}", std::process::id())).join("api.db")
 }
 
 /// 打开并初始化连接（不持有全局锁；由调用方在锁内调用，避免并发重复初始化）。

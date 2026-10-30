@@ -1,0 +1,10 @@
+{
+  "qid": "Q-0517",
+  "audit_id": "AUDIT-20261030-012",
+  "question": "压测并发没有后端上限，可创建任意数量 worker",
+  "root_cause": "**start_load_run** 直接按用户并发数spawn；**RUNS**只插入不移除；停止信号无法唤醒等待中的请求和升压延时。",
+  "solution": "1. 后端校验1到128并发、1到3600秒时长、升压不超过时长，活动任务上限4；无效配置在创建任务前拒绝。\n2. 使用watch取消信号唤醒请求和延时，监督任务join全部worker后才完成报告。\n3. 完成后从RUNS移除并释放采样，仅保留16条不含采样的结果缓存，历史从SQLite读取；禁止删除仍活动的任务。\n4. 启动失败删除占位行，测试数据库改用系统临时目录；新增越界拒绝和停止回收测试。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/api/loadtest.rs** | 资源限额、取消收尾、状态回收和生命周期测试 |\n| **src-tauri/src/commands/api/commands.rs** | 启动校验、失败清理及活跃删除保护 |\n| **src-tauri/src/commands/api/db.rs** | 单测使用临时数据库，避免访问用户数据 |",
+  "status": "已验证",
+  "validation": "4 API load tests passed, including rate-limited and unlimited loopback traffic, rejected resource bounds and cancellation drain. Test database is isolated."
+}

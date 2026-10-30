@@ -761,6 +761,7 @@ pub fn api_start_load_test(
     // 可选：直接使用当前（可能未保存的）请求配置压测
     input_override: Option<SendRequestInput>,
 ) -> Result<String, String> {
+    super::loadtest::validate_config(&config)?;
     let input = if let Some(ov) = input_override {
         ov
     } else {
@@ -778,7 +779,16 @@ pub fn api_start_load_test(
         .map_err(|e| e.to_string())?;
         Ok(())
     })?;
-    Ok(super::loadtest::start_load_run(run_id, endpoint_id, name, config, created_at, input))
+    match super::loadtest::start_load_run(run_id.clone(), endpoint_id, name, config, created_at, input) {
+        Ok(id) => Ok(id),
+        Err(error) => {
+            db::with_db(|conn| {
+                conn.execute("DELETE FROM api_load_runs WHERE id = ?1", [&run_id]).map_err(|e| e.to_string())?;
+                Ok(())
+            })?;
+            Err(error)
+        }
+    }
 }
 
 #[tauri::command]
@@ -826,9 +836,11 @@ pub fn api_list_load_runs(endpoint_id: String) -> Result<Vec<LoadTestRun>, Strin
 
 #[tauri::command]
 pub fn api_delete_load_run(run_id: String) -> Result<(), String> {
+    super::loadtest::ensure_not_active(&run_id)?;
     db::with_db(|conn| {
         conn.execute("DELETE FROM api_load_runs WHERE id = ?1", rusqlite::params![run_id])
             .map_err(|e| e.to_string())?;
+        super::loadtest::forget_completed(&run_id);
         Ok(())
     })
 }
