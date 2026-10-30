@@ -604,9 +604,8 @@ fn build_env_vars_status(
 fn build_cache_status(def: &ProjectDef) -> Option<CacheStatus> {
     use crate::commands::cache::format_bytes;
     use crate::commands::cache::get_dir_size;
-    use crate::commands::utils::{
-        expand_home, resolve_custom_cache_path, resolve_detected_path, run_simple_command_checked,
-    };
+    use crate::commands::project::package_config::resolve_custom_cache_path;
+    use crate::commands::utils::{expand_home, resolve_detected_path, run_simple_command_checked};
 
     // Find the first package manager under this project that has cache settings configured
     let pm = def.package_managers.iter().find(|pm| {

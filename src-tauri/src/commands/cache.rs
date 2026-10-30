@@ -4,7 +4,8 @@ use serde::{Serialize, Deserialize};
 use walkdir::WalkDir;
 use tauri::Emitter;
 
-use super::config::{get_data_dir, MigrateProgress};
+use super::config::get_data_dir;
+use super::storage_commands::MigrateProgress;
 use super::utils::expand_home;
 
 /// 把技能相关调试日志同时写入文件，便于在打包运行时排查（终端 stderr 不可见）。
@@ -454,7 +455,8 @@ fn pm_available(project_id: &str, pm: &crate::commands::project::types::PackageM
 #[tauri::command]
 pub fn get_caches_list() -> Result<Vec<CacheInfo>, String> {
     use super::project::registry;
-    use super::utils::{expand_home, is_exe_in_path, cache_detect_evidence_dynamic, resolve_detected_path};
+    use crate::commands::project::package_config::cache_detect_evidence_dynamic;
+    use super::utils::{expand_home, is_exe_in_path, resolve_detected_path};
     
     let mut list = Vec::new();
     
@@ -467,7 +469,7 @@ pub fn get_caches_list() -> Result<Vec<CacheInfo>, String> {
                 let installed = pm_available(&project.id, pm);
                 
                 // Resolve path: try custom config resolver first, then cmd, then default_path
-                let mut resolved_path = super::utils::resolve_custom_cache_path(pm).unwrap_or_default();
+                let mut resolved_path = crate::commands::project::package_config::resolve_custom_cache_path(pm).unwrap_or_default();
                 
                 if resolved_path.is_empty() {
                     if let Some(ref cmd) = pm.cache_detect_cmd {
@@ -586,7 +588,7 @@ pub fn migrate_cache_path(name: String, new_path: String) -> Result<(), String> 
     result
 }
 
-/// 存储迁移进度（与 config::MigrateProgress 区分，用于 cache/data 迁移）
+/// 存储迁移进度（与 storage_commands::MigrateProgress 区分，用于 cache/data 迁移）
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct MigrateStorageProgress {
     pub stage: String,

@@ -162,8 +162,9 @@ pub(super) fn resolve_pkg_storage_path_dynamic(
     storage_kind: &str,
     extra_cache_id: Option<&str>,
 ) -> Result<String, String> {
+    use crate::commands::project::package_config::resolve_custom_cache_path;
     use crate::commands::project::registry;
-    use crate::commands::utils::{expand_home, resolve_custom_cache_path};
+    use crate::commands::utils::expand_home;
 
     let project = registry::registry()
         .into_iter()
@@ -381,7 +382,9 @@ pub fn migrate_pkg_storage(
                     }
                 } else {
                     // 主缓存：同步更新配置文件中的缓存路径（如 NuGet.Config）
-                    crate::commands::utils::apply_cache_config_writes(pm, &new_path);
+                    crate::commands::project::package_config::apply_cache_config_writes(
+                        pm, &new_path,
+                    );
                 }
             }
         }

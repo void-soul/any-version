@@ -1,4 +1,13 @@
-use super::*;
+//! Application-level storage migration commands and progress DTOs.
+
+use super::config::Config;
+use super::foundation::{get_base_dir, get_data_dir};
+use serde::Serialize;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+use tauri::Emitter;
 
 /// 路径迁移结果（供前端展示）
 #[derive(Serialize, Clone, Debug)]
@@ -74,17 +83,6 @@ pub fn delete_old_storage_dirs(dirs: Vec<String>) -> Result<Vec<String>, String>
         return Err(errors.join("\n"));
     }
     Ok(deleted)
-}
-
-#[tauri::command]
-pub fn get_config() -> Result<Config, String> {
-    Ok(load_config())
-}
-
-/// 获取应用版本号（从 Cargo.toml）
-#[tauri::command]
-pub fn get_app_version() -> Result<String, String> {
-    Ok(env!("CARGO_PKG_VERSION").to_string())
 }
 
 /// 更新配置并自动迁移存储路径。

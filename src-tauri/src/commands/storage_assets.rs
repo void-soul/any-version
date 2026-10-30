@@ -35,7 +35,7 @@ const SHARED_OR_EPHEMERAL_MODULES: &[&str] = &[
     "env", "cache", "sdk_resolver", "hosts", "port", "network", "pkg", "mirror", "service", "project",
     "hidden_cmd", "utils", "conflict", "http_server", "img_base64", "ai_registry", "tool_version", "cert_receiver",
     "rtsp_server", "file_io", "secrets", "s3_common", "autostart_admin", "serialtool", "wstool",
-    "storage_assets", "storage_maintenance", "storage_migration", "foundation", "module_lifecycle",
+    "storage_assets", "storage_maintenance", "storage_migration", "storage_commands", "foundation", "module_lifecycle",
 ];
 
 pub fn snapshot_files() -> impl Iterator<Item = &'static str> {

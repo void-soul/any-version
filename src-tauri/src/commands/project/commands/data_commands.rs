@@ -139,7 +139,7 @@ pub fn project_set_cache_path(
 
     // 设置完成后，同步更新配置中的缓存路径（主缓存如 NuGet.Config；附加缓存无需写文件）
     if extra.is_none() {
-        crate::commands::utils::apply_cache_config_writes(pm, &new_path);
+        crate::commands::project::package_config::apply_cache_config_writes(pm, &new_path);
     }
 
     Ok(())

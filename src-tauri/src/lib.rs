@@ -375,7 +375,7 @@ pub fn run() {
             // 启动时兜底重建 SDK 锚点 junction（修复迁移后遗留的普通空目录）
             {
                 let config = crate::commands::config::load_config();
-                let rebuilt = crate::commands::config::rebuild_sdk_junctions(&config);
+                let rebuilt = crate::commands::storage_migration::rebuild_sdk_junctions(&config);
                 if !rebuilt.is_empty() {
                     exit_log::exit_log(&format!("[startup] 重建 SDK 锚点 junction: {:?}", rebuilt));
                 }

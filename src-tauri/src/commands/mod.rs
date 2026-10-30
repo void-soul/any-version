@@ -37,6 +37,7 @@ pub mod state_sync;
 pub mod storage_assets;
 pub mod storage_maintenance;
 pub mod storage_migration;
+pub mod storage_commands;
 pub mod foundation;
 pub mod module_lifecycle;
 pub mod autostart_admin;

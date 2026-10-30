@@ -77,13 +77,13 @@ pub fn load_registry() -> Vec<ProjectDef> {
     let base_dir = crate::commands::config::get_base_dir();
     let mut search_dirs: Vec<std::path::PathBuf> = Vec::new();
 
-    // 开发构建优先用仓库源目录（原因见 `utils::dev_repo_root`）
-    if let Some(repo) = crate::commands::utils::dev_repo_root() {
+    // 开发构建优先用仓库源目录（原因见 `foundation::dev_repo_root`）
+    if let Some(repo) = crate::commands::foundation::dev_repo_root() {
         search_dirs.push(repo);
     }
 
     // 优先在 Tauri 2 打包后的官方资源目录下查找
-    if let Some(res_dir) = crate::commands::utils::get_resource_dir() {
+    if let Some(res_dir) = crate::commands::foundation::get_resource_dir() {
         search_dirs.push(res_dir);
     }
 

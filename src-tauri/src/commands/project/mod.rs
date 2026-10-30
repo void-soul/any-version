@@ -5,3 +5,5 @@ pub mod scanner;
 pub mod commands;
 pub mod versions;
 pub mod layout;
+
+pub mod package_config;

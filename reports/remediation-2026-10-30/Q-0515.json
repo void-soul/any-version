@@ -1,15 +1,26 @@
 {
   "qid": "Q-0515",
-  "root_cause": "路径、原子文件、资源定位和SDK应用服务共享模块命名空间，导致底层实现反向导入业务。",
-  "solution": "1. 提取无业务导入的 **foundation** 与 **path_templates**，提供路径入口、资源定位和原子替换。\n2. **config/utils/project::dirs** 保留兼容重导出；SDK迁移和链接重建放应用级 **storage_migration**。\n3. 原子写使用唯一临时文件、刷盘后替换，替换失败保留原文件，不回退为直接截断写。\n4. 测试构建的应用数据根隔离到唯一临时目录，并新增原子写失败保留与基础层依赖检查。\n主agent验收：主应用测试编译通过；Windows提升隔离环境storage16项（含junction2、事务回滚、WAL和配置拒绝）、foundation6项全部通过；既有state_sync5项通过。仅操作临时fixture。",
-  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/foundation.rs** | 独立路径、资源和原子文件能力 |\n| **src-tauri/src/commands/foundation/path_templates.rs** | 公共机器根模板与测试 |\n| **src-tauri/src/commands/config.rs** | 兼容重导出，移出SDK编排 |\n| **src-tauri/src/commands/utils.rs** | 使用基础层，不再经project展开路径 |\n| **src-tauri/src/commands/project/dirs.rs** | 公共模板兼容入口 |",
+  "root_cause": "先前纯路径/原子写虽迁foundation，但SDK配置适配和应用存储IPC仍保留在通用utils/配置模块，形成业务反向依赖。",
+  "solution": "1. 提取无业务导入的 **foundation** 与 **path_templates**，提供路径入口、资源定位和原子替换。\n2. **config/utils/project::dirs** 保留兼容重导出；SDK迁移和链接重建放应用级 **storage_migration**。\n3. 原子写使用唯一临时文件、刷盘后替换，替换失败保留原文件，不回退为直接截断写。\n4. 测试构建的应用数据根隔离到唯一临时目录，并新增原子写失败保留与基础层依赖检查。\n主agent验收：主应用测试编译通过；Windows提升隔离环境storage16项（含junction2、事务回滚、WAL和配置拒绝）、foundation6项全部通过；既有state_sync5项通过。仅操作临时fixture。\n最终单向边界补齐：\n1. 三个PackageManagerDef适配helper迁project/package_config，调用方显式引用业务模块，utils不保留SDK回导出。\n2. Project registry直接依赖foundation纯资源定位。\n3. 存储迁移DTO、update_config/delete_old_storage_dirs/do_migrate_storage移到显式storage_commands应用层；get_config/get_app_version留config/queries。\n4. config删除storage_migration回导出，lib直接调用上层storage_migration；IPC注册只改Rust路径，前端命令名和序列化协议不变。\n5. 新storage_commands明确声明无独立持久化payload，资产策略仍由原config/storage模块负责。\n主agent再次编译all-targets和全量分组回归通过。架构守卫同时禁止utils SDK依赖、config迁移反向依赖及registry经utils资源定位。",
+  "files": "| File | Change |\n|------|--------|\n| **foundation.rs**、**foundation/path_templates.rs** | 业务无关路径/资源/原子写 |\n| **utils.rs**、**project/package_config.rs**、SDK/cache调用方 | SDK适配归业务，资源直连foundation |\n| **config/**、**storage_commands.rs**、**storage_migration.rs** | 配置查询与应用迁移分离 |\n| **lib.rs**、**app_commands.rs**、**commands/mod.rs**、**storage_assets.rs** | 组合根、IPC与资产policy |",
   "status": "已验证",
-  "validation": "Compiled c5bed827f96e762d; storage16 + foundation6 + existing state_sync5 passed. Startup hook reviewed before all database initialization.",
   "paths": [
-    "src-tauri/src/commands/foundation.rs",
-    "src-tauri/src/commands/foundation/path_templates.rs",
-    "src-tauri/src/commands/config.rs",
     "src-tauri/src/commands/utils.rs",
-    "src-tauri/src/commands/project/dirs.rs"
-  ]
+    "src-tauri/src/commands/project/package_config.rs",
+    "src-tauri/src/commands/project/mod.rs",
+    "src-tauri/src/commands/cache.rs",
+    "src-tauri/src/commands/project/scanner.rs",
+    "src-tauri/src/commands/project/commands/data_commands.rs",
+    "src-tauri/src/commands/project/commands/cache_queries.rs",
+    "src-tauri/src/commands/project/registry.rs",
+    "src-tauri/src/commands/config.rs",
+    "src-tauri/src/commands/config/migration_api.rs",
+    "src-tauri/src/commands/config/queries.rs",
+    "src-tauri/src/commands/storage_commands.rs",
+    "src-tauri/src/commands/mod.rs",
+    "src-tauri/src/commands/storage_assets.rs",
+    "src-tauri/src/app_commands.rs",
+    "src-tauri/src/lib.rs"
+  ],
+  "validation": "Final all-targets check and1483 inventory;1459 sandbox +18 exact Windows fixture tests passed,6 existing ignored. Frontend tsc/50 files397 tests and production build passed; source guard1084 passed."
 }
