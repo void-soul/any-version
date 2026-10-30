@@ -1,215 +1,36 @@
+import { BackgroundTextureSettings } from "./BackgroundTextureSettings";
+import { ApplicationFontSelector } from "./ApplicationFontSelector";
+import { ThemeAccentSettings } from "./ThemeAccentSettings";
+import { ApplicationStartupSettings } from "./ApplicationStartupSettings";
+import { ApplicationUpdateReady } from "./ApplicationUpdateReady";
+import { StorageMigrationResult } from "./StorageMigrationResult";
+import { StorageMigrationProgress } from "./StorageMigrationProgress";
+import { StorageMigrationConfirm } from "./StorageMigrationConfirm";
+import { StoragePathPreview } from "./StoragePathPreview";
+import { useAppearanceSettings } from "./useAppearanceSettings";
 import { useState, useEffect, useRef } from "react";
 import { theamedAlert, alertError } from "./shared/ThemedAlert";
-import { applyDensity } from "../utils/appearance";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { listen, emit } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import {
-  enable as enableAutostart,
-  disable as disableAutostart,
-  isEnabled as isAutostartEnabled,
-} from "@tauri-apps/plugin-autostart";
-import {
-  FolderKanban,
-  Save,
-  RefreshCw,
-
-  CheckCircle2,
-  ExternalLink,
-  FolderOpen,
-  AlertTriangle,
-  Trash2,
-  Loader2,
-  FileText,
-  Power,
-
-  Sliders,
-
-  Upload,
-
-
-  GripVertical,
-  RotateCcw,
-  Search,
-  X,
-} from "lucide-react";
-import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
-import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import {
-  VEX_CYBER_ACCENT,
-  VEX_THEME_PRESETS,
-  VEX_THEME_STORE_KEY,
-  resolveThemeAccent,
-} from "../utils/brand";
+import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
+import { FolderKanban, Save, RefreshCw, CheckCircle2, FolderOpen, Power, Sliders, RotateCcw, Search } from "lucide-react";
+import { DndContext, closestCenter } from "@dnd-kit/core";
+import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { ConfirmDialogHost } from "./shared/ConfirmDialog";
 import type { ConfirmRequest } from "./shared/ConfirmDialog";
-
-// 可拖拽的模块配置行：主题色 + 位置 + 启用 + 快捷键（拖拽手柄独立，避免与控件冲突）
-function ModuleConfigRow({
-  id,
-  label,
-  icon: Icon,
-  color,
-  disabled,
-  inToolbar,
-  pinned,
-  hotkey,
-  isRecording,
-  onToggleToolbar,
-  onToggleEnabled,
-  onRecordHotkey,
-  onClearHotkey,
-}: {
-  id: string;
-  label: string;
-  icon: any;
-  color: string;
-  disabled: boolean;
-  inToolbar: boolean;
-  pinned: boolean;
-  hotkey: string;
-  isRecording: boolean;
-  onToggleToolbar: () => void;
-  onToggleEnabled: () => void;
-  onRecordHotkey: () => void;
-  onClearHotkey: () => void;
-}) {
-  const { t } = useTranslation();
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging, setActivatorNodeRef } =
-    useSortable({ id });
-  return (
-    <div
-      ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={`flex items-center gap-2 px-2.5 py-2 rounded-card bg-white/[0.03] border border-white/5 ${
-        isDragging ? "opacity-60 ring-1 ring-[var(--module-accent-ring)] z-10" : ""
-      } ${disabled ? "opacity-50" : ""}`}
-      {...attributes}
-    >
-      {/* 拖拽手柄 */}
-      <button
-        ref={setActivatorNodeRef}
-        {...listeners}
-        className="cursor-grab active:cursor-grabbing text-slate-500 hover:text-slate-300 p-0.5 touch-none flex-shrink-0"
-        title={t("settings.dragSort")}
-      >
-        <GripVertical className="w-3.5 h-3.5" />
-      </button>
-
-      {/* 图标 + 标签 */}
-      <Icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color }} />
-      <span className="text-caption text-slate-300 w-14 truncate flex-shrink-0">{label}</span>
-
-      {/* 位置：顶栏/更多 */}
-      {pinned ? (
-        <span className="text-micro text-slate-600 w-9 text-center flex-shrink-0">{t("settings.pinned")}</span>
-      ) : (
-        <button
-          onClick={onToggleToolbar}
-          disabled={disabled}
-          className={`px-1.5 py-0.5 rounded-md text-micro font-medium border transition cursor-pointer disabled:opacity-40 w-9 flex-shrink-0 ${
-            inToolbar
-              ? "bg-cyan-500/15 border-cyan-500/40 text-cyan-300"
-              : "bg-white/5 border-white/10 text-slate-400"
-          }`}
-          title={inToolbar ? t("settings.toolbarTipIn") : t("settings.toolbarTipOut")}
-        >
-          {inToolbar ? t("settings.toolbar") : t("settings.more")}
-        </button>
-      )}
-
-      {/* 启用开关 */}
-      {pinned ? (
-        <span className="w-8 flex-shrink-0" />
-      ) : (
-        <button
-          onClick={onToggleEnabled}
-          className={`relative w-8 rounded-full transition cursor-pointer flex-shrink-0 ${
-            disabled ? "bg-white/10" : "bg-emerald-500/60"
-          }`}
-          style={{ height: 18 }}
-          title={disabled ? t("settings.clickEnable") : t("settings.clickDisable")}
-        >
-          <span
-            className="absolute top-[2px] w-[14px] h-[14px] rounded-full bg-white transition-all"
-            style={{ left: disabled ? 2 : 16 }}
-          />
-        </button>
-      )}
-
-      {/* 快捷键 */}
-      <div className="flex items-center gap-1 flex-shrink-0">
-        <button
-          onClick={onRecordHotkey}
-          className={`px-2 py-0.5 rounded-md text-micro font-mono border transition cursor-pointer ${
-            isRecording
-              ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
-              : hotkey
-                ? "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10"
-                : "bg-white/[0.02] border-dashed border-white/15 text-slate-500 hover:text-slate-300"
-          }`}
-          title={isRecording ? t("settings.recHint") : hotkey ? t("settings.clickReRecord") : t("settings.clickRecordHotkey")}
-        >
-          {isRecording ? t("settings.pressKeys") : hotkey || t("settings.no")}
-        </button>
-        {hotkey && !isRecording && (
-          <button
-            onClick={onClearHotkey}
-            className="text-slate-500 hover:text-rose-300 p-0.5 cursor-pointer"
-            title={t("settings.clearShortcut")}
-          >
-            <X className="w-3 h-3" />
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
 import type { AppSettings } from "../contracts/appSettings";
 import type { AppSettingsPatch } from "../contracts/appSettings";
 import { loadAppSettings, patchAppSettings } from "../services/appSettings";
-import { MODULE_CATALOG as MODULES, moduleLabel } from "../moduleCatalog";
+import { moduleLabel } from "../moduleCatalog";
 import { useTranslation } from "react-i18next";
 import DataSyncPanel from "./DataSyncPanel";
 import VexGlowAvatar from "./VexGlowAvatar";
 import VexGreeting from "./VexGreeting";
-
-interface Config {
-  versions_dir?: string;
-  links_dir?: string;
-  data_dir?: string;
-  sdk_dir?: string;
-  node_projects_dir?: string;
-}
-
-interface MigrateResult {
-  moved_versions: boolean;
-  moved_links: boolean;
-  recreated_junctions: string[];
-  updated_env_vars: string[];
-  updated_path_entries: string[];
-  errors: string[];
-  old_dirs_remain: string[];
-}
-
-interface MigrateProgress {
-  stage: string;
-  current: number;
-  total: number;
-  file_name: string;
-}
-
-/** 托盘右键菜单配置（与后端 TrayMenuConfig 对应） */
-interface TrayMenuConfig {
-  /** 是否启用托盘右键菜单（总开关） */
-  enabled: boolean;
-  /** 是否在托盘菜单显示 Mihomo 项（细分项已迁至代理模块设置） */
-  show_mihomo: boolean;
-}
+import { type Config, type MigrateProgress, type MigrateResult, type TrayMenuConfig } from "./GlobalSettings.model";
+import { ModuleConfigRow } from "./GlobalSettings.ModuleConfigRow";
 
 export default function GlobalSettings() {
   const { t } = useTranslation();
@@ -243,8 +64,6 @@ export default function GlobalSettings() {
   // 应用通过 UAC manifest 始终以管理员身份运行，故开机自启天然具备管理员权限。
   const [autostartOn, setAutostartOn] = useState(false);
   const [autostartBusy, setAutostartBusy] = useState(false);
-
-
 
   // 托盘右键菜单配置
   const [trayCfg, setTrayCfg] = useState<TrayMenuConfig>({
@@ -291,11 +110,6 @@ export default function GlobalSettings() {
       setAppVersion("1.0.0");
     }
   };
-
-
-
-
-
 
   const fetchAutostart = async () => {
     try {
@@ -353,297 +167,36 @@ export default function GlobalSettings() {
   const [_launcherSaved, setLauncherSaved] = useState(false);
 
   // ---- 外观：模块主题色 + 全局字体 + 模块顺序 + 模块布局 ----
-  const [appearance, setAppearance] = useState<{
-    moduleThemeColors: Record<string, string>;
-    globalFont: string;
-    customFontPath: string;
-    moduleOrder: string[];
-    toolbarModules: string[];
-    disabledModules: string[];
-    backgroundTexture: string;
-    language: string;
-    motionPreference: string;
-    density: string;
-  }>({
-    moduleThemeColors: {},
-    globalFont: "",
-    customFontPath: "",
-    moduleOrder: [],
-    toolbarModules: [],
-    disabledModules: [],
-    backgroundTexture: "",
-    language: "",
-    motionPreference: "",
-    density: "",
-  });
-  const [importingFont, setImportingFont] = useState(false);
-  const [systemFonts, setSystemFonts] = useState<string[]>([]);
-  const [fontSearch, setFontSearch] = useState("");
-  const [fontRefreshing, setFontRefreshing] = useState(false);
-
-  // 当前生效的全局主题色（用户可在下方「外观」里覆盖默认签名色）。
-  const themeAccent = resolveThemeAccent(appearance.moduleThemeColors);
-
-  // 模块顺序：优先用户自定义顺序，缺失的模块（新增/子工具）追加到末尾，保证完整。
-  const moduleOrderIds = (() => {
-    const custom = appearance.moduleOrder;
-    const all = MODULES.map((m) => m.id);
-    if (custom.length === 0) return all;
-    // 已有序的在前，未出现过的模块按默认顺序追加
-    const ordered = custom.filter((id) => all.includes(id));
-    const missing = all.filter((id) => !ordered.includes(id));
-    return [...ordered, ...missing];
-  })();
-
-  // 统一模块映射（从注册表派生），用于模块管理区。
-  const MODULE_MAP_LOCAL: Record<string, { id: string; label: string; color: string; icon: any; pinned?: boolean; defaultToolbar?: boolean }> =
-    Object.fromEntries(MODULES.map((m) => [m.id, { id: m.id, label: m.label, color: m.color, icon: m.icon, pinned: m.pinned, defaultToolbar: m.defaultToolbar }]));
-
-  // 判断模块当前是否「在顶栏」：优先用户显式布局，为空时回退默认顶栏。
-  const isModuleInToolbar = (id: string): boolean => {
-    if (MODULE_MAP_LOCAL[id]?.pinned) return true; // 设置模块始终顶栏
-    if (appearance.toolbarModules.length > 0) {
-      return appearance.toolbarModules.includes(id);
-    }
-    return !!MODULE_MAP_LOCAL[id]?.defaultToolbar;
-  };
-
-  const fetchAppearance = async () => {
-    try {
-      const ap = await invoke<{
-        moduleThemeColors: Record<string, string>;
-        globalFont: string;
-        customFontPath: string;
-        moduleOrder: string[];
-        toolbarModules: string[];
-        disabledModules: string[];
-        backgroundTexture: string;
-        language: string;
-        motionPreference: string;
-        density: string;
-      }>("get_appearance_config");
-      setAppearance(ap);
-    } catch (e) {
-      console.error("读取外观配置失败", e);
-    }
-  };
-
-  const fetchSystemFonts = async () => {
-    try {
-      const fonts = await invoke<string[]>("list_system_fonts");
-      setSystemFonts(fonts || []);
-    } catch (e) {
-      console.error("读取系统字体失败", e);
-    }
-  };
-
-  const refreshSystemFonts = async () => {
-    setFontRefreshing(true);
-    try {
-      await fetchSystemFonts();
-    } finally {
-      setFontRefreshing(false);
-    }
-  };
-
-  // 按关键字过滤系统字体（大小写不敏感）
-  const filteredFonts = (() => {
-    const kw = fontSearch.trim().toLowerCase();
-    if (!kw) return systemFonts;
-    return systemFonts.filter((f) => f.toLowerCase().includes(kw));
-  })();
-
-  const saveModuleOrder = async (order: string[]) => {
-    setAppearance({ ...appearance, moduleOrder: order });
-    try {
-      await invoke("set_module_order", { order });
-      emit("appearance-updated");
-    } catch (e) {
-      console.error("保存模块顺序失败", e);
-    }
-  };
-
-  // 保存模块布局（顶栏模块 + 禁用模块）
-  const saveModuleLayout = async (toolbar: string[], disabled: string[]) => {
-    setAppearance({ ...appearance, toolbarModules: toolbar, disabledModules: disabled });
-    try {
-      await invoke("set_module_layout", {
-        toolbarModules: toolbar,
-        disabledModules: disabled,
-      });
-      emit("appearance-updated");
-    } catch (e) {
-      console.error("保存模块布局失败", e);
-    }
-  };
-
-  // 物化「当前实际顶栏模块列表」：若用户尚未显式保存布局，则以默认顶栏列表为准。
-  // 避免在空列表上增删导致「只保留一个模块、其余全部落到更多」。
-  const materializedToolbar = (): string[] => {
-    if (appearance.toolbarModules.length > 0) return [...appearance.toolbarModules];
-    return MODULES.filter((m) => m.defaultToolbar).map((m) => m.id);
-  };
-
-  // 切换模块启用/禁用
-  const toggleModuleEnabled = (id: string) => {
-    if (MODULE_MAP_LOCAL[id]?.pinned) return; // 设置模块不可禁用
-    const disabled = appearance.disabledModules.includes(id)
-      ? appearance.disabledModules.filter((x) => x !== id)
-      : [...appearance.disabledModules, id];
-    saveModuleLayout(materializedToolbar(), disabled);
-  };
-
-  // 切换模块在顶栏 / 更多
-  const toggleModuleToolbar = (id: string) => {
-    if (MODULE_MAP_LOCAL[id]?.pinned) return; // 设置模块始终顶栏
-    const base = materializedToolbar();
-    const toolbar = base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
-    saveModuleLayout(toolbar, appearance.disabledModules);
-  };
-
-  const handleModuleOrderDragEnd = (event: { active: any; over: any }) => {
-    const { active, over } = event;
-    if (over && active.id !== over.id) {
-      const oldIndex = moduleOrderIds.indexOf(active.id);
-      const newIndex = moduleOrderIds.indexOf(over.id);
-      if (oldIndex >= 0 && newIndex >= 0) {
-        saveModuleOrder(arrayMove(moduleOrderIds, oldIndex, newIndex));
-      }
-    }
-  };
-
-  const handleResetModuleOrder = () => {
-    saveModuleOrder([]);
-  };
-
-  const orderSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
-
-  const handleSetGlobalFont = async (font: string) => {
-    setAppearance({ ...appearance, globalFont: font });
-    try {
-      await invoke("set_global_font", { font });
-      emit("appearance-updated");
-    } catch (e) {
-      console.error("保存全局字体失败", e);
-    }
-  };
-
-  const handleSetBackgroundTexture = async (texture: string) => {
-    setAppearance({ ...appearance, backgroundTexture: texture });
-    try {
-      await invoke("set_background_texture", { texture });
-      emit("appearance-updated");
-    } catch (e) {
-      console.error("保存背景纹理失败", e);
-    }
-  };
-
-  // 动效偏好：「跟随系统」（尊重系统的「减少动效」）/「始终开启」（无视系统设置）。
-  // 系统被切成「最佳性能」时 prefers-reduced-motion 会变 reduce，头像辉光闪烁等
-  // 自家动效会全部停掉 —— 这里给用户一个不听系统的出口。
-  const handleSetMotionPreference = async (pref: string) => {
-    setAppearance({ ...appearance, motionPreference: pref });
-    try {
-      await invoke("set_motion_preference", { preference: pref });
-      emit("appearance-updated");
-    } catch (e) {
-      console.error("保存动效偏好失败", e);
-    }
-  };
-
-  // 列表密度：紧凑（行更高，一屏更多）/ 舒适（默认）。
-  // 后端只存 "compact" 一个开关值，具体像素由 App.css 的 --density-py 决定
-  // —— 密度是纯视觉手感，不该让后端知道 8px / 4px 这种数。
-  const handleSetDensity = async (value: string) => {
-    setAppearance({ ...appearance, density: value });
-    try {
-      // 写入口与命令面板共用（utils/appearance.ts），避免两处各写一份 invoke + 广播
-      await applyDensity(value);
-    } catch (e) {
-      console.error("保存列表密度失败", e);
-    }
-  };
-
-  // 切换界面语言：持久化到后端，并即时切换 i18n。
-  const handleSetLanguage = async (lang: string) => {
-    setAppearance({ ...appearance, language: lang });
-    try {
-      await invoke("set_language", { language: lang });
-    } catch (e) {
-      console.error("保存语言设置失败", e);
-    }
-    try {
-      const { default: i18n } = await import("i18next");
-      await i18n.changeLanguage(lang || undefined);
-    } catch (e) {
-      console.error("切换语言失败", e);
-    }
-  };
-
-  const handleSetThemeAccent = async (color: string) => {
-    setAppearance({
-      ...appearance,
-      moduleThemeColors: { ...appearance.moduleThemeColors, [VEX_THEME_STORE_KEY]: color },
-    });
-    try {
-      await invoke("set_module_theme_color", { moduleId: VEX_THEME_STORE_KEY, color });
-      emit("appearance-updated");
-    } catch (e) {
-      console.error("保存主题色失败", e);
-    }
-  };
-
-  const handleResetThemeAccent = async () => {
-    setAppearance({
-      ...appearance,
-      moduleThemeColors: {
-        ...appearance.moduleThemeColors,
-        [VEX_THEME_STORE_KEY]: VEX_CYBER_ACCENT,
-      },
-    });
-    try {
-      await invoke("set_module_theme_color", { moduleId: VEX_THEME_STORE_KEY, color: "" });
-      emit("appearance-updated");
-    } catch (e) {
-      console.error("重置主题色失败", e);
-    }
-  };
-
-  const handleImportFont = async () => {
-    try {
-      const selected = await openDialog({
-        title: t("settings.pickFontFile"),
-        multiple: false,
-        filters: [
-          { name: t("settings.fontFilter"), extensions: ["ttf", "otf", "woff", "woff2"] },
-        ],
-      });
-      if (!selected) return;
-      setImportingFont(true);
-      const res = await invoke<{ family: string; path: string; ext: string }>(
-        "import_custom_font",
-        { src: selected as string }
-      );
-      setAppearance({ ...appearance, globalFont: res.family, customFontPath: res.path });
-      emit("appearance-updated");
-      theamedAlert(t("settings.fontImported", { family: res.family }));
-    } catch (e: any) {
-      alertError(t("settings.importFontFail", { err: String(e) }));
-    } finally {
-      setImportingFont(false);
-    }
-  };
-
-  const handleClearCustomFont = async () => {
-    try {
-      await invoke("clear_custom_font");
-      setAppearance({ ...appearance, globalFont: "", customFontPath: "" });
-      emit("appearance-updated");
-      theamedAlert(t("settings.customFontRemoved"));
-    } catch (e: any) {
-      alertError(t("settings.removeFontFail", { err: String(e) }));
-    }
-  };
+  const {
+    appearance,
+    importingFont,
+    systemFonts,
+    fontSearch,
+    setFontSearch,
+    fontRefreshing,
+    themeAccent,
+    moduleOrderIds,
+    MODULE_MAP_LOCAL,
+    isModuleInToolbar,
+    fetchAppearance,
+    fetchSystemFonts,
+    refreshSystemFonts,
+    filteredFonts,
+    toggleModuleEnabled,
+    toggleModuleToolbar,
+    handleModuleOrderDragEnd,
+    handleResetModuleOrder,
+    orderSensors,
+    handleSetGlobalFont,
+    handleSetBackgroundTexture,
+    handleSetMotionPreference,
+    handleSetDensity,
+    handleSetLanguage,
+    handleSetThemeAccent,
+    handleResetThemeAccent,
+    handleImportFont,
+    handleClearCustomFont,
+  } = useAppearanceSettings();
 
   const fetchLauncherConfig = async () => {
     try {
@@ -958,7 +511,6 @@ export default function GlobalSettings() {
     }
   };
 
-
   const handleDownloadUpdate = () => {
     void openUrl("https://github.com/void-soul/any-version/releases/latest");
   };
@@ -974,7 +526,6 @@ export default function GlobalSettings() {
             {t("settings.dataDirSection")}
           </h3>
         </div>
-
 
         {loading ? (
           <div className="text-body text-slate-400 py-6 flex items-center gap-2">
@@ -1006,175 +557,34 @@ export default function GlobalSettings() {
             </div>
 
             {/* 派生路径只读展示 */}
-            <div className="rounded-card border border-white/5 bg-white/[0.02] p-3 space-y-1.5">
-              <p className="text-tiny text-slate-500 uppercase font-semibold">
-                {t("settings.derivedDirs")}
-              </p>
-              <div className="text-tiny font-mono text-slate-400 space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-cyan-400 flex-shrink-0">{t("settings.sdkDir")}</span>
-                  <span className="truncate">
-                    {(dataDir || "…").replace(/[\\/]+$/, "")}\sdk
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-emerald-400 flex-shrink-0">
-                    {t("settings.nodeServices")}
-                  </span>
-                  <span className="truncate">
-                    {(dataDir || "…").replace(/[\\/]+$/, "")}\node-projects
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-amber-400 flex-shrink-0">{t("settings.certs")}</span>
-                  <span className="truncate">
-                    {(dataDir || "…").replace(/[\\/]+$/, "")}\certs
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-slate-400 flex-shrink-0">
-                    {t("settings.cacheDb")}
-                  </span>
-                  <span className="truncate">
-                    {(dataDir || "…").replace(/[\\/]+$/, "")}
-                    {t("settings.derivedTail")}
-                  </span>
-                </div>
-              </div>
-            </div>
+            <StoragePathPreview
+              dataDir={dataDir}
+            />
 
             {/* 路径变更确认弹窗 */}
             {showMigrateConfirm && (
-              <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-card space-y-3 animate-fadeIn">
-                <h4 className="text-body font-semibold text-amber-400 flex items-center gap-1.5">
-                  <AlertTriangle className="w-4 h-4" />
-                  {t("settings.confirmMigrate")}
-                </h4>
-                <div className="text-tiny text-slate-300 space-y-1.5">
-                  <p>{t("settings.migrateNotice")}</p>
-                  <p className="text-amber-300">{t("settings.migrateStep1")}</p>
-                  <p className="text-amber-300">{t("settings.migrateStep2")}</p>
-                  <p className="text-amber-300">{t("settings.migrateStep3")}</p>
-                  <p className="text-slate-400 mt-1">{t("settings.migrateHint")}</p>
-                  <p className="text-amber-300">{t("settings.migrateRestartNote")}</p>
-                </div>
-                <div className="flex items-center gap-2 pt-1">
-                  <button
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-card text-body font-semibold cursor-pointer transition-all flex items-center gap-1.5"
-                  >
-                    <Save className="w-3 h-3" />
-                    {saving ? t("settings.migrating") : t("settings.confirmMigrateSave")}
-                  </button>
-                  <button
-                    onClick={() => setShowMigrateConfirm(false)}
-                    className="px-4 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-card text-body font-medium cursor-pointer border border-white/10"
-                  >
-                    {t("common.cancel")}
-                  </button>
-                </div>
-              </div>
+              <StorageMigrationConfirm
+                handleSave={handleSave}
+                saving={saving}
+                setShowMigrateConfirm={setShowMigrateConfirm}
+              />
             )}
 
             {/* 迁移进度条 */}
             {progress && (
-              <div className="p-3 bg-[var(--module-accent-soft)] border border-[var(--module-accent-ring)] rounded-card space-y-2 animate-fadeIn">
-                <div className="flex items-center justify-between text-tiny">
-                  <span className="text-[var(--module-accent)] font-semibold flex items-center gap-1.5">
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                    {progress.stage}
-                  </span>
-                  {progress.total > 0 && (
-                    <span className="text-[var(--module-accent)] font-mono">
-                      {progress.current}/{progress.total}
-                    </span>
-                  )}
-                </div>
-                {progress.total > 0 && (
-                  <div className="w-full bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] rounded-full h-1.5 overflow-hidden">
-                    <div
-                      className="bg-[var(--module-accent)] h-full rounded-full transition-all duration-300"
-                      style={{
-                        width: `${Math.round((progress.current / progress.total) * 100)}%`,
-                      }}
-                    />
-                  </div>
-                )}
-                {progress.file_name && (
-                  <div className="flex items-center gap-1 text-micro text-slate-400">
-                    <FileText className="w-2.5 h-2.5 flex-shrink-0" />
-                    <span className="truncate">{progress.file_name}</span>
-                  </div>
-                )}
-              </div>
+              <StorageMigrationProgress
+                progress={progress}
+              />
             )}
 
             {/* 迁移结果展示 */}
             {migrateResult && (
-              <div className="p-4 bg-emerald-500/5 border border-emerald-500/15 rounded-card space-y-2 text-tiny">
-                <h4 className="text-body font-semibold text-emerald-400">
-                  {t("settings.migrateDone")}
-                </h4>
-                {migrateResult.moved_versions && (
-                  <p className="text-slate-300">{t("settings.migMovedVersions")}</p>
-                )}
-                {migrateResult.moved_links && (
-                  <p className="text-slate-300">{t("settings.migMovedLinks")}</p>
-                )}
-                {migrateResult.recreated_junctions.length > 0 && (
-                  <p className="text-slate-300">
-                    {t("settings.migRecreatedJunctions", { count: migrateResult.recreated_junctions.length })}{" "}
-                    {migrateResult.recreated_junctions.join(", ")}
-                  </p>
-                )}
-                {migrateResult.updated_env_vars.length > 0 && (
-                  <p className="text-slate-300">
-                    {t("settings.migUpdatedEnv")}{" "}
-                    {migrateResult.updated_env_vars.join(", ")}
-                  </p>
-                )}
-                {migrateResult.updated_path_entries.length > 0 && (
-                  <p className="text-slate-300">
-                    {t("settings.migUpdatedPath", { count: migrateResult.updated_path_entries.length })}
-                  </p>
-                )}
-
-                {/* 旧目录清理提示 */}
-                {migrateResult.old_dirs_remain.length > 0 && (
-                  <div className="pt-2 mt-2 border-t border-amber-500/15 space-y-2">
-                    <div className="flex items-start gap-1.5 text-amber-300">
-                      <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                      <span>
-                        {t("settings.oldDirsRemain")}
-                      </span>
-                    </div>
-                    {migrateResult.old_dirs_remain.map((dir, i) => (
-                      <p
-                        key={i}
-                        className="font-mono text-micro text-slate-400 pl-5"
-                      >
-                        {dir}
-                      </p>
-                    ))}
-                    {deletedOldDirs ? (
-                      <p className="text-emerald-400 text-tiny flex items-center gap-1">
-                        <CheckCircle2 className="w-3 h-3" />
-                        {t("settings.deletedOldDirs", { count: deletedOldDirs.length })}
-                      </p>
-                    ) : (
-                      <button
-                        onClick={handleDeleteOldDirs}
-                        disabled={deletingOldDirs}
-                        className="px-3 py-1.5 bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] hover:bg-[color-mix(in_srgb,var(--module-accent)_40%,transparent)] disabled:opacity-50 text-[var(--module-accent)] rounded-ctl text-tiny font-medium cursor-pointer transition-all flex items-center gap-1.5 border border-[var(--module-accent-ring)]"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                        {deletingOldDirs ? t("settings.deletingOld") : t("settings.deleteOldDirs")}
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
+              <StorageMigrationResult
+                migrateResult={migrateResult}
+                deletedOldDirs={deletedOldDirs}
+                handleDeleteOldDirs={handleDeleteOldDirs}
+                deletingOldDirs={deletingOldDirs}
+              />
             )}
 
             {/* Migration is applied before storage opens in the next process. */}
@@ -1271,38 +681,14 @@ export default function GlobalSettings() {
         )}
 
         {latestVersion && (
-          <div className="p-4 bg-emerald-500/5 border border-emerald-500/15 rounded-card space-y-2">
-            <div className="flex items-center gap-2">
-              <span className="text-body font-semibold text-emerald-300">
-                {t("settings.newVersionFound", { version: latestVersion })}
-              </span>
-              {updateBody && (
-                <span className="text-tiny text-slate-400">
-                  ({updateBody.substring(0, 80)}...)
-                </span>
-              )}
-            </div>
-            {updateSource === "plugin" ? (
-              <button
-                onClick={handleInstallUpdate}
-                disabled={installing}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-ctl text-body font-semibold cursor-pointer transition-all flex items-center gap-1.5 disabled:opacity-60"
-              >
-                <Loader2
-                  className={`w-3 h-3 ${installing ? "animate-spin" : ""}`}
-                />
-                {installing ? t("settings.installingUpdate") : t("settings.downloadInstall")}
-              </button>
-            ) : (
-              <button
-                onClick={handleDownloadUpdate}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-ctl text-body font-semibold cursor-pointer transition-all flex items-center gap-1.5"
-              >
-                <ExternalLink className="w-3 h-3" />
-                {t("settings.gotoDownloadPage")}
-              </button>
-            )}
-          </div>
+          <ApplicationUpdateReady
+            latestVersion={latestVersion}
+            updateBody={updateBody}
+            updateSource={updateSource}
+            handleInstallUpdate={handleInstallUpdate}
+            installing={installing}
+            handleDownloadUpdate={handleDownloadUpdate}
+          />
         )}
 
         {latestVersion === null && !checkingUpdate && !updateError && (
@@ -1313,62 +699,13 @@ export default function GlobalSettings() {
       </div>
 
       {/* 应用行为 */}
-      <div className="glass-panel rounded-panel p-6 border border-white/5 space-y-4">
-        <div className="flex items-center gap-2 pb-3 border-b border-white/5">
-          <Power className="w-4 h-4 text-[var(--module-accent)]" />
-          <h3 className="text-body font-semibold text-white">{t("settings.behavior")}</h3>
-        </div>
-
-        <div className="flex items-center justify-between">
-          <div className="space-y-0.5">
-            <p className="text-body font-medium text-slate-200">{t("settings.autostart")}</p>
-            <p className="text-micro text-slate-500">
-              {t("settings.autostartHint")}
-            </p>
-          </div>
-          <button
-            onClick={handleToggleAutostart}
-            disabled={autostartBusy}
-            role="switch"
-            aria-checked={autostartOn}
-            className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors cursor-pointer disabled:opacity-50 ${
-              autostartOn ? "bg-[var(--module-accent)]" : "bg-white/10"
-            }`}
-            title={autostartOn ? t("settings.autostartOn") : t("settings.autostartOff")}
-          >
-            <span
-              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                autostartOn ? "translate-x-4" : "translate-x-0.5"
-              }`}
-            />
-          </button>
-        </div>
-
-        {/* 托盘右键菜单总开关（各模块的细分项在对应模块的设置弹窗中） */}
-        <div className="pt-3 border-t border-white/5 space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <p className="text-body font-medium text-slate-200">{t("settings.trayMenuEnabled")}</p>
-              <p className="text-micro text-slate-500">{t("settings.trayMenuEnabledHint")}</p>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={trayCfg.enabled}
-              onClick={() => saveTrayCfg({ enabled: !trayCfg.enabled })}
-              className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors cursor-pointer ${
-                trayCfg.enabled ? "bg-[var(--module-accent)]" : "bg-white/15"
-              }`}
-            >
-              <span
-                className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${
-                  trayCfg.enabled ? "translate-x-4" : "translate-x-0.5"
-                }`}
-              />
-            </button>
-          </div>
-        </div>
-      </div>
+      <ApplicationStartupSettings
+        handleToggleAutostart={handleToggleAutostart}
+        autostartBusy={autostartBusy}
+        autostartOn={autostartOn}
+        trayCfg={trayCfg}
+        saveTrayCfg={saveTrayCfg}
+      />
 
       {/* 外观 (Appearance) */}
       <div className="glass-panel rounded-panel p-6 border border-white/5 space-y-5">
@@ -1385,53 +722,11 @@ export default function GlobalSettings() {
         </div>
 
         {/* 0. 主题色 */}
-        <div className="space-y-2.5">
-          <div className="flex items-center justify-between pt-3 border-t border-white/5">
-            <p className="text-caption font-medium text-slate-200">{t("settings.themeColor")}</p>
-            <div className="flex items-center gap-2">
-              <div
-                className="flex items-center gap-1.5 rounded-md border border-white/10 bg-black/30 px-2 py-1 font-mono text-tiny text-slate-200"
-                style={{ boxShadow: `0 0 8px ${themeAccent}55` }}
-              >
-                <span className="h-3 w-3 rounded-full" style={{ background: themeAccent }} />
-                <span>{themeAccent}</span>
-              </div>
-              <button
-                onClick={() => void handleResetThemeAccent()}
-                className="rounded-md border border-white/10 px-2 py-1 text-tiny text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
-                title={t("settings.resetTheme")}
-              >
-                {t("settings.resetThemeBtn")}
-              </button>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {VEX_THEME_PRESETS.map((c) => (
-              <button
-                key={c}
-                onClick={() => void handleSetThemeAccent(c)}
-                title={c}
-                className={`h-8 w-8 rounded-ctl border transition cursor-pointer ${
-                  c === themeAccent ? "border-white ring-2 ring-white/40" : "border-white/15 hover:border-white/50"
-                }`}
-                style={{ background: c }}
-              />
-            ))}
-            <label
-              className="relative h-8 w-8 rounded-ctl border border-white/15 hover:border-white/50 cursor-pointer flex items-center justify-center overflow-hidden transition"
-              title={t("settings.customColor")}
-            >
-              <span className="h-full w-full" style={{ background: "conic-gradient(red, yellow, lime, cyan, blue, magenta, red)" }} />
-              <input
-                type="color"
-                value={themeAccent}
-                onChange={(e) => void handleSetThemeAccent(e.target.value)}
-                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-              />
-            </label>
-          </div>
-          <p className="text-micro text-slate-600">{t("settings.themePresetsHint")}</p>
-        </div>
+        <ThemeAccentSettings
+          themeAccent={themeAccent}
+          handleResetThemeAccent={handleResetThemeAccent}
+          handleSetThemeAccent={handleSetThemeAccent}
+        />
 
         {/* 1. 全局字体 */}
         <div className="pt-3 border-t border-white/5 space-y-2.5">
@@ -1456,38 +751,14 @@ export default function GlobalSettings() {
               <RefreshCw className={`w-3.5 h-3.5 ${fontRefreshing ? "animate-spin" : ""}`} />
             </button>
           </div>
-          <div className="flex items-center gap-2">
-            <select
-              value={appearance.globalFont}
-              onChange={(e) => handleSetGlobalFont(e.target.value)}
-              className="flex-1 min-w-0 glass-input text-body"
-            >
-              <option value="">{t("settings.defaultFont")}</option>
-              {filteredFonts.map((f) => (
-                <option key={f} value={f}>
-                  {f}
-                </option>
-              ))}
-            </select>
-            {appearance.customFontPath && (
-              <button
-                onClick={handleClearCustomFont}
-                className="px-2.5 py-1.5 rounded-ctl text-tiny font-medium bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] border border-[color-mix(in_srgb,var(--module-accent)_40%,transparent)] text-[var(--module-accent)] hover:bg-[color-mix(in_srgb,var(--module-accent)_30%,transparent)] transition cursor-pointer whitespace-nowrap"
-                title={t("settings.removeCustomFont")}
-              >
-                {t("settings.removeCustomFont")}
-              </button>
-            )}
-            <button
-              onClick={handleImportFont}
-              disabled={importingFont}
-              className="px-2.5 py-1.5 rounded-ctl text-tiny font-medium bg-cyan-600/20 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-600/30 transition cursor-pointer whitespace-nowrap flex items-center gap-1 disabled:opacity-50"
-              title={t("settings.importFontTitle")}
-            >
-              {importingFont ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
-              {t("settings.importFont")}
-            </button>
-          </div>
+          <ApplicationFontSelector
+            appearance={appearance}
+            handleSetGlobalFont={handleSetGlobalFont}
+            filteredFonts={filteredFonts}
+            handleClearCustomFont={handleClearCustomFont}
+            handleImportFont={handleImportFont}
+            importingFont={importingFont}
+          />
           {appearance.customFontPath && (
             <p className="text-micro text-emerald-400">
               {t("settings.usingCustomFont", { font: appearance.globalFont })}
@@ -1496,47 +767,10 @@ export default function GlobalSettings() {
         </div>
 
         {/* 1.5 全局背景底图纹理 */}
-        <div className="pt-3 border-t border-white/5 space-y-2.5">
-          <p className="text-caption font-medium text-slate-200">{t("settings.backgroundTexture")}</p>
-          <p className="text-micro text-slate-500">{t("settings.backgroundTextureHint")}</p>
-          <div className="grid grid-cols-5 gap-1.5">
-            {[
-              { value: "", label: "settings.textureGrid", cls: "cyber-grid" },
-              { value: "dots", label: "settings.textureDots", cls: "app-bg-dots" },
-              { value: "scanline", label: "settings.textureScanline", cls: "app-bg-scanline" },
-              { value: "aurora", label: "settings.textureAurora", cls: "app-bg-aurora" },
-              { value: "solid", label: "settings.textureSolid", cls: "app-bg-solid" },
-              { value: "diagonal", label: "settings.textureDiagonal", cls: "app-bg-diagonal" },
-              { value: "cross", label: "settings.textureCross", cls: "app-bg-cross" },
-              { value: "paper", label: "settings.texturePaper", cls: "app-bg-paper" },
-              { value: "hex", label: "settings.textureHex", cls: "app-bg-hex" },
-              { value: "circuit", label: "settings.textureCircuit", cls: "app-bg-circuit" },
-              { value: "waves", label: "settings.textureWaves", cls: "app-bg-waves" },
-              { value: "noise", label: "settings.textureNoise", cls: "app-bg-noise" },
-              { value: "vignette", label: "settings.textureVignette", cls: "app-bg-vignette" },
-              { value: "neonline", label: "settings.textureNeonline", cls: "app-bg-neonline" },
-            ].map((tc) => {
-              const active = (appearance.backgroundTexture || "") === tc.value;
-              return (
-                <button
-                  key={tc.value}
-                  onClick={() => handleSetBackgroundTexture(tc.value)}
-                  className={`flex flex-col items-center gap-1 rounded-ctl border p-1.5 transition cursor-pointer ${
-                    active
-                      ? "border-[var(--module-accent)] bg-[color-mix(in_srgb,var(--module-accent)_18%,transparent)]"
-                      : "border-white/10 bg-white/[0.03] hover:border-white/25"
-                  }`}
-                  title={t(tc.label)}
-                >
-                  <span className={`h-7 w-full rounded ${tc.cls} bg-black/40`} />
-                  <span className={`text-micro ${active ? "text-[var(--module-accent)]" : "text-slate-400"}`}>
-                    {t(tc.label)}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        <BackgroundTextureSettings
+          appearance={appearance}
+          handleSetBackgroundTexture={handleSetBackgroundTexture}
+        />
 
         {/* 1.6 界面语言 */}
         <div className="pt-3 border-t border-white/5 space-y-2.5">

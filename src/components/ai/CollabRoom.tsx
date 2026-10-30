@@ -1,195 +1,20 @@
+import { useCollabRoomActions } from "./useCollabRoomActions";
+import { CollabToolPicker } from "./CollabToolPicker";
+import { CollabRoomTasks } from "./CollabRoomTasks";
+import { CollabRoomList } from "./CollabRoomList";
+import { CollabRoomCreate } from "./CollabRoomCreate";
 import React, { useEffect, useRef, useState, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { MarkdownRenderer } from "../shared/markdown/MarkdownRenderer";
-import VexEmptyState from "../VexEmptyState";
-import {
-  MessagesSquare,
-  Plus,
-  Trash2,
-  Send,
-  Quote,
-  Loader2,
-  ListChecks,
-  Bot,
-  Cpu,
-  User as UserIcon,
-  Zap,
-  Square,
-  RotateCcw,
-  Settings,
-  ChevronDown,
-  Archive,
-  Check,
-  Copy,
-  Terminal,
-  FileText,
-  Globe,
-  ListTodo,
-  FilePen,
-  Brain,
-  Wrench,
-} from "lucide-react";
-import type {
-  CollabRoom as CollabRoomT,
-  CollabMessage,
-  CollabReference,
-  CollabFileRef,
-  CollabRoomPage,
-  CollabMessagePage,
-  CollabTask,
-  AiProvider,
-  DetectedAiTool,
-  CollabDeltaPayload,
-  CollabActivityPayload,
-  CollabPromptPayload,
-  CollabMsgUpdatedPayload,
-  CollabDispatchOptions,
-  ModelCustomParam,
-  ContextSnapshot,
-  CollabCompactedPayload,
-  ProxyRequestPayload,
-  ProxyResponseStartPayload,
-  ProxyDeltaPayload,
-  ProxyCompletePayload,
-  ProxyErrorPayload,
-  LastLaunchConfig,
-  CollabAgentStatus,
-} from "../../contracts/ai";
+import { MessagesSquare, Plus, Send, Loader2, Square, RotateCcw, Settings, ChevronDown, Archive } from "lucide-react";
+import type { CollabRoom as CollabRoomT, CollabMessage, CollabReference, CollabFileRef, CollabRoomPage, CollabMessagePage, CollabTask, AiProvider, DetectedAiTool, CollabDeltaPayload, CollabActivityPayload, CollabPromptPayload, CollabMsgUpdatedPayload, CollabDispatchOptions, ModelCustomParam, ContextSnapshot, CollabCompactedPayload, ProxyRequestPayload, ProxyResponseStartPayload, ProxyDeltaPayload, ProxyCompletePayload, ProxyErrorPayload, LastLaunchConfig, CollabAgentStatus } from "../../contracts/ai";
 import { alertError, theamedAlert, theamedConfirm } from "../shared/ThemedAlert";
 import { ModelSelector, CustomParamControls } from "../shared/ai/ModelSelector";
-
-const DYNAMIC_COLOR_PALETTE = [
-  "bg-orange-500", "bg-emerald-500", "bg-violet-500",
-  "bg-cyan-500", "bg-amber-500", "bg-pink-500",
-  "bg-rose-500", "bg-indigo-500", "bg-teal-500"
-];
-
-function senderColor(sender: string, customColor?: string): string {
-  if (sender === "user") return "bg-blue-500";
-  if (customColor) return customColor;
-  let hash = 0;
-  for (let i = 0; i < sender.length; i++) {
-    hash = (hash << 5) - hash + sender.charCodeAt(i);
-    hash |= 0;
-  }
-  const idx = Math.abs(hash) % DYNAMIC_COLOR_PALETTE.length;
-  return DYNAMIC_COLOR_PALETTE[idx];
-}
-
-// ─── 任务状态徽章（E 任务流） ───
-function TaskBadge({ status }: { status: string }) {
-  const { t } = useTranslation();
-  const map: Record<string, string> = {
-    open: "bg-slate-600",
-    claimed: "bg-amber-600",
-    in_progress: "bg-blue-600",
-    in_review: "bg-[var(--module-accent)]",
-    done: "bg-emerald-600",
-  };
-  const label: Record<string, string> = {
-    open: "collab.open",
-    claimed: "collab.claimed",
-    in_progress: "collab.inProgress",
-    in_review: "collab.inReview",
-    done: "collab.done",
-  };
-  return (
-    <span className={`px-1.5 py-0.5 rounded text-micro text-white ${map[status] || "bg-slate-600"}`}>
-      {label[status] ? t(label[status]) : status}
-    </span>
-  );
-}
-
-// ─── 人类化状态文案 ───
-// 运行中（思考/工作）的随机短语池（i18n 键）
-const THINKING_KEYS = [
-  "thinking", "analyzing", "letMeThink", "organizing", "wording",
-  "searching", "coding", "checking", "reasoning", "planning",
-];
-// 错误时的随机短语池（i18n 键）
-const ERROR_KEYS = [
-  "errOops", "errHard", "errWrong", "errHelp", "errBlocked", "errUnexpected",
-];
-/// 随机选择一个短语
-function pickRandom(arr: string[]): string {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
-/// 轮换短语的自定义 Hook：每隔 intervalMs 毫秒随机切换一个短语
-function useRotatingPhrase(phrases: string[], active: boolean, intervalMs = 4000): string {
-  const [idx, setIdx] = useState(() => Math.floor(Math.random() * phrases.length));
-  useEffect(() => {
-    if (!active) return;
-    const timer = setInterval(() => {
-      setIdx(Math.floor(Math.random() * phrases.length));
-    }, intervalMs);
-    return () => clearInterval(timer);
-  }, [active, phrases.length, intervalMs]);
-  return phrases[idx] || phrases[0] || "";
-}
-
-// ─── 头像/昵称来源 ───
-// 唯一权威来源是 ai-tools/<id>/config.json（通过工具 Tab 的「资料」编辑写入后端）。
-// 消息体本身也携带 avatar 与 nickname 覆盖（见 CollabMessage），保证历史消息稳定显示。
-/// 获取有效头像：消息携带 > 工具配置 > null
-function getToolAvatar(tools: DetectedAiTool[], toolId: string, msgAvatar?: string | null): string | null {
-  if (msgAvatar) return msgAvatar;
-  const t = tools.find((x) => x.id === toolId);
-  return t?.avatar ?? null;
-}
-/// 获取有效昵称：消息携带 > 工具配置 > null
-function getToolNickname(tools: DetectedAiTool[], toolId: string, msgNickname?: string | null): string | null {
-  if (msgNickname) return msgNickname;
-  const t = tools.find((x) => x.id === toolId);
-  return t?.nickname ?? null;
-}
-/// 耗时格式化：毫秒 → "1.2s" / "1m03s"
-function formatDuration(ms: number): string {
-  const totalSec = Math.round(ms / 1000);
-  if (totalSec < 60) return `${totalSec}s`;
-  const m = Math.floor(totalSec / 60);
-  const s = totalSec % 60;
-  return `${m}m${s.toString().padStart(2, "0")}s`;
-}
-
-/** agent 在线状态点颜色（working=绿脉冲, thinking=琥珀脉冲, online=绿, offline=灰） */
-function agentDotClass(status?: string): string {
-  if (status === "working") return "bg-emerald-400 animate-pulse";
-  if (status === "thinking") return "bg-amber-400 animate-pulse";
-  if (status === "online") return "bg-emerald-500";
-  return "bg-slate-600";
-}
-function agentStatusTitle(t: (k: string) => string, status?: string): string {
-  if (status === "working") return t("collab.statusWorking");
-  if (status === "thinking") return t("collab.statusThinking");
-  if (status === "online") return t("collab.statusOnline");
-  return t("collab.statusOffline");
-}
-
-// 从 open-tag 移植：按活动文本关键词映射工具图标（优先精确匹配，回退兜底）。
-// open-tag 用结构化 toolName 字段，Kira 仅传合并后的 activity 字符串，
-// 故对字符串做关键词匹配——只要文本含 bash/read/web/todo 等词即给对应图标。
-type IconType = React.ComponentType<{ className?: string }>;
-const TOOL_ICON_RULES: Array<[RegExp, IconType]> = [
-  [/(bash|exec|shell|cmd|command|run|terminal)/i, Terminal],
-  [/(read|open|cat|view|load)/i, FileText],
-  [/(write|edit|create|save|update|modify|patch)/i, FilePen],
-  [/(web|http|fetch|curl|request|url|search|browser)/i, Globe],
-  [/(todo|task|list|plan)/i, ListTodo],
-  [/(think|reason|analyze)/i, Brain],
-];
-const TOOL_ICON_FALLBACK: IconType = Wrench;
-
-function ToolActivityIcon({ activity }: { activity: string }) {
-  const text = activity ?? "";
-  for (const [re, Icon] of TOOL_ICON_RULES) {
-    if (re.test(text)) return <Icon className="w-2.5 h-2.5 flex-shrink-0" />;
-  }
-  return <TOOL_ICON_FALLBACK className="w-2.5 h-2.5 flex-shrink-0" />;
-}
+import { MessageView } from "./CollabRoom.MessageView";
+import { ReferenceCard } from "./CollabRoom.ReferenceCard";
+import { FileBadge } from "./CollabRoom.FileBadge";
 
 export default function CollabRoom() {
   const { t } = useTranslation();
@@ -614,44 +439,20 @@ export default function CollabRoom() {
     };
   }, [messages]);
 
-  const handlePickProject = async () => {
-    try {
-      const selected = await open({ directory: true, title: t("collab.pickProjectDir") });
-      if (selected) {
-        const dir = selected as string;
-        setNewProject(dir);
-        if (!newName.trim()) setNewName(dir.split(/[\\/]/).pop() || "");
-      }
-    } catch {
-      /* ignore */
-    }
-  };
-
-  const createRoom = async () => {
-    if (!newProject.trim()) {
-      theamedAlert(t("collab.needProjectDir"));
-      return;
-    }
-    const room = await invoke<CollabRoomT>("collab_create_room", {
-      name: newName || t("collab.unnamedSession"),
-      projectPath: newProject.trim(),
-    });
-    await refreshRooms();
-    setActiveRoom(room);
-    setCreating(false);
-    setNewName("");
-    setNewProject("");
-  };
-
-  const deleteRoom = async (id: string) => {
-    try {
-      await invoke("collab_delete_room", { roomId: id });
-    } catch (e) {
-      console.error("[CollabRoom] 删除房间失败:", e);
-    }
-    await refreshRooms();
-    if (activeRoom?.id === id) setActiveRoom(null);
-  };
+  const {
+    handlePickProject,
+    createRoom,
+    deleteRoom,
+  } = useCollabRoomActions({
+    setNewProject,
+    newName,
+    setNewName,
+    newProject,
+    refreshRooms,
+    setActiveRoom,
+    setCreating,
+    activeRoom,
+  });
 
   // 会话列表滚动到底自动加载下一页
   const loadMoreRooms = async () => {
@@ -895,86 +696,25 @@ export default function CollabRoom() {
         </div>
 
         {creating && (
-          <div className="mb-2 p-2 rounded-ctl bg-slate-900/60 border border-white/10 space-y-1.5">
-            <input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder={t("collab.sessionNamePh")}
-              className="w-full bg-slate-800 border border-white/10 rounded px-2 py-1 text-tiny text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
-            />
-            <button
-              onClick={handlePickProject}
-              className={`w-full px-2 py-1 rounded text-left text-tiny border border-white/10 truncate cursor-pointer ${
-                newProject
-                  ? "bg-slate-800 text-slate-200"
-                  : "bg-slate-800/60 text-slate-500 hover:text-slate-300"
-              }`}
-              title={newProject || t("collab.pickProjectDir")}
-            >
-              {newProject || `${t("collab.pickProjectDir")}…`}
-            </button>
-            <div className="flex gap-1">
-              <button
-                onClick={createRoom}
-                className="flex-1 px-2 py-1 rounded bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-tiny font-semibold cursor-pointer"
-              >
-                {t("collab.create")}
-              </button>
-              <button
-                onClick={() => setCreating(false)}
-                className="px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-tiny cursor-pointer"
-              >
-                {t("collab.cancel")}
-              </button>
-            </div>
-          </div>
+          <CollabRoomCreate
+            newName={newName}
+            setNewName={setNewName}
+            handlePickProject={handlePickProject}
+            newProject={newProject}
+            createRoom={createRoom}
+            setCreating={setCreating}
+          />
         )}
 
-        <div className="flex-1 overflow-y-auto space-y-0.5" onScroll={onRoomsScroll}>
-          {rooms.length === 0 && !loadingMore && (
-            <VexEmptyState
-              title={t("collab.noSessionTitle")}
-              desc={t("collab.noSessionDesc")}
-              tick={t("collab.noSessionTick")}
-              avatarSize={34}
-              className="!py-8"
-            />
-          )}
-          {rooms.map((r) => (
-            <div
-              key={r.id}
-              className={`group flex items-center gap-1 px-2 py-1.5 rounded-ctl cursor-pointer text-caption ${
-                activeRoom?.id === r.id
-                  ? "bg-[color-mix(in_srgb,var(--module-accent)_30%,transparent)] text-[var(--module-accent)]"
-                  : "text-slate-400 hover:bg-white/5"
-              }`}
-              onClick={() => setActiveRoom(r)}
-            >
-              <MessagesSquare className="w-3 h-3 flex-shrink-0" />
-              <div className="flex-1 min-w-0">
-                <div className="truncate font-medium">{r.name}</div>
-                <div className="truncate text-[8px] text-slate-500">{r.project_path}</div>
-              </div>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  deleteRoom(r.id);
-                }}
-                className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-500/20 text-slate-500 hover:text-red-300 cursor-pointer"
-              >
-                <Trash2 className="w-3 h-3" />
-              </button>
-            </div>
-          ))}
-          {loadingMore && (
-            <div className="flex items-center justify-center gap-1.5 py-2 text-micro text-slate-500">
-              <Loader2 className="w-3 h-3 animate-spin" /> {t("collab.loading")}
-            </div>
-          )}
-          {!hasMore && rooms.length > 0 && (
-            <p className="text-center text-[8px] text-slate-600 py-1">{t("collab.endOfList")}</p>
-          )}
-        </div>
+        <CollabRoomList
+          onRoomsScroll={onRoomsScroll}
+          rooms={rooms}
+          loadingMore={loadingMore}
+          activeRoom={activeRoom}
+          setActiveRoom={setActiveRoom}
+          deleteRoom={deleteRoom}
+          hasMore={hasMore}
+        />
       </div>
 
       {/* 主区域 */}
@@ -1023,101 +763,26 @@ export default function CollabRoom() {
             </div>
 
             {/* 任务流面板（E）：agent 通过总线认领/交接/完成 */}
-            <div className="flex-shrink-0 border-t border-white/5 bg-slate-900/30">
-              <button
-                onClick={() => setTasksOpen((o) => !o)}
-                className="w-full flex items-center justify-between px-3 py-1.5 text-micro text-slate-400 hover:text-slate-200 cursor-pointer transition-all"
-              >
-                <span className="flex items-center gap-1.5 font-semibold">
-                  <ListChecks className="w-3 h-3" /> {t("collab.tasksTitle", { count: tasks.length })}
-                </span>
-                <ChevronDown className={`w-3 h-3 transition-transform ${tasksOpen ? "rotate-180" : ""}`} />
-              </button>
-              {tasksOpen && (
-                <div className="px-3 pb-3 space-y-2">
-                  {tasks.length === 0 && (
-                    <p className="text-tiny text-slate-500">{t("collab.noTasks")}</p>
-                  )}
-                  {tasks.map((task) => (
-                    <div key={task.id} className="rounded border border-white/5 bg-slate-800/40 p-2 space-y-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-caption text-slate-200 font-medium truncate">{task.title}</span>
-                        <TaskBadge status={task.status} />
-                      </div>
-                      {task.description && <p className="text-tiny text-slate-400 line-clamp-2">{task.description}</p>}
-                      <div className="flex items-center justify-between text-micro text-slate-500">
-                        <span>{task.assignee ? t("collab.assignedTo", { name: task.assignee }) : t("collab.unassigned")}</span>
-                        <div className="flex gap-1">
-                          {task.status !== "done" && (
-                            <button
-                              onClick={() => taskAction("claim", task.id)}
-                              className="px-1.5 py-0.5 rounded bg-[color-mix(in_srgb,var(--module-accent)_80%,transparent)] text-white hover:bg-[var(--module-accent-strong)] cursor-pointer"
-                            >
-                              {t("collab.claim")}
-                            </button>
-                          )}
-                          {task.status !== "done" && (
-                            <button
-                              onClick={() => taskAction("complete", task.id)}
-                              className="px-1.5 py-0.5 rounded bg-emerald-600/80 text-white hover:bg-emerald-500 cursor-pointer"
-                            >
-                              {t("collab.complete")}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  <div className="flex gap-1">
-                    <input
-                      value={newTaskTitle}
-                      onChange={(e) => setNewTaskTitle(e.target.value)}
-                      placeholder={t("collab.taskTitlePh")}
-                      className="flex-1 bg-slate-800 border border-white/10 rounded px-2 py-1 text-tiny text-slate-200 focus:outline-none focus:border-[var(--module-accent)]"
-                    />
-                    <button
-                      onClick={createTask}
-                      className="px-2 py-1 rounded bg-[var(--module-accent)] text-white text-tiny hover:bg-[var(--module-accent-strong)] cursor-pointer"
-                    >
-                      {t("collab.create")}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
+            <CollabRoomTasks
+              setTasksOpen={setTasksOpen}
+              tasks={tasks}
+              tasksOpen={tasksOpen}
+              taskAction={taskAction}
+              newTaskTitle={newTaskTitle}
+              setNewTaskTitle={setNewTaskTitle}
+              createTask={createTask}
+            />
 
             {/* 输入区 */}
             <div className="flex-shrink-0 border-t border-white/5 p-3 space-y-2 bg-slate-900/40">
               {/* @ 工具选择（单选） */}
-              <div className="flex flex-wrap gap-1 items-center">
-                <span className="text-micro text-slate-500 mr-1">{t("collab.atTool")}</span>
-                {toolsLoading && <span className="text-micro text-slate-400 animate-pulse">{t("collab.loading")}</span>}
-                {/* 协同只带得上 CLI 工具：桌面端是 GUI 程序，@ 它没法接任务
-                    （后端 dispatch 也会拦一道，这里先在 UI 上不让它出现） */}
-                {tools.filter((tl) => tl.installed && (tl.tool_kind ?? "other") === "cli").map((tl) => {
-                  const on = selectedTool === tl.id;
-                  const avatar = getToolAvatar(tools, tl.id);
-                  const nickname = getToolNickname(tools, tl.id) || tl.display_name;
-                  return (
-                    <div key={tl.id} className="relative flex items-center">
-                      <span
-                        className={`absolute -top-0.5 -right-0.5 z-10 w-2 h-2 rounded-full border border-slate-900 ${agentDotClass(agents[tl.id]?.status)}`}
-                        title={agentStatusTitle(t, agents[tl.id]?.status)}
-                      />
-                      <button
-                        onClick={() => setSelectedTool(on ? "" : tl.id)}
-                        className={`px-2 py-0.5 rounded-full text-micro font-semibold transition-all cursor-pointer ${
-                          on
-                            ? "bg-[var(--module-accent)] text-white"
-                            : "text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-white/10"
-                        }`}
-                      >
-                        {avatar ? `${avatar} ` : ""}{nickname}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
+              <CollabToolPicker
+                toolsLoading={toolsLoading}
+                tools={tools}
+                selectedTool={selectedTool}
+                agents={agents}
+                setSelectedTool={setSelectedTool}
+              />
 
               {/* 模型/供应商（仅支持模型设置的工具显示） */}
               {(() => {
@@ -1308,358 +973,6 @@ export default function CollabRoom() {
           </>
         )}
       </div>
-    </div>
-  );
-}
-
-// ─── 单条消息渲染 ───
-function PromptResponse({
-  prompt,
-  onRespond,
-}: {
-  prompt: { question: string; options: string[] };
-  onRespond: (response: string) => void;
-}) {
-  const { t } = useTranslation();
-  const [customResponse, setCustomResponse] = useState("");
-  return (
-    <div className="mt-2 rounded-ctl border border-amber-500/30 bg-amber-500/5 p-2.5 space-y-2">
-      <div className="flex items-start gap-1.5">
-        <span className="text-amber-400 text-tiny font-bold mt-0.5">{t("collab.askBadge")}</span>
-        <span className="text-tiny text-slate-300 whitespace-pre-wrap break-words flex-1">
-          {prompt.question}
-        </span>
-      </div>
-      <div className="flex flex-wrap gap-1.5 items-center">
-        {prompt.options.map((opt) => (
-          <button
-            key={opt}
-            onClick={() => onRespond(opt)}
-            className="px-2.5 py-1 rounded-md bg-amber-600/80 hover:bg-amber-500 text-white text-tiny font-semibold transition-colors cursor-pointer"
-          >
-            {opt}
-          </button>
-        ))}
-        <input
-          value={customResponse}
-          onChange={(e) => setCustomResponse(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && customResponse.trim()) {
-              onRespond(customResponse.trim());
-              setCustomResponse("");
-            }
-          }}
-          placeholder={t("collab.customReplyPh")}
-          className="flex-1 min-w-[80px] bg-slate-800 border border-white/10 rounded-md px-2 py-1 text-tiny text-slate-200 focus:outline-none focus:border-amber-500"
-        />
-        {customResponse.trim() && (
-          <button
-            onClick={() => {
-              onRespond(customResponse.trim());
-              setCustomResponse("");
-            }}
-            className="px-2 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-slate-200 text-tiny cursor-pointer"
-          >
-            {t("collab.send")}
-          </button>
-        )}
-      </div>
-      <p className="text-[8px] text-slate-500">{t("collab.autoYesHint")}</p>
-    </div>
-  );
-}
-
-function MessageView({
-  m,
-  tools,
-  onQuote,
-  activity,
-  prompt,
-  proxy,
-  onRespond,
-}: {
-  m: CollabMessage;
-  tools: DetectedAiTool[];
-  onQuote: (m: CollabMessage) => void;
-  activity?: string;
-  prompt?: { question: string; options: string[] };
-  proxy?: { text: string; status: string; elapsed?: number };
-  onRespond: (response: string) => void;
-}) {
-  const isUser = m.sender === "user";
-  const color = senderColor(m.sender);
-  const running = m.status === "running";
-  const isError = m.status === "error";
-  const isTool = !isUser;
-
-  // 轮换思维短语（仅 running 状态时轮换）
-  const { t } = useTranslation();
-  const thinkingPhrase = useRotatingPhrase(THINKING_KEYS.map((k) => t(`collab.${k}`)), running && !m.content, 4000);
-  // 错误短语（仅 error 状态时使用，不轮换）
-  const errorPhrase = useMemo(() => {
-    const key = pickRandom(ERROR_KEYS);
-    return t(`collab.${key}`);
-  }, [m.id, isError, t]);
-
-  // 头像：消息携带 > 工具配置 > null
-  const avatar = isTool ? getToolAvatar(tools, m.sender, m.avatar) : null;
-  // 昵称：消息携带(sender_name 已含 nickname) > 工具配置 > sender_name
-  const displayName = isTool
-    ? (getToolNickname(tools, m.sender, m.sender_name) ?? m.sender_name)
-    : m.sender_name;
-
-  const [copied, setCopied] = useState(false);
-
-  const handleCopyMessage = async () => {
-    if (!m.content) return;
-    try {
-      await navigator.clipboard.writeText(m.content);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      const textArea = document.createElement("textarea");
-      textArea.value = m.content;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand("copy");
-      document.body.removeChild(textArea);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
-
-  return (
-    <div className="flex gap-2.5">
-      {/* 头像 */}
-      <div
-        className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-caption font-bold flex-shrink-0 ${color}`}
-      >
-        {isUser ? (
-          <UserIcon className="w-3.5 h-3.5" />
-        ) : avatar ? (
-          <span className="text-[14px] leading-none">{avatar}</span>
-        ) : (
-          <Bot className="w-3.5 h-3.5" />
-        )}
-      </div>
-
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-0.5">
-          <span className="text-caption font-semibold text-slate-200">
-            {displayName}
-          </span>
-          <span className="text-[8px] text-slate-500">{m.created_at}</span>
-          {m.dispatch && (
-            <span className="px-1.5 py-0.5 rounded bg-[var(--module-accent-soft)] text-[var(--module-accent)] text-[8px] font-medium flex items-center gap-1">
-              <Cpu className="w-2.5 h-2.5" />
-              {m.dispatch.model || m.dispatch.tool_id}
-              {m.dispatch.duration_ms != null && (
-                <span className="text-[color-mix(in_srgb,var(--module-accent)_70%,transparent)]">· {formatDuration(m.dispatch.duration_ms)}</span>
-              )}
-              {m.dispatch.usage && (
-                <span className="text-[color-mix(in_srgb,var(--module-accent)_70%,transparent)]">
-                  · {(m.dispatch.usage.input_tokens + m.dispatch.usage.output_tokens).toLocaleString()} tokens
-                </span>
-              )}
-            </span>
-          )}
-        </div>
-
-        {/* 引用卡 */}
-        {m.references.length > 0 && (
-          <div className="mb-1 space-y-1">
-            {m.references.map((r, i) => (
-              <ReferenceCard
-                key={i}
-                senderName={r.source_sender_name}
-                excerpt={r.excerpt}
-                variant="message"
-              />
-            ))}
-          </div>
-        )}
-
-        {/* 文件附件 */}
-        {m.files.length > 0 && (
-          <div className="mb-1 flex flex-wrap gap-1">
-            {m.files.map((f, i) => (
-              <FileBadge key={i} path={f.path} color="cyan" />
-            ))}
-          </div>
-        )}
-
-        {/* 内容 */}
-        <div
-          className={`rounded-ctl px-3 py-2 text-caption leading-relaxed break-words ${
-            isUser
-              ? "bg-blue-500/10 border border-blue-500/20 whitespace-pre-wrap"
-              : running
-              ? "bg-slate-800/40 border border-white/5 text-slate-400"
-              : isError
-              ? "bg-red-500/5 border border-red-500/20"
-              : "bg-slate-800/60 border border-white/5"
-          }`}
-        >
-          {running && !m.content ? (
-            <span className="flex items-center gap-1.5 text-slate-400">
-              <Loader2 className="w-3 h-3 animate-spin" /> {thinkingPhrase}
-            </span>
-          ) : isUser ? (
-            m.content || <span className="text-slate-600">{t("collab.emptyContent")}</span>
-          ) : isError ? (
-            <div className="flex items-center gap-1.5 text-red-400">
-              <span className="text-tiny">{t("collab.errPrefix", { phrase: errorPhrase })}</span>
-              <span className="flex-1">
-                <MarkdownRenderer content={m.content} />
-              </span>
-            </div>
-          ) : (
-            <MarkdownRenderer content={m.content} />
-          )}
-        </div>
-
-        {/* 活动状态指示器：思考中/调用工具等实时状态 */}
-        {running && activity && (
-          <div className="mt-1.5 flex items-center gap-1.5 text-micro text-slate-400">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--module-accent)] opacity-60"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-[var(--module-accent)]"></span>
-            </span>
-            <span className="animate-pulse flex items-center gap-1">
-              <ToolActivityIcon activity={activity} />
-              {activity}
-            </span>
-          </div>
-        )}
-
-        {/* 代理层实时状态：当 stdout 无输出但代理已收到响应时显示 */}
-        {running && !m.content && proxy && proxy.status !== "complete" && (
-          <div className="mt-1.5 rounded-md border border-cyan-500/20 bg-cyan-500/5 px-2 py-1 text-micro text-cyan-300/80">
-            <span className="flex items-center gap-1">
-              <span className="relative flex h-1.5 w-1.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-60"></span>
-                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-500"></span>
-              </span>
-              {t("collab.proxyStatus", { status: proxy.status })}
-            </span>
-          </div>
-        )}
-        {running && !m.content && proxy?.status === "complete" && proxy.text && (
-          <div className="mt-1.5 rounded-md border border-emerald-500/20 bg-emerald-500/5 px-2 py-1.5 text-micro text-emerald-300/80">
-            <div className="flex items-center gap-1 mb-1">
-              <Zap className="w-2.5 h-2.5" />
-              <span>{t("collab.proxyReceived", { count: proxy.text.length, elapsed: proxy.elapsed ? t("collab.elapsedMs", { ms: proxy.elapsed }) : "" })}</span>
-            </div>
-            <div className="text-[8px] text-slate-400 max-h-24 overflow-y-auto whitespace-pre-wrap break-words">
-              {proxy.text.slice(0, 200)}{proxy.text.length > 200 ? "…" : ""}
-            </div>
-          </div>
-        )}
-
-        {/* 有内容后仍在运行时显示当前活动（工具调用等） */}
-        {running && m.content && activity && (
-          <div className="mt-1 flex items-center gap-1 text-[8px] text-slate-500">
-            <Loader2 className="w-2.5 h-2.5 animate-spin" />
-            <ToolActivityIcon activity={activity} />
-            <span>{activity}</span>
-          </div>
-        )}
-
-        {/* 交互式询问：工具需要用户做出选择 */}
-        {prompt && <PromptResponse prompt={prompt} onRespond={onRespond} />}
-
-
-        {/* 回链 + 引用 + 复制按钮 */}
-        <div className="flex items-center gap-3 mt-1">
-          <button
-            onClick={() => onQuote(m)}
-            className="flex items-center gap-1 text-[8px] text-slate-500 hover:text-[var(--module-accent)] cursor-pointer transition-colors"
-          >
-            <Quote className="w-3 h-3" /> {t("collab.quote")}
-          </button>
-          <button
-            onClick={handleCopyMessage}
-            disabled={!m.content}
-            className={`flex items-center gap-1 text-[8px] transition-colors cursor-pointer ${
-              copied ? "text-emerald-400 font-medium" : "text-slate-500 hover:text-slate-300"
-            }`}
-            title={t("collab.copyMsg")}
-          >
-            {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-            {copied ? t("collab.copied") : t("collab.copy")}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── 共享组件：引用卡 / 文件徽章（输入区 + 消息渲染共用） ───
-
-function ReferenceCard({
-  senderName,
-  excerpt,
-  onRemove,
-  variant = "input",
-}: {
-  senderName: string;
-  excerpt: string;
-  onRemove?: () => void;
-  variant?: "input" | "message";
-}) {
-  const { t } = useTranslation();
-  const isInput = variant === "input";
-  return (
-    <div
-      className={`flex items-start gap-2 p-1.5 rounded border-l-2 border-[var(--module-accent)] text-micro ${
-        isInput ? "bg-slate-800/60 text-slate-300" : "bg-slate-800/50 text-slate-400"
-      }`}
-    >
-      <Quote className="w-3 h-3 flex-shrink-0 mt-0.5 text-[var(--module-accent)]" />
-      <div className="flex-1 min-w-0">
-        <span className="font-semibold text-[var(--module-accent)]">
-          {t("collab.fromSender", { name: senderName })}
-        </span>
-        <span className={`whitespace-pre-wrap ${isInput ? "line-clamp-2" : "line-clamp-3"}`}>
-          {excerpt}
-        </span>
-      </div>
-      {onRemove && (
-        <button
-          onClick={onRemove}
-          className="text-slate-500 hover:text-red-300 cursor-pointer"
-        >
-          <Trash2 className="w-3 h-3" />
-        </button>
-      )}
-    </div>
-  );
-}
-
-function FileBadge({
-  path,
-  onRemove,
-  color = "slate",
-}: {
-  path: string;
-  onRemove?: () => void;
-  color?: "slate" | "cyan";
-}) {
-  const colorClass = color === "cyan" ? "text-cyan-300" : "text-slate-300";
-  return (
-    <div
-      className={`flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-800/60 border border-white/10 text-micro ${colorClass} max-w-[200px]`}
-      title={path}
-    >
-      <span className="truncate">@ {path.split(/[\\/]/).pop()}</span>
-      {onRemove && (
-        <button
-          onClick={onRemove}
-          className="text-slate-500 hover:text-red-300 cursor-pointer flex-shrink-0"
-        >
-          <Trash2 className="w-2.5 h-2.5" />
-        </button>
-      )}
     </div>
   );
 }

@@ -1,158 +1,20 @@
+import { useProjectDetection } from "./useProjectDetection";
+import { ProjectTraySettings } from "./ProjectTraySettings";
+import { ProjectIdentityHeader } from "./ProjectIdentityHeader";
+import { useProjectServiceActions } from "./useProjectServiceActions";
+import { useProjectVersionActions } from "./useProjectVersionActions";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { theamedAlert, alertError } from "../shared/ThemedAlert";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
-import {
-  ExternalLink,
-  ShieldCheck,
-  RefreshCw,
-  Info,
-  Loader,
-  Settings,
-} from "lucide-react";
-import type {
-  ProjectStatus,
-  ProjectDetail,
-  ProjectDef,
-  ManagePreview,
-  ProjectDelegation,
-} from "./types";
-import { categoryLabel } from "./types";
+import { RefreshCw, Info, Loader, Settings } from "lucide-react";
+import type { ProjectStatus, ProjectDetail, ProjectDef, ManagePreview, ProjectDelegation } from "./types";
 import type { SubTabProps } from "./ProjectSubTabs";
-import {
-  VersionsTab,
-  EnvVarsTab,
-  ServicesTab,
-  PackageManagerTab,
-  LegacyTab,
-  DataDirsTab,
-  ConfigTab,
-} from "./ProjectSubTabs";
+import { VersionsTab, EnvVarsTab, ServicesTab, PackageManagerTab, LegacyTab, DataDirsTab, ConfigTab } from "./ProjectSubTabs";
 import { ConfirmDialogHost } from "../shared/ConfirmDialog";
 import type { ConfirmRequest } from "../shared/ConfirmDialog";
-
-type SubTab = "versions" | "envvars" | "services" | "config" | string;
-
-const baseTabKeys: Record<string, string> = {
-  versions: "projdetail.tabVersions",
-  envvars: "projdetail.tabEnvVars",
-  legacy: "projdetail.tabLegacy",
-  services: "projdetail.tabServices",
-  data_dirs: "projdetail.tabDataDirs",
-  config: "projdetail.tabConfig",
-};
-
-// 判断项目是否支持版本管理（下载多版本 / Git 仓库 / 远程版本清单 / GitHub assets / npm 包）。
-// mysql 等 SDK 使用 version_url_prefix_map + remote_versions_config 提供版本，
-// npm 包（npm_pkg_name 型）使用 npm install 安装，
-// Ghidra 用的是 remote_versions_config + github_asset —— 其 tag 是 `Ghidra_12.1.4_build`
-// 而资产叫 `ghidra_12.1.4_PUBLIC_20260921.zip`，中间那个构建日期既不在 tag 也不在
-// published_at 里，只有 github_asset 能表达（见 types.rs 的 github_asset 注释）。
-// 这三个字段任一存在都须纳入判定，否则托管后会被误判为「简单托管」而看不到下载入口。
-function hasVersionSupportOf(def: ProjectDef | null | undefined): boolean {
-  if (!def) return false;
-  return !!(
-    def.download_url_template ||
-    def.is_git_repo ||
-    def.version_url_prefix_map ||
-    def.npm_pkg_name ||
-    def.remote_versions_config ||
-    def.github_asset
-  );
-}
-
-interface ProjectUIState {
-  detail: ProjectDetail | null;
-  detailLoaded: boolean;
-  detailLoading: boolean;
-  activeSubTab: SubTab;
-  remoteVersions: string[];
-  loadingRemote: boolean;
-  versionsUpdatedAt: number | null;
-  installingVersion: string | null;
-  downloadProgress: { sdk: string; downloaded: number; total: number; pct: number; speed_str: string } | null;
-  installStep: string;
-  showManagePreview: boolean;
-  managePreview: ManagePreview | null;
-  managing: boolean;
-  unmanaging: boolean;
-  isSimpleManage: boolean;
-  cacheDestPath: string;
-  migratingCache: boolean;
-  packages: SubTabProps["packages"];
-  loadingPackages: boolean;
-  upgradingPackage: string | null;
-  packageError: string | null;
-  serviceCtrlLoading: boolean;
-  switchingVersion: string | null;
-  repairingEnv: boolean;
-  // 检测进度
-  detectStep: string;
-  detectIndex: number;
-  detectTotal: number;
-}
-
-const EMPTY_UI: ProjectUIState = {
-  detail: null,
-  detailLoaded: false,
-  detailLoading: false,
-  activeSubTab: "versions",
-  remoteVersions: [],
-  loadingRemote: false,
-  versionsUpdatedAt: null,
-  installingVersion: null,
-  downloadProgress: null,
-  installStep: "",
-  showManagePreview: false,
-  managePreview: null,
-  managing: false,
-  unmanaging: false,
-  isSimpleManage: false,
-  cacheDestPath: "",
-  migratingCache: false,
-  packages: [],
-  loadingPackages: false,
-  upgradingPackage: null,
-  packageError: null,
-  serviceCtrlLoading: false,
-  switchingVersion: null,
-  repairingEnv: false,
-  detectStep: "",
-  detectIndex: 0,
-  detectTotal: 0,
-};
-
-let _onProgress: ((p: { sdk: string; downloaded: number; total: number; pct: number; speed_str: string }) => void) | null = null;
-let _onStep: ((s: { sdk: string; step: string }) => void) | null = null;
-let _unlistenProgress: (() => void) | null = null;
-let _unlistenStep: (() => void) | null = null;
-
-function ensureListeners(
-  onProgress: (p: { sdk: string; downloaded: number; total: number; pct: number; speed_str: string }) => void,
-  onStep: (s: { sdk: string; step: string }) => void,
-) {
-  _onProgress = onProgress;
-  _onStep = onStep;
-  if (!_unlistenProgress) {
-    listen<{ sdk: string; downloaded: number; total: number; pct: number; speed_str: string }>("download-progress", (e) => {
-      _onProgress?.(e.payload);
-    }).then((u) => { _unlistenProgress = u; });
-  }
-  if (!_unlistenStep) {
-    listen<{ sdk: string; step: string }>("install-step", (e) => {
-      _onStep?.(e.payload);
-    }).then((u) => { _unlistenStep = u; });
-  }
-}
-
-interface Props {
-  project: ProjectStatus | null;
-  onRefresh: () => Promise<void>;
-  onProjectUpdate?: (id: string) => Promise<void>;
-}
+import { EMPTY_UI, baseTabKeys, ensureListeners, hasVersionSupportOf, type ProjectUIState, type Props, type SubTab } from "./ProjectDetailPanel.model";
 
 export default function ProjectDetailPanel({
   project,
@@ -193,7 +55,6 @@ export default function ProjectDetailPanel({
   const patch = useCallback((id: string, partial: Partial<ProjectUIState>) => {
     setUiMap((prev) => ({ ...prev, [id]: { ...(prev[id] ?? EMPTY_UI), ...partial } }));
   }, []);
-
 
   useEffect(() => {
     ensureListeners(
@@ -311,56 +172,11 @@ export default function ProjectDetailPanel({
   }, [patch]);
 
   // 首次打开项目时的逐步检测队列
-  const runInitialDetection = useCallback(async (id: string, proj: ProjectStatus) => {
-    const steps: Array<{ label: string; run: () => Promise<void> }> = [];
-
-    // 步骤1：加载项目详情（版本、环境变量等）
-    steps.push({
-      label: t("projdetail.detecting", { name: proj.display_name }),
-      run: async () => {
-        try {
-          const d = await invoke<ProjectDetail>("project_detail", { id });
-          patch(id, { detail: d, detailLoaded: true });
-        } catch (e) {
-          console.error("检测项目详情失败:", e);
-        }
-      },
-    });
-
-    // 步骤2：获取远程版本列表（优先读缓存）
-    steps.push({
-      label: t("projdetail.fetchingVersions", { name: proj.display_name }),
-      run: async () => {
-        try {
-          const result = await invoke<{ versions: string[]; updated_at: number; from_cache: boolean }>(
-            "project_list_remote_versions", { id, force: false }
-          );
-          patch(id, { remoteVersions: result.versions, versionsUpdatedAt: result.updated_at });
-        } catch (e) {
-          console.error("获取远程版本列表失败:", e);
-        }
-      },
-    });
-
-    // 步骤3：标记全局包待检测（不在初始检测中执行，太慢）
-    // 全局包检测改为懒加载：用户切换到"全局包"标签页时才触发
-
-    patch(id, { detailLoading: true, loadingRemote: true, loadingPackages: true, detectTotal: steps.length });
-
-    for (let i = 0; i < steps.length; i++) {
-      patch(id, { detectIndex: i + 1, detectStep: steps[i].label });
-      await steps[i].run();
-    }
-
-    patch(id, {
-      detailLoading: false,
-      loadingRemote: false,
-      loadingPackages: false,
-      detectStep: "",
-      detectIndex: 0,
-      detectTotal: 0,
-    });
-  }, [patch]);
+  const {
+    runInitialDetection,
+  } = useProjectDetection({
+    patch,
+  });
 
   useEffect(() => {
     if (!pid || !project) return;
@@ -374,104 +190,22 @@ export default function ProjectDetailPanel({
     }
   }, [pid]);
 
-  const handleInstall = useCallback(async (version: string) => {
-    if (!pid) return;
-    eventProjectRef.current = pid;
-    patch(pid, { installingVersion: version, installStep: t("projdetail.stepDownloading"), downloadProgress: null });
-    try {
-      const parts = version.includes(" · ") ? version.split(" · ")[1] : version;
-      const cleanVer = parts.trim().split(" ")[0];
-      await invoke("project_install_version", { id: pid, version: cleanVer });
-      await refreshSingle(pid);
-    } catch (e: unknown) {
-      alertError(t("projdetail.installFail", { err: String(e) }));
-    } finally {
-      setTimeout(() => {
-        if (eventProjectRef.current === pid) {
-          patch(pid, { installingVersion: null, downloadProgress: null, installStep: "" });
-          eventProjectRef.current = null;
-        }
-      }, 3000);
-    }
-  }, [pid, patch, loadDetail, onRefresh]);
-
-  const handleCancelInstall = useCallback(async () => {
-    if (!pid) return;
-    try {
-      await invoke("project_cancel_install", { id: pid });
-    } catch {
-      // 忽略错误（任务可能已完成）
-    } finally {
-      patch(pid, { installingVersion: null, downloadProgress: null, installStep: "" });
-      eventProjectRef.current = null;
-    }
-  }, [pid, patch]);
-
-  const handleRefreshRemoteVersions = useCallback(async () => {
-    if (!pid) return;
-    patch(pid, { loadingRemote: true });
-    try {
-      const result = await invoke<{ versions: string[]; updated_at: number; from_cache: boolean }>(
-        "project_list_remote_versions", { id: pid, force: true }
-      );
-      patch(pid, { remoteVersions: result.versions, versionsUpdatedAt: result.updated_at, loadingRemote: false });
-    } catch (e: unknown) {
-      alertError(t("projdetail.refreshVersionsFail", { err: String(e) }));
-      patch(pid, { loadingRemote: false });
-    }
-  }, [pid, patch]);
-
-  /** 真正卸载版本（由确认弹窗回调触发） */
-  const doUninstall = useCallback(async (version: string) => {
-    if (!pid) return;
-    try {
-      await invoke("project_uninstall_version", { id: pid, version });
-      await refreshSingle(pid);
-    } catch (e: unknown) {
-      alertError(t("projdetail.uninstallFail", { err: String(e) }));
-    }
-  }, [pid, refreshSingle, t]);
-
-  const handleUninstall = useCallback(async (version: string) => {
-    if (!pid || !ui.detail) return;
-    setConfirmRequest({
-      title: t("projsub.uninstallThis"),
-      danger: true,
-      confirmText: t("projdetail.confirmUninstallBtn"),
-      desc: t("projdetail.uninstallConfirm", { name: ui.detail.status.display_name, version }),
-      onConfirm: () => {
-        void doUninstall(version);
-      },
-    });
-  }, [pid, ui.detail, doUninstall, t]);
-
-  const handleUse = useCallback(async (version: string) => {
-    if (!pid) return;
-    patch(pid, { switchingVersion: version, detectStep: t("projdetail.switching", { version }) });
-    try {
-      await invoke("project_use_version", { id: pid, version });
-      const detail = await invoke<ProjectDetail>("project_detail", { id: pid });
-      patch(pid, { detail, switchingVersion: null, detectStep: "" });
-      if (onProjectUpdate) await onProjectUpdate(pid);
-    } catch (e: unknown) {
-      alertError(t("projdetail.switchFail", { err: String(e) }));
-      patch(pid, { switchingVersion: null, detectStep: "" });
-    }
-  }, [pid, patch, loadDetail, onRefresh]);
-
-  const handleRepairEnv = useCallback(async () => {
-    if (!pid) return;
-    patch(pid, { repairingEnv: true });
-    try {
-      await invoke("project_repair_env_vars", { id: pid });
-      await refreshSingle(pid);
-      theamedAlert(t("projdetail.envFixed"));
-    } catch (e: unknown) {
-      alertError(t("projdetail.envFixFail", { err: String(e) }));
-    } finally {
-      patch(pid, { repairingEnv: false });
-    }
-  }, [pid, patch, refreshSingle]);
+  const {
+    handleInstall,
+    handleCancelInstall,
+    handleRefreshRemoteVersions,
+    handleUninstall,
+    handleUse,
+    handleRepairEnv,
+  } = useProjectVersionActions({
+    pid,
+    eventProjectRef,
+    patch,
+    refreshSingle,
+    detail: ui.detail,
+    setConfirmRequest,
+    onProjectUpdate,
+  });
 
   const handlePreviewManage = useCallback(async () => {
     if (!pid || !ui.detail) return;
@@ -555,112 +289,16 @@ export default function ProjectDetailPanel({
   }, [pid, ui.detail, patch, loadDetail, onRefresh]);
 
   /** 强制终止服务进程（安全停止失败并确认后调用） */
-  const forceStopService = useCallback(async () => {
-    if (!pid) return;
-    patch(pid, { serviceCtrlLoading: true });
-    try {
-      await invoke("force_stop_service", { name: pid });
-      await invoke("refresh_tray_menu");
-      await refreshSingle(pid);
-    } catch (e: unknown) {
-      alertError(t("projdetail.serviceOpFail", { err: String(e) }));
-    } finally {
-      patch(pid, { serviceCtrlLoading: false });
-    }
-  }, [pid, patch, refreshSingle, t]);
-
-  /** 真正执行服务启停（由确认弹窗或无需确认的路径调用） */
-  const runServiceToggle = useCallback(async () => {
-    if (!pid || !ui.detail?.status?.service_status) return;
-    const running = ui.detail.status.service_status.running;
-    const simpleService = ui.detail.def.simple_mode || ui.detail.status.is_simple_managed;
-
-    patch(pid, { serviceCtrlLoading: true });
-    try {
-      if (running) {
-        try {
-          await invoke("stop_service", { name: pid });
-        } catch (stopErr) {
-          const msg = String(stopErr);
-          // 安全停止失败：用统一弹窗询问是否强制终止。
-          // 用户取消时不再抛出原错误（旧实现会紧跟一条"服务操作失败"的 alert，
-          // 与「用户主动取消」的语义冲突）。
-          patch(pid, { serviceCtrlLoading: false });
-          setConfirmRequest({
-            title: t("projdetail.stopFailTitle"),
-            danger: true,
-            confirmText: t("projdetail.forceStopBtn"),
-            desc: t("projdetail.stopFailConfirm", { msg, pid }),
-            onConfirm: () => {
-              void forceStopService();
-            },
-          });
-          return;
-        }
-      } else {
-        if (!simpleService && !ui.detail.status.active_version) {
-          theamedAlert(t("projdetail.needEnableFirst"));
-          patch(pid, { serviceCtrlLoading: false });
-          return;
-        }
-        await invoke("start_service", {
-          name: pid,
-          version: simpleService ? null : ui.detail.status.active_version,
-        });
-      }
-      await invoke("refresh_tray_menu");
-      await refreshSingle(pid);
-    } catch (e: unknown) {
-      alertError(t("projdetail.serviceOpFail", { err: String(e) }));
-    } finally {
-      patch(pid, { serviceCtrlLoading: false });
-    }
-  }, [pid, ui.detail, patch, refreshSingle, forceStopService, t]);
-
-  /** 服务启停入口：非管理员且有系统服务时先确认（统一弹窗），再执行 */
-  const handleServiceToggle = useCallback(async () => {
-    if (!pid || !ui.detail?.status?.service_status) return;
-    if (!isAdmin && Array.isArray(ui.detail.def.service_names) && ui.detail.def.service_names.length > 0) {
-      setConfirmRequest({
-        title: t("projdetail.adminWarnTitle"),
-        confirmText: t("common.confirm"),
-        desc: t("projdetail.adminWarn"),
-        onConfirm: () => {
-          void runServiceToggle();
-        },
-      });
-      return;
-    }
-    await runServiceToggle();
-  }, [pid, ui.detail, isAdmin, runServiceToggle, t]);
-
-  // 服务类项目：静默轮询服务状态，进程意外退出后前端能自动感知，
-  // 避免界面仍显示陈旧 PID 导致「停止」误报「未检测到进程」。
-  const _def = pid ? uiMap[pid]?.detail?.def : undefined;
-  const isServiceProject = !!_def && (_def.is_service || _def.category === "service");
-  useEffect(() => {
-    if (!pid || !isServiceProject) return;
-    const poll = () => {
-      invoke<ProjectDetail>("project_detail", { id: pid })
-        .then((d) => patch(pid, { detail: d }))
-        .catch(() => {});
-    };
-    const t = setInterval(poll, 3000);
-    return () => clearInterval(t);
-  }, [pid, isServiceProject, patch]);
-
-  // 后端在启动/停止/强制终止服务成功后主动 emit 该事件，前端即时刷新，
-  // 不再等待 3s 轮询的缓存空窗，避免 redis/mysql 等启动较慢的服务状态更新不及时。
-  useEffect(() => {
-    if (!pid) return;
-    let unlisten: (() => void) | undefined;
-    listen<string>("service-status-changed", (e) => {
-      if (e.payload === pid) {
-        refreshSingle(pid);
-      }
-    }).then((u) => { unlisten = u; });
-    return () => unlisten?.();
-  }, [pid, refreshSingle]);
+  const {
+    handleServiceToggle,
+  } = useProjectServiceActions({
+    pid,
+    patch,
+    refreshSingle,
+    detail: ui.detail,
+    setConfirmRequest,
+    isAdmin,
+  });
 
   const handleMigrateCache = useCallback(async () => {
     if (!pid) return;
@@ -820,92 +458,19 @@ export default function ProjectDetailPanel({
     <div className="h-full flex flex-col overflow-hidden">
       <div className="p-5 border-b border-white/5 bg-white/2 flex-shrink-0">
         <div className="flex items-center justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-base font-semibold text-white">{status.display_name}</h3>
-              <span className={`px-1.5 py-0.5 rounded text-micro font-semibold border ${
-                status.category === "language"
-                  ? "bg-blue-500/10 text-blue-400 border-blue-500/20"
-                  : status.category === "tool"
-                  ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                  : "bg-[var(--module-accent-soft)] text-[var(--module-accent)] border-[var(--module-accent-ring)]"
-              }`}>
-                {categoryLabel(status.category)}
-              </span>
-              {status.managed ? (
-                status.is_simple_managed ? (
-                  <span className="px-1.5 py-0.5 rounded text-micro bg-amber-500/10 text-amber-400 border border-amber-500/20 font-bold flex items-center gap-0.5">
-                    <ShieldCheck className="w-2.5 h-2.5" /> {t("projdetail.simpleManaging")}
-                  </span>
-                ) : (
-                  <span className="px-1.5 py-0.5 rounded text-micro bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold flex items-center gap-0.5">
-                    <ShieldCheck className="w-2.5 h-2.5" /> {t("projdetail.managing")}
-                  </span>
-                )
-              ) : (
-                <span className="px-1.5 py-0.5 rounded text-micro bg-slate-500/10 text-slate-400 border border-slate-500/20 font-medium">
-                  {t("projdetail.notManaged")}
-                </span>
-              )}
-              {status.installed ? (
-                status.active_version ? (
-                  <span className="px-1.5 py-0.5 rounded text-micro font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
-                    v{status.active_version}
-                  </span>
-                ) : (
-                  <span className="px-1.5 py-0.5 rounded text-micro font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                    {t("projdetail.installed")}
-                  </span>
-                )
-              ) : (
-                <span className="px-1.5 py-0.5 rounded text-micro font-semibold bg-red-500/10 text-red-400 border border-red-500/20">
-                  {t("projdetail.notInstalled")}
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-              {def?.official_website && (
-                <button onClick={() => openUrl(def.official_website)} className="text-tiny text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-0.5 cursor-pointer mr-1">
-                  {t("projdetail.officialSite")} <ExternalLink className="w-2.5 h-2.5" />
-                </button>
-              )}
-              {status.install_source && (
-                <><span className="text-slate-600 text-tiny">.</span><span className="text-tiny text-slate-400">{t("projdetail.installMethod")}: {status.install_source}</span></>
-              )}
-              {status.install_root && (
-                <><span className="text-slate-600 text-tiny">.</span><span className="text-tiny text-slate-400 font-mono truncate max-w-[300px]" title={status.install_root}>{t("projdetail.installPath")}: {status.install_root}</span></>
-              )}
-              {(!status.managed || status.is_simple_managed) && (!status.install_root || status.install_source === "手动指定") && (
-                <>
-                  <span className="text-slate-600 text-tiny">.</span>
-                  <button
-                    onClick={handleSelectCustomPath}
-                    className="text-tiny ui-link transition-colors flex items-center gap-0.5 cursor-pointer font-medium"
-                  >
-                    {status.install_root ? t("projdetail.modifyPath") : t("projdetail.manualSpecifyDir")}
-                  </button>
-                  {status.install_source === "手动指定" && (
-                    <>
-                      <span className="text-slate-600 text-tiny">.</span>
-                      <button
-                        onClick={handleClearCustomPath}
-                        className="text-tiny text-amber-500 hover:text-amber-400 hover:underline transition-colors flex items-center gap-0.5 cursor-pointer font-medium"
-                      >
-                        {t("projdetail.restoreAutoDetect")}
-                      </button>
-                    </>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
+          <ProjectIdentityHeader
+            status={status}
+            def={def}
+            handleSelectCustomPath={handleSelectCustomPath}
+            handleClearCustomPath={handleClearCustomPath}
+          />
           <div className="flex items-center gap-2">
             {status.managed && (
               <button
                 onClick={() => setShowMenuConfig(!showMenuConfig)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-ctl text-tiny border cursor-pointer transition-all ${
-                  showMenuConfig 
-                    ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white" 
+                  showMenuConfig
+                    ? "bg-[var(--module-accent)] border-[var(--module-accent)] text-white"
                     : "bg-white/5 border-white/5 text-slate-300 hover:bg-white/10"
                 }`}
                 title={t("projdetail.trayConfigTitle")}
@@ -926,84 +491,15 @@ export default function ProjectDetailPanel({
       </div>
 
       {showMenuConfig && status.managed && (
-        <div className="mx-5 mt-4 p-4 glass-panel border border-white/5 rounded-panel bg-white/2 space-y-3 animate-fadeIn flex-shrink-0">
-          <div className="flex items-center justify-between border-b border-white/5 pb-2">
-            <span className="text-body font-semibold text-white flex items-center gap-1.5">
-              <Settings className="w-3.5 h-3.5 text-[var(--module-accent)]" />
-              {t("projdetail.trayConfigTitle")}
-            </span>
-            <button 
-              onClick={() => setShowMenuConfig(false)}
-              className="text-tiny text-slate-400 hover:text-slate-200 cursor-pointer"
-            >
-              {t("projdetail.close")}
-            </button>
-          </div>
-          <div className="flex flex-wrap gap-6 py-1">
-            <label className="flex items-center gap-2 cursor-pointer text-body text-slate-300 select-none">
-              <input
-                type="checkbox"
-                checked={status.show_version !== false}
-                onChange={async (e) => {
-                  if (pid) {
-                    await invoke("update_project_menu_config", {
-                      id: pid,
-                      showVersion: e.target.checked,
-                      showService: status.show_service !== false,
-                    });
-                    await refreshSingle(pid);
-                  }
-                }}
-                className="rounded border-white/10 bg-black/40 text-[var(--module-accent)] focus:ring-[var(--module-accent)] w-3.5 h-3.5 cursor-pointer"
-              />
-              {t("projdetail.showVersionSwitch")}
-            </label>
-            {(def?.category === "service" || def?.is_service) && (
-              <>
-                <label className="flex items-center gap-2 cursor-pointer text-body text-slate-300 select-none">
-                  <input
-                    type="checkbox"
-                    checked={status.show_service !== false}
-                    onChange={async (e) => {
-                      if (pid) {
-                        await invoke("update_project_menu_config", {
-                          id: pid,
-                          showVersion: status.show_version !== false,
-                          showService: e.target.checked,
-                        });
-                        await refreshSingle(pid);
-                      }
-                    }}
-                    className="rounded border-white/10 bg-black/40 text-[var(--module-accent)] focus:ring-[var(--module-accent)] w-3.5 h-3.5 cursor-pointer"
-                  />
-                  {t("projdetail.showServiceControl")}
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer text-body text-slate-300 select-none">
-                  <input
-                    type="checkbox"
-                    checked={pid ? autoStartServices.includes(pid) : false}
-                    onChange={async (e) => {
-                      if (pid) {
-                        const enabled = e.target.checked;
-                        await invoke("set_auto_start_service", { serviceId: pid, enabled });
-                        setAutoStartServices((prev) =>
-                          enabled ? [...prev.filter((id) => id !== pid), pid] : prev.filter((id) => id !== pid)
-                        );
-                      }
-                    }}
-                    className="rounded border-white/10 bg-black/40 text-red-500 focus:ring-red-500 w-3.5 h-3.5 cursor-pointer"
-                  />
-                  <span className={pid && autoStartServices.includes(pid) ? "text-red-400 font-semibold" : ""}>
-                    {t("projdetail.autoStartService")}
-                  </span>
-                </label>
-              </>
-            )}
-          </div>
-          <p className="text-tiny text-slate-500 leading-normal">
-            {t("projdetail.trayHint")}
-          </p>
-        </div>
+        <ProjectTraySettings
+          setShowMenuConfig={setShowMenuConfig}
+          status={status}
+          pid={pid}
+          refreshSingle={refreshSingle}
+          def={def}
+          autoStartServices={autoStartServices}
+          setAutoStartServices={setAutoStartServices}
+        />
       )}
 
       {status.managed && (status.is_simple_managed || def?.simple_mode) && !status.install_root ? (
@@ -1099,11 +595,11 @@ export default function ProjectDetailPanel({
                   }
 
                   return (
-                    <PackageManagerTab 
-                      key={pt.id} 
-                      projectId={pid!} 
-                      pm={pmDef} 
-                      hidden={activeTab !== pt.id} 
+                    <PackageManagerTab
+                      key={pt.id}
+                      projectId={pid!}
+                      pm={pmDef}
+                      hidden={activeTab !== pt.id}
                       installRoot={status.install_root}
                       installSource={status.install_source}
                       projectStatus={status}
@@ -1155,7 +651,7 @@ export default function ProjectDetailPanel({
               {!isUnmanage && localDelegation && (
                 <div className="p-3 bg-white/5 border border-white/10 rounded-card space-y-3">
                   <span className="text-caption font-semibold text-slate-300 block">{t("projdetail.chooseOptions")}</span>
-                  
+
                   <div className="grid grid-cols-2 gap-3 text-body">
                     {/* 1. 环境变量 */}
                     {envVars.length > 0 && (
@@ -1167,8 +663,8 @@ export default function ProjectDetailPanel({
                             checked={localDelegation.env_vars.length === envVars.filter(v => v.tier !== "compat").length}
                             onChange={(e) => {
                               const checked = e.target.checked;
-                              const updatedEnvVars = checked 
-                                ? envVars.filter(v => v.tier !== "compat").map(v => v.name) 
+                              const updatedEnvVars = checked
+                                ? envVars.filter(v => v.tier !== "compat").map(v => v.name)
                                 : [];
                               handleCheckboxChange({ env_vars: updatedEnvVars });
                             }}
@@ -1460,10 +956,10 @@ export default function ProjectDetailPanel({
 
         <div className="flex items-center justify-between">
           <div className="text-tiny text-slate-500">
-            {status.managed 
-              ? status.is_simple_managed 
-                ? t("projdetail.simpleManagingDesc") 
-                : t("projdetail.managingDesc") 
+            {status.managed
+              ? status.is_simple_managed
+                ? t("projdetail.simpleManagingDesc")
+                : t("projdetail.managingDesc")
               : t("projdetail.unmanagedDesc")}
           </div>
           <div className="flex items-center gap-2">
