@@ -740,7 +740,7 @@ fn unzip_to(data: &[u8], dest: &Path) -> Result<(), String> {
     let mut total: u64 = 0;
     for i in 0..archive.len() {
         let mut f = archive.by_index(i).map_err(|e| e.to_string())?;
-        let name = f.name().to_string();
+        let name = f.name().map_err(|e| format!("读取ZIP文件名失败: {e}"))?.to_string();
         if name.ends_with('/') {
             continue;
         }

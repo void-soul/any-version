@@ -76,7 +76,7 @@ pub async fn mihomo_substore_download(state: State<'_, MihomoState>) -> Result<S
     let mut archive = zip::ZipArchive::new(cursor).map_err(|e| format!("解压失败: {e}"))?;
     for i in 0..archive.len() {
         let mut f = archive.by_index(i).map_err(|e| e.to_string())?;
-        let name = f.name().replace('\\', "/");
+        let name = f.name().map_err(|e| format!("读取ZIP文件名失败: {e}"))?.replace('\\', "/");
         if name.ends_with('/') || name.contains("..") {
             continue;
         }

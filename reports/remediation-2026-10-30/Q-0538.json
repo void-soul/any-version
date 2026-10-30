@@ -1,0 +1,19 @@
+{
+  "qid": "Q-0538",
+  "question": "刷新RustSec后TLS、ZIP和Zstd依赖存在已知漏洞。",
+  "root_cause": "旧TLS锁版本及直接ZIP2和updater默认ZIP4依赖未更新。",
+  "solution": "升级rustls0.23.46、webpki0.103.16、根证书1.0.11，直接ZIP升级9.1.3并按其fallible文件名API适配。Zstd同步0.14.3/safe8.2.0/sys2.1.2。锁AES0.9.2兼容现有Rust1.88。Windows updater保留原生NSIS/MSI和TLS/系统代理，去除未使用ZIP包兼容；当前发布配置未生成旧ZIP updater artifacts。三份Cargo锁重新扫描均无漏洞条目。\n主agent验收：Main lib compiled with Rust1.88; ZIP-related6 and plugin9 tests passed; main/shared/receiver cargo-audit each has zero vulnerability entries. Unmaintained warnings are separately reported.",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/Cargo.toml**、**Cargo.lock** | 修复依赖与Windows更新特性 |\n| **commands/mihomo/{mod,backup,github,substore}.rs** | 明确处理ZIP文件名错误 |\n| **commands/project/versions.rs**、**commands/ai/codex_plugins.rs** | SDK与插件包文件名API适配 |",
+  "status": "已验证",
+  "validation": "Main lib compiled with Rust1.88; ZIP-related6 and plugin9 tests passed; main/shared/receiver cargo-audit each has zero vulnerability entries. Unmaintained warnings are separately reported.",
+  "paths": [
+    "src-tauri/Cargo.toml",
+    "src-tauri/Cargo.lock",
+    "src-tauri/src/commands/mihomo/mod.rs",
+    "src-tauri/src/commands/mihomo/backup.rs",
+    "src-tauri/src/commands/mihomo/github.rs",
+    "src-tauri/src/commands/mihomo/substore.rs",
+    "src-tauri/src/commands/project/versions.rs",
+    "src-tauri/src/commands/ai/codex_plugins.rs"
+  ]
+}

@@ -1580,7 +1580,7 @@ pub(crate) fn unzip_file(src: &Path, dest: &Path) -> Result<(), String> {
             None => continue,
         };
 
-        if file.name().ends_with('/') {
+        if file.name().map_err(|e| format!("读取ZIP文件名失败: {e}"))?.ends_with('/') {
             fs::create_dir_all(&outpath).map_err(|e| e.to_string())?;
         } else {
             if let Some(p) = outpath.parent() {

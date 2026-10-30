@@ -380,7 +380,7 @@ fn extract_zip_stripping_root(bytes: &[u8], destination: &Path) -> Result<(), St
         let mut file = archive
             .by_index(index)
             .map_err(|e| format!("读取压缩包条目 {index} 失败: {e}"))?;
-        let Some(relative) = safe_zip_entry(file.name()) else {
+        let Some(relative) = safe_zip_entry(&file.name().map_err(|e| format!("读取ZIP文件名失败: {e}"))?) else {
             continue;
         };
         let output = destination.join(&relative);

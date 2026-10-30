@@ -21,7 +21,8 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
-tauri-plugin-updater = "2"
+# Windows releases use native NSIS/MSI installers; ZIP compatibility is unused.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls", "system-proxy"] }
 # 开机自启（launch-at-login）。注册时带 `--minimized` 参数，
 # 开机自启时静默启动到托盘（见 lib.rs setup 中对该参数的处理）。
 # 暴露 JS 侧 enable/disable/isEnabled，需要 autostart:default 权限。
@@ -40,7 +41,7 @@ hyper-util = { version = "0.1", features = ["tokio", "client-legacy"] }
 http-body-util = "0.1"
 bytes = "1"
 async-stream = "0.3"
-zip = "2.1"
+zip = "9"
 # 原本用 sevenz-rust 0.6，但它在 RUSTSEC-2026-0245（解压路径穿越 → 任意文件写）
 # 之外还被标记 unmaintained（RUSTSEC-2026-0246），最新只有 0.6.1、无补丁可用。
 # sevenz-rust2 是活跃的维护分支，API 基本同源。

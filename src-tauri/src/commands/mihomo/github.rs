@@ -134,7 +134,7 @@ pub async fn mihomo_download_ui(state: State<'_, MihomoState>) -> Result<String,
     let mut strip = true;
     for i in 0..archive.len() {
         let f = archive.by_index(i).map_err(|e| e.to_string())?;
-        let n = f.name().to_string();
+        let n = f.name().map_err(|e| format!("读取ZIP文件名失败: {e}"))?.to_string();
         if !n.starts_with("dist/") && !n.starts_with("dist\\") {
             strip = false;
             break;
@@ -142,7 +142,7 @@ pub async fn mihomo_download_ui(state: State<'_, MihomoState>) -> Result<String,
     }
     for i in 0..archive.len() {
         let mut f = archive.by_index(i).map_err(|e| e.to_string())?;
-        let name = f.name().replace('\\', "/");
+        let name = f.name().map_err(|e| format!("读取ZIP文件名失败: {e}"))?.replace('\\', "/");
         if name.ends_with('/') {
             continue;
         }
