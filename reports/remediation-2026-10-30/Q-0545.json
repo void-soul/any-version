@@ -1,0 +1,23 @@
+{
+  "qid": "Q-0545",
+  "question": "ToolLauncher混合插件市场、会话选择、模型启动配置、工具安装卸载、日志和缓存管理，原文件2431行。",
+  "root_cause": "不同生命周期及功能领域集中在同一主组件中，原逻辑通过大量局部状态互相协作。",
+  "solution": "提取useToolMarketplace、useToolSessions、useToolModelConfiguration、useToolOperations四个独立领域hook，输入分别1/2/2/3项，状态与对应领域渲染/命令在同一功能文件内；主页面通过明确返回字段编排启动操作。安装摘要、上次启动、手动路径、缓存目录列表为typed独立视图；纯函数和折叠卡片独立导出。保留主页面加载状态及其早返回位置；模型hook放在config和selectedTool初始化后，避免TDZ。\n主agent验收：Agent tsc and all 49 files/395 tests passed; primary reviewed hook initialization order, typed domain inputs and independent event ownership; output line counts checked.",
+  "files": "| File | Change |\n|------|--------|\n| **ToolLauncher.tsx** | 2431行降至948行的启动编排页面 |\n| **useToolMarketplace.tsx**、**useToolSessions.tsx** | 市场/会话独立状态、命令与渲染 |\n| **useToolModelConfiguration.tsx** | 模型/代理能力配置状态及视图 |\n| **useToolOperations.tsx** | 安装升级卸载、确认、日志与缓存操作 |\n| **ToolInstallationHeader.tsx**、**ToolLastLaunchSummary.tsx**、**ToolCustomPathEditor.tsx**、**ToolCacheDirectoryList.tsx** | 窄typed视图 |\n| **ToolLauncher.model.tsx**、**ToolLauncher.CollapsibleCard.tsx** | 纯模型工具与折叠控件 |",
+  "status": "已验证",
+  "validation": "Agent tsc and all 49 files/395 tests passed; primary reviewed hook initialization order, typed domain inputs and independent event ownership; output line counts checked.",
+  "paths": [
+    "src/components/ai/ToolLauncher.CollapsibleCard.tsx",
+    "src/components/ai/ToolLauncher.model.tsx",
+    "src/components/ai/ToolLauncher.tsx",
+    "src/components/ai/ToolInstallationHeader.tsx",
+    "src/components/ai/ToolLastLaunchSummary.tsx",
+    "src/components/ai/ToolCustomPathEditor.tsx",
+    "src/components/ai/ToolCacheDirectoryList.tsx",
+    "src/components/ai/useToolMarketplace.tsx",
+    "src/components/ai/useToolSessions.tsx",
+    "src/components/ai/useToolModelConfiguration.tsx",
+    "src/components/ai/useToolOperations.tsx"
+  ],
+  "parent_task": "Q-0506"
+}
