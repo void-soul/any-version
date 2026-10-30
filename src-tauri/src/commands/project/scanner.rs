@@ -8,12 +8,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use super::types::{
-    ProjectDef, ProjectStatus, ProjectDetail,
-    EnvVarStatus, EnvVarTier, CacheStatus, ServiceStatus,
-    ManagePreview, ManageStep,
-};
 use super::registry;
+use super::types::{
+    CacheStatus, EnvVarStatus, EnvVarTier, ManagePreview, ManageStep, ProjectDef, ProjectDetail,
+    ProjectStatus, ServiceStatus,
+};
 use crate::commands::config::load_config;
 use crate::commands::env::get_registry_env_any;
 use crate::commands::sdk_resolver::find_sdk_root;
@@ -52,29 +51,26 @@ pub fn list_projects_fast() -> Result<Vec<ProjectStatus>, String> {
 
 /// 获取单个项目运行时状态
 pub fn get_project_status(id: &str) -> Result<ProjectStatus, String> {
-    let def = registry::find_by_id(id)
-        .ok_or_else(|| format!("未找到项目: {}", id))?;
+    let def = registry::find_by_id(id).ok_or_else(|| format!("未找到项目: {}", id))?;
     let config = load_config();
     build_project_status(&def, &config, false, true)
 }
 
 /// 获取项目详情（定义 + 状态）
 pub fn get_project_detail(id: &str) -> Result<ProjectDetail, String> {
-    let def = registry::find_by_id(id)
-        .ok_or_else(|| format!("未找到项目: {}", id))?;
+    let def = registry::find_by_id(id).ok_or_else(|| format!("未找到项目: {}", id))?;
     let config = load_config();
     let status = build_project_status(&def, &config, false, true)?;
 
-    Ok(ProjectDetail {
-        def,
-        status,
-    })
+    Ok(ProjectDetail { def, status })
 }
 
 /// 预览托管操作步骤
-pub fn preview_manage(id: &str, delegation: crate::commands::config::ProjectDelegation) -> Result<ManagePreview, String> {
-    let def = registry::find_by_id(id)
-        .ok_or_else(|| format!("未找到项目: {}", id))?;
+pub fn preview_manage(
+    id: &str,
+    delegation: crate::commands::config::ProjectDelegation,
+) -> Result<ManagePreview, String> {
+    let def = registry::find_by_id(id).ok_or_else(|| format!("未找到项目: {}", id))?;
 
     let mut steps = Vec::new();
 
@@ -85,15 +81,19 @@ pub fn preview_manage(id: &str, delegation: crate::commands::config::ProjectDele
     if has_local {
         steps.push(ManageStep {
             action: "found_local".to_string(),
-            description: format!("检测到本地已安装版本: {} (来源: {})",
+            description: format!(
+                "检测到本地已安装版本: {} (来源: {})",
                 local_install_root.as_deref().unwrap_or("未知"),
-                local_install_source.as_deref().unwrap_or("未知")),
+                local_install_source.as_deref().unwrap_or("未知")
+            ),
             target: local_install_root.clone().unwrap_or_default(),
         });
     }
 
     // 1. 备份环境变量
-    let backup_vars: Vec<&str> = def.env_vars.iter()
+    let backup_vars: Vec<&str> = def
+        .env_vars
+        .iter()
         .filter(|v| v.tier.as_ref().map_or(true, |t| *t != EnvVarTier::Compat))
         .filter(|v| delegation.env_vars.contains(&v.name))
         .map(|v| v.name.as_str())
@@ -111,7 +111,7 @@ pub fn preview_manage(id: &str, delegation: crate::commands::config::ProjectDele
     let config = load_config();
     let links_dir = Path::new(&config.links_dir);
     let link_dir = links_dir.join(&id);
-    
+
     // MSIX 型（如 WinGet）不参与 PATH：它是系统级安装，没有 link 目录（不做 junction），
     // 而它的 exe 在 WindowsApps（应用执行别名）—— 写/清 PATH 都是错的。
     let has_path_delegated = if def.is_msix() {
@@ -132,7 +132,11 @@ pub fn preview_manage(id: &str, delegation: crate::commands::config::ProjectDele
 
     // 3. 设置环境变量
     for var in &def.env_vars {
-        if var.tier.as_ref().map_or(false, |t| *t == EnvVarTier::Compat) {
+        if var
+            .tier
+            .as_ref()
+            .map_or(false, |t| *t == EnvVarTier::Compat)
+        {
             continue;
         }
         if !delegation.env_vars.contains(&var.name) {
@@ -141,7 +145,10 @@ pub fn preview_manage(id: &str, delegation: crate::commands::config::ProjectDele
         if var.tier.as_ref().map_or(false, |t| *t == EnvVarTier::Clear) {
             steps.push(ManageStep {
                 action: "clear_env".to_string(),
-                description: format!("清除注册表中的环境变量 {}（托管后由 anyversion 托管）", var.name),
+                description: format!(
+                    "清除注册表中的环境变量 {}（托管后由 anyversion 托管）",
+                    var.name
+                ),
                 target: var.name.clone(),
             });
             continue;
@@ -214,11 +221,15 @@ pub fn preview_manage(id: &str, delegation: crate::commands::config::ProjectDele
 //  内部实现
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-pub fn get_project_delegation(config: &crate::commands::config::Config, id: &str, def: &ProjectDef) -> crate::commands::config::ProjectDelegation {
+pub fn get_project_delegation(
+    config: &crate::commands::config::Config,
+    id: &str,
+    def: &ProjectDef,
+) -> crate::commands::config::ProjectDelegation {
     if let Some(del) = config.project_delegations.get(id) {
         return del.clone();
     }
-    
+
     // Migration fallback
     if config.managed_items.contains(id) {
         let is_simple = config.simple_managed_items.contains(id) || def.simple_mode;
@@ -237,7 +248,9 @@ pub fn get_project_delegation(config: &crate::commands::config::Config, id: &str
             let mut envs = std::collections::HashSet::new();
             for var in &def.env_vars {
                 if let Some(ref tier) = var.tier {
-                    if *tier == super::types::EnvVarTier::Compat { continue; }
+                    if *tier == super::types::EnvVarTier::Compat {
+                        continue;
+                    }
                 }
                 envs.insert(var.name.clone());
             }
@@ -270,7 +283,12 @@ pub fn get_project_delegation(config: &crate::commands::config::Config, id: &str
 }
 
 /// 构建单个项目的运行时状态
-fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Config, skip_cache: bool, force_service_refresh: bool) -> Result<ProjectStatus, String> {
+fn build_project_status(
+    def: &ProjectDef,
+    config: &crate::commands::config::Config,
+    skip_cache: bool,
+    force_service_refresh: bool,
+) -> Result<ProjectStatus, String> {
     let id = &def.id;
     let versions_dir = Path::new(&config.versions_dir).join(id);
     let links_dir = Path::new(&config.links_dir);
@@ -280,8 +298,8 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
 
     // 检测激活版本（通过 junction link 解析，或从配置中的 active_versions 中获取作为 fallback）
     let junction_path = links_dir.join(id);
-    let active_version = resolve_active_version(&junction_path)
-        .or_else(|| config.active_versions.get(id).cloned());
+    let active_version =
+        resolve_active_version(&junction_path).or_else(|| config.active_versions.get(id).cloned());
 
     let delegation = get_project_delegation(config, id, def);
 
@@ -297,7 +315,8 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
     };
 
     // 判断是否已安装（AnyVersion 版本目录 或 外部安装均可）
-    let mut installed = !installed_versions.is_empty() || active_version.is_some() || install_root.is_some();
+    let mut installed =
+        !installed_versions.is_empty() || active_version.is_some() || install_root.is_some();
     let mut active_version = active_version;
 
     // 如果未托管或处于简单托管模式，且尚未解析出激活版本，尝试从本地安装路径中检测版本号作为激活版本
@@ -346,7 +365,12 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
     }
 
     // 环境变量状态
-    let env_vars_status = build_env_vars_status(def, &config.links_dir, config, managed && !is_simple_managed);
+    let env_vars_status = build_env_vars_status(
+        def,
+        &config.links_dir,
+        config,
+        managed && !is_simple_managed,
+    );
 
     // Kira 写入用户 PATH 的条目 —— 只要 Kira 设置过（且还留在用户 PATH 里）就展示：
     // - 完全托管：展示全部候选条目（含"未在 PATH/目录缺失"的告警，帮助发现失效）；
@@ -393,7 +417,8 @@ fn build_project_status(def: &ProjectDef, config: &crate::commands::config::Conf
     let data_dirs_status = build_data_dirs_status(def, active_install_root.as_deref());
 
     // 服务状态：单个 SDK 详情/状态请求先同步失效并检测一次，确保外部进程也能立即反映。
-    let service_status = if def.is_service || def.category == super::types::ProjectCategory::Service {
+    let service_status = if def.is_service || def.category == super::types::ProjectCategory::Service
+    {
         if force_service_refresh {
             crate::commands::service::refresh_service_status_for_id(&def.id)
         } else {
@@ -445,7 +470,8 @@ fn scan_installed_versions(versions_dir: &Path) -> Vec<String> {
                     continue;
                 }
                 let ft = entry.file_type();
-                let is_dir_or_junction = ft.as_ref()
+                let is_dir_or_junction = ft
+                    .as_ref()
                     .map(|t| t.is_dir() || t.is_symlink())
                     .unwrap_or(false);
                 if is_dir_or_junction {
@@ -467,8 +493,11 @@ fn resolve_active_version(junction_path: &Path) -> Option<String> {
 
     // 尝试 canonicalize 解析 junction 目标
     if let Ok(target) = fs::canonicalize(junction_path) {
-        let target_str = target.to_string_lossy().to_string()
-            .trim_start_matches(r"\\?\").to_string();
+        let target_str = target
+            .to_string_lossy()
+            .to_string()
+            .trim_start_matches(r"\\?\")
+            .to_string();
         let target_path = Path::new(&target_str);
         // 取目标的最后一级目录名作为版本号
         if let Some(name) = target_path.file_name() {
@@ -513,17 +542,36 @@ fn build_env_vars_status(
     for var_def in &def.env_vars {
         // 跳过兼容层变量（NODE_PATH/NVM_HOME/VOLTA_HOME 等），
         // 它们属于其他工具的检测线索，与 AnyVersion 管理无关
-        if var_def.tier.as_ref().map_or(false, |t| *t == EnvVarTier::Compat) {
+        if var_def
+            .tier
+            .as_ref()
+            .map_or(false, |t| *t == EnvVarTier::Compat)
+        {
             continue;
         }
         let name = &var_def.name;
-        let (value, source, exists, in_anyversion) = if managed && var_def.tier.as_ref().map_or(false, |t| *t == EnvVarTier::Clear) {
+        let (value, source, exists, in_anyversion) = if managed
+            && var_def
+                .tier
+                .as_ref()
+                .map_or(false, |t| *t == EnvVarTier::Clear)
+        {
             // 如果已经被托管且是 Clear 级别的变量，我们展示已清空并托管的状态，并显示备份值
             let backup_val = config.original_envs.get(&def.id).and_then(|m| m.get(name));
             if let Some(backup_val) = backup_val {
-                (Some(format!("已清空并托管 (备份值: {})", backup_val)), "备份管理".to_string(), true, true)
+                (
+                    Some(format!("已清空并托管 (备份值: {})", backup_val)),
+                    "备份管理".to_string(),
+                    true,
+                    true,
+                )
             } else {
-                (Some("已清空并托管".to_string()), "托管中".to_string(), true, true)
+                (
+                    Some("已清空并托管".to_string()),
+                    "托管中".to_string(),
+                    true,
+                    true,
+                )
             }
         } else if let Some((val, src)) = get_registry_env_any(name) {
             let val_path = Path::new(&val);
@@ -554,16 +602,22 @@ fn build_env_vars_status(
 
 /// 构建缓存状态
 fn build_cache_status(def: &ProjectDef) -> Option<CacheStatus> {
-    use crate::commands::cache::get_dir_size;
     use crate::commands::cache::format_bytes;
-    use crate::commands::utils::{expand_home, resolve_custom_cache_path, resolve_detected_path, run_simple_command_checked};
+    use crate::commands::cache::get_dir_size;
+    use crate::commands::utils::{
+        expand_home, resolve_custom_cache_path, resolve_detected_path, run_simple_command_checked,
+    };
 
     // Find the first package manager under this project that has cache settings configured
-    let pm = def.package_managers.iter().find(|pm| pm.cache_detect_cmd.is_some() || pm.cache_default_path.is_some() || pm.cache_config_source.is_some())?;
-    
+    let pm = def.package_managers.iter().find(|pm| {
+        pm.cache_detect_cmd.is_some()
+            || pm.cache_default_path.is_some()
+            || pm.cache_config_source.is_some()
+    })?;
+
     // Resolve path: try custom config resolver first, then cmd, then default_path
     let mut resolved_path = resolve_custom_cache_path(pm).unwrap_or_default();
-    
+
     if resolved_path.is_empty() {
         if let Some(ref cmd) = pm.cache_detect_cmd {
             let parts: Vec<&str> = cmd.split_whitespace().collect();
@@ -574,24 +628,26 @@ fn build_cache_status(def: &ProjectDef) -> Option<CacheStatus> {
                     super::commands::run_cmd_capture(cmd.clone(), Some(def.id.clone()))
                 };
                 if let Ok(out) = output {
-                    if let Some(path) = resolve_detected_path(&out, pm.cache_detect_json_path.as_deref()) {
+                    if let Some(path) =
+                        resolve_detected_path(&out, pm.cache_detect_json_path.as_deref())
+                    {
                         resolved_path = path;
                     }
                 }
             }
         }
     }
-    
+
     if resolved_path.is_empty() {
         if let Some(ref default_path) = pm.cache_default_path {
             resolved_path = expand_home(default_path);
         }
     }
-    
+
     if resolved_path.is_empty() {
         return None;
     }
-    
+
     let cache_path = PathBuf::from(&resolved_path);
     if !cache_path.exists() {
         return None;
@@ -650,8 +706,15 @@ pub fn get_bin_paths(sdk_id: &str, link_dir: &str) -> Vec<String> {
     if let Some(def) = registry::find_by_id(sdk_id) {
         if let Some(ref bin_dirs) = def.bin_dirs {
             if !bin_dirs.is_empty() {
-                return bin_dirs.iter()
-                    .map(|d| if d.is_empty() { link_dir.to_string() } else { format!("{}\\{}", link_dir, d) })
+                return bin_dirs
+                    .iter()
+                    .map(|d| {
+                        if d.is_empty() {
+                            link_dir.to_string()
+                        } else {
+                            format!("{}\\{}", link_dir, d)
+                        }
+                    })
                     .collect();
             }
         }
@@ -672,7 +735,10 @@ fn which_in_path(name: &str) -> bool {
     #[cfg(windows)]
     {
         let name_lower = name.to_lowercase();
-        if !name_lower.ends_with(".exe") && !name_lower.ends_with(".cmd") && !name_lower.ends_with(".bat") {
+        if !name_lower.ends_with(".exe")
+            && !name_lower.ends_with(".cmd")
+            && !name_lower.ends_with(".bat")
+        {
             check_names.push(format!("{}.exe", name));
             check_names.push(format!("{}.cmd", name));
             check_names.push(format!("{}.bat", name));
@@ -729,7 +795,9 @@ pub(crate) fn invalidate_msix_version_cache(package_name: &str) {
 /// 这类应用没有普通 exe 安装路径，只能问系统包注册。
 pub(crate) fn msix_package_info(package_name: &str) -> Result<MsixInfo, String> {
     {
-        let cache = msix_version_cache().lock().map_err(|e| format!("MSIX 缓存锁失败: {}", e))?;
+        let cache = msix_version_cache()
+            .lock()
+            .map_err(|e| format!("MSIX 缓存锁失败: {}", e))?;
         if let Some((at, value)) = cache.get(package_name) {
             if at.elapsed() < MSIX_VERSION_TTL {
                 return Ok(value.clone());
@@ -768,8 +836,9 @@ pub(crate) fn msix_package_install_location(package_name: &str) -> Result<Option
 
 /// PackageFamilyName 查询结果缓存（与版本缓存同理：一次 PowerShell 约 1~2 秒）。
 fn msix_family_cache() -> &'static std::sync::Mutex<HashMap<String, (Instant, Option<String>)>> {
-    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<String, (Instant, Option<String>)>>> =
-        std::sync::OnceLock::new();
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<HashMap<String, (Instant, Option<String>)>>,
+    > = std::sync::OnceLock::new();
     CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
 }
 
@@ -782,9 +851,7 @@ fn msix_family_cache() -> &'static std::sync::Mutex<HashMap<String, (Instant, Op
 ///
 /// 候选按优先级给出（stable 优先、beta 兜底），**一次** PowerShell 调用搞定全部候选。
 /// 抄 EchoBird `codex_proxy/codex_binary.rs::find_codex_store_family_via_appx`。
-pub(crate) fn msix_package_family_name(
-    package_names: &[&str],
-) -> Result<Option<String>, String> {
+pub(crate) fn msix_package_family_name(package_names: &[&str]) -> Result<Option<String>, String> {
     let key = package_names.join("|");
     if key.is_empty() {
         return Ok(None);
@@ -875,136 +942,8 @@ fn parse_msix_version(stdout: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{build_family_name_script, parse_msix_family_name, parse_msix_info, parse_msix_version};
+#[path = "scanner/tests.rs"]
+mod tests;
 
-    /// `<版本>|<InstallLocation>` 一次拿全：版本与安装目录都要，BOM / CRLF / 空行都要扛住。
-    ///
-    /// 安装目录是界面「检测到的路径」的唯一来源（Store 应用没法在 `paths.json` 里声明
-    /// WindowsApps 路径），所以不能因为分隔符位置不理想就整条丢掉。
-    #[test]
-    fn msix_info_parses_version_and_install_location() {
-        assert_eq!(
-            parse_msix_info("2.19675.0.0|C:\\Program Files\\WindowsApps\\Claude_2.19675.0.0_x64__pzs8sxrjxfjjc\r\n"),
-            (
-                Some("2.19675.0.0".to_string()),
-                Some("C:\\Program Files\\WindowsApps\\Claude_2.19675.0.0_x64__pzs8sxrjxfjjc".to_string())
-            )
-        );
-        assert_eq!(
-            parse_msix_info("\u{feff}1.29.380.0|C:\\Program Files\\WindowsApps\\Codex\r\n"),
-            (
-                Some("1.29.380.0".to_string()),
-                Some("C:\\Program Files\\WindowsApps\\Codex".to_string())
-            ),
-            "BOM 要剥掉"
-        );
-        // 没装 → 两项都没有（绝不能把空串当成路径显示出去）
-        assert_eq!(parse_msix_info("\r\n\r\n"), (None, None));
-        assert_eq!(parse_msix_info(""), (None, None));
-        // 路径为空（异常输出）→ 只认版本
-        assert_eq!(parse_msix_info("1.2.3.4|\r\n"), (Some("1.2.3.4".to_string()), None));
-        // 没有 `|`（脚本被截断）→ 版本仍可用，路径不猜
-        assert_eq!(parse_msix_info("1.2.3.4"), (Some("1.2.3.4".to_string()), None));
-        // WindowsApps 路径里本来就有 `|` 之外的字符，用 split_once 只切第一个分隔符
-        assert_eq!(
-            parse_msix_info("1.0.0.0|D:\\a\\b|c\r\n").1.as_deref(),
-            Some("D:\\a\\b|c")
-        );
-    }
-
-    /// PowerShell 的输出形态：CRLF、前导空行、可能有 BOM；没装时只有空行。
-    #[test]
-    fn msix_version_parses_first_non_empty_line() {
-        assert_eq!(parse_msix_version("1.29.380.0\r\n").as_deref(), Some("1.29.380.0"));
-        assert_eq!(parse_msix_version("\r\n\r\n").as_deref(), None, "没装时输出为空");
-        assert_eq!(parse_msix_version("").as_deref(), None);
-        assert_eq!(parse_msix_version("\u{feff}1.29.380.0\r\n").as_deref(), Some("1.29.380.0"), "BOM 要剥掉");
-        // 多个包命中时（同名多版本 / 多用户）只取第一行
-        assert_eq!(parse_msix_version("2.0.0.0\r\n1.29.380.0\r\n").as_deref(), Some("2.0.0.0"));
-    }
-
-    /// 族名必须是 `<identity>_<hash>` 形态：PowerShell 报错或输出别的东西时不能
-    /// 让它变成一个假 AUMID（那比「找不到」更难排查）。
-    #[test]
-    fn msix_family_name_requires_identity_hash_shape() {
-        assert_eq!(parse_msix_family_name("OpenAI.Codex_2p2nqsd0c76g0\r\n").as_deref(), Some("OpenAI.Codex_2p2nqsd0c76g0"));
-        assert_eq!(parse_msix_family_name("\u{feff}OpenAI.Codex_abc\r\n").as_deref(), Some("OpenAI.Codex_abc"), "BOM 要剥掉");
-        assert_eq!(parse_msix_family_name("\r\n\r\n").as_deref(), None, "没装时输出为空");
-        // 报错信息 / 命令回显不是族名
-        assert_eq!(parse_msix_family_name("Get-AppxPackage : 找不到").as_deref(), None);
-    }
-
-    /// 一次 PowerShell 调用覆盖全部候选：首个用 `if`，其余 `elseif`（stable 优先）。
-    #[test]
-    fn family_name_script_chains_candidates_in_one_call() {
-        let script = build_family_name_script(&["OpenAI.Codex", "OpenAI.CodexBeta"]);
-        assert!(script.starts_with("if($p=Get-AppxPackage -Name 'OpenAI.Codex'"), "首个候选必须是 if");
-        assert!(script.contains("elseif($p=Get-AppxPackage -Name 'OpenAI.CodexBeta'"));
-        assert_eq!(script.matches("Get-AppxPackage").count(), 2, "两个候选一次查完");
-        // 单引号里的单引号要转义，否则 PowerShell 语法错、整条脚本静默失效
-        assert!(build_family_name_script(&["O'Brien.App"]).contains("O''Brien.App"));
-    }
-}
-
-/// 扫描数据目录状态
-fn build_data_dirs_status(def: &ProjectDef, active_install_root: Option<&str>) -> Vec<crate::commands::project::types::DataDirStatus> {
-    use crate::commands::cache::{format_bytes, get_dir_size};
-    use crate::commands::project::types::DataDirStatus;
-
-    let config = load_config();
-    let install_root = active_install_root.map(PathBuf::from);
-    let mut statuses = Vec::new();
-
-    for dir_def in &def.data_dirs {
-        let resolved = crate::commands::service::resolve_data_dir(
-            def,
-            dir_def,
-            &config,
-            install_root.as_deref(),
-        );
-        let path = Path::new(&resolved.path);
-        let exists = path.exists();
-        let mut is_link = false;
-        let mut real_target = String::new();
-
-        if exists {
-            if let Ok(metadata) = fs::symlink_metadata(path) {
-                if metadata.file_type().is_symlink() {
-                    if let Ok(eval_path) = fs::read_link(path) {
-                        is_link = true;
-                        real_target = eval_path.to_string_lossy().to_string();
-                    } else if let Ok(eval_path) = fs::canonicalize(path) {
-                        let canonical = eval_path.to_string_lossy().to_string();
-                        let canonical_clean = canonical.trim_start_matches(r"\\?\").to_string();
-                        if canonical_clean != path.to_string_lossy().to_string() {
-                            is_link = true;
-                            real_target = canonical_clean;
-                        }
-                    }
-                }
-            }
-        }
-
-        let size_path = if exists && is_link && !real_target.is_empty() {
-            Path::new(&real_target)
-        } else {
-            path
-        };
-        let size = if exists { format_bytes(get_dir_size(size_path)) } else { "0 B".to_string() };
-
-        statuses.push(DataDirStatus {
-            id: resolved.id,
-            display_name: resolved.display_name,
-            path: resolved.path,
-            size,
-            is_link,
-            real_target,
-            exists,
-            kind: resolved.kind,
-            source: Some(resolved.source),
-        });
-    }
-
-    statuses
-}
+mod data_dirs;
+use data_dirs::build_data_dirs_status;
