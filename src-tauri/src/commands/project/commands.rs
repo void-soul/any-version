@@ -244,6 +244,13 @@ pub fn project_manage(app: tauri::AppHandle, id: String, delegation: crate::comm
         }
     }
 
+    // 5.5 安装根布局（scoop 这类把「本体位置」写死在目录结构里的工具：
+    //     `<root>\apps\<id>\current` junction + `<root>\shims\<name>.cmd` 包装）。
+    //     还没装版本时内部会跳过，安装完成后再补一次（见 versions::do_install）。
+    if let Err(e) = super::layout::apply(&def, &link_dir) {
+        eprintln!("[manage] 补齐 {} 的安装根布局失败: {}", id, e);
+    }
+
     // 6. 保存旧版数据备份
     save_manage_backup(&id, &def, &config);
 
@@ -284,6 +291,10 @@ pub fn project_repair_env_vars(id: String) -> Result<(), String> {
         .unwrap_or_else(|_| link_str.clone());
 
     crate::commands::env::configure_sdk_env_vars(&id, &link_str, &dest_str)?;
+    // 修复环境变量后同样要保证安装根布局存在（scoop 的 apps\scoop\current / shims 包装）。
+    if let Err(e) = super::layout::apply(&def, &link_dir) {
+        eprintln!("[repair] 补齐 {} 的安装根布局失败: {}", id, e);
+    }
     crate::sync_process_path();
     Ok(())
 }
@@ -301,6 +312,10 @@ pub fn project_unmanage(app: tauri::AppHandle, id: String) -> Result<(), String>
 
     let mut config = load_config();
     let delegation = scanner::get_project_delegation(&config, &id, &def);
+
+    // 0. 先撤掉 root_layout 生成的 junction / shim 包装 —— 必须在清空 SCOOP 之前，
+    //    否则读不到根路径，留下的 junction 会指向可能已不存在的版本链接目录。
+    super::layout::remove(&def, &Path::new(&config.links_dir).join(&id));
 
     // 1. 移除被托管的项目环境变量
     for var_def in &def.env_vars {

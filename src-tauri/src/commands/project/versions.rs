@@ -1308,6 +1308,11 @@ async fn do_install(
         let _ = crate::commands::cache::create_junction(&junction_path, &dest_dir);
     }
 
+    // 8. 安装根布局：首次安装后 links_dir/<id> 才存在，托管那一步会跳过（见 layout::apply）。
+    if let Err(e) = super::layout::apply(&def, &junction_path) {
+        eprintln!("[install] 补齐 {} 的安装根布局失败: {}", id, e);
+    }
+
     sync_install_step(&app, &id, "完成");
 
     Ok(())

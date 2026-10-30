@@ -37,9 +37,49 @@ pub struct EnvVarDef {
     pub check_type: String,
     #[serde(default)]
     pub tier: Option<EnvVarTier>,
-    /// 托管时的值子目录（相对于 link_dir），不填则值 = link_dir
+    /// 托管时的值子目录：存在时值 = 缓存根（`{data_dir}/caches`）下的该子目录，
+    /// 不填则值 = SDK 版本链接目录（link_dir）。见 `env.rs::sdk_env_var_value`。
     #[serde(default)]
     pub sub_dir: Option<String>,
+}
+
+/// 「安装根布局」声明：把 SDK 的版本链接目录投影到某个环境变量指向的根下。
+///
+/// 只对「假定自己装在 `<root>\apps\<id>\current`」的工具需要，目前就是 scoop：
+/// 它的 `lib/core.ps1` 用 `$PSScriptRoot\..\..\..\..` 反推安装根（SDK 的平铺布局
+/// `sdk/<id>/lib` 会反推成盘符根，于是 buckets 落到 `D:\buckets`），
+/// shim 模板又固定取 `<root>\apps\scoop\current\supporting\shims\kiennq\shim.exe`
+/// （缺失时 `scoop install` 会在「Creating shim」一步失败）。
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RootLayoutDef {
+    /// 提供根路径的环境变量名（值由 env_vars 托管写入，如 SCOOP）
+    pub env_var: String,
+    /// 投影到根下的 junction：`<root>\<rel>` → `{link_dir}\<target>`（target 为空 = link_dir）
+    #[serde(default)]
+    pub link_dirs: Vec<RootLayoutLink>,
+    /// 生成到 `<root>\shims` 的 .cmd 包装（让 cmd 环境也能调用 PowerShell 脚本）
+    #[serde(default)]
+    pub shim_wrappers: Vec<RootLayoutShim>,
+    /// 首次托管时确保存在的 bucket（异步执行 `scoop bucket add <name>`，失败静默）
+    #[serde(default)]
+    pub ensure_bucket: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RootLayoutLink {
+    /// 相对根目录的路径（如 `apps\scoop\current`）
+    pub rel: String,
+    /// 相对版本链接目录的目标；空表示链接目录本身
+    #[serde(default)]
+    pub target: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RootLayoutShim {
+    /// shim 名（生成 `<name>.cmd`）
+    pub name: String,
+    /// 被包装的脚本（相对版本链接目录，如 `bin\scoop.ps1`）
+    pub script: String,
 }
 
 /// 用户可配置的环境变量（运行时参数，非路径类）
@@ -446,6 +486,9 @@ pub struct ProjectDef {
     /// 支持手动定义
     #[serde(default)]
     pub bin_dirs: Option<Vec<String>>,
+    /// 安装根布局（scoop 这类「本体必须在 `<root>\apps\<id>\current`」的工具需要）
+    #[serde(default)]
+    pub root_layout: Option<RootLayoutDef>,
     /// 是否要求将 bin 目录注册到【系统级 PATH】(HKLM) 而非用户级 PATH (HKCU)。
     /// 某些构建工具（如 Flutter 启动的 cmake 子进程）只读取系统级 PATH 视图，
     /// 用户级 PATH 对其不可见，此时需开启此选项才能使 find_program 找到可执行文件。

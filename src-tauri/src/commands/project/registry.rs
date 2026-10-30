@@ -360,27 +360,68 @@ mod tests {
         assert!(scoop.remote_versions_url.is_some(), "scoop 缺版本列表地址");
     }
 
-    /// SCOOP / SCOOP_GLOBAL 是「安装根」语义，**不能**交给通用环境变量托管：
-    /// 不带 sub_dir 的 path 型变量会被写成 SDK 的版本链接目录（`env.rs::sdk_env_var_value`），
-    /// 于是「根目录」与「全局目录」两个数据目录会被解析成同一个 junction（实测截图），
-    /// 而 scoop 自己的 apps/buckets 会被引到版本目录里，切版本即丢。
-    /// 它们必须保持 Clear 层（托管时清除变量），位置移动交给「数据管理」页签里
-    /// 对应 data_dir 条目的「开始变更」（复制 + Junction）——与 mysql 等服务的做法一致。
+    /// SCOOP 是「安装根」语义，必须托管，但**必须带 `sub_dir`**：
+    /// - 不带 sub_dir 的 path 型变量会被写成 SDK 的版本链接目录（`env.rs::sdk_env_var_value`），
+    ///   scoop 的 apps/buckets 会被引到版本目录里，切版本即丢（Q-0270 的历史坑）；
+    /// - 反过来「清除变量」也不行：scoop 的 `lib/core.ps1` 会拿 `$PSScriptRoot\..\..\..\..`
+    ///   反推安装根，SDK 托管的平铺布局（`sdk/<id>/lib`）反推出来是盘符根（实测 buckets
+    ///   落到 `D:\buckets`、cache 落到 `D:\cache`，`{home}\scoop` 兜底永远走不到）。
+    /// 所以值必须锚定到 `get_cache_root()/scoop`，与「数据管理」页签里 root 条目的默认路径
+    /// （`{data_dir}\caches\scoop`）保持一致；`SCOOP_GLOBAL` 仍是 Clear（-g 位置交给 global 条目）。
     #[test]
-    fn scoop_env_vars_must_not_be_path_managed() {
+    fn scoop_root_env_var_must_be_anchored_to_cache_root() {
         let scoop = load_all()
             .into_iter()
             .find(|d| d.id == "scoop")
             .expect("projects/ 里缺少 scoop");
-        assert!(!scoop.env_vars.is_empty(), "scoop 应声明 SCOOP / SCOOP_GLOBAL");
-        for var in &scoop.env_vars {
-            assert_eq!(
-                var.tier,
-                Some(super::super::types::EnvVarTier::Clear),
-                "{} 不能是托管型路径变量（会被写成版本链接目录）",
-                var.name
-            );
-        }
+
+        let root = scoop
+            .env_vars
+            .iter()
+            .find(|v| v.name == "SCOOP")
+            .expect("scoop 应声明 SCOOP");
+        assert_eq!(root.check_type, "path");
+        assert_eq!(
+            root.tier,
+            Some(super::super::types::EnvVarTier::Core),
+            "SCOOP 必须是托管型路径变量"
+        );
+        assert_eq!(
+            root.sub_dir.as_deref(),
+            Some("scoop"),
+            "SCOOP 必须锚定到缓存根下的 scoop 子目录，否则会被写成版本链接目录"
+        );
+
+        let global = scoop
+            .env_vars
+            .iter()
+            .find(|v| v.name == "SCOOP_GLOBAL")
+            .expect("scoop 应声明 SCOOP_GLOBAL");
+        assert_eq!(
+            global.tier,
+            Some(super::super::types::EnvVarTier::Clear),
+            "SCOOP_GLOBAL 仍由「数据管理」的 global 条目托管，变量要清空"
+        );
+
+        // 光有正确的 SCOOP 值还不够：scoop 还假定本体在 `<root>\apps\scoop\current`
+        // （shim 模板从那里取），并在 `<root>\shims` 里提供 scoop 命令。
+        // 这两条由 root_layout 在托管/修复/安装后自动补齐，否则新机器托管完仍然装不了东西。
+        let layout = scoop
+            .root_layout
+            .as_ref()
+            .expect("scoop 必须声明 root_layout，否则新机器一键托管后 shim 生成会失败");
+        assert_eq!(layout.env_var, "SCOOP");
+        assert!(
+            layout
+                .link_dirs
+                .iter()
+                .any(|l| l.rel.replace('/', "\\").eq_ignore_ascii_case("apps\\scoop\\current")),
+            "scoop 需要 apps\\scoop\\current 投影到版本链接目录"
+        );
+        assert!(
+            layout.shim_wrappers.iter().any(|s| s.name == "scoop"),
+            "scoop 需要 shims\\scoop.cmd 包装"
+        );
     }
 
     /// 谁会声明 `data_dirs`（数据 / 日志 / 缓存 / 配置目录，界面上就是「数据管理」页）：
