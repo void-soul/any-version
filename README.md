@@ -77,7 +77,7 @@ Windows 开发者聚合工具箱 —— 多 SDK 版本管理 · AI Agent 桌面�
 
 | 层级 | 技术 |
 |------|------|
-| **前端** | React 19 · TypeScript · Vite 7 · Tailwind CSS 4 |
+| **前端** | React 19 · TypeScript · Vite 8 · Tailwind CSS 4 |
 | **后端** | Rust 2021 Edition · Tauri 2 |
 | **核心依赖（前端）** | react-markdown · remark-gfm · monaco-editor · lucide-react · flag-icons · dompurify |
 | **核心依赖（Rust）** | sysinfo · reqwest · serde · winreg · trash · tauri（autostart/dialog/opener/process/updater 插件） |
@@ -86,9 +86,9 @@ Windows 开发者聚合工具箱 —— 多 SDK 版本管理 · AI Agent 桌面�
 
 ### 前置要求
 
-- [Rust](https://www.rust-lang.org/) (建议 1.75+)
-- [Node.js](https://nodejs.org/) (建议 18+)
-- [pnpm](https://pnpm.io/) 或 npm
+- [Rust](https://www.rust-lang.org/)（发布构建使用 1.93）
+- [Node.js](https://nodejs.org/)（建议 22.13+，与 CI 保持一致）
+- [pnpm](https://pnpm.io/) 11（需要 Node.js 22.13+）；也可使用 npm，最低 Node.js 版本见 **package.json** 的 **engines**
 
 ### 从 Release 下载
 
@@ -119,7 +119,7 @@ pnpm tauri build
 # 终端 1：启动 Vite 开发服务器
 pnpm dev
 
-# 终端 2：启动 Tauri 应用（会自动连接 localhost:1420）
+# 终端 2：启动 Tauri 应用（会自动连接 localhost:8888）
 pnpm tauri dev
 ```
 
