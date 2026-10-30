@@ -1,0 +1,27 @@
+{
+  "qid": "Q-0578",
+  "question": "BuddyPanel原4657行，将账号、OAuth/导入、平台切换、会话管理与冲突裁决、签到/旅行、到期列及路径设置集中。",
+  "root_cause": "不同领域的状态、后台事件和大量视图混在同一页面，缺少可独立维护的边界。",
+  "solution": "完整顶层声明提取QuotaBar和868行以内模型。7个领域hook各自拥有状态和相应命令/视图：冲突中心、会话、签到、账号导入、到期列、客户端路径、账号维护；输入分别3/5/5/8/3/3/7项，未引入宽controller/context。主页面保留平台加载/切换、共享busy及事件分派，platformEpochRef仍唯一且传给异步请求守卫。6个typed子视图覆盖平台头、自动签到/旅行设置、用量与删除弹窗、到期单元格；先有值再调用hook，晚声明load/showMsg/displayName仅通过惰性回调捕获。\n主agent最终tsc通过、50测试文件397项通过，npm run build通过。全部输出小于1000行。\n最终主agent验收：主程序all-targets通过；完整Rust分组1477通过/6原忽略；前端50文件397测试、tsc、生产构建通过；1084源结构/边界守卫通过。",
+  "files": "| File | Change |\n|------|--------|\n| **BuddyPanel.tsx** | 4657降至988行主编排 |\n| **useBuddyConflictCenter.tsx**、**useBuddySessions.tsx**、**useBuddyCheckin.tsx** | 冲突714/会话470/签到780行，状态跨Tab保持 |\n| **useBuddyAccountImport.tsx**、**useBuddyAccountMaintenance.tsx** | 355/236行导入/OAuth与账号排序/维护 |\n| **useBuddyExpiryColumns.tsx**、**useBuddyClientPaths.tsx** | 到期列及路径领域 |\n| **Buddy*Header/Settings/Dialog/ExpiryCell.tsx**、**BuddyPanel.*.tsx** | typed视图、完整QuotaBar与模型 |",
+  "status": "已验证",
+  "paths": [
+    "src/components/buddy/BuddyPanel.QuotaBar.tsx",
+    "src/components/buddy/BuddyPanel.model.tsx",
+    "src/components/buddy/BuddyPanel.tsx",
+    "src/components/buddy/BuddyPlatformHeader.tsx",
+    "src/components/buddy/BuddyAutoCheckinSettings.tsx",
+    "src/components/buddy/BuddyAutoTravelSettings.tsx",
+    "src/components/buddy/BuddyAccountUsageDialog.tsx",
+    "src/components/buddy/BuddyDeleteAccountsDialog.tsx",
+    "src/components/buddy/BuddyExpiryCell.tsx",
+    "src/components/buddy/useBuddyConflictCenter.tsx",
+    "src/components/buddy/useBuddySessions.tsx",
+    "src/components/buddy/useBuddyCheckin.tsx",
+    "src/components/buddy/useBuddyAccountImport.tsx",
+    "src/components/buddy/useBuddyExpiryColumns.tsx",
+    "src/components/buddy/useBuddyClientPaths.tsx",
+    "src/components/buddy/useBuddyAccountMaintenance.tsx"
+  ],
+  "validation": "Final all-targets check and1483 inventory;1459 sandbox +18 exact Windows fixture tests passed,6 existing ignored. Frontend tsc/50 files397 tests and production build passed; source guard1084 passed."
+}
