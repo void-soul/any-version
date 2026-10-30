@@ -1,0 +1,30 @@
+{
+  "qid": "Q-0576",
+  "question": "CodeBuddy共享扩展目录重定向、冲突决策与SQLite合并事务集中在3396行实现。",
+  "root_cause": "CodeBuddy共享扩展目录重定向、冲突决策与SQLite合并事务集中在3396行实现。 会话锁与缓存需要保持单一所有权，测试应按真实场景归档。",
+  "solution": "保留原公开模块facade和所有API；将模型、持久化、共享目录、合并、冲突处理、迁移和测试按实际职责放到正常Rust子模块。保留进程级锁和缓存唯一所有权、所有原函数及原测试；共享辅助限制pub(super)，原pub(super)按旧祖先限定保留。CodeBuddy测试额外按冲突、工作区、数据库、合并和junction场景拆分，共用隔离临时fixture。 测试模块使用正常mod tests声明及codebuddy/tests/*.rs目录，避免path属性改变嵌套模块的搜索基准。\n最终主agent验收：主程序all-targets通过；完整Rust分组1477通过/6原忽略；前端50文件397测试、tsc、生产构建通过；1084源结构/边界守卫通过。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/buddy/session_transfer/codebuddy.rs** | 兼容facade与职责声明 |\n| **src-tauri/src/commands/buddy/session_transfer/codebuddy/** | 职责实现及原测试分组 |",
+  "status": "已验证",
+  "paths": [
+    "src-tauri/src/commands/buddy/session_transfer/codebuddy.rs",
+    "src-tauri/src/commands/buddy/session_transfer/codebuddy/context.rs",
+    "src-tauri/src/commands/buddy/session_transfer/codebuddy/shared_storage.rs",
+    "src-tauri/src/commands/buddy/session_transfer/codebuddy/transfer.rs",
+    "src-tauri/src/commands/buddy/session_transfer/codebuddy/conflicts.rs",
+    "src-tauri/src/commands/buddy/session_transfer/codebuddy/preview.rs",
+    "src-tauri/src/commands/buddy/session_transfer/codebuddy/synchronization.rs",
+    "src-tauri/src/commands/buddy/session_transfer/codebuddy/workspaces.rs",
+    "src-tauri/src/commands/buddy/session_transfer/codebuddy/merge.rs",
+    "src-tauri/src/commands/buddy/session_transfer/codebuddy/index.rs",
+    "src-tauri/src/commands/buddy/session_transfer/codebuddy/movement.rs",
+    "src-tauri/src/commands/buddy/session_transfer/codebuddy/filesystem.rs",
+    "src-tauri/src/commands/buddy/session_transfer/codebuddy/database.rs",
+    "src-tauri/src/commands/buddy/session_transfer/codebuddy/tests.rs",
+    "src-tauri/src/commands/buddy/session_transfer/codebuddy/tests/conflict_resolution.rs",
+    "src-tauri/src/commands/buddy/session_transfer/codebuddy/tests/workspace_movement.rs",
+    "src-tauri/src/commands/buddy/session_transfer/codebuddy/tests/database.rs",
+    "src-tauri/src/commands/buddy/session_transfer/codebuddy/tests/merging.rs",
+    "src-tauri/src/commands/buddy/session_transfer/codebuddy/tests/junctions.rs"
+  ],
+  "validation": "Final all-targets check and1483 inventory;1459 sandbox +18 exact Windows fixture tests passed,6 existing ignored. Frontend tsc/50 files397 tests and production build passed; source guard1084 passed."
+}
