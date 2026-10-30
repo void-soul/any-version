@@ -1,0 +1,20 @@
+{
+  "qid": "Q-0547",
+  "parent_task": "Q-0506",
+  "question": "env.rs原文件超过1000行，多项职责和单元测试混在同一模块，降低独立维护和审查效率。",
+  "root_cause": "历史功能持续累积，注册表、路径、运行状态、安装和测试缺少模块内职责边界。",
+  "solution": "按实际职责拆为 registry, path, sdk, backups, directories, models, tests。原路径保留公开facade，以正常Rust子模块与reexport保持原公开API及Tauri命令宏。私有共享辅助限制为pub(super)，保留既有测试，不引入include片段。\n主agent验收：Main lib compiled; corresponding 5 inherited tests passed across sandbox + exact Windows temporary-fixture validation. All output paths <1000 lines; SDK fixture paths anchored to CARGO_MANIFEST_DIR.",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/env.rs** | 兼容facade和子模块声明 |\n| **src-tauri/src/commands/env/** | 按职责独立实现与原有回归测试 |",
+  "status": "已验证",
+  "paths": [
+    "src-tauri/src/commands/env.rs",
+    "src-tauri/src/commands/env/registry.rs",
+    "src-tauri/src/commands/env/path.rs",
+    "src-tauri/src/commands/env/sdk.rs",
+    "src-tauri/src/commands/env/backups.rs",
+    "src-tauri/src/commands/env/directories.rs",
+    "src-tauri/src/commands/env/models.rs",
+    "src-tauri/src/commands/env/tests.rs"
+  ],
+  "validation": "Main lib compiled; corresponding 5 inherited tests passed across sandbox + exact Windows temporary-fixture validation. All output paths <1000 lines; SDK fixture paths anchored to CARGO_MANIFEST_DIR."
+}
