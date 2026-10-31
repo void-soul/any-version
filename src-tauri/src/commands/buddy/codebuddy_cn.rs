@@ -496,6 +496,7 @@ fn friendly_inject_error(err: &str) -> String {
 }
 
 /// 注入后校验：state.vscdb 中目标 key 必须存在且非空（复刻 verify_state_db_injection）
+#[cfg(test)]
 fn verify_state_db_injection(state_db_path: &std::path::Path, db_key: &str) -> Result<(), String> {
     let conn = rusqlite::Connection::open(state_db_path)
         .map_err(|e| format!("注入校验失败，无法打开 state.vscdb: {}", e))?;
@@ -537,67 +538,18 @@ pub(crate) fn read_session_access_token() -> Result<Option<String>, String> {
         .map(|s| s.to_string()))
 }
 
-/// 同步 CodeBuddy CN 插件的**身份键** `User/globalStorage/storage.json` → `genie.userId`。
-///
-/// 真机结论（2026-10-18）：插件把 `genie.userId` 当作"当前是谁"，再拿它去和
-/// `state.vscdb` 里的令牌会话对账。**只注入令牌不改这个键**，客户端就会判为未登录
-/// （账号显示正常、一操作就提示登录）—— 这就是切号"看起来成功、实际不生效"的那一半原因。
-///
-/// 同源校验：我们账号库里的 `uid` 就是导入时从客户端会话 `account.uid` 取的，
-/// 与 `genie.userId` 同一个值空间（实测 DEDEDE 两边都是 57c81ef5-…）。
-fn sync_plugin_user_id(data_root: &std::path::Path, uid: &str) -> Result<(), String> {
-    let uid = uid.trim();
-    if uid.is_empty() {
-        return Err("账号缺少 uid，无法同步 CodeBuddy CN 身份键（genie.userId）".to_string());
-    }
-    let path = data_root
-        .join("User")
-        .join("globalStorage")
-        .join("storage.json");
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let mut root: serde_json::Value = match std::fs::read_to_string(&path) {
-        Ok(text) => serde_json::from_str(&text).unwrap_or_else(|_| serde_json::json!({})),
-        Err(_) => serde_json::json!({}),
-    };
-    if !root.is_object() {
-        root = serde_json::json!({});
-    }
-    // 备份：身份键同步失败时能把它恢复回去（客户端找不到身份 = 直接登出）
-    if path.exists() {
-        let mut backup = path.as_os_str().to_os_string();
-        backup.push(format!(
-            ".kira-switch-{}.bak",
-            chrono::Utc::now().timestamp()
-        ));
-        if let Err(e) = std::fs::copy(&path, std::path::PathBuf::from(backup)) {
-            eprintln!("[buddy] 备份 CodeBuddy CN storage.json 失败（继续切号）: {e}");
-        }
-    }
-    if let Some(obj) = root.as_object_mut() {
-        obj.insert("genie.userId".to_string(), serde_json::Value::String(uid.to_string()));
-    }
-    let content =
-        serde_json::to_string(&root).map_err(|e| format!("序列化 storage.json 失败: {}", e))?;
-    store::write_atomic(&path, &content)?;
-
-    // 写后校验
-    let written = std::fs::read_to_string(&path)
-        .map_err(|e| format!("校验 CodeBuddy CN 身份键失败: {e}"))?;
-    let written_json: serde_json::Value = serde_json::from_str(&written)
-        .map_err(|e| format!("校验 CodeBuddy CN storage.json 失败: {e}"))?;
-    match written_json.get("genie.userId").and_then(|v| v.as_str()) {
-        Some(v) if v == uid => Ok(()),
-        other => Err(format!(
-            "同步 CodeBuddy CN 身份键失败：genie.userId={:?}，期望 {}",
-            other, uid
-        )),
-    }
-}
+#[path = "codebuddy_cn/switch_transaction.rs"]
+mod switch_transaction;
 
 /// 切换默认客户端到指定账号（写回 state.vscdb + 同步插件身份键）。
 pub fn write_account_to_default_client(account: &BuddyAccount) -> Result<String, String> {
+    write_account_with_confirmation(account, || None)
+}
+
+fn write_account_with_confirmation(
+    account: &BuddyAccount,
+    confirm: impl FnOnce() -> Option<String>,
+) -> Result<String, String> {
     let state_db = default_state_db_path()
         .ok_or_else(|| "无法定位默认 CodeBuddy CN state.vscdb 路径".to_string())?;
     if let Some(parent) = state_db.parent() {
@@ -619,20 +571,30 @@ pub fn write_account_to_default_client(account: &BuddyAccount) -> Result<String,
                 account.display_name()
             )
         })?;
-    if let Err(err) = super::crypto::inject_secret_to_state_db(
-        &state_db,
-        &db_key,
-        &session_json,
-        &data_root,
-        Platform::CodeBuddyCn,
-    ) {
-        return Err(friendly_inject_error(&err));
+    let identity = switch_transaction::IdentityUpdate::prepare(&data_root, uid)?;
+    let encrypted = super::crypto::encrypt_secret_payload(
+        session_json.as_bytes(), &data_root, Platform::CodeBuddyCn,
+    ).map_err(|e| friendly_inject_error(&e))?;
+    let buffer = serde_json::to_string(&serde_json::json!({
+        "type": "Buffer", "data": encrypted
+    })).map_err(|e| e.to_string())?;
+    let committed = switch_transaction::commit(&state_db, &db_key, &buffer, identity, |conn| {
+        let stored: String = conn.query_row(
+            "SELECT value FROM ItemTable WHERE key = ?1", [&db_key], |row| row.get(0),
+        ).map_err(|e| e.to_string())?;
+        if stored != buffer { return Err("CN secret verification failed".into()); }
+        let decoded = super::crypto::decode_secret_storage_value(
+            &stored, &data_root, Platform::CodeBuddyCn,
+        )?;
+        if decoded != session_json { return Err("CN session verification failed".into()); }
+        Ok(())
+    })?;
+    if let Some(error) = confirm() {
+        return Err(committed.rollback(error));
     }
-    verify_state_db_injection(&state_db, &db_key)?;
-    // 身份键**最后**写：令牌已落地并校验通过，再换 genie.userId。
-    // 顺序反过来的话，注入/校验失败会留下「身份已换、令牌还是旧账号」——
-    // 客户端拿新身份配旧令牌，直接登出，而且没有回滚路径。
-    sync_plugin_user_id(&data_root, uid)?;
+    if let Err(error) = committed.verify_target() {
+        return Err(committed.rollback(error));
+    }
     Ok(format!(
         "已切换到 {}（{}）",
         account.display_name(),
@@ -644,7 +606,9 @@ pub fn write_account_to_default_client(account: &BuddyAccount) -> Result<String,
 pub fn switch_account(account_id: &str) -> Result<String, String> {
     let account = store::load_account(BuddyPlatform::CodebuddyCn, account_id)
         .ok_or_else(|| format!("CodeBuddy CN 账号不存在: {}", account_id))?;
-    let result = write_account_to_default_client(&account)?;
+    let result = write_account_with_confirmation(&account, || {
+        super::confirm_switch_landed(BuddyPlatform::CodebuddyCn, &account.access_token)
+    })?;
     let mut updated = account;
     updated.last_used = chrono::Utc::now().timestamp();
     let _ = store::upsert_account(BuddyPlatform::CodebuddyCn, updated);
@@ -753,53 +717,6 @@ mod tests {
         // 顶层兼容字段保留
         assert_eq!(v["id"].as_str(), Some("Tencent-Cloud.genie-ide-cn"));
         assert_eq!(v["converted"].as_bool(), Some(true));
-    }
-
-    #[test]
-    fn plugin_user_id_is_synced_and_verified() {
-        let dir = std::env::temp_dir().join(format!(
-            "kira-cn-userid-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        ));
-        let storage = dir.join("User").join("globalStorage").join("storage.json");
-        std::fs::create_dir_all(storage.parent().unwrap()).unwrap();
-        // 预置一个"旧身份"，模拟已经登录过的客户端
-        std::fs::write(
-            &storage,
-            serde_json::json!({
-                "telemetry.machineId": "abc",
-                "genie.userId": "old-uid",
-                "windowControlHeight": 32
-            })
-            .to_string(),
-        )
-        .unwrap();
-
-        sync_plugin_user_id(&dir, "new-uid").expect("同步身份键应成功");
-
-        let after: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&storage).unwrap()).unwrap();
-        assert_eq!(after["genie.userId"].as_str(), Some("new-uid"));
-        // 其它键必须保留
-        assert_eq!(after["telemetry.machineId"].as_str(), Some("abc"));
-        assert_eq!(after["windowControlHeight"].as_i64(), Some(32));
-        // 备份文件应该留下
-        let backups: Vec<_> = std::fs::read_dir(storage.parent().unwrap())
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .map(|e| e.file_name().to_string_lossy().to_string())
-            .filter(|n| n.starts_with("storage.json.kira-switch-"))
-            .collect();
-        assert_eq!(backups.len(), 1, "应留一份同步前的备份");
-
-        // 空 uid 必须拒绝（否则会把身份键写坏，客户端直接登出）
-        assert!(sync_plugin_user_id(&dir, "  ").is_err());
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

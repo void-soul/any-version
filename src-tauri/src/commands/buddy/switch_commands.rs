@@ -180,7 +180,9 @@ pub async fn buddy_switch_account(
         // 3.5) **延时复查**：等客户端落定后再确认登录态确实是我们写的。
         //     客户端处在退出/启动窗口时会用缓存会话回写覆盖（真机 2026-10-17 踩过），
         //     那种情况必须报错而不是返回成功 —— 静默成功比失败更糟。
-        if let Some(problem) = confirm_switch_landed(platform, &account.access_token) {
+        // CN confirms while its committed snapshot is still available for guarded recovery.
+        if let Some(problem) = (platform != BuddyPlatform::CodebuddyCn)
+            .then(|| confirm_switch_landed(platform, &account.access_token)).flatten() {
             eprintln!("[Buddy Switch] 切号未生效：{problem}");
             return Err(problem);
         }
