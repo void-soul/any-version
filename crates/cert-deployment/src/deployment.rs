@@ -118,16 +118,37 @@ impl OutputLock {
         std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
         let root = root.canonicalize().map_err(|e| e.to_string())?;
         let path = root.join(".receiver-deployment.lock");
-        if path.exists() && is_link(&path)? {
-            return Err("证书目录锁不能是链接".into());
+        match std::fs::symlink_metadata(&path) {
+            Ok(_) if is_link(&path)? => return Err("证书目录锁不能是链接（含悬空链接）".into()),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("无法检查证书目录锁: {error}")),
         }
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(path)
-            .map_err(|e| e.to_string())?;
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // Open the reparse point itself and keep the active lock file from being replaced.
+            options.custom_flags(0x00200000).share_mode(0x1 | 0x2);
+        }
+        let file = options.open(&path).map_err(|e| e.to_string())?;
+        let metadata = file.metadata().map_err(|e| e.to_string())?;
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            if metadata.file_attributes() & 0x400 != 0 {
+                return Err("证书目录锁不能是链接".into());
+            }
+        }
+        if !metadata.is_file() {
+            return Err("证书目录锁必须是普通文件".into());
+        }
         fs2::FileExt::try_lock_exclusive(&file)
             .map_err(|e| format!("其它接收端正在使用此证书目录，请稍后重试: {e}"))?;
         Ok(Self { _file: file })
@@ -149,6 +170,7 @@ fn is_link(path: &Path) -> Result<bool, String> {
 
 fn validate_name(name: &str) -> Result<(), String> {
     if name.is_empty()
+        || name.starts_with(".receiver-")
         || name.contains(['/', '\\', ':', '\0'])
         || name == "."
         || name == ".."
@@ -167,11 +189,57 @@ fn validate_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn create_private_dir(path: &Path, recursive: bool) -> Result<(), String> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(recursive);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(path).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn private_file(path: &Path) -> Result<std::fs::File, String> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    let output = options.open(path).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Existing files copied from the previous generation may have broader permissions.
+        output
+            .set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(output)
+}
+
+fn names_alias(left: &str, right: &str, windows: bool) -> bool {
+    if windows {
+        left.to_uppercase() == right.to_uppercase()
+    } else {
+        left == right
+    }
+}
+
 fn copy_tree(source: &Path, dest: &Path, depth: usize, count: &mut usize) -> Result<(), String> {
     if depth > 8 {
         return Err("证书目录层级过深，未修改现有证书".into());
     }
-    std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
+    create_private_dir(dest, true)?;
     for entry in std::fs::read_dir(source).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         *count += 1;
@@ -198,7 +266,7 @@ impl Deployment {
         let output_lock = OutputLock::try_acquire(&root)?;
         recover_pending(&root)?;
         let staging = root.join(format!(".receiver-stage-{}", crate::random_hex(16)));
-        std::fs::create_dir(&staging).map_err(|e| e.to_string())?;
+        create_private_dir(&staging, false)?;
         Ok(Self {
             root,
             staging,
@@ -212,7 +280,13 @@ impl Deployment {
     fn add(&mut self, name: &str, staged: PathBuf) -> Result<(), String> {
         validate_name(name)?;
         let target = self.root.join(name);
-        if self.operations.iter().any(|op| op.target == target) {
+        if self.operations.iter().any(|op| {
+            names_alias(
+                op.target.file_name().unwrap().to_str().unwrap(),
+                name,
+                cfg!(windows),
+            )
+        }) {
             return Err("证书目标名称重复".into());
         }
         if target.exists() && is_link(&target)? {
@@ -239,12 +313,20 @@ impl Deployment {
             }
             copy_tree(&target, &staged, 0, &mut 0)?;
         } else {
-            std::fs::create_dir(&staged).map_err(|e| e.to_string())?;
+            create_private_dir(&staged, false)?;
         }
+        let mut names = Vec::new();
         for (file, content) in files {
+            if names
+                .iter()
+                .any(|name: &&str| names_alias(name, file, cfg!(windows)))
+            {
+                return Err("证书目录内文件名称重复".into());
+            }
+            names.push(file);
             validate_name(file)?;
             let path = staged.join(file);
-            let mut output = std::fs::File::create(&path).map_err(|e| e.to_string())?;
+            let mut output = private_file(&path)?;
             use std::io::Write;
             output
                 .write_all(content.as_bytes())
@@ -256,7 +338,7 @@ impl Deployment {
 
     pub fn file(&mut self, name: &str, content: &str) -> Result<(), String> {
         let staged = self.staging.join(format!("new-{}", self.operations.len()));
-        let mut output = std::fs::File::create(&staged).map_err(|e| e.to_string())?;
+        let mut output = private_file(&staged)?;
         use std::io::Write;
         output
             .write_all(content.as_bytes())
@@ -336,6 +418,10 @@ impl Deployment {
     }
 
     pub fn finish(mut self) -> Result<(), String> {
+        self.commit_journal()
+    }
+
+    pub(crate) fn commit_journal(&mut self) -> Result<(), String> {
         let journal = Journal {
             committed: true,
             targets: self
@@ -504,5 +590,87 @@ mod tests {
         );
         assert!(!staging.exists());
         drop(next);
+    }
+    #[test]
+    fn windows_name_aliases_are_detected_before_live_installation() {
+        assert!(names_alias("example.com.crt", "EXAMPLE.COM.CRT", true));
+        assert!(!names_alias("example.com.crt", "EXAMPLE.COM.CRT", false));
+        assert!(validate_name(".receiver-deployment.lock").is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn flat_file_directory_case_alias_is_rejected_before_install() {
+        let root = Root::new();
+        let mut deployment = Deployment::new(&root.0).unwrap();
+        deployment
+            .file("example.com.crt", "fake certificate")
+            .unwrap();
+        assert!(deployment.directory("EXAMPLE.COM.CRT", vec![]).is_err());
+        assert!(!root.0.join("example.com.crt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_lock_symlink_does_not_create_its_external_target() {
+        let root = Root::new();
+        let output = root.0.join("output");
+        std::fs::create_dir(&output).unwrap();
+        let unrelated = root.0.join("must-not-create");
+        std::os::unix::fs::symlink(&unrelated, output.join(".receiver-deployment.lock")).unwrap();
+        assert!(OutputLock::try_acquire(&output).is_err());
+        assert!(!unrelated.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_directories_and_flat_private_keys_have_owner_only_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = Root::new();
+        for old_mode in [0o600, 0o644] {
+            let key = root.0.join("example.key");
+            std::fs::write(&key, "fake old key").unwrap();
+            std::fs::set_permissions(&key, std::fs::Permissions::from_mode(old_mode)).unwrap();
+            let mut deployment = Deployment::new(&root.0).unwrap();
+            assert_eq!(
+                std::fs::metadata(&deployment.staging)
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+            deployment.file("example.key", "fake new key").unwrap();
+            deployment.install().unwrap();
+            deployment.finish().unwrap();
+            assert_eq!(
+                std::fs::metadata(&key).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        std::fs::create_dir(root.0.join("certificate")).unwrap();
+        std::fs::write(root.0.join("certificate/cert.key"), "fake copied key").unwrap();
+        let mut deployment = Deployment::new(&root.0).unwrap();
+        deployment
+            .directory("certificate", vec![("cert.key", "fake replacement".into())])
+            .unwrap();
+        deployment.install().unwrap();
+        deployment.finish().unwrap();
+        assert_eq!(
+            std::fs::metadata(root.0.join("certificate"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(root.0.join("certificate/cert.key"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
     }
 }

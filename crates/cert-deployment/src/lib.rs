@@ -1,8 +1,11 @@
-//! Certificate deployment shared by the embedded and standalone receivers.
+//! Certificate deployment shared by local deployment and both HTTP receivers.
 //! This crate has no Tauri, application configuration or logging dependencies.
 pub mod deployment;
 pub mod protocol;
+pub mod reading;
+pub mod credentials;
 pub mod reload_command;
+mod reload_plan;
 
 fn random_hex(length: usize) -> String {
     let mut bytes = vec![0; length];

@@ -12,6 +12,29 @@ impl Drop for Scratch {
     }
 }
 
+fn terminate(child: &mut std::process::Child) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = Command::new("taskkill.exe")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .creation_flags(0x08000000)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(unix)]
+    {
+        // The child starts a new process group below; the negative PGID addresses only that group.
+        unsafe {
+            libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 pub fn run(program: &str, args: &[&str], cwd: Option<&str>) -> Result<String, String> {
     run_with_timeout(program, args, cwd, Duration::from_secs(30))
 }
@@ -38,6 +61,11 @@ fn run_with_timeout(
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000);
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
     }
@@ -50,26 +78,13 @@ fn run_with_timeout(
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Err(e) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                terminate(&mut child);
                 return Err(format!("等待 {program} 失败: {e}"));
             }
             Ok(None) => {}
         }
         if Instant::now() >= deadline {
-            #[cfg(windows)]
-            {
-                use std::os::windows::process::CommandExt;
-                let _ = Command::new("taskkill.exe")
-                    .args(["/PID", &child.id().to_string(), "/T", "/F"])
-                    .creation_flags(0x08000000)
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status();
-            }
-            let _ = child.kill();
-            let _ = child.wait();
+            terminate(&mut child);
             return Err(format!(
                 "{program} 执行超过 {} 秒，已终止",
                 timeout.as_secs_f64()
@@ -121,5 +136,45 @@ mod tests {
     fn captures_success_and_reports_nonzero_exit() {
         assert_eq!(run("cmd.exe", &["/c", "echo done"], None).unwrap(), "done");
         assert!(run("cmd.exe", &["/c", "exit 7"], None).is_err());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn timeout_terminates_the_shell_process_group() {
+        struct Probe(std::path::PathBuf);
+        impl Drop for Probe {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(self.0.join("survived"));
+                let _ = std::fs::remove_dir(&self.0);
+            }
+        }
+        let root = Probe(
+            std::env::temp_dir().join(format!("receiver-group-probe-{}", crate::random_hex(12))),
+        );
+        std::fs::create_dir(&root.0).unwrap();
+        let marker = root.0.join("survived");
+        let result = run_with_timeout(
+            "/bin/sh",
+            &[
+                "-c",
+                "(sleep 0.6; printf survived > \"$1\") & wait",
+                "receiver-timeout-test",
+                marker.to_str().unwrap(),
+            ],
+            None,
+            Duration::from_millis(100),
+        );
+        assert!(result.unwrap_err().contains("已终止"));
+        std::thread::sleep(Duration::from_millis(800));
+        assert!(!marker.exists(), "a shell descendant survived the timeout");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn captures_unix_command_success_and_failure() {
+        assert_eq!(
+            run("/bin/sh", &["-c", "printf done"], None).unwrap(),
+            "done"
+        );
+        assert!(run("/bin/sh", &["-c", "exit 7"], None).is_err());
     }
 }
