@@ -1,0 +1,58 @@
+本地技能回写差异审阅快照（非直接应用补丁）
+
+--- .codebuddy\skills\cockpit-buddy-sync\references\our-features.md
++++ .codebuddy\skills\cockpit-buddy-sync\references\our-features.md
+@@ -54,7 +54,7 @@
+ | 14 | 签到（手动 + 自动） | `api.rs`、`auto_checkin.rs`（含**随机时间窗**） | `checkin-result.js`（`code===10001`）、`daemon.js` `dailyCheckin` | **随机时间窗只在我们与 cockpit**，勿被它覆盖；它的多域兜底值得抄 | ⚠️ | `workdaddy.md` §8 |
+ | 15 | 成长计划 / Buddy 状态 / 旅行 | `auto_travel.rs`、`daily_history.rs` | `growth-daily.js`（每日进度聚合）、`growth-active.js`（streak tiers）、`/api/growth/*` | 我们的旅行状态机已覆盖它的 cat 部分；**streak tiers 判定**未比对 | 🔍 | `workdaddy.md` §19 |
+ | 16 | 2API 凭据热更新（切号后立刻同步） | `twoapi/credentials.rs`、`on_account_switched` | WorkBuddy 无 2API；**协议真源是参考 C** | 已对齐（且我们多了 mtime 防 lost update） | ✅ | `workbuddy2api.md` |
+-| 17 | 切号的并发闸与失败回滚语义 | `mod.rs::SwitchGuard`（同平台互斥、进入即占用）、`mod.rs::confirm_switch_landed`（**延时 400ms 复查**，被回写/消失就报错）、`diagnose_switch_landing`（三态判定） | `codebuddy-native.js`（`4ed7410`，2026-09-29）：`refreshInFlight`/`loginInProgress`/`logoutInProgress` 三锁在**第一个 await 之前**同步预留；入口正在更新就**直接拒绝**；失败先恢复 `previous`，只有"新会话已落盘"才删；**回滚也失败要说"恢复未确认"** | **并发闸 ✅ / 落地复查 ✅（我们独有，它锁不住客户端进程）**；**失败回滚 ❌ 未做**（CN 注入 verify 失败时我们不回滚原 secret，WorkBuddy 靠原子写不破坏原文件） | ⚠️ 部分对齐 | `workdaddy.md` §24 |
++| 17 | 切号并发闸与失败回滚 | **switch_commands.rs**、**codebuddy_cn/switch_transaction.rs** | A codebuddy-native.js / 4ed7410：失败恢复与恢复未确认语义 | 2026-10-31：CN 写前校验 storage.json，SQLite 事务内更新 secret/身份并验证；延时确认双资源，失败条件恢复，外部更新不覆盖。WorkBuddy 保留原子写与原落地复查，本轮不宣称其多资源回滚已对齐。Q-0583/Q-0584 | ⚠️ CN本轮已验证；WorkBuddy保留既定模型 | reports/buddy-repair-2026-10-31/FINAL-REPORT.txt |
+ | 18 | 客户端身份判定（CN vs 国际版） | `client_process.rs::is_codebuddy_cn_binary`（名字初筛 + `resources/app/product.json` 的 `applicationName` 终判），`resolve_launch_path` 与进程匹配都走它 | `profiles.js::isCodeBuddyBinary`：同样是名字初筛 + `applicationName`（`buddycn` / `buddy`）终判，参考侧在 `win-launcher.js` / `codebuddy-native.js` 用 | **已对齐（2026-10-20）**：CN 老版本曾用国际版 exe 名 `CodeBuddy.exe`，只看名字会误判。现在读到元数据时 `applicationName == "buddycn"` 才认 CN，`buddy`（国际版）否决；元数据读不到时退回名字判定（参考侧 fail closed，我们保留兜底，避免升级中途把已装客户端判成没装）。单测按参考 `test/codebuddy-compat.test.js` 移植 | ✅ | `scripts/profiles.js::isCodeBuddyBinary` + `test/codebuddy-compat.test.js` |
+ | 19 | 账号令牌的到期日管理 | `api.rs`（`token_expiry_at`）、`store.rs` | WorkDaddy 无对应机制 | **我们自己的坑**：批量刷新把 20 个账号到期日对齐到同一分钟 → 集体过期；且**切换 ≠ 刷新**（90 天是 refresh token 且由客户端自己填） | ⚠️ 自有 | `qa.db` Q-0430 |
+ | 20 | Token 统计（扫本地会话 JSONL，AI 模块用） | `commands/ai/usage.rs`、`components/ai/UsageStats.tsx` | `token-stats.js`（`CACHE_VERSION=8`/`aggregateBuckets`/`dailyBreakdown`） | AI 侧而非账号域；它的缓存版本 + 分桶口径未比对 | 🔍 **P3** | `workdaddy.md` §6 |
+@@ -84,15 +84,14 @@
+ | D6 | 工具 schema `enum` 缺 `type` | `proxy/mod.rs::normalize_function_parameters` 只保证根 `object` | 按枚举值推断补 type（全串→string/整→integer/整+小→number/布尔→boolean/**混合不改**）；`11133` 走 400 快速失败不轮转 | Kimi 系直接 400；混合类型不改写是有意的（交上游报错） | ❌ P2 |
+ | D7 | 工具历史配对 | **不需要新增修复：已由 `convert.rs::collapse_system_messages_to_head` 消解**。出站 openai 时 `normalize_openai_message_roles` 先把 `developer` 归一成 `system`，紧接着 collapse 把**所有** system 合并到头部 → 插在 tool 组里的 notice 自然离开，`tool` 结果重新紧跟 `assistant(tool_calls)`。2026-10-27 加单测 `interleaved_notice_does_not_break_tool_pairing` 钉住该效果 | 插件 notice 被插进 `assistant(tool_calls)` 与 `tool` 之间 → 上游 `11148`；参考侧的做法是把 notice **移到本组结果之后**（保留它在对话里的位置），仍失败则归还 400 且**不轮转、不计账号失败** | **实现方式不同、效果等价（且更彻底）**：参考侧只搬组内 notice，我们把全部 system 前移（同时满足「system 必须前置」的上游要求）。副作用是 notice 变成头部系统提示的一部分，对 `<image_resize_notice>` 这类内容无实质影响。`11148` 的失败语义已在 D1 对齐（`tool_call_mismatch` → `fatal`、不整流重发） | ✅ 已对齐（不同实现） |
+ | D8 | 截断流/空流信号 | **已落地 2026-10-27**：新增 `proxy/stream_guard.rs`（`StreamProgress` 观测三协议 + `is_truncated`，10 单测）；同协议 / 跨协议 / Responses 包装三条流路径都接入：截断时不补「正常收尾」、改补 error 帧（跨协议用 `close_open_blocks` + error 事件、不发 `message_stop`），且 `failed_requests` 代替 `success_requests`。开关 `ProxyConfig.stream_truncation_guard`（默认 true） | 上游 200 但流中途断（有内容帧、无 `finish_reason`/`[DONE]`）→ 在 `[DONE]` 前补 error 帧，日志收敛 **502** | 原实现三处都是「循环结束 = 完成」：同协议连 `[DONE]` 都不记、跨协议直接 `conv.finish()`（= `message_stop`）、Responses 直接 `conv.finish()`（= `response.completed`） | ✅ 已对齐 |
+-| D12 | 签到节流与退避 | **已落地 2026-10-27**：`CHECKIN_ACCOUNT_GAP_SECS=3`（仅自动调度，`force` 不等待）；`BuddyAccountScheduleState` 增 `retry_count` / `retry_at_epoch`；失败走 `checkin_retry_delay_secs`（5/15/60，之后固定 60），且 `checkin_error_is_retryable` 只对 5xx/408/网络错误重试 | 账号间 **3s**；退避 **5/15/60s**，只对 5xx 与业务码 `10001` 重试；「今天已签到」判定前已按幂等成功处理 | 原实现把计划重抽到「窗口内随机分钟」（`from = now+1`）= **一分钟内无限重打**；`scheduled_minute` 是分钟粒度，表达不了秒级退避 → 退避落在 `retry_at_epoch`（秒） | ✅ 已对齐 |
++| D12 | 签到节流与退避 | api/checkin.rs + auto_checkin/{planning,cycle}.rs；保留随机窗、账号间3秒间隔 | A要求10001明确已签到文案；D 0029指出10001也代表暂拒 | 2026-10-31：已签到/暂拒/活动结束/硬错分开，401/403优先；状态查询与签到保留HTTP/业务码，双端点错误不丢重试语义；5/15/60秒最多三次重试，耗尽或硬失败当日终止，手动可重试。自动任务仍仅WorkBuddy。Q-0582 | ✅ 本轮已验证 |
+ | D9 | 积分查询缓存 | `api.rs` 无 TTL（`growth.rs` 有 60s 视图缓存但**不标注**） | 直连账单接口 + **60s TTL**；命中必须显式标「（缓存）+ 年龄」；失败**不入缓存** | 用户把滞后数字当实时；失败被缓存会「一直显示上次的数」 | ❌ P3 |
+ | D10 | 积分余额快照 | `daily_history.rs`/`action_log.rs` 事件追加，无去重 | `credits_snapshot` **只记增加**，`dedup_key=credit\|{uid}\|{value}`，`_MAX_DELTA=1_000_000`，首见只建基线 | 重复写流水 / 异常值污染历史 | ❌ P3 |
+ | D11 | 套餐到期判定 | `expiry.rs` | `expiresIn` 是秒需换算；**缺失 = 0 = 未知，不当已过期**（`is_expired = exp > 0 && now >= exp`）；到期与余额**同请求同缓存** | 「未知」被当「已过期」= 误报过期；余额新、到期旧 = 自相矛盾 | 🔍 P3 |
+-| D12 | 签到节流与退避 | `auto_checkin.rs` 有随机窗，**无账号间隔、无重试** | 账号间 **3s**；退避 **5/15/60s**，只对 HTTP 5xx 与业务码 `10001` 重试；「今天已签到」（也是 10001）判定前已按幂等成功处理 | 多账号同刻签到被上游 500 `10001`，当天就白丢（只能等下一轮） | ❌ P1 |
+ | D13 | 每日任务判据 | `is_plan_due` + `reschedule_missed_plans`（错过重排到窗口内） | `YYYY-MM-DD-HH` 去重 + 整点判据 + **错过即放弃**（不补跑）+ **无论成败都 `mark_ran`**（失败不每分钟重试刷屏）；`set_plan` 保留 `last_run` | 我们重排 = 可能当天补跑（我们**有意**保留，随机窗语义更宽）；但「失败每分钟重试」必须避免 | ⚠️ 有意不同 P3 |
+ | D14 | 任务留痕 | `action_log.rs`（30 天，无 dedup_key） | `task_logs(..., dedup_key UNIQUE)` + `level=ok/warn/credit`；四档状态 `claimed/pending/skipped/failed`，**认不出按 pending**；展示序 `failed→pending→claimed→skipped` | 重复行刷屏；「认不出」被当成功 = 谎报 | ⚠️ 部分 P3 |
+ | D15 | 本地文件写入纪律 | `store.rs::write_atomic` = tmp + `fs::rename`，进程内 Mutex | **路径级锁** + `mkstemp → write → flush+fsync → chmod → os.replace`；写失败**放弃整轮**；拒绝符号链接；`weight=0` = **删键** | 掉电/崩溃可能留下空文件（无 fsync）；跨进程无锁（客户端/我们同时写登录态） | ⚠️ 部分 P2 |
+-| D16 | OAuth 落盘时序 | `api.rs` OAuth 流程 | **落盘是唯一关键动作**，成功才 drop state；落盘失败**保留 state 与 ready 备忘**，重试只重做落盘（不重跑签到/trial）；副作用前先 `_mark_provisioned`；`STATE_TTL=900` | 落盘失败后用户重试会**重跑副作用**（重复签到/领奖） | 🔍 P2 |
++| D16 | OAuth落盘时序 | api/{oauth,oauth_sessions}.rs + store/oauth_enrichment.rs | D accounts.py及44ec974：ready缓存、必需落盘成功后完成，失败只重试保存 | 2026-10-31：token/ready保留、按login_id串行完成、取消/过期清理与成功短缓存；可选用量补全失败保持成功，凭据CAS合并元数据。纠正旧结论：我方OAuth无签到/trial；D也是先签到后mark_provisioned，不能声称副作用前标记。Q-0590 | ✅ 本轮已验证 |
+ | D17 | 401 不单次杀号 | `api.rs::is_revoked_refresh_error`：只认 refresh 响应的 `invalid_grant` 一类 | 「无 `12153` 的纯 401」（APISIX 拦截页/空体）与 `12153` **共用一个连续计数**，达阈值才禁用 | **有意不对齐**：我们的吊销判定只发生在 **refresh 响应**，不来自聊天 401 页；单次聊天 401 我们不处置任何账号状态。它这条是池化场景的「防误杀」，我们没有这个误杀路径 | ⚠️ 有意不对齐 |
+ | D18 | 404/405 不换路径 | **已落地**：换路径的唯一触发是 `UpstreamErrorKind::ChannelCheck`，404/405 分类为 `NotFound`/`Client` 天然不命中 | 404/405 **刻意不换**（WAF 取舍，有测试钉住） | 以后若加「按状态码兜底换路径」，必须先想清这条 | ✅ 随 D2 |
+
+@@ -117,4 +116,8 @@
+
+ **每轮流程**：读本表 → 挑 1 个 ❌/🔍（**涉及 2API / 上游协议 / 签到节流 / 文件写入时，先看 D 域表**，
+ 不要在上表里找 WorkDaddy 的对应物）→ 按上面深挖 → 有差异就改代码 → 单测 + 真机验证 →
+-回写本行状态与差异 → 有新坑写 `pitfalls.md` → pin 推进。+回写本行状态与差异 → 有新坑写 `pitfalls.md` → pin 推进。
++
++### 2026-10-31 业务审查补充
++
++用户批准报告11项修复，QA Q-0580—Q-0590。账号库统一UID优先、可靠邮箱兼容去重，拒绝跨身份ID覆盖；整批导入预校验，详情为权威并恢复索引，索引失败回滚；twin要求双方唯一可靠邮箱，重新认证保留人工倒计时。前端按平台生命周期scope阻断旧请求/监听写回。参考HEAD：A 2fd29e4、B 97c1c25c、D 15568af。只推进这些业务机制，不推进仓库增量同步点，不宣称D域全部协议已重新审计。验收见 reports/buddy-repair-2026-10-31/FINAL-REPORT.txt。
+--- .codebuddy\skills\cockpit-buddy-sync\references\pitfalls.md
++++ .codebuddy\skills\cockpit-buddy-sync\references\pitfalls.md
+@@ -503,3 +503,15 @@
+     直接失败并带上原始错误（原先 `fetch_account_info` 的 Err 被静默吞成空元组，真因看不见）。
+     **检测**：`grep -n "id: String::new()" src-tauri/src/commands/buddy/*.rs` —— 出现即须确认「谁给它分配 id」；
+     新增账号后看落盘文件名是否为 `{platform}_{32hex}`。
++
++
++## 2026-10-31：业务成功与持久化成功要分开核实
++
++- 10001不是单义“已签到”。必须连同HTTP、文案、活动状态分类；状态查询的备用端点不能把可重试500藏在404后，401/403优先。
++- 展示email可能是昵称或掩码。先全局找UID，再考虑可靠邮箱；twin还必须双向唯一。输入ID不能授权覆盖其他身份。保留真实邮箱跨UID去重是既有兼容决定。
++- SQLite secret与storage.json不是天然同一事务。CN在SQLite提交前写并校验身份；失败先确认数据库恢复，再条件恢复身份。延时确认必须同时检查两份资源，不得覆盖外部新代次。未知恢复要明说未确认。进程崩溃/断电的跨资源原子性不在本轮测试承诺内。
++- OAuth必需落盘失败要保留ready；已落盘后的可选补全不能把登录报失败，也不能整账号upsert覆盖新凭据或复活删除账号。使用generation及凭据CAS做元数据合并。
++- 旧load闭包在调用时抓当前epoch仍可能越权；平台生命周期scope须在旧请求调用前、await后、catch和finally都生效，A→B→A与StrictMode重放不能复活旧lease。
++- D16旧表“重复签到/trial”和“参考副作用前标记”均被完整源码否定；不能把对照表当证据。
++
++对应Q-0580—Q-0590及 reports/buddy-repair-2026-10-31/FINAL-REPORT.txt；本轮不推进sync-point。

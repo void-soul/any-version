@@ -1,0 +1,70 @@
+{
+  "date": "2026-10-31",
+  "baseline": "966c1ba",
+  "code_head": "f801edf",
+  "findings": {
+    "total": 11,
+    "fixed": 11,
+    "qa_ids": [
+      "Q-0580",
+      "Q-0581",
+      "Q-0582",
+      "Q-0583",
+      "Q-0584",
+      "Q-0585",
+      "Q-0586",
+      "Q-0587",
+      "Q-0588",
+      "Q-0589",
+      "Q-0590"
+    ],
+    "status": "已验证"
+  },
+  "tests": {
+    "buddy": {
+      "passed": 274,
+      "failed": 0,
+      "ignored": 5,
+      "new_net": 40
+    },
+    "rust": {
+      "inventory": 1523,
+      "passed": 1517,
+      "failed": 0,
+      "ignored": 6,
+      "sandbox_passed": 1499,
+      "restricted_fixture_exact_retries_passed": 18,
+      "final_oauth_intent_change_retested_in_buddy": true
+    },
+    "vitest": {
+      "files": 51,
+      "passed": 412,
+      "failed": 0,
+      "new": 15
+    },
+    "typecheck": "passed",
+    "vite_build": "passed",
+    "architecture": {
+      "status": "passed",
+      "source_files": 1097
+    },
+    "diff_check": "passed",
+    "qa_format": {
+      "new_entries_valid": 11,
+      "preexisting_issues": 19
+    }
+  },
+  "scope": {
+    "real_accounts_used": false,
+    "network_login_or_checkin": false,
+    "sync_points_advanced": false,
+    "push": false,
+    "crash_atomicity_claimed": false
+  },
+  "metadata": {
+    "qa_db": "Preserved existing changes and appended records; commit per-entry JSON snapshots only",
+    "skill_records": "Updated local ignored feature table and pitfalls; commit review snapshot",
+    "code_commits": 5,
+    "commit_index": "commit-index.json"
+  }
+}

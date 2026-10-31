@@ -1,0 +1,78 @@
+[
+  {
+    "commit": "b791c5baf95d08940a519c4a09040e2e5a1970cd",
+    "qid": "Q-0580",
+    "message": "fix: #Q-0580 Protect account identities and storage integrity (#Q-0581 #Q-0585 #Q-0586 #Q-0587 #Q-0588)",
+    "files": [
+      "reports/buddy-repair-2026-10-31/Q-0580.json",
+      "reports/buddy-repair-2026-10-31/Q-0581.json",
+      "reports/buddy-repair-2026-10-31/Q-0585.json",
+      "reports/buddy-repair-2026-10-31/Q-0586.json",
+      "reports/buddy-repair-2026-10-31/Q-0587.json",
+      "reports/buddy-repair-2026-10-31/Q-0588.json",
+      "src-tauri/src/commands/buddy/account_commands.rs",
+      "src-tauri/src/commands/buddy/store.rs",
+      "src-tauri/src/commands/buddy/store/account_index.rs",
+      "src-tauri/src/commands/buddy/store/identity.rs",
+      "src-tauri/src/commands/buddy/store/oauth_enrichment.rs",
+      "src-tauri/src/commands/buddy/store/tests.rs",
+      "src-tauri/src/commands/buddy/store/tests/regressions.rs"
+    ]
+  },
+  {
+    "commit": "c59232bb9ac5f62807f1b8662aaf5033866a254f",
+    "qid": "Q-0583",
+    "message": "fix: #Q-0583 Recover CN switch failures without overwriting external state (#Q-0584)",
+    "files": [
+      "reports/buddy-repair-2026-10-31/Q-0583.json",
+      "reports/buddy-repair-2026-10-31/Q-0584.json",
+      "src-tauri/src/commands/buddy/codebuddy_cn.rs",
+      "src-tauri/src/commands/buddy/codebuddy_cn/switch_transaction.rs",
+      "src-tauri/src/commands/buddy/switch_commands.rs"
+    ]
+  },
+  {
+    "commit": "5702ada29ab39ae84ee32fb4d78cccdc7cda75d9",
+    "qid": "Q-0582",
+    "message": "fix: #Q-0582 Classify check-in refusals and bound scheduler retries",
+    "files": [
+      "reports/buddy-repair-2026-10-31/Q-0582.json",
+      "src-tauri/src/commands/buddy/api.rs",
+      "src-tauri/src/commands/buddy/api/checkin.rs",
+      "src-tauri/src/commands/buddy/api/checkin_regressions.rs",
+      "src-tauri/src/commands/buddy/auto_checkin.rs",
+      "src-tauri/src/commands/buddy/auto_checkin/cycle.rs",
+      "src-tauri/src/commands/buddy/auto_checkin/planning.rs",
+      "src-tauri/src/commands/buddy/auto_checkin/tests.rs"
+    ]
+  },
+  {
+    "commit": "3e3d02345acfabb2c5b73b5c9667c6bcc9641985",
+    "qid": "Q-0590",
+    "message": "fix: #Q-0590 Persist OAuth ready results and merge optional metadata safely",
+    "files": [
+      "reports/buddy-repair-2026-10-31/Q-0590.json",
+      "src-tauri/src/commands/buddy/api.rs",
+      "src-tauri/src/commands/buddy/api/oauth.rs",
+      "src-tauri/src/commands/buddy/api/oauth_sessions.rs",
+      "src-tauri/src/commands/buddy/api/oauth_sessions/tests.rs",
+      "src-tauri/src/commands/buddy/usage_commands.rs"
+    ]
+  },
+  {
+    "commit": "f801edf495a22466236e735c0a5030e2a35a826d",
+    "qid": "Q-0589",
+    "message": "fix: #Q-0589 Isolate Buddy platform operations across switches and disposal",
+    "files": [
+      "reports/buddy-repair-2026-10-31/Q-0589.json",
+      "src/components/buddy/BuddyPanel.tsx",
+      "src/components/buddy/__tests__/platformScope.test.ts",
+      "src/components/buddy/loadBuddyPlatform.ts",
+      "src/components/buddy/platformScope.ts",
+      "src/components/buddy/runBuddyAccountSwitch.ts",
+      "src/components/buddy/useBuddyAccountImport.tsx",
+      "src/components/buddy/useBuddyAccountMaintenance.tsx",
+      "src/components/buddy/useBuddyPlatformScope.ts"
+    ]
+  }
+]

@@ -1,0 +1,73 @@
+[
+  {
+    "qid": "Q-0580",
+    "description": "Protect account identities and storage integrity (#Q-0581 #Q-0585 #Q-0586 #Q-0587 #Q-0588)",
+    "files": [
+      "src-tauri/src/commands/buddy/store.rs",
+      "src-tauri/src/commands/buddy/store/identity.rs",
+      "src-tauri/src/commands/buddy/store/account_index.rs",
+      "src-tauri/src/commands/buddy/store/oauth_enrichment.rs",
+      "src-tauri/src/commands/buddy/store/tests.rs",
+      "src-tauri/src/commands/buddy/store/tests/regressions.rs",
+      "src-tauri/src/commands/buddy/account_commands.rs",
+      "reports/buddy-repair-2026-10-31/Q-0580.json",
+      "reports/buddy-repair-2026-10-31/Q-0581.json",
+      "reports/buddy-repair-2026-10-31/Q-0585.json",
+      "reports/buddy-repair-2026-10-31/Q-0586.json",
+      "reports/buddy-repair-2026-10-31/Q-0587.json",
+      "reports/buddy-repair-2026-10-31/Q-0588.json"
+    ]
+  },
+  {
+    "qid": "Q-0583",
+    "description": "Recover CN switch failures without overwriting external state (#Q-0584)",
+    "files": [
+      "src-tauri/src/commands/buddy/codebuddy_cn.rs",
+      "src-tauri/src/commands/buddy/codebuddy_cn/switch_transaction.rs",
+      "src-tauri/src/commands/buddy/switch_commands.rs",
+      "reports/buddy-repair-2026-10-31/Q-0583.json",
+      "reports/buddy-repair-2026-10-31/Q-0584.json"
+    ]
+  },
+  {
+    "qid": "Q-0582",
+    "description": "Classify check-in refusals and bound scheduler retries",
+    "files": [
+      "src-tauri/src/commands/buddy/api/checkin.rs",
+      "src-tauri/src/commands/buddy/api/checkin_regressions.rs",
+      "src-tauri/src/commands/buddy/auto_checkin.rs",
+      "src-tauri/src/commands/buddy/auto_checkin/planning.rs",
+      "src-tauri/src/commands/buddy/auto_checkin/cycle.rs",
+      "src-tauri/src/commands/buddy/auto_checkin/tests.rs",
+      "reports/buddy-repair-2026-10-31/Q-0582.json",
+      "src-tauri/src/commands/buddy/api.rs"
+    ]
+  },
+  {
+    "qid": "Q-0590",
+    "description": "Persist OAuth ready results and merge optional metadata safely",
+    "files": [
+      "src-tauri/src/commands/buddy/api.rs",
+      "src-tauri/src/commands/buddy/api/oauth.rs",
+      "src-tauri/src/commands/buddy/api/oauth_sessions.rs",
+      "src-tauri/src/commands/buddy/api/oauth_sessions/tests.rs",
+      "src-tauri/src/commands/buddy/usage_commands.rs",
+      "reports/buddy-repair-2026-10-31/Q-0590.json"
+    ]
+  },
+  {
+    "qid": "Q-0589",
+    "description": "Isolate Buddy platform operations across switches and disposal",
+    "files": [
+      "src/components/buddy/BuddyPanel.tsx",
+      "src/components/buddy/useBuddyAccountImport.tsx",
+      "src/components/buddy/useBuddyAccountMaintenance.tsx",
+      "src/components/buddy/platformScope.ts",
+      "src/components/buddy/useBuddyPlatformScope.ts",
+      "src/components/buddy/loadBuddyPlatform.ts",
+      "src/components/buddy/runBuddyAccountSwitch.ts",
+      "src/components/buddy/__tests__/platformScope.test.ts",
+      "reports/buddy-repair-2026-10-31/Q-0589.json"
+    ]
+  }
+]

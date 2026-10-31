@@ -1,0 +1,4 @@
+*.log
+qa-created.txt
+qa-solutions.json
+private.local/
