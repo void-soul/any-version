@@ -372,3 +372,6 @@ pub use checkin::*;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod checkin_regressions;

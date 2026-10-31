@@ -4,8 +4,8 @@
 //! - 每轮：查询签到状态 → 未签到则执行 daily-checkin → 更新账号签到信息
 //! - 错过不补执行：打开应用时发现「计划时间已过但今天没做过」的账号，重排到窗口内的
 //!   新随机时间（`reschedule_missed_plans`）；窗口已全过去则今天放弃，等明天跨天重规划
-//! - 失败重试：也改为重排新随机时间（`reschedule_failed_plans`），不再原地退避重试
-//! - 调度：固定 30 秒轮询（应用启动时立即跑一轮），仅调度异常本身按退避重试
+//! - 暂时失败：最多三次秒级退避重试；硬失败或预算耗尽后当天停止。
+//! - 调度：最久 30 秒轮询，退避到期可提前唤醒（启动时立即跑一轮），仅调度异常本身按退避重试
 //! - 日志：按天记录，保留 30 天，前端可查看/清空
 
 use std::collections::HashMap;
@@ -48,7 +48,7 @@ pub const MISSED_PLAN_GRACE_MIN: i32 = 5;
 /// 只作用于**自动调度**；用户点「立即执行」（`force`）时不加等待，否则 N 个账号要干等 3N 秒。
 pub const CHECKIN_ACCOUNT_GAP_SECS: u64 = 3;
 
-/// 失败退避序列（秒）：第 N 次失败后等这么久再重试，用尽后固定末位。
+/// Three bounded retries after the initial attempt (seconds).
 pub const CHECKIN_RETRY_DELAYS_SECS: [u64; 3] = [5, 15, 60];
 
 struct CheckinGuard;
@@ -68,10 +68,13 @@ pub struct BuddyAccountScheduleState {
     /// 实际签到时刻（HH:MM:SS，当日成功/已签时记录）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_checked_time: Option<String>,
-    /// 连续失败次数：决定下次重试的退避（5s / 15s / 60s，用尽后固定 60s）。
+    /// 连续失败次数：最多安排三次重试（5s / 15s / 60s），之后当天停止。
     /// 成功、已签到、跨天重规划都会清零。
     #[serde(default)]
     pub retry_count: u32,
+    /// No more automatic attempts for this date (hard failure or retry budget exhausted).
+    #[serde(default)]
+    pub exhausted: bool,
     /// 下次允许重试的时刻（Unix 秒）。到点前调度跳过该账号 ——
     /// 退避的落地点在这里：`scheduled_minute` 是分钟粒度，表达不了秒级退避。
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -270,10 +273,11 @@ pub fn start_auto_checkin_scheduler(app: AppHandle) {
                 }
             }
             match run_auto_checkin_cycle_if_needed(platform, &app, false).await {
-                // 固定短间隔轮询：账号级失败已改成「重排到窗口内新随机时间」，
-                // 轮询若退避到分钟级就会错过这些随机时刻。
+                // 正常最久30秒轮询；有账号等待秒级重试时提前唤醒。
                 Ok(_) => {
-                    next_delay = SCHEDULER_POLL_DELAY;
+                    next_delay = get_config_checked()
+                        .map(|config| next_checkin_delay(&config, Local::now().timestamp()))
+                        .unwrap_or(SCHEDULER_POLL_DELAY);
                     retry_delay = INITIAL_RETRY_DELAY;
                 }
                 Err(err) => {

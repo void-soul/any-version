@@ -96,6 +96,7 @@ fn schedule_state(date: &str, minute: i32) -> BuddyAccountScheduleState {
         last_checked_date: None,
         last_checked_time: None,
         retry_count: 0,
+        exhausted: false,
         retry_at_epoch: None,
     }
 }
@@ -271,7 +272,7 @@ fn test_reschedule_failed_plans_clears_state_for_non_retryable() {
         720,
         1_700_000_000
     ));
-    // 4xx / 登录态问题：不排重试，退避状态清空（重试只会刷日志）
+    // 硬错误/登录态问题：清空退避并标记当天终止。
     assert_eq!(schedules["acc_failed"].retry_count, 0);
     assert_eq!(schedules["acc_failed"].retry_at_epoch, None);
 }
@@ -302,7 +303,7 @@ fn test_checkin_error_is_retryable() {
     assert!(checkin_error_is_retryable(
         "请求 daily-checkin 失败: connection reset"
     ));
-    // 4xx（含登录态问题）→ 不重试
+    // 无暂拒10001的硬4xx（含登录态问题）不重试。
     assert!(!checkin_error_is_retryable(&api::checkin_http_error(
         400,
         "bad request"
@@ -371,6 +372,7 @@ fn test_cross_day_replan_resets_daily_state() {
                 last_checked_date: Some("2020-01-01".to_string()),
                 last_checked_time: Some("06:40:00".to_string()),
                 retry_count: 0,
+                exhausted: false,
                 retry_at_epoch: None,
             },
         )])),
@@ -478,6 +480,7 @@ fn test_validation_rejects_invalid_time_and_schedule() {
             last_checked_date: None,
             last_checked_time: None,
             retry_count: 0,
+            exhausted: false,
             retry_at_epoch: None,
         },
     )]));
@@ -495,4 +498,90 @@ fn test_retry_delay_bounded_exponential_backoff() {
         MAX_RETRY_DELAY
     );
     assert_eq!(next_retry_delay(MAX_RETRY_DELAY), MAX_RETRY_DELAY);
+}
+
+#[test]
+fn retry_budget_and_terminal_failures_do_not_reenter() {
+    let today = get_today_date_string();
+    let mut states = HashMap::from([("account".to_string(), schedule_state(&today, 600))]);
+    for attempt in 1..=4 {
+        assert!(reschedule_failed_plans(
+            &mut states,
+            &[("account".into(), true)],
+            &today,
+            600,
+            360,
+            720,
+            1_700_000_000
+        ));
+        let state = &states["account"];
+        assert_eq!(state.exhausted, attempt == 4);
+        assert_eq!(state.last_checked_date, None);
+    }
+    assert!(!checkin_schedule_due(
+        &states["account"],
+        &today,
+        600,
+        720,
+        i64::MAX
+    ));
+    let mut states = HashMap::from([("account".to_string(), schedule_state(&today, 600))]);
+    reschedule_failed_plans(
+        &mut states,
+        &[("account".into(), false)],
+        &today,
+        600,
+        360,
+        720,
+        1_700_000_000,
+    );
+    assert!(states["account"].exhausted);
+    assert!(!checkin_schedule_due(
+        &states["account"],
+        &today,
+        600,
+        720,
+        i64::MAX
+    ));
+}
+#[test]
+fn retries_use_seconds_and_survive_original_plan_grace() {
+    let today = get_today_date_string();
+    let mut state = schedule_state(&today, 600);
+    state.retry_at_epoch = Some(1005);
+    assert!(!checkin_schedule_due(&state, &today, 610, 720, 1004));
+    assert!(checkin_schedule_due(&state, &today, 610, 720, 1005));
+    assert!(!checkin_schedule_due(&state, &today, 721, 720, 1005));
+    let config = BuddyAutoCheckinConfig {
+        account_schedules: Some(HashMap::from([("account".into(), state)])),
+        ..Default::default()
+    };
+    assert_eq!(next_checkin_delay(&config, 1000), Duration::from_secs(5));
+    assert_eq!(next_checkin_delay(&config, 990), Duration::from_secs(15));
+}
+#[test]
+fn last_minute_retry_is_bounded_by_actual_window_end() {
+    let today = get_today_date_string();
+    let mut states = HashMap::from([("account".into(), schedule_state(&today, 600))]);
+    reschedule_failed_plans(
+        &mut states,
+        &[("account".into(), true)],
+        &today,
+        600,
+        360,
+        600,
+        1200,
+    );
+    assert_eq!(states["account"].retry_at_epoch, Some(1205));
+    reschedule_failed_plans(
+        &mut states,
+        &[("account".into(), true)],
+        &today,
+        600,
+        360,
+        600,
+        1258,
+    );
+    assert!(states["account"].exhausted);
+    assert_eq!(states["account"].retry_at_epoch, None);
 }

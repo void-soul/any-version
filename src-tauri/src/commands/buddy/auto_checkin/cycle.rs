@@ -31,7 +31,7 @@ pub async fn run_auto_checkin_cycle_if_needed(
         force || cross_day || current_minute >= parse_time_to_minutes(&config.start_time);
     let before_schedules = config.account_schedules.clone().unwrap_or_default();
     let mut schedule_changed = ensure_account_schedules(&mut config, &accounts, allow_generate);
-    // 计划时间已过但今天还没完成（应用没开着 / 上一轮失败）→ 重排到窗口内的新随机时间，
+    // 未进入重试/终止状态、且错过计划的账号→重排到窗口内的新随机时间，
     // 而不是「打开应用就立刻补执行」。手动立即执行（force）不参与重排。
     let (rescheduled, reschedule_entries) = if force {
         (false, Vec::new())
@@ -67,15 +67,7 @@ pub async fn run_auto_checkin_cycle_if_needed(
                     .and_then(|s| s.get(&account.id));
                 match sch {
                     Some(s) => {
-                        if s.last_checked_date.as_deref() == Some(&today_str) {
-                            return false;
-                        }
-                        // 退避未到点：本轮跳过（失败后的 5s / 15s / 60s 等待）
-                        if s.retry_at_epoch.is_some_and(|at| at > now_epoch) {
-                            return false;
-                        }
-                        s.scheduled_date == today_str
-                            && is_plan_due(s.scheduled_minute, current_minute, end_min)
+                        checkin_schedule_due(s, &today_str, current_minute, end_min, now_epoch)
                     }
                     None => false,
                 }
@@ -99,11 +91,18 @@ pub async fn run_auto_checkin_cycle_if_needed(
     );
 
     let mut retry_needed = false;
-    // 登录态过期标记（仅用于收尾日志；失败的重试时机已改为「重排到窗口内新随机时间」）
+    // 登录态过期标记，仅用于收尾日志；该错误当天不自动重试。
     let mut auth_expired = false;
     let mut entries: Vec<action_log::BuddyActionLogEntry> = reschedule_entries;
     let retry_before_schedules = config.account_schedules.clone().unwrap_or_default();
     let mut new_schedules = retry_before_schedules.clone();
+    if force {
+        for state in new_schedules.values_mut() {
+            state.retry_count = 0;
+            state.retry_at_epoch = None;
+            state.exhausted = false;
+        }
+    }
     // 本轮失败的账号 + 该失败是否值得退避重试（4xx/登录态问题重试只是刷日志）
     let mut failed_ids: Vec<(String, bool)> = Vec::new();
     // 自动调度时账号之间留间隔：上游对「同一秒多个账号签到」会回 500/10001。
@@ -115,6 +114,9 @@ pub async fn run_auto_checkin_cycle_if_needed(
             tokio::time::sleep(Duration::from_secs(CHECKIN_ACCOUNT_GAP_SECS)).await;
         }
         first_account = false;
+        if !force && (get_today_date_string() != today_str || current_minute_of_day() > end_min) {
+            break;
+        }
         let email_display = if !account.email.trim().is_empty() {
             account.email.clone()
         } else {
@@ -150,6 +152,7 @@ pub async fn run_auto_checkin_cycle_if_needed(
             }
             Ok(status) if !status.active => {
                 retry_needed = true;
+                failed_ids.push((account.id.clone(), false));
                 entries.push(action_log::make_entry(
                     "checkin",
                     &account.id,
@@ -174,7 +177,7 @@ pub async fn run_auto_checkin_cycle_if_needed(
             .await
             {
                 Ok(res) if res.success && res.already == Some(true) => {
-                    // 官方业务码 10001：今日已签到，无需再打接口
+                    // 业务码10001且文案明确今日已签到，无需再打接口
                     entries.push(action_log::make_entry(
                         "checkin",
                         &account.id,
@@ -198,6 +201,7 @@ pub async fn run_auto_checkin_cycle_if_needed(
                     );
                 }
                 Ok(res) if res.inactive == Some(true) => {
+                    failed_ids.push((account.id.clone(), false));
                     // 官方明确回复「活动未开启/已结束」：状态记为 inactive（而非 failed）
                     retry_needed = true;
                     let message = res
@@ -296,8 +300,8 @@ pub async fn run_auto_checkin_cycle_if_needed(
                         }
                         _ => {
                             retry_needed = true;
-                            // 业务层说「没签上」（活动未开启之类）：重试没有意义
-                            failed_ids.push((account.id.clone(), false));
+                            // 回查未确认签到成功，保留解码器对暂拒/硬失败的判定。
+                            failed_ids.push((account.id.clone(), res.retryable));
                             let message = res
                                 .message
                                 .clone()
@@ -328,7 +332,7 @@ pub async fn run_auto_checkin_cycle_if_needed(
                         auth_expired = true;
                     }
                     retry_needed = true;
-                    // 只有 5xx / 网络层错误才值得 5s 后重试；400/401/403 重试只是刷日志
+                    // 保留HTTP、业务码和鉴权优先级，只有暂时失败参与有界重试。
                     failed_ids.push((account.id.clone(), checkin_error_is_retryable(&err)));
                     entries.push(action_log::make_entry(
                         "checkin",
@@ -371,16 +375,18 @@ pub async fn run_auto_checkin_cycle_if_needed(
         }
     }
 
-    // 失败账号按退避重试（5s/15s/60s，之后固定 60s）。不做退避的话，下一个轮询
+    // 失败账号按退避重试（5s/15s/60s，最多三次）。不做退避的话，下一个轮询
     //（30 秒后）会以「已到点」立刻重打同一个失败账号 —— 上游对此回 500/10001。
+    let retry_now = Local::now();
+    let retry_minute = (retry_now.hour() * 60 + retry_now.minute()) as i32;
     let retry_moved = reschedule_failed_plans(
         &mut new_schedules,
         &failed_ids,
         &today_str,
-        current_minute,
+        retry_minute,
         start_min,
         end_min,
-        now_epoch,
+        retry_now.timestamp(),
     );
 
     config.account_schedules = Some(new_schedules);
@@ -395,11 +401,10 @@ pub async fn run_auto_checkin_cycle_if_needed(
     let _ = app.emit("buddy-action-logs-changed", ());
     let _ = app.emit("buddy-auto-checkin-config-changed", ());
 
-    // 失败不再让调度器拉长间隔：重试时机已改成「重排到窗口内的新随机时间」，
-    // 轮询若退避到分钟以上就会错过这些随机时刻。失败信息已写进行为日志。
+    // 账号失败不触发全局调度退避；账号自身的秒级重试或终止已记录。
     if auth_expired || retry_needed {
         eprintln!(
-            "[BuddyAutoCheckin] 本轮存在失败：已过计划时间的账号已重排到窗口内新随机时间（窗口已结束的今天放弃）"
+            "[BuddyAutoCheckin] 本轮存在失败：暂时错误按有界退避重试，硬失败或预算耗尽当天停止"
         );
     }
     Ok("completed".to_string())

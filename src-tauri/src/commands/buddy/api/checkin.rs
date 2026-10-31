@@ -55,6 +55,9 @@ pub struct CheckinStatusResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct CheckinResponse {
+    /// Transient upstream refusal; never an already-completed result.
+    #[serde(default)]
+    pub retryable: bool,
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
@@ -68,7 +71,7 @@ pub struct CheckinResponse {
     pub is_streak_day: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_checkin_in: Option<i64>,
-    /// 今日已完成签到（官方业务码 10001）——此时 `success` 同样为 true
+    /// 今日已完成签到（业务码 10001 且文案明确完成）——此时 `success` 同样为 true
     #[serde(skip_serializing_if = "Option::is_none")]
     pub already: Option<bool>,
     /// 签到活动未开启 / 已结束：不是失败，当日重试也没有意义
@@ -101,11 +104,11 @@ pub(super) const CHECKIN_INACTIVE_HINTS: &[&str] = &[
 pub enum CheckinOutcome {
     /// 本次签到成功
     Success,
-    /// 今日已完成签到（业务码 10001）
+    /// 今日已完成签到（业务码 10001 且文案明确完成）
     Already,
     /// 活动未开启 / 已结束
     Inactive,
-    /// 其他失败（可重试）
+    /// 其他失败（是否可重试由 HTTP/业务码另行判定）
     Failed,
 }
 
@@ -122,19 +125,45 @@ pub fn is_checkin_inactive_message(message: &str) -> bool {
 
 /// 分类签到结果。
 ///
-/// 判定顺序与参考实现一致：**先判 inactive**，再判 10001——
+/// 判定顺序与参考实现一致：**先判 inactive**，再判明确完成文案的 10001——
 /// 活动已结束却返回 10001 时不算「已签到」。
 pub fn classify_checkin_result(http_ok: bool, code: i64, message: &str) -> CheckinOutcome {
     if is_checkin_inactive_message(message) {
         return CheckinOutcome::Inactive;
     }
-    if code == CHECKIN_ALREADY_CODE {
+    if code == CHECKIN_ALREADY_CODE && is_checkin_already_message(message) {
         return CheckinOutcome::Already;
     }
     if http_ok && code == 0 {
         return CheckinOutcome::Success;
     }
     CheckinOutcome::Failed
+}
+
+/// Only affirmative completion messages establish idempotent success.
+pub fn is_checkin_already_message(message: &str) -> bool {
+    let text = message.trim().to_ascii_lowercase();
+    [
+        "已签到",
+        "已完成签到",
+        "已经签到",
+        "已领取",
+        "已经领取",
+        "重复签到",
+        "already checked in",
+        "already checked-in",
+        "already claimed",
+    ]
+    .iter()
+    .any(|hint| text.contains(hint))
+}
+
+pub fn checkin_response_error(status: u16, code: Option<i64>, message: &str) -> String {
+    let error = checkin_http_error(status, message);
+    match code {
+        Some(code) => format!("{} (code={})", error, code),
+        None => error,
+    }
 }
 
 /// 构造签到接口的错误信息：401/403 统一带 [`AUTH_EXPIRED_PREFIX`]，调度器据此拉长重试。
@@ -260,43 +289,12 @@ pub(super) async fn fetch_checkin_status_from(
     let resp = req
         .send()
         .await
-        .map_err(|e| format!("请求 {} 失败: {}", path, e))?;
-
-    let status_code = resp.status();
-    let body: Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析 {} 响应失败: {}", path, e))?;
-
-    if !status_code.is_success() {
-        let message = body
-            .get("message")
-            .or_else(|| body.get("msg"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown error");
-        return Err(format!(
-            "请求 {} 失败 (http={}): {}",
-            path,
-            status_code.as_u16(),
-            message
-        ));
-    }
-
-    let code = body.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
-    if code != 0 {
-        let message = body
-            .get("message")
-            .or_else(|| body.get("msg"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown error");
-        return Err(format!("请求 {} 失败 (code={}): {}", path, code, message));
-    }
-
-    let data = body
-        .get("data")
-        .ok_or_else(|| format!("{} 响应缺少 data 字段", path))?;
-
-    parse_checkin_status_data(data).map_err(|e| format!("解析 {} data 失败: {}", path, e))
+        .map_err(|error| checkin_transport_error(path, &error.to_string()))?;
+    let status = resp.status().as_u16();
+    let text = resp.text().await.map_err(|error| {
+        checkin_transport_error(&format!("{} (http={})", path, status), &error.to_string())
+    })?;
+    decode_checkin_status_response(status, &text)
 }
 
 pub async fn get_checkin_status(
@@ -326,10 +324,7 @@ pub async fn get_checkin_status(
             .await
             {
                 Ok(status) => Ok(status),
-                Err(legacy_err) => Err(format!(
-                    "查询签到状态失败: activity=({}) legacy=({})",
-                    activity_err, legacy_err
-                )),
+                Err(legacy_err) => Err(combine_checkin_status_errors(&activity_err, &legacy_err)),
             }
         }
     }
@@ -368,23 +363,19 @@ pub async fn perform_checkin(
     let resp = req
         .send()
         .await
-        .map_err(|e| format!("请求 daily-checkin 失败: {}", e))?;
+        .map_err(|e| checkin_transport_error("daily-checkin", &e.to_string()))?;
 
-    let status_code = resp.status();
-    let body: Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析 daily-checkin 响应失败: {}", e))?;
+    let status = resp.status().as_u16();
+    let text = resp.text().await.map_err(|e| {
+        checkin_transport_error(&format!("daily-checkin (http={})", status), &e.to_string())
+    })?;
+    decode_checkin_response(status, &text)
+}
 
-    if !status_code.is_success() {
-        let message = body
-            .get("message")
-            .or_else(|| body.get("msg"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown error");
-        return Err(checkin_http_error(status_code.as_u16(), message));
-    }
-
+/// Pure HTTP/business decoder, shared by the real request and isolated fixtures.
+pub fn decode_checkin_response(status: u16, text: &str) -> Result<CheckinResponse, String> {
+    let body: Value = serde_json::from_str(text)
+        .map_err(|_| checkin_http_error(status, "服务器响应不是有效JSON"))?;
     let code = body.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
     let api_msg = body
         .get("message")
@@ -393,10 +384,20 @@ pub async fn perform_checkin(
         .unwrap_or("unknown error")
         .to_string();
 
-    match classify_checkin_result(true, code, &api_msg) {
-        // 官方「今日已签到」：按已签到返回，调用方与调度器都不必再回查状态
+    if status == 401 || status == 403 {
+        return Err(checkin_response_error(status, Some(code), &api_msg));
+    }
+    let outcome = classify_checkin_result((200..300).contains(&status), code, &api_msg);
+    if !(200..300).contains(&status)
+        && !matches!(outcome, CheckinOutcome::Already | CheckinOutcome::Inactive)
+    {
+        return Err(checkin_response_error(status, Some(code), &api_msg));
+    }
+    match outcome {
+        // 官方明确「今日已签到」：按已签到返回，调用方与调度器都不必再回查状态
         CheckinOutcome::Already => {
             return Ok(CheckinResponse {
+                retryable: false,
                 success: true,
                 message: Some(api_msg),
                 reward: None,
@@ -411,6 +412,7 @@ pub async fn perform_checkin(
         // 活动未开启 / 已结束：不是失败，当日重试也没有意义
         CheckinOutcome::Inactive => {
             return Ok(CheckinResponse {
+                retryable: false,
                 success: false,
                 message: Some(api_msg),
                 reward: None,
@@ -424,6 +426,7 @@ pub async fn perform_checkin(
         }
         CheckinOutcome::Failed => {
             return Ok(CheckinResponse {
+                retryable: code == CHECKIN_ALREADY_CODE,
                 success: false,
                 message: Some(api_msg),
                 reward: None,
@@ -464,6 +467,7 @@ pub async fn perform_checkin(
         .and_then(|v| v.as_i64());
 
     Ok(CheckinResponse {
+        retryable: false,
         success,
         message: message.clone(),
         reward,
@@ -498,4 +502,75 @@ pub fn update_checkin_info(
         updated.checkin_rewards = rewards;
     }
     store::upsert_account(platform, updated)
+}
+
+const CHECKIN_TRANSPORT_PREFIX: &str = "CHECKIN_TRANSPORT:";
+pub fn checkin_transport_error(operation: &str, message: &str) -> String {
+    format!("{}{}: {}", CHECKIN_TRANSPORT_PREFIX, operation, message)
+}
+pub fn checkin_error_http_status(error: &str) -> Option<u16> {
+    let rest = &error[error.find("(http=")? + 6..];
+    rest.chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>()
+        .parse()
+        .ok()
+}
+pub fn is_retryable_checkin_error(error: &str) -> bool {
+    if error.starts_with(AUTH_EXPIRED_PREFIX)
+        || error.starts_with(AUTH_REVOKED_PREFIX)
+        || matches!(checkin_error_http_status(error), Some(401 | 403))
+    {
+        return false;
+    }
+    if error.starts_with(CHECKIN_TRANSPORT_PREFIX) {
+        return true;
+    }
+    match checkin_error_http_status(error) {
+        Some(status) => {
+            (500..=599).contains(&status) || status == 408 || error.contains("(code=10001)")
+        }
+        None => {
+            error.starts_with("请求 daily-checkin 失败:")
+                || error.contains("connection reset")
+                || error.contains("timed out")
+        }
+    }
+}
+pub fn decode_checkin_status_response(
+    status: u16,
+    text: &str,
+) -> Result<CheckinStatusResponse, String> {
+    let body: Value = serde_json::from_str(text)
+        .map_err(|_| checkin_http_error(status, "签到状态响应不是有效JSON"))?;
+    let code = body.get("code").and_then(Value::as_i64);
+    let message = body
+        .get("message")
+        .or_else(|| body.get("msg"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown error");
+    if !(200..300).contains(&status) || code != Some(0) {
+        return Err(checkin_response_error(status, code, message));
+    }
+    let data = body
+        .get("data")
+        .ok_or_else(|| checkin_response_error(status, code, "签到状态响应缺少data"))?;
+    parse_checkin_status_data(data).map_err(|error| checkin_response_error(status, code, &error))
+}
+pub fn combine_checkin_status_errors(activity: &str, legacy: &str) -> String {
+    let auth = |error: &str| {
+        error.starts_with(AUTH_EXPIRED_PREFIX) || error.starts_with(AUTH_REVOKED_PREFIX)
+    };
+    let (primary, other) = if auth(activity) {
+        (activity, legacy)
+    } else if auth(legacy) {
+        (legacy, activity)
+    } else if is_retryable_checkin_error(legacy) {
+        (legacy, activity)
+    } else if is_retryable_checkin_error(activity) {
+        (activity, legacy)
+    } else {
+        (legacy, activity)
+    };
+    format!("{}（另一签到状态接口: {}）", primary, other)
 }
