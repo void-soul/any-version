@@ -1,4 +1,5 @@
-import { useState } from "react";
+import type { BuddyPlatformScope } from "./platformScope";
+import { useLayoutEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
@@ -7,7 +8,8 @@ import { type BuddyAccount, type OAuthStartResponse } from "./BuddyPanel.model";
 import type { Dispatch, SetStateAction } from "react";
 
 /** Owns the BuddyAccountImport feature, independently of page rendering. */
-export function useBuddyAccountImport({ setBusy, setMessage, showMsg, displayName, load, platformLabel, busy, platform }: {
+export function useBuddyAccountImport({ platformScope, setBusy, setMessage, showMsg, displayName, load, platformLabel, busy, platform }: {
+  platformScope: BuddyPlatformScope;
   setBusy: Dispatch<SetStateAction<boolean>>;
   setMessage: Dispatch<SetStateAction<{ ok: boolean; text: string; } | null>>;
   showMsg: (ok: boolean, text: string) => void;
@@ -33,13 +35,21 @@ export function useBuddyAccountImport({ setBusy, setMessage, showMsg, displayNam
   // WorkDaddy「账号导出」的密码（只有加密导出包需要，明文 JSON 留空即可）
   const [workdaddyPassword, setWorkdaddyPassword] = useState("");
 
+  useLayoutEffect(() => {
+    setShowAdd(false); setOauth(null); setOauthBusy(false);
+    setTokenInput(""); setWorkdaddyPassword("");
+  }, [platformScope]);
+
   // ─── 账号操作 ───
 
   const importFromLocal = async () => {
+    const lease = platformScope.capture();
+    if (!lease.current()) return;
     setBusy(true);
     setMessage(null);
     try {
       const account = await invoke<BuddyAccount | null>("buddy_import_from_local", { platform });
+      if (!lease.current()) return;
       if (account) {
         showMsg(true, t("buddy.imported", { name: displayName(account) }));
         setShowAdd(false);
@@ -48,14 +58,19 @@ export function useBuddyAccountImport({ setBusy, setMessage, showMsg, displayNam
       }
       await load();
     } catch (e) {
+      if (!lease.current()) return;
       showMsg(false, String(e));
     } finally {
-      setBusy(false);
+      if (lease.current()) {
+        setBusy(false);
+      }
     }
   };
 
   /** 第三方工具导出文件导入（WorkDaddy 加密包 / cockpit-tools 明文 JSON，均不读取对方数据目录） */
   const importThirdParty = async (tool: "workdaddy" | "cockpit-tools") => {
+    const lease = platformScope.capture();
+    if (!lease.current()) return;
     if (tool === "workdaddy" && !workdaddyPassword.trim()) {
       showMsg(false, t("buddy.importWorkdaddyPasswordRequired"));
       return;
@@ -65,67 +80,89 @@ export function useBuddyAccountImport({ setBusy, setMessage, showMsg, displayNam
         title: tool === "workdaddy" ? t("buddy.importWorkdaddyPick") : t("buddy.importCockpitPick"),
         filters: [{ name: "JSON", extensions: ["json"] }],
       });
+      if (!lease.current()) return;
       if (!selected) return;
       const path = Array.isArray(selected) ? selected[0] : selected;
       setBusy(true);
       setMessage(null);
       const content = await invoke<string>("read_text_file", { path });
+      if (!lease.current()) return;
       const imported = await invoke<BuddyAccount[]>("buddy_import_third_party", {
         platform,
         tool,
         jsonContent: content,
         password: tool === "workdaddy" ? workdaddyPassword : null,
       });
+      if (!lease.current()) return;
       showMsg(true, t("buddy.importedThirdParty", { count: imported.length }));
       setShowAdd(false);
       await load();
     } catch (e) {
+      if (!lease.current()) return;
       showMsg(false, String(e));
     } finally {
-      setBusy(false);
+      if (lease.current()) {
+        setBusy(false);
+      }
     }
   };
 
   const importFromJson = async () => {
+    const lease = platformScope.capture();
+    if (!lease.current()) return;
     try {
       const selected = await openDialog({
         title: t("buddy.importJsonPick"),
         filters: [{ name: "JSON", extensions: ["json"] }],
       });
+      if (!lease.current()) return;
       if (!selected) return;
       const path = Array.isArray(selected) ? selected[0] : selected;
       setBusy(true);
       setMessage(null);
       const json = await invoke<string>("read_text_file", { path });
+      if (!lease.current()) return;
       const imported = await invoke<BuddyAccount[]>("buddy_import_accounts", {
         platform,
         jsonContent: json,
       });
+      if (!lease.current()) return;
       showMsg(true, t("buddy.importedJson", { count: imported.length }));
       await load();
     } catch (e) {
+      if (!lease.current()) return;
       showMsg(false, String(e));
     } finally {
-      setBusy(false);
+      if (lease.current()) {
+        setBusy(false);
+      }
     }
   };
 
   // ─── 新增账号 ───
 
   const startOAuth = async () => {
+    const lease = platformScope.capture();
+    if (!lease.current()) return;
     setOauthBusy(true);
     setMessage(null);
     try {
       const res = await invoke<OAuthStartResponse>("buddy_oauth_start", { platform });
+      if (!lease.current()) return;
       setOauth(res);
     } catch (e) {
+      if (!lease.current()) return;
       showMsg(false, String(e));
     } finally {
-      setOauthBusy(false);
+      if (lease.current()) {
+        setOauthBusy(false);
+      }
     }
   };
 
   const completeOAuth = async () => {
+    const lease = platformScope.capture();
+    if (!lease.current()) return;
     if (!oauth) return;
     setOauthBusy(true);
     setMessage(null);
@@ -134,22 +171,30 @@ export function useBuddyAccountImport({ setBusy, setMessage, showMsg, displayNam
         platform,
         loginId: oauth.loginId,
       });
+      if (!lease.current()) return;
       setShowAdd(false);
       setOauth(null);
       showMsg(true, t("buddy.added", { name: displayName(account) }));
       await load();
     } catch (e) {
+      if (!lease.current()) return;
       showMsg(false, String(e));
     } finally {
-      setOauthBusy(false);
+      if (lease.current()) {
+        setOauthBusy(false);
+      }
     }
   };
 
   const cancelOAuth = async () => {
+    const lease = platformScope.capture();
+    if (!lease.current()) return;
     if (oauth) {
       try {
         await invoke("buddy_oauth_cancel", { platform, loginId: oauth.loginId });
+        if (!lease.current()) return;
       } catch {
+        if (!lease.current()) return;
         // 忽略取消失败
       }
     }
@@ -158,6 +203,8 @@ export function useBuddyAccountImport({ setBusy, setMessage, showMsg, displayNam
   };
 
   const addWithToken = async () => {
+    const lease = platformScope.capture();
+    if (!lease.current()) return;
     const token = tokenInput.trim();
     if (!token) return;
     setBusy(true);
@@ -167,14 +214,18 @@ export function useBuddyAccountImport({ setBusy, setMessage, showMsg, displayNam
         platform,
         accessToken: token,
       });
+      if (!lease.current()) return;
       setShowAdd(false);
       setTokenInput("");
       showMsg(true, t("buddy.added", { name: displayName(account) }));
       await load();
     } catch (e) {
+      if (!lease.current()) return;
       showMsg(false, String(e));
     } finally {
-      setBusy(false);
+      if (lease.current()) {
+        setBusy(false);
+      }
     }
   };
 

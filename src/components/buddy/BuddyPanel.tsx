@@ -1,3 +1,6 @@
+import { runBuddyAccountSwitch, formatBuddySwitchResult } from "./runBuddyAccountSwitch";
+import { loadBuddyPlatform } from "./loadBuddyPlatform";
+import { useBuddyPlatformScope } from "./useBuddyPlatformScope";
 import { BuddyExpiryCell } from "./BuddyExpiryCell";
 import { BuddyDeleteAccountsDialog } from "./BuddyDeleteAccountsDialog";
 import { BuddyAccountUsageDialog } from "./BuddyAccountUsageDialog";
@@ -20,12 +23,13 @@ import TwoApiPanel from "./TwoApiPanel";
 import { Plug } from "lucide-react";
 import { formatQuotaNumber, mergeCreditSegments } from "./quota";
 import { RefreshCw, Download, Upload, Trash2, Check, Loader2, Users, AlertTriangle, CircleAlert, CircleCheck, Plus, MessageSquareText, CalendarCheck, LogIn, X, Settings, Star } from "lucide-react";
-import { ACC_BTN, COL_ACTIONS, COL_CREDITS_MIN, COL_INFO, COL_W, LABEL_TONE, PLATFORMS, TOOL_BTN, TOOL_BTN_DANGER, TOOL_BTN_PRIMARY, accountCreditSegments, describeLabel, getDosageText, getPlanBadge, parseQuotaItems, summarizeQuota, type BuddyAccount, type BuddyAccountView, type BuddyActionLogEntry, type BuddyAutoCheckinConfig, type BuddyAutoTravelConfig, type BuddyCheckinTasksView, type BuddyConflictProgress, type BuddyPaths, type BuddySwitchProgress, type BuddyTransferReport, type BuddyTravelTasksView, type Tab } from "./BuddyPanel.model";
+import { ACC_BTN, COL_ACTIONS, COL_CREDITS_MIN, COL_INFO, COL_W, LABEL_TONE, PLATFORMS, TOOL_BTN, TOOL_BTN_DANGER, TOOL_BTN_PRIMARY, accountCreditSegments, describeLabel, getDosageText, getPlanBadge, parseQuotaItems, summarizeQuota, type BuddyAccount, type BuddyActionLogEntry, type BuddyAutoCheckinConfig, type BuddyAutoTravelConfig, type BuddyCheckinTasksView, type BuddyConflictProgress, type BuddyPaths, type BuddySwitchProgress, type BuddyTravelTasksView, type Tab } from "./BuddyPanel.model";
 import { QuotaBar } from "./BuddyPanel.QuotaBar";
 
 export default function BuddyPanel() {
   const { t } = useTranslation();
   const [platform, setPlatform] = useState<string>("codebuddy-cn");
+  const platformScope = useBuddyPlatformScope(platform);
   const platformLabel = PLATFORMS.find((p) => p.id === platform)?.label ?? platform;
   const [tab, setTab] = useState<Tab>("accounts");
   const [accounts, setAccounts] = useState<BuddyAccount[]>([]);
@@ -99,6 +103,7 @@ export default function BuddyPanel() {
     toggleSelectAll,
     selectedCount,
   } = useBuddyAccountMaintenance({
+    platformScope,
     showMsg: (ok, text) => showMsg(ok, text),
     accounts,
     currentId,
@@ -142,6 +147,7 @@ export default function BuddyPanel() {
     importFromJson,
     renderAddAccountDialog,
   } = useBuddyAccountImport({
+    platformScope,
     setBusy,
     setMessage,
     showMsg: (ok, text) => showMsg(ok, text),
@@ -192,33 +198,30 @@ export default function BuddyPanel() {
     platform,
   });
 
-  const load = useCallback(async () => {
-    const epoch = platformEpochRef.current;
-    try {
-      const [list, current, pathInfo, view] = await Promise.all([
-        invoke<BuddyAccount[]>("buddy_list_accounts", { platform }),
-        invoke<string | null>("buddy_get_current_account_id", { platform }),
-        invoke<BuddyPaths>("buddy_get_paths", { platform }),
-        invoke<BuddyAccountView>("buddy_get_account_view", { platform }),
-      ]);
-      // 平台已经切走：这是上一个平台的迟到响应，丢掉，别把它的账号画到当前标签下
-      if (platformEpochRef.current !== epoch) return;
-      setAccounts(list);
-      setCurrentId(current);
-      setPaths(pathInfo);
-      setAccountView(view);
-    } catch (e) {
-      if (platformEpochRef.current !== epoch) return;
-      setMessage({ ok: false, text: String(e) });
-    } finally {
-      if (platformEpochRef.current === epoch) setPlatformLoading(false);
-    }
-  }, [platform]);
+  const load = useCallback(() => loadBuddyPlatform({
+    scope: platformScope, platform,
+    onLoaded: snapshot => {
+      setAccounts(snapshot.accounts); setCurrentId(snapshot.currentId);
+      setPaths(snapshot.paths); setAccountView(snapshot.view);
+    },
+    onError: error => setMessage({ ok: false, text: String(error) }),
+    onFinished: () => setPlatformLoading(false),
+  }), [platform, platformScope]);
 
   // 切换平台：先让旧请求作废、清空旧平台数据，再拉新列表。
   // 不清空的话，加载期间新标签下会挂着上一个平台的账号（快速来回切时尤其明显）。
   useEffect(() => {
     platformEpochRef.current += 1;
+    setBusy(false);
+    setMessage(null);
+    setSwitchProgress(null);
+    setShowAdd(false);
+    setOauth(null);
+    setTokenInput("");
+    setDeleteIds(null);
+    setUsageAccountId(null);
+    setEditingCell(null);
+    setAddingColumn(false);
     setAccounts([]);
     setCurrentId(null);
     setPaths(null);
@@ -243,6 +246,7 @@ export default function BuddyPanel() {
     const stale = latestSec === 0 || Date.now() - latestSec * 1000 > 10 * 60 * 1000;
     if (!stale) return;
     autoSyncRef.current.add(platform);
+    const lease = platformScope.capture();
     const epoch = platformEpochRef.current;
     void (async () => {
       try {
@@ -250,7 +254,7 @@ export default function BuddyPanel() {
       } catch {
         // 静默：这一步只是让状态/积分变新，失败不影响列表可用
       }
-      if (platformEpochRef.current === epoch) await load();
+      if (lease.current() && platformEpochRef.current === epoch) await load();
     })();
   }, [platform, platformLoading, accounts, load]);
 
@@ -261,54 +265,71 @@ export default function BuddyPanel() {
 
   // 自动签到事件刷新（日志 / 配置变化都会影响今日任务列表的状态）
   useEffect(() => {
+    const lease = platformScope.capture();
+    let disposed = false;
+    const active = () => !disposed && lease.current();
+    const retain = async (pending: Promise<UnlistenFn>) => {
+      const fn = await pending;
+      if (active()) unlisteners.push(fn); else fn();
+    };
     const unlisteners: (() => void)[] = [];
     const refreshTasks = () => {
+      if (!active()) return;
       void invoke<BuddyCheckinTasksView>("buddy_auto_checkin_tasks")
-        .then(setAutoTasks)
+        .then(value => { if (active()) setAutoTasks(value); })
         .catch(() => {});
     };
     const refreshTravel = () => {
+      if (!active()) return;
       void invoke<BuddyAutoTravelConfig>("buddy_auto_travel_get_config")
-        .then(setTravelConfig)
+        .then(value => { if (active()) setTravelConfig(value); })
         .catch(() => {});
       void invoke<BuddyTravelTasksView>("buddy_auto_travel_tasks")
-        .then(setTravelTasks)
+        .then(value => { if (active()) setTravelTasks(value); })
         .catch(() => {});
     };
     const setup = async () => {
-      unlisteners.push(
-        await listen("buddy-action-logs-changed", () => {
-          void invoke<BuddyActionLogEntry[]>("buddy_get_action_logs").then(setActionLogs).catch(() => {});
+      await retain(
+        listen("buddy-action-logs-changed", () => {
+          if (!active()) return;
+          void invoke<BuddyActionLogEntry[]>("buddy_get_action_logs").then(value => { if (active()) setActionLogs(value); }).catch(() => {});
           refreshTasks();
           // 有新的签到/派出行事件 → 刷新日历（当天格子与明细）
           void loadCalendar(calendarMonth);
         })
       );
-      unlisteners.push(
-        await listen("buddy-auto-checkin-config-changed", () => {
+      if (!active()) return;
+      await retain(
+        listen("buddy-auto-checkin-config-changed", () => {
+          if (!active()) return;
           void invoke<BuddyAutoCheckinConfig>("buddy_auto_checkin_get_config")
-            .then(setAutoConfig)
+            .then(value => { if (active()) setAutoConfig(value); })
             .catch(() => {});
           refreshTasks();
         })
       );
-      unlisteners.push(
-        await listen<BuddyConflictProgress>("buddy-conflict-progress", (e) => {
+      if (!active()) return;
+      await retain(
+        listen<BuddyConflictProgress>("buddy-conflict-progress", (e) => {
+          if (!active() || e.payload.platform !== platform) return;
           // done 事件只是收尾信号，清掉进度条（结果由 invoke 返回值渲染）
           setConflictProgress(e.payload.stage === "done" ? null : e.payload);
         })
       );
-      unlisteners.push(
-        await listen("buddy-auto-travel-config-changed", () => {
+      if (!active()) return;
+      await retain(
+        listen("buddy-auto-travel-config-changed", () => {
+          if (!active()) return;
           refreshTravel();
         })
       );
     };
-    void setup();
+    void setup().catch(error => { if (active()) showMsg(false, String(error)); });
     return () => {
+      disposed = true;
       for (const fn of unlisteners) fn();
     };
-  }, [platform, loadCalendar, calendarMonth]);
+  }, [platform, platformScope, loadCalendar, calendarMonth]);
 
   const displayName = useMemo(
     () => (acc: BuddyAccount) =>
@@ -334,6 +355,8 @@ export default function BuddyPanel() {
 
   // 账号互导：把勾选的账号导入到另一平台（目标侧按 uid/email 去重）
   const syncSelected = async () => {
+    const lease = platformScope.capture();
+    if (!lease.current()) return;
     const other = PLATFORMS.find((p) => p.id !== platform);
     if (!other || selectedIds.size === 0) return;
     setBusy(true);
@@ -344,15 +367,21 @@ export default function BuddyPanel() {
         toPlatform: other.id,
         accountIds: [...selectedIds],
       });
+      if (!lease.current()) return;
       showMsg(true, t("buddy.syncImported", { count, target: other.label }));
     } catch (e) {
+      if (!lease.current()) return;
       showMsg(false, t("buddy.syncFailed", { error: String(e) }));
     } finally {
-      setBusy(false);
+      if (lease.current()) {
+        setBusy(false);
+      }
     }
   };
 
   const switchAccount = async (id: string) => {
+    const lease = platformScope.capture();
+    if (!lease.current()) return;
     setBusy(true);
     setMessage(null);
     setSwitchProgress(null);
@@ -362,51 +391,24 @@ export default function BuddyPanel() {
     setConflictAlertDismissed(false);
     setConflictDialogOpen(false);
     conflictDialogShownRef.current = false;
-    let unlisten: UnlistenFn | null = null;
-    try {
-      unlisten = await listen<BuddySwitchProgress>("buddy-switch-progress", (e) => {
-        setSwitchProgress(e.payload);
-        // 合并结束时后端带上逐会话台账（只在该阶段出现）
-        if (e.payload.sync) {
-          setSyncSummary(e.payload.sync);
-          focusConflicts(e.payload.sync.conflict);
-        }
-      });
-      const [text, report] = await invoke<[string, BuddyTransferReport | null]>(
-        "buddy_switch_account",
-        { platform, accountId: id }
-      );
-      const parts = [text];
-      if (
-        report &&
-        report.addedConversations + report.replacedConversations + report.updatedSessionRows + report.scannedWorkspaces >
-          0
-      ) {
-        parts.push(
-          t("buddy.mergeResult", {
-            added: report.addedConversations,
-            replaced: report.replacedConversations,
-            rows: report.updatedSessionRows,
-            workspaces: report.scannedWorkspaces,
-          })
-        );
-      }
-      // 事件可能在切换返回前就被消费，这里用返回值兜底，保证台账一定展示
-      if (report?.sync) {
-        setSyncSummary(report.sync);
-        focusConflicts(report.sync.conflict);
-      }
-      // 本次切换落盘的冲突（若有）刷新进待处理列表
-      void loadConflicts();
-      showMsg(true, parts.join("；"));
-      await load();
-    } catch (e) {
-      showMsg(false, String(e));
-    } finally {
-      unlisten?.();
-      setSwitchProgress(null);
-      setBusy(false);
-    }
+    await runBuddyAccountSwitch({
+      scope: platformScope, platform, accountId: id,
+      onProgress: progress => {
+        setSwitchProgress(progress);
+        if (progress.sync) { setSyncSummary(progress.sync); focusConflicts(progress.sync.conflict); }
+      },
+      onResult: async (text, report) => {
+        if (report?.sync) { setSyncSummary(report.sync); focusConflicts(report.sync.conflict); }
+        void loadConflicts();
+        showMsg(true, formatBuddySwitchResult(text, report, changed => t("buddy.mergeResult", {
+          added: changed.addedConversations, replaced: changed.replacedConversations,
+          rows: changed.updatedSessionRows, workspaces: changed.scannedWorkspaces,
+        })));
+        await load();
+      },
+      onError: error => showMsg(false, String(error)),
+      onFinished: () => { setSwitchProgress(null); setBusy(false); },
+    });
   };
 
   const otherPlatform = PLATFORMS.find((p) => p.id !== platform);

@@ -1,3 +1,4 @@
+import type { BuddyPlatformScope } from "./platformScope";
 import { useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
@@ -6,7 +7,8 @@ import { accountCreditSegments, parseQuotaItems, summarizeQuota, type BuddyAccou
 import type { Dispatch, SetStateAction } from "react";
 
 /** Owns the BuddyAccountMaintenance feature, independently of page rendering. */
-export function useBuddyAccountMaintenance({ showMsg, accounts, currentId, setBusy, setMessage, load, platform }: {
+export function useBuddyAccountMaintenance({ platformScope, showMsg, accounts, currentId, setBusy, setMessage, load, platform }: {
+  platformScope: BuddyPlatformScope;
   showMsg: (ok: boolean, text: string) => void;
   accounts: BuddyAccount[];
   currentId: string | null;
@@ -29,26 +31,34 @@ export function useBuddyAccountMaintenance({ showMsg, accounts, currentId, setBu
 
   // 主账号：点 ★ 设为/取消主账号（主账号恒排在列表首位）
   const togglePrimary = async (accountId: string) => {
+    const lease = platformScope.capture();
+    if (!lease.current()) return;
     try {
       const next = accountView.primaryAccountId === accountId ? null : accountId;
       const view = await invoke<BuddyAccountView>("buddy_set_primary_account", {
         platform,
         accountId: next,
       });
+      if (!lease.current()) return;
       setAccountView(view);
     } catch (e) {
+      if (!lease.current()) return;
       showMsg(false, String(e));
     }
   };
 
   const changeOrderMode = async (orderMode: string) => {
+    const lease = platformScope.capture();
+    if (!lease.current()) return;
     try {
       const view = await invoke<BuddyAccountView>("buddy_set_account_order_mode", {
         platform,
         orderMode,
       });
+      if (!lease.current()) return;
       setAccountView(view);
     } catch (e) {
+      if (!lease.current()) return;
       showMsg(false, String(e));
     }
   };
@@ -125,20 +135,28 @@ export function useBuddyAccountMaintenance({ showMsg, accounts, currentId, setBu
   }, [accounts, currentId]);
 
   const refreshAccount = async (id: string) => {
+    const lease = platformScope.capture();
+    if (!lease.current()) return;
     setBusy(true);
     setMessage(null);
     try {
       await invoke<BuddyAccount>("buddy_refresh_token", { platform, accountId: id });
+      if (!lease.current()) return;
       showMsg(true, t("buddy.refreshed"));
       await load();
     } catch (e) {
+      if (!lease.current()) return;
       showMsg(false, String(e));
     } finally {
-      setBusy(false);
+      if (lease.current()) {
+        setBusy(false);
+      }
     }
   };
 
   const refreshSelected = async () => {
+    const lease = platformScope.capture();
+    if (!lease.current()) return;
     if (selectedIds.size === 0) return;
     setBusy(true);
     setMessage(null);
@@ -147,20 +165,27 @@ export function useBuddyAccountMaintenance({ showMsg, accounts, currentId, setBu
         platform,
         accountIds: [...selectedIds],
       });
+      if (!lease.current()) return;
       showMsg(true, t("buddy.refreshedAll", { count }));
       await load();
     } catch (e) {
+      if (!lease.current()) return;
       showMsg(false, String(e));
     } finally {
-      setBusy(false);
+      if (lease.current()) {
+        setBusy(false);
+      }
     }
   };
 
   const deleteAccounts = async (ids: string[]) => {
+    const lease = platformScope.capture();
+    if (!lease.current()) return;
     setBusy(true);
     setMessage(null);
     try {
       await invoke("buddy_delete_accounts", { platform, accountIds: ids });
+      if (!lease.current()) return;
       setSelectedIds((prev) => {
         const next = new Set(prev);
         ids.forEach((id) => next.delete(id));
@@ -169,22 +194,30 @@ export function useBuddyAccountMaintenance({ showMsg, accounts, currentId, setBu
       setDeleteIds(null);
       await load();
     } catch (e) {
+      if (!lease.current()) return;
       showMsg(false, String(e));
     } finally {
-      setBusy(false);
+      if (lease.current()) {
+        setBusy(false);
+      }
     }
   };
 
   // 导出指定账号（工具栏批量导出 / 卡片单个导出共用）
   const exportByIds = async (ids: string[], nameBase?: string) => {
+    const lease = platformScope.capture();
+    if (!lease.current()) return;
     if (ids.length === 0) return;
     try {
       const json = await invoke<string>("buddy_export_accounts", { platform, accountIds: ids });
+      if (!lease.current()) return;
       const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const name = `${nameBase ?? platform}-accounts-${ts}.json`;
       await invoke("file_io_save_text", { fileName: name, content: json });
+      if (!lease.current()) return;
       showMsg(true, t("buddy.exported", { name }));
     } catch (e) {
+      if (!lease.current()) return;
       showMsg(false, String(e));
     }
   };
