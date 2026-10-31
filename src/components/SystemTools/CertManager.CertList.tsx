@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { ShieldCheck, Plus, Trash2, Download, Copy, Check } from "lucide-react";
-import { CERT_ISSUE_LOG_EVENT, daysUntil, fmtDate, issuingSet, type CertDetail, type Certificate, type Credential, type DeployNode, type IssueLogPayload, type IssueResult } from "./CertManager.model";
+import { CERT_ISSUE_LOG_EVENT, daysUntil, fmtDate, formatIssueResultSummary, issuingSet, type CertDetail, type Certificate, type Credential, type DeployNode, type IssueLogPayload, type IssueResult } from "./CertManager.model";
 import { CertForm } from "./CertManager.CertForm";
 import { IssueLogModal } from "./CertManager.IssueLogModal";
 import { DeployModal } from "./CertManager.DeployModal";
@@ -80,8 +80,8 @@ export function CertList() {
       });
       const res = await invoke<IssueResult>("cert_issue_now", { id });
       await refresh();
-      if (res.renewed) {
-        const summary = t("certmgr.applyDone", { time: fmtDate(res.cert?.not_after) });
+      if (res.renewed || (res.deployment?.fail_count ?? 0) > 0) {
+        const summary = formatIssueResultSummary(res, t("certmgr.applyDone", { time: fmtDate(res.cert?.not_after) }));
         toast(summary);
         setLiveLog((p) => (p && p.id === id ? { ...p, summary } : p));
       } else {

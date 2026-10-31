@@ -20,7 +20,7 @@ pub struct Credential {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeployNode {
     pub id: String,
-    /// qiniu / aliyun / linux / windows
+    /// local / ssh / linux / windows / api / docker / webhook / cloud providers
     #[serde(rename = "type")]
     pub node_type: String,
     pub name: String,

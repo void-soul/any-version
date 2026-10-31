@@ -4,7 +4,7 @@
 //! - 数据模型（Certificate / DeployNode / Credential）持久化在 `get_data_dir()/certs/` 下三个 JSON 文件。
 //! - 验证方式：DNS-01（lego --dns <provider>）与 HTTP-01（lego --http）；CNAME 委托需公网权威 DNS，暂不支持。
 //! - 域名列表 → 部署方式：`Certificate.deploy_links` 保存关联；部署方式本身不保存域名。
-//! - 部署：Windows 接收端 / API / Docker / SSH / Webhook / 阿里云 SSL / 腾讯云 SSL / 七牛 SSL。
+//! - 部署：本机目录与重载 / Windows 接收端 / API / Docker / SSH / Webhook / 云服务。
 //! - 调度：应用内 tokio 定时器，扫描到期并触发申请/部署。
 
 use aes_gcm::aead::Aead;
@@ -40,6 +40,9 @@ mod lego;
 pub use lego::*;
 mod deploy_ssh;
 use deploy_ssh::*;
+mod deploy_local;
+mod local_retry;
+mod local_pending;
 mod deploy_baota;
 use deploy_baota::*;
 mod deploy_aliyun;

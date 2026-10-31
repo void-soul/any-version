@@ -18,6 +18,7 @@ pub(super) async fn deploy_to_node(
     target: &str,
 ) -> Result<(), String> {
     match node.node_type.as_str() {
+        "local" => super::deploy_local::deploy_local(node, cert, pems, target).await,
         // Windows 接收端 / API / Docker 拉取，均走独立的 cert-receiver /push
         "windows" | "api" | "docker" => deploy_http_push(node, cert, pems, target).await,
         "ssh" => deploy_ssh(node, cert, pems, target),

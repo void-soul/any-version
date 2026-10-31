@@ -53,6 +53,7 @@ export function DeployNodes() {
               <span className="text-tiny px-2 py-0.5 rounded bg-sky-500/20 text-sky-300">{NODE_TYPE_LABELS[n.type] ?? n.type}</span>
             </div>
             <div className="text-tiny text-slate-500 mt-1">{t("certmgr.deployInfo", { days: n.deploy_before_days, time: fmtDate(n.last_deploy_at) })}</div>
+            {n.type === "local" && <div className="text-tiny text-slate-400 mt-1 break-all">本机目录：{n.config.output_dir || "未配置"}</div>}
             {n.last_deploy_error && <div className="text-tiny text-rose-400 mt-1">⚠ {n.last_deploy_error}</div>}
             <div className="flex gap-3 mt-2 text-caption">
               <button onClick={() => { setEditing(n); setShowForm(true); }} className="text-slate-300 hover:text-white">{t("certmgr.edit")}</button>

@@ -56,10 +56,14 @@ pub fn start_scheduler(app: tauri::AppHandle) {
                 }
             };
 
-            for id in due_certs {
+            for id in &due_certs {
                 // 定时任务不强制：到没到期由 lego 按 renew_before_days 判断
                 let result = issue_and_deploy(Some(app.clone()), &id, false).await;
                 let (ok, message) = match &result {
+                    Ok(r) if r.deployment.fail_count > 0 => (
+                        false,
+                        format!("证书已签发或仍有效，但 {} 个部署失败，请查看部署日志", r.deployment.fail_count),
+                    ),
                     Ok(r) if r.renewed => (true, "已续期".to_string()),
                     Ok(r) => (
                         true,
@@ -70,13 +74,14 @@ pub fn start_scheduler(app: tauri::AppHandle) {
                     ),
                     Err(e) => (false, e.clone()),
                 };
+                let deployment_failed = result.as_ref().is_ok_and(|r| r.deployment.fail_count > 0);
                 {
                     let st = app.state::<CertScheduler>();
                     let mut s = st.state.lock().unwrap();
                     s.push_log(SchedulerLogEntry {
                         at: Utc::now().to_rfc3339(),
                         cert_id: id.clone(),
-                        action: "renew".into(),
+                        action: if deployment_failed { "deploy" } else { "renew" }.into(),
                         ok,
                         message: message.clone(),
                     });
@@ -85,7 +90,9 @@ pub fn start_scheduler(app: tauri::AppHandle) {
                 let channels = load_json::<NotifyChannel>("notify_channels.json");
                 notify_all(
                     &channels,
-                    if ok {
+                    if deployment_failed {
+                        "证书部署失败"
+                    } else if ok {
                         "证书续期成功"
                     } else {
                         "证书续期失败"
@@ -93,6 +100,13 @@ pub fn start_scheduler(app: tauri::AppHandle) {
                     &format!("证书 {}：{}", id, message),
                 )
                 .await;
+            }
+
+            // A fresh certificate is no longer due for issuance. Retry failed local deployments
+            // from its existing PEM on later cycles, without requesting another ACME certificate.
+            let retry_enabled = app.state::<CertScheduler>().state.lock().unwrap().enabled;
+            if retry_enabled {
+                super::local_retry::retry_local_deployments(&app, &due_certs).await;
             }
 
             // 到期扫描后顺带检查外部域名证书（同一调度周期）

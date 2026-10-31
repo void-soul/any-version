@@ -1,14 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
-import { NODE_FIELDS, NODE_TYPE_LABELS, type DeployNode, type FieldSpec } from "./CertManager.model";
+import { NODE_FIELDS, NODE_TYPE_LABELS, makeNodeConfig, visibleNodeFields, type DeployNode } from "./CertManager.model";
 export function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDone: () => void }) {
   const { t } = useTranslation();
-  const makeData = (cfg: Record<string, string>, fields: FieldSpec[]) => {
-    const d: Record<string, string> = {};
-    for (const f of fields) d[f.key] = cfg[f.key] ?? "";
-    return d;
-  };
   // `type` 是 Rust 侧序列化出来的名字（cert.rs 里 node_type 带 rename = "type"）。
   // 这里不能再写 node_type —— 那样恒为 undefined，任何非 linux 节点都会退化成 linux，
   // 保存时还会把这个错误类型写回去。
@@ -16,7 +11,7 @@ export function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDo
   const [nodeType, setNodeType] = useState(initialType);
   const [name, setName] = useState(initial?.name || "");
   const [data, setData] = useState<Record<string, string>>(() =>
-    makeData(initial?.config ?? {}, NODE_FIELDS[initialType] || [])
+    makeNodeConfig(initialType, initial?.config)
   );
   const [deployBefore, setDeployBefore] = useState(initial?.deploy_before_days || 7);
   const [note, setNote] = useState(initial?.note || "");
@@ -29,7 +24,7 @@ export function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDo
       firstTypeRun.current = false;
       return;
     }
-    setData(makeData({}, NODE_FIELDS[nodeType] || []));
+    setData(makeNodeConfig(nodeType));
   }, [nodeType]);
 
   const setField = (key: string, val: string) => {
@@ -38,6 +33,11 @@ export function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDo
 
   const submit = async () => {
     setErr("");
+    if (nodeType === "local") {
+      if (!data.output_dir?.trim()) return setErr("请填写本机证书目录");
+      if (data.reload_mode === "command" && !data.reload_command?.trim()) return setErr("请填写重载命令");
+      if (data.reload_mode === "service" && !data.service_name?.trim()) return setErr("请填写服务名称");
+    }
     try {
       await invoke("deploy_node_upsert", {
         id: initial?.id,
@@ -53,7 +53,7 @@ export function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDo
     }
   };
 
-  const fields = NODE_FIELDS[nodeType] || [];
+  const fields = visibleNodeFields(nodeType, data);
 
   return (
     <div className="rounded-ctl border border-white/10 bg-white/5 p-4 space-y-3">
@@ -112,11 +112,14 @@ export function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDo
           {t("certmgr.receiverHint")}
         </p>
       )}
+      {nodeType === "local" && (
+        <p className="ui-note ui-note-info">证书申请或续期后直接部署到本机目录，无需接收端。启用证书调度后，失败部署会在后续扫描中重试。</p>
+      )}
       <div className="grid grid-cols-2 gap-3">
-        <label className="text-caption text-slate-400">
+        {nodeType !== "local" && <label className="text-caption text-slate-400">
           {t("certmgr.deployDays")}
           <input type="number" value={deployBefore} onChange={(e) => setDeployBefore(Number(e.target.value))} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" />
-        </label>
+        </label>}
         <label className="text-caption text-slate-400">
           {t("certmgr.remark")}
           <input value={note} onChange={(e) => setNote(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" />

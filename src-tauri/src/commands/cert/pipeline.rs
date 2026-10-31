@@ -16,6 +16,8 @@ pub struct IssueResult {
     pub renewed: bool,
     /// 证书剩余有效期（天，负数表示已过期）
     pub days_left: Option<i64>,
+    /// Issuance and deployment are separate outcomes; a fresh certificate may fail to deploy.
+    pub deployment: DeploySummary,
 }
 
 /// 申请（或续期）指定证书，并部署到其所有关联节点。
@@ -106,9 +108,16 @@ pub async fn issue_and_deploy(
     ));
 
     // 域名列表 → 部署方式关联；target 用于 CDN / 负载均衡等需要目标域名的节点
+    // Deploy the renewed validity metadata, rather than the pre-issuance snapshot.
+    let cert = certs[idx].clone();
     let links = cert_links(&cert);
-    if links.is_empty() {
+    let deployment = if links.is_empty() {
         log.line("（未关联任何部署方式，跳过部署）");
+        DeploySummary {
+            results: vec![],
+            ok_count: 0,
+            fail_count: 0,
+        }
     } else {
         let (summary, records) =
             deploy_links(&mut log, &cert, &pems, &mut nodes, &links, "issue").await;
@@ -117,7 +126,8 @@ pub async fn issue_and_deploy(
             "部署汇总：成功 {} 个，失败 {} 个",
             summary.ok_count, summary.fail_count
         ));
-    }
+        summary
+    };
 
     let updated = certs[idx].clone();
     save_json("certificates.json", &certs);
@@ -134,6 +144,7 @@ pub async fn issue_and_deploy(
         cert: updated,
         renewed,
         days_left,
+        deployment,
     })
 }
 
@@ -264,7 +275,18 @@ pub(super) async fn deploy_links(
                 target.as_str()
             }
         ));
-        let (ok, message) = match deploy_to_node(&node, cert, pems, &target).await {
+        let deployment_result = if node.node_type == "local" {
+            super::local_pending::run_registered(
+                &cert.id,
+                &node.id,
+                &target,
+                deploy_to_node(&node, cert, pems, &target),
+            )
+            .await
+        } else {
+            deploy_to_node(&node, cert, pems, &target).await
+        };
+        let (ok, message) = match deployment_result {
             Ok(()) => {
                 log.line("  部署成功");
                 (true, "成功".to_string())

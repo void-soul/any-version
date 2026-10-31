@@ -58,6 +58,13 @@ export interface IssueResult {
   renewed: boolean;
   /** 证书剩余有效期（天，负数表示已过期） */
   days_left?: number | null;
+  /** Older backends omit automatic deployment results. */
+  deployment?: DeploySummary;
+}
+
+export function formatIssueResultSummary(result: Pick<IssueResult, "deployment">, fallback: string): string {
+  const failed = result.deployment?.fail_count ?? 0;
+  return failed > 0 ? `证书已签发，但 ${failed} 个部署失败，请查看部署日志` : fallback;
 }
 
 
@@ -204,7 +211,24 @@ export type FieldSpec = {
   placeholder?: string;
   textarea?: boolean;
   select?: { value: string; label: string }[];
+  defaultValue?: string;
+  visibleWhen?: { key: string; value: string };
 };
+
+export function makeNodeConfig(nodeType: string, config: Record<string, string> = {}): Record<string, string> {
+  // Preserve legacy local post_script without exposing an additional form field.
+  const data: Record<string, string> = nodeType === "local" && config.post_script !== undefined
+    ? { post_script: config.post_script } : {};
+  for (const field of NODE_FIELDS[nodeType] ?? []) {
+    data[field.key] = config[field.key] ?? field.defaultValue ?? "";
+  }
+  return data;
+}
+
+export function visibleNodeFields(nodeType: string, config: Record<string, string>): FieldSpec[] {
+  return (NODE_FIELDS[nodeType] ?? []).filter((field) =>
+    !field.visibleWhen || config[field.visibleWhen.key] === field.visibleWhen.value);
+}
 
 
 export const AUTH_OPTIONS = [
@@ -214,6 +238,21 @@ export const AUTH_OPTIONS = [
 
 
 export const NODE_FIELDS: Record<string, FieldSpec[]> = {
+  local: [
+    { key: "output_dir", label: "本机证书目录", type: "text", placeholder: "/etc/nginx/certificates" },
+    { key: "layout", label: "目录布局", type: "text", defaultValue: "cert", select: [
+      { value: "cert", label: "按证书" }, { value: "domain", label: "按域名" },
+      { value: "both", label: "按证书和域名" }, { value: "flat", label: "直接写入目录" },
+    ] },
+    { key: "reload_mode", label: "部署后重载", type: "text", defaultValue: "none", select: [
+      { value: "none", label: "不重载" }, { value: "command", label: "执行命令" },
+      { value: "nginx", label: "重载 Nginx" }, { value: "service", label: "重启服务" },
+    ] },
+    { key: "reload_command", label: "重载命令", type: "text", textarea: true, visibleWhen: { key: "reload_mode", value: "command" } },
+    { key: "nginx_prefix", label: "Nginx 工作目录（可选）", type: "text", visibleWhen: { key: "reload_mode", value: "nginx" } },
+    { key: "nginx_conf", label: "Nginx 配置路径（可选）", type: "text", visibleWhen: { key: "reload_mode", value: "nginx" } },
+    { key: "service_name", label: "服务名称", type: "text", visibleWhen: { key: "reload_mode", value: "service" } },
+  ],
   windows: [
     { key: "url", label: "接收端地址", type: "text", placeholder: "http://127.0.0.1:9000（/push 可省略）" },
     { key: "token", label: "共享 Token", type: "password" },
@@ -373,6 +412,7 @@ export const NODE_FIELDS: Record<string, FieldSpec[]> = {
 
 
 export const NODE_TYPE_LABELS: Record<string, string> = {
+  local: "本机部署",
   windows: "Windows 接收端 / Nginx",
   api: "API 拉取",
   docker: "Docker 容器拉取",

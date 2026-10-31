@@ -26,10 +26,46 @@ pub(super) fn load_json<T: serde::de::DeserializeOwned>(name: &str) -> Vec<T> {
     Vec::new()
 }
 
+pub(super) fn load_json_checked<T: serde::de::DeserializeOwned>(name: &str) -> Result<Vec<T>, String> {
+    read_json_at(&ensure_dir().join(name))
+}
+
+fn read_json_at<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Result<Vec<T>, String> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("读取证书配置失败 {}: {e}", path.display())),
+    };
+    serde_json::from_slice(&bytes).map_err(|e| format!("证书配置无效，未覆盖原文件 {}: {e}", path.display()))
+}
+
+pub(super) fn save_json_checked<T: Serialize>(name: &str, v: &[T]) -> Result<(), String> {
+    let path = ensure_dir().join(name);
+    let bytes = serde_json::to_vec_pretty(v).map_err(|e| e.to_string())?;
+    crate::commands::foundation::atomic_write_file(&path, &bytes)
+}
+
 pub(super) fn save_json<T: Serialize>(name: &str, v: &[T]) {
-    let p = ensure_dir().join(name);
-    if let Ok(s) = serde_json::to_string_pretty(v) {
-        let _ = std::fs::write(&p, s);
+    if let Err(error) = save_json_checked(name, v) {
+        eprintln!("[cert] 保存配置失败: {error}");
+    }
+}
+
+#[cfg(test)]
+mod checked_tests {
+    use super::*;
+    #[test]
+    fn missing_is_empty_but_malformed_or_unreadable_is_an_error() {
+        let mut nonce = [0; 12]; getrandom::getrandom(&mut nonce).unwrap();
+        let root = std::env::temp_dir().join(format!("cert-json-check-{}", hex(&nonce)));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("nodes.json");
+        assert!(read_json_at::<serde_json::Value>(&path).unwrap().is_empty());
+        std::fs::write(&path, b"invalid json").unwrap();
+        assert!(read_json_at::<serde_json::Value>(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"invalid json");
+        assert!(read_json_at::<serde_json::Value>(&root).is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
 

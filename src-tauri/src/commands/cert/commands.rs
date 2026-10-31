@@ -266,8 +266,11 @@ pub fn deploy_node_upsert(
     config: HashMap<String, String>,
     deploy_before_days: Option<i64>,
     note: Option<String>,
-) -> DeployNode {
-    let mut nodes = load_json::<DeployNode>("deploy_nodes.json");
+) -> Result<DeployNode, String> {
+    if node_type == "local" {
+        super::deploy_local::LocalDeployment::from_config(&config)?;
+    }
+    let mut nodes = load_json_checked::<DeployNode>("deploy_nodes.json")?;
     let nid = id.unwrap_or_else(|| gen_id("node"));
     let node = if let Some(pos) = nodes.iter().position(|n| n.id == nid) {
         let mut n = nodes[pos].clone();
@@ -294,8 +297,8 @@ pub fn deploy_node_upsert(
     } else {
         nodes.push(node.clone());
     }
-    save_json("deploy_nodes.json", &nodes);
-    node
+    save_json_checked("deploy_nodes.json", &nodes)?;
+    Ok(node)
 }
 
 #[tauri::command]
@@ -322,6 +325,7 @@ pub async fn deploy_node_test(id: String) -> Result<String, String> {
     let nodes = load_json::<DeployNode>("deploy_nodes.json");
     let node = find_node(&nodes, &id).ok_or_else(|| "节点不存在".to_string())?;
     match node.node_type.as_str() {
+        "local" => super::deploy_local::test_local(node.config.clone()).await,
         "windows" | "api" | "docker" => {
             let url = node.config.get("url").cloned().unwrap_or_default();
             let token = node.config.get("token").cloned().unwrap_or_default();
