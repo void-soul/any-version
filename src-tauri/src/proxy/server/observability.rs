@@ -404,6 +404,15 @@ pub async fn update_running_config(port: u16, f: impl FnOnce(&mut ProxyConfig)) 
     match handle {
         Some(cfg) => {
             let mut w = cfg.write().await;
+            // Stop may unregister while this updater is waiting for the write lock.
+            let registered = RUNNING_CONFIGS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .any(|(p, current)| *p == port && Arc::ptr_eq(current, &cfg));
+            if !registered {
+                return false;
+            }
             f(&mut w);
             true
         }

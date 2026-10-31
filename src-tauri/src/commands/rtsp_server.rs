@@ -1,3 +1,6 @@
+#[path = "rtsp_server_lifecycle.rs"]
+mod lifecycle;
+use lifecycle::{OwnedChild, OutputReaders};
 use parking_lot::Mutex;
 use std::process::{Command, Stdio, Child};
 #[cfg(windows)]
@@ -62,15 +65,16 @@ pub struct RtspServerStatus {
 }
 
 pub struct InnerRtspServer {
-    pub mediamtx_child: Option<Child>,
-    pub ffmpeg_child: Child,
+    pub mediamtx_child: Option<OwnedChild>,
+    pub ffmpeg_child: OwnedChild,
     pub config: RtspConfig,
     pub start_time: std::time::Instant,
     pub logs: Arc<Mutex<Vec<String>>>,
     pub should_stop: Arc<AtomicBool>,
+    pub readers: OutputReaders,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct RtspServerState {
     pub servers: Arc<Mutex<HashMap<String, InnerRtspServer>>>,
     pub last_logs: Arc<Mutex<HashMap<String, Vec<String>>>>,
@@ -131,37 +135,6 @@ fn testsrc_audio_source(kind: &str) -> (Vec<String>, Option<String>) {
     ];
     let af = if af.is_empty() { None } else { Some(af.to_string()) };
     (args, af)
-}
-
-/// 把子进程输出逐行并入实例日志（内存环形 + 供状态查询的快照）。
-///
-/// 必须持续读取：子进程的 stdout/stderr 被管道接管后，若无人读取，
-/// 管道缓冲写满会导致子进程永久阻塞（MediaMTX 会因此停止响应新连接）。
-fn spawn_output_reader<R: std::io::Read + Send + 'static>(
-    stream: R,
-    logs: Arc<Mutex<Vec<String>>>,
-    last_logs: Arc<Mutex<HashMap<String, Vec<String>>>>,
-    instance_id: String,
-    prefix: &'static str,
-) {
-    std::thread::spawn(move || {
-        for line in BufReader::new(stream).lines().map_while(Result::ok) {
-            let line = format!("{}{}", prefix, line);
-            {
-                let mut l = logs.lock();
-                if l.len() > 300 {
-                    l.remove(0);
-                }
-                l.push(line.clone());
-            }
-            let mut last_map = last_logs.lock();
-            let ll = last_map.entry(instance_id.clone()).or_insert_with(Vec::new);
-            if ll.len() > 300 {
-                ll.remove(0);
-            }
-            ll.push(line);
-        }
-    });
 }
 
 /// 等待回环 TCP 端口进入监听状态（最多 timeout）。
@@ -328,7 +301,7 @@ pub fn start_rtsp_server(
     state: State<'_, RtspServerState>,
     mut config: RtspConfig,
 ) -> Result<RtspServerStatus, String> {
-    crate::runtime_tasks::require_enabled("rtspServer")?;
+    let _operation = crate::runtime_tasks::begin_operation("rtspServer")?;
     let instance_id = config.id.clone().unwrap_or_else(|| format!("server_{}", config.port));
     config.id = Some(instance_id.clone());
 
@@ -340,18 +313,16 @@ pub fn start_rtsp_server(
     let mut guard = state.servers.lock();
 
     // 如果指定 ID 已存在运行中的进程，先彻底杀死清理
-    if let Some(mut inner) = guard.remove(&instance_id) {
-        inner.should_stop.store(true, Ordering::SeqCst);
-        let _ = inner.ffmpeg_child.kill();
-        if let Some(ref mut mtx) = inner.mediamtx_child {
-            let _ = mtx.kill();
-        }
+    if let Some(inner) = guard.get_mut(&instance_id) {
+        lifecycle::stop_instance(inner, false)?;
     }
+    guard.remove(&instance_id);
 
     state.last_errors.lock().insert(instance_id.clone(), None);
     state.last_logs.lock().insert(instance_id.clone(), Vec::new());
 
     let logs = Arc::new(Mutex::new(Vec::new()));
+    let mut readers = OutputReaders::default();
     let path_clean = config.path_name.trim_start_matches('/');
 
     // 检查是否存在标准 RTSP 流媒体服务器 MediaMTX
@@ -448,10 +419,12 @@ pub fn start_rtsp_server(
             mtx_cmd.creation_flags(0x08000000 | 0x01000000);
         }
 
+        #[cfg(unix)] { use std::os::unix::process::CommandExt; mtx_cmd.process_group(0); }
         match mtx_cmd.spawn() {
-            Ok(mut child) => {
+            Ok(child) => {
+                let mut child = OwnedChild::new(child);
                 if let Some(out) = child.stdout.take() {
-                    spawn_output_reader(
+                    readers.spawn(
                         out,
                         Arc::clone(&logs),
                         Arc::clone(&state.last_logs),
@@ -460,7 +433,7 @@ pub fn start_rtsp_server(
                     );
                 }
                 if let Some(err) = child.stderr.take() {
-                    spawn_output_reader(
+                    readers.spawn(
                         err,
                         Arc::clone(&logs),
                         Arc::clone(&state.last_logs),
@@ -714,8 +687,9 @@ pub fn start_rtsp_server(
         cmd.creation_flags(0x08000000 | 0x01000000);
     }
 
+    #[cfg(unix)] { use std::os::unix::process::CommandExt; cmd.process_group(0); }
     let mut child = match cmd.spawn() {
-        Ok(c) => c,
+        Ok(c) => OwnedChild::new(c),
         Err(e) => {
             let err = format!("启动 FFmpeg 推流进程失败: {}\n命令: {}", e, full_cmd_line);
             state.last_errors.lock().insert(instance_id.clone(), Some(err.clone()));
@@ -726,9 +700,12 @@ pub fn start_rtsp_server(
     let pid = child.id();
     let mtx_pid = mediamtx_child.as_ref().map(|c| c.id());
 
+    if let Some(stdout) = child.stdout.take() {
+        readers.spawn(stdout, Arc::clone(&logs), Arc::clone(&state.last_logs), instance_id.clone(), "");
+    }
     // 捕获 stderr 日志
     if let Some(stderr) = child.stderr.take() {
-        spawn_output_reader(
+        readers.spawn(
             stderr,
             Arc::clone(&logs),
             Arc::clone(&state.last_logs),
@@ -797,6 +774,7 @@ pub fn start_rtsp_server(
             start_time: std::time::Instant::now(),
             logs,
             should_stop: Arc::new(AtomicBool::new(false)),
+            readers,
         },
     );
     drop(guard);
@@ -813,15 +791,13 @@ pub fn stop_rtsp_server(
     id: String,
 ) -> Result<(), String> {
     let mut guard = state.servers.lock();
-    if let Some(mut inner) = guard.remove(&id) {
-        inner.should_stop.store(true, Ordering::SeqCst);
-        let _ = inner.ffmpeg_child.kill();
-        if let Some(ref mut mtx) = inner.mediamtx_child {
-            let _ = mtx.kill();
-        }
+    if let Some(inner) = guard.get_mut(&id) {
+        lifecycle::stop_instance(inner, true)?;
     }
+    guard.remove(&id);
     drop(guard);
-    state.last_errors.lock().insert(id, None);
+    state.last_logs.lock().remove(&id);
+    state.last_errors.lock().remove(&id);
     let _ = crate::tray::rebuild_tray_menu(&app);
     Ok(())
 }
@@ -831,21 +807,17 @@ pub fn stop_rtsp_server(
 pub fn stop_all_rtsp_servers(
     state: State<'_, RtspServerState>,
 ) -> Result<(), String> {
-    stop_all_rtsp_servers_inner(&state);
-    Ok(())
+    lifecycle::stop_all(&state)
 }
 
-/// 停止所有 RTSP 服务器实例（核心逻辑，供命令与退出清理线程复用）
+/// Best-effort synchronous cleanup for application exit; module shutdown reports errors below.
 pub fn stop_all_rtsp_servers_inner(state: &RtspServerState) {
-    let mut guard = state.servers.lock();
-    for (id, mut inner) in guard.drain() {
-        inner.should_stop.store(true, Ordering::SeqCst);
-        let _ = inner.ffmpeg_child.kill();
-        if let Some(ref mut mtx) = inner.mediamtx_child {
-            let _ = mtx.kill();
-        }
-        state.last_errors.lock().insert(id, None);
-    }
+    if let Err(error) = lifecycle::stop_all(state) { eprintln!("RTSP cleanup: {error}"); }
+}
+
+pub async fn shutdown_module(state: RtspServerState) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || lifecycle::stop_all(&state))
+        .await.map_err(|e| e.to_string())?
 }
 
 /// 获取指定 ID 的 RTSP 服务器状态与日志
@@ -914,12 +886,10 @@ pub fn get_rtsp_server_status(
     }
 
     if !is_running {
-        if let Some(mut inner) = guard.remove(&id) {
-            let _ = inner.ffmpeg_child.kill();
-            if let Some(ref mut mtx) = inner.mediamtx_child {
-                let _ = mtx.kill();
-            }
+        if let Some(inner) = guard.get_mut(&id) {
+            lifecycle::stop_instance(inner, false)?;
         }
+        guard.remove(&id);
         if let Some(last_l) = state.last_logs.lock().get(&id) {
             logs = last_l.clone();
         }

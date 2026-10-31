@@ -82,6 +82,7 @@ pub async fn serve_proxy(
         collab_room_id: config.collab_room_id.clone(),
         tool_id: config.tool_id.clone(),
     };
+    let (stop, stop_guard, finish_guard) = lifecycle::instance(state.config.clone());
 
     // 登记配置句柄：2API 在 Buddy 切号后靠它热更新鉴权头（否则只能重启服务）。
     // 同端口先清掉旧句柄，避免反复启动后残留。
@@ -139,12 +140,26 @@ pub async fn serve_proxy(
             log_requests_mw,
         ))
         .fallback(catch_all_handler)
-        .with_state(state.clone());
+        .with_state(state.clone())
+        .layer(middleware::from_fn_with_state(
+            stop.clone(),
+            lifecycle::cancel_requests,
+        ));
 
-    axum::serve(tokio_listener, app)
-        .await
-        .map_err(|e| format!("代理服务器错误: {}", e))?;
-    Ok(())
+    // Keep the serving future alive long enough to close accepted connections when its owner aborts.
+    let server = tokio::spawn(async move {
+        let _finish = finish_guard;
+        let listener = connection::OwnedListener::new(tokio_listener, stop.clone());
+        let result = axum::serve(listener, app)
+            .with_graceful_shutdown(async move { stop.cancelled().await })
+            .await
+            .map_err(|e| format!("代理服务器错误: {}", e));
+        _finish.clear().await;
+        result
+    });
+    let result = server.await.map_err(|e| e.to_string())?;
+    drop(stop_guard);
+    result
 }
 
 /// 把 bind 失败翻译成可操作的提示（抄自 CodexPlusPlus 0e9a86a）。
@@ -547,7 +562,10 @@ mod tests {
     }
 }
 
+mod connection;
+mod lifecycle;
 mod observability;
+pub use lifecycle::wait_for_stopped_proxies;
 use observability::{
     catch_all_handler, emit_proxy_event, extract_inbound_delta_text, extract_inbound_full_text,
     get_collab_msg_id, log_proxy, log_proxy_json_full, log_proxy_raw, log_requests_mw,
