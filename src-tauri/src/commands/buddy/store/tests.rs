@@ -482,3 +482,5 @@ fn set_primary_rejects_unknown_account() {
     )
     .is_err());
 }
+
+mod regressions;

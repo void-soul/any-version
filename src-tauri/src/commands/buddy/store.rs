@@ -108,19 +108,10 @@ pub fn load_account(platform: BuddyPlatform, account_id: &str) -> Option<BuddyAc
     serde_json::from_str(&content).ok()
 }
 
-fn load_index(platform: BuddyPlatform) -> BuddyAccountIndex {
-    let path = match index_path(platform) {
-        Ok(p) => p,
-        Err(_) => return BuddyAccountIndex::default(),
-    };
-    if !path.exists() {
-        return BuddyAccountIndex::default();
-    }
-    fs::read_to_string(&path)
-        .ok()
-        .and_then(|c| serde_json::from_str::<BuddyAccountIndex>(&c).ok())
-        .unwrap_or_default()
-}
+mod account_index;
+use account_index::{load_index, load_index_checked};
+mod identity;
+use identity::{matching_account_id, reliable_email, validate_account};
 
 fn save_index(platform: BuddyPlatform, index: &BuddyAccountIndex) -> Result<(), String> {
     let path = index_path(platform)?;
@@ -129,14 +120,15 @@ fn save_index(platform: BuddyPlatform, index: &BuddyAccountIndex) -> Result<(), 
     write_atomic(&path, &content)
 }
 
+mod oauth_enrichment;
+pub use oauth_enrichment::merge_optional_oauth_enrichment;
+
 /// 原子写（临时文件 + 重命名）
 pub fn write_atomic(path: &PathBuf, content: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {}", e))?;
     }
-    let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, content).map_err(|e| format!("写入临时文件失败: {}", e))?;
-    fs::rename(&tmp, path).map_err(|e| format!("原子替换文件失败: {}", e))
+    crate::commands::foundation::atomic_write_file(path, content.as_bytes())
 }
 
 /// 仅当文件哈希匹配时原子写（防并发覆盖官方客户端更新）。
@@ -276,44 +268,32 @@ pub fn upsert_account(
     account: BuddyAccount,
 ) -> Result<BuddyAccount, String> {
     let _lock = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut index = load_index(platform);
-
+    validate_account(&account)?;
+    let mut index = load_index_checked(platform)?;
     let now = chrono::Utc::now().timestamp();
-
-    // 去重：按 uid 优先，其次 email
-    let existing_id = index
+    let accounts: Vec<_> = index
         .accounts
         .iter()
         .filter_map(|summary| load_account(platform, &summary.id))
-        .find(|existing| {
-            let uid_match = existing
-                .uid
-                .as_ref()
-                .zip(account.uid.as_ref())
-                .map(|(a, b)| a.eq_ignore_ascii_case(b))
-                .unwrap_or(false);
-            if uid_match {
-                return true;
-            }
-            let email_match = existing.email.eq_ignore_ascii_case(&account.email)
-                && !account.email.trim().is_empty()
-                && account.email != "unknown";
-            email_match
-        })
-        .map(|a| a.id);
-
-    // 新账号（库里没有同 uid/email）必须自己分配 id：
-    // 「新增账号（OAuth / 粘贴 token）」两条路传进来的 `id` 都是空的，
-    // 以前直接把它当文件名 → normalize_account_id("") → 报「账号 ID 不能为空」，
-    // 而界面上根本没有让用户填 ID 的地方，文案把真因埋了。
+        .collect();
+    let existing_id = matching_account_id(&accounts, &account)?;
     let account_id = existing_id.unwrap_or_else(|| {
-        let given = account.id.trim().to_string();
+        let given = account.id.trim();
         if given.is_empty() {
             derive_account_id(platform, account.uid.as_deref(), &account.email)
         } else {
-            given
+            given.to_string()
         }
     });
+    let path = account_file_path(platform, &account_id)?;
+    // A caller-supplied filename is never authority to overwrite another identity.
+    if path.exists()
+        && !accounts.iter().any(|existing| {
+            existing.id == account_id && identity::same_identity(existing, &account)
+        })
+    {
+        return Err("账号 ID 已属于其他身份或其文件无法读取，拒绝覆盖".to_string());
+    }
     let existing = load_account(platform, &account_id);
 
     let mut merged = account.clone();
@@ -324,7 +304,17 @@ pub fn upsert_account(
         merged.tags = existing.as_ref().and_then(|a| a.tags.clone());
     }
 
-    let path = account_file_path(platform, &account_id)?;
+    if merged.expiry_times.is_empty() {
+        merged.expiry_times = existing
+            .as_ref()
+            .map(|a| a.expiry_times.clone())
+            .unwrap_or_default();
+    }
+    let previous = match fs::read(&path) {
+        Ok(bytes) => Some(bytes),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("读取账号原文件失败: {e}")),
+    };
     let content =
         serde_json::to_string_pretty(&merged).map_err(|e| format!("序列化账号失败: {}", e))?;
     write_atomic(&path, &content)?;
@@ -336,7 +326,18 @@ pub fn upsert_account(
     } else {
         index.accounts.push(summary);
     }
-    save_index(platform, &index)?;
+    if let Err(error) = save_index(platform, &index) {
+        let rollback = match previous {
+            Some(bytes) => crate::commands::foundation::atomic_write_file(&path, &bytes),
+            None => fs::remove_file(&path).map_err(|e| e.to_string()),
+        };
+        return Err(match rollback {
+            Ok(()) => format!("保存账号索引失败，账号变更已回滚: {error}"),
+            Err(recovery) => {
+                format!("保存账号索引失败: {error}；账号回滚失败: {recovery}（账号文件保留供恢复）")
+            }
+        });
+    }
     Ok(merged)
 }
 
@@ -348,7 +349,7 @@ pub fn delete_account(platform: BuddyPlatform, account_id: &str) -> Result<(), S
         if path.exists() {
             fs::remove_file(&path).map_err(|e| format!("删除账号文件失败: {}", e))?;
         }
-        let mut index = load_index(platform);
+        let mut index = load_index_checked(platform)?;
         index.accounts.retain(|s| s.id != account_id);
         save_index(platform, &index)?;
         get_current_account_id(platform).as_deref() == Some(account_id)
@@ -478,15 +479,25 @@ fn sync_expiry_times_to_twin(
     saved: &BuddyAccount,
     times: std::collections::HashMap<String, i64>,
 ) {
-    let email = saved.email.trim();
-    if email.is_empty() {
+    let Some(email) = reliable_email(&saved.email) else {
+        return;
+    };
+    if list_accounts(platform)
+        .iter()
+        .filter(|a| reliable_email(&a.email).as_deref() == Some(email.as_str()))
+        .count()
+        != 1
+    {
         return;
     }
     let other = twin_platform(platform);
-    for twin in list_accounts(other) {
-        if twin.email.trim().eq_ignore_ascii_case(email) && twin.expiry_times != saved.expiry_times
-        {
-            let _ = set_expiry_times(other, &twin.id, times.clone());
+    let twins: Vec<_> = list_accounts(other)
+        .into_iter()
+        .filter(|a| reliable_email(&a.email).as_deref() == Some(email.as_str()))
+        .collect();
+    if let [twin] = twins.as_slice() {
+        if twin.expiry_times != saved.expiry_times {
+            let _ = set_expiry_times(other, &twin.id, times);
         }
     }
 }
@@ -498,17 +509,28 @@ fn sync_expiry_times_to_twin(
 pub fn backfill_expiry_times() {
     for platform in [BuddyPlatform::Workbuddy, BuddyPlatform::CodebuddyCn] {
         let other = twin_platform(platform);
-        let by_email: std::collections::HashMap<String, BuddyAccount> = list_accounts(other)
-            .into_iter()
-            .filter(|a| !a.email.trim().is_empty())
-            .map(|a| (a.email.trim().to_lowercase(), a))
-            .collect();
-        for account in list_accounts(platform) {
-            let email = account.email.trim().to_lowercase();
-            if email.is_empty() || account.expiry_times.is_empty() {
+        let others = list_accounts(other);
+        let sources = list_accounts(platform);
+        for account in &sources {
+            let Some(email) = reliable_email(&account.email) else {
+                continue;
+            };
+            if sources
+                .iter()
+                .filter(|a| reliable_email(&a.email).as_deref() == Some(email.as_str()))
+                .count()
+                != 1
+            {
                 continue;
             }
-            let Some(twin) = by_email.get(&email) else {
+            if account.expiry_times.is_empty() {
+                continue;
+            }
+            let twins: Vec<_> = others
+                .iter()
+                .filter(|a| reliable_email(&a.email).as_deref() == Some(email.as_str()))
+                .collect();
+            let [twin] = twins.as_slice() else {
                 continue;
             };
             // 只补 twin 缺失的键；同键两边都有值时保留 twin 现值（不覆盖）
@@ -742,12 +764,21 @@ pub fn parse_accounts_json(
     Ok(imported)
 }
 
+/// Validate the entire import before writing any account (also used by third-party imports).
+pub fn validate_accounts(accounts: &[BuddyAccount]) -> Result<(), String> {
+    for (index, account) in accounts.iter().enumerate() {
+        validate_account(account).map_err(|e| format!("导入第 {} 个账号无效: {}", index + 1, e))?;
+    }
+    Ok(())
+}
+
 /// 导入账号 JSON 并落库（解析复用 `parse_accounts_json`，按 uid/email 去重）。
 pub fn import_accounts(
     platform: BuddyPlatform,
     json_content: &str,
 ) -> Result<Vec<BuddyAccount>, String> {
     let parsed = parse_accounts_json(platform, json_content)?;
+    validate_accounts(&parsed)?;
     let mut saved = Vec::with_capacity(parsed.len());
     for account in parsed {
         saved.push(upsert_account(platform, account)?);

@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0586",
+  "date": "2026-10-31",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "Buddy业务审查修复：07 [P2] 空token导入可覆盖有效凭据。范围：两平台。\n证据：store.rs:633-754，仅反序列化后逐条upsert，空字符串token可进入存储。\n参考：A scripts/lib.js:414-438 拒绝空token。",
+  "root_cause": "导入只反序列化后逐条写入，没有整批凭据校验。",
+  "solution": "1. 原生和第三方导入落库前统一校验整批非空token及可靠身份；报告无效条目位置，避免有效账号先写入。\n2. 使用临时文件、假凭据或延迟响应回归测试，并由主agent复核实际调用链。\n4. 主agent验收：最终Buddy 274通过/0失败/5忽略；Rust全量1499通过+18个受沙箱限制的隔离fixture沙箱外逐项通过，6项原有忽略。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/buddy/store.rs** | 修复本条根因及调用链边界 |\n| **src-tauri/src/commands/buddy/store/identity.rs** | 修复本条根因及调用链边界 |\n| **src-tauri/src/commands/buddy/account_commands.rs** | 修复本条根因及调用链边界 |\n| **src-tauri/src/commands/buddy/store/tests/regressions.rs** | 隔离回归验证 |",
+  "created_at": "2026-10-31 12:13:47",
+  "updated_at": "2026-10-31 12:27:34",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

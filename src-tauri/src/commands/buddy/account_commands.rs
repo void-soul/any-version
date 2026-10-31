@@ -216,6 +216,7 @@ pub fn buddy_import_third_party(
         other => return Err(format!("不支持的第三方导入来源: {}", other)),
     };
 
+    store::validate_accounts(&parsed)?;
     let mut saved = Vec::with_capacity(parsed.len());
     for account in parsed {
         saved.push(store::upsert_account(platform, account)?);

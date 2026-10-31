@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0585",
+  "date": "2026-10-31",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "Buddy业务审查修复：06 [P2] twin共享把同展示字段误认成同一用户。范围：跨平台。\n证据：store.rs:476-528，仅按email文本匹配，昵称/掩码/unknown也可能参与共享和回填。",
+  "root_cause": "twin仅比较展示email，没有可靠性及双向唯一性要求。",
+  "solution": "1. 仅双方唯一可靠邮箱传播倒计时和补缺；昵称、掩码、占位文本及多候选均停止自动写回。\n2. 使用临时文件、假凭据或延迟响应回归测试，并由主agent复核实际调用链。\n4. 主agent验收：最终Buddy 274通过/0失败/5忽略；Rust全量1499通过+18个受沙箱限制的隔离fixture沙箱外逐项通过，6项原有忽略。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/buddy/store.rs** | 修复本条根因及调用链边界 |\n| **src-tauri/src/commands/buddy/store/identity.rs** | 修复本条根因及调用链边界 |\n| **src-tauri/src/commands/buddy/store/tests/regressions.rs** | 隔离回归验证 |",
+  "created_at": "2026-10-31 12:13:46",
+  "updated_at": "2026-10-31 12:27:34",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}
