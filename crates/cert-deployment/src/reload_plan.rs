@@ -27,12 +27,14 @@ impl Platform {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Command {
     pub program: String,
     pub args: Vec<String>,
     pub cwd: Option<String>,
-    pub message: &'static str,
+    pub message: String,
+    #[serde(default)]
+    pub continue_on_error: bool,
 }
 fn command(
     program: &str,
@@ -44,7 +46,8 @@ fn command(
         program: program.into(),
         args,
         cwd,
-        message,
+        message: message.into(),
+        continue_on_error: false,
     }
 }
 
@@ -108,12 +111,15 @@ pub(crate) fn plan(
             }
             match platform {
                 Platform::Windows => Ok(vec![
-                    command(
-                        "net.exe",
-                        vec!["stop".into(), name.into()],
-                        None,
-                        "正在停止证书服务",
-                    ),
+                    Command {
+                        continue_on_error: true,
+                        ..command(
+                            "net.exe",
+                            vec!["stop".into(), name.into()],
+                            None,
+                            "正在停止证书服务",
+                        )
+                    },
                     command(
                         "net.exe",
                         vec!["start".into(), name.into()],
@@ -204,5 +210,69 @@ mod tests {
         assert!(plan(&options("service"), Platform::MacOs)
             .unwrap_err()
             .contains("command"));
+    }
+}
+
+pub(crate) fn execute(commands: &[Command], log: &impl Fn(&str)) -> Result<String, String> {
+    execute_with(commands, log, |command| {
+        let args: Vec<_> = command.args.iter().map(String::as_str).collect();
+        crate::reload_command::run(&command.program, &args, command.cwd.as_deref())
+    })
+}
+
+pub(crate) fn execute_with(
+    commands: &[Command],
+    log: &impl Fn(&str),
+    mut run: impl FnMut(&Command) -> Result<String, String>,
+) -> Result<String, String> {
+    let mut output = String::new();
+    for command in commands {
+        log(&command.message);
+        match run(command) {
+            Ok(result) => output = result,
+            Err(error) if command.continue_on_error => {
+                log(&format!("停止服务未成功，继续尝试启动以确认恢复: {error}"))
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(output)
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::*;
+    #[test]
+    fn stopped_windows_service_can_be_started_but_start_must_succeed() {
+        let options = ReloadOptions {
+            mode: "service",
+            command: "",
+            nginx_prefix: "",
+            nginx_conf: "",
+            service_name: "fake-service",
+            post_script: None,
+        };
+        let commands = plan(&options, Platform::Windows).unwrap();
+        assert!(commands[0].continue_on_error);
+        assert!(!commands[1].continue_on_error);
+        let logs = std::cell::RefCell::new(vec![]);
+        let mut calls = 0;
+        let result = execute_with(&commands, &|s| logs.borrow_mut().push(s.to_string()), |c| {
+            calls += 1;
+            if c.args[0] == "stop" {
+                Err("already stopped".into())
+            } else {
+                Ok("started".into())
+            }
+        });
+        assert_eq!(result.unwrap(), "started");
+        assert_eq!(calls, 2);
+        assert!(logs.borrow().iter().any(|s| s.contains("already stopped")));
+        assert!(execute_with(&commands, &|_| {}, |_| Err("fake refusal".into())).is_err());
+        let old: Command = serde_json::from_str(
+            r#"{"program":"net.exe","args":["start","fake"],"cwd":null,"message":"old"}"#,
+        )
+        .unwrap();
+        assert!(!old.continue_on_error);
     }
 }

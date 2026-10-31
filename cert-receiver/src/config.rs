@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 pub const CONFIG_FILE: &str = "cert-receiver.toml";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
     /// 监听地址，形如 `127.0.0.1:9000`
     pub listen_addr: String,
@@ -135,10 +135,32 @@ pub fn save(path: &Path, cfg: &Config) -> Result<(), String> {
          # 查找顺序：--config <path> → exe 同目录 → 当前工作目录 → %ProgramData%\\Kira\\ → C:\\certs\\\n\n{}",
         body
     );
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {e}"))?;
+    let temp = parent.join(format!(".receiver-config-{}.tmp", random_hex(12)));
+    let result = (|| {
+        use std::io::Write;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temp).map_err(|e| e.to_string())?;
+        file.write_all(text.as_bytes())
+            .and_then(|_| file.sync_all())
+            .map_err(|e| e.to_string())?;
+        drop(file);
+        std::fs::rename(&temp, path).map_err(|e| e.to_string())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
     }
-    std::fs::write(path, text).map_err(|e| format!("写入 {} 失败: {}", path.display(), e))
+    result.map_err(|e| format!("写入 {} 失败: {e}", path.display()))
 }
 
 pub fn random_hex(n: usize) -> String {

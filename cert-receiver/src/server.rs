@@ -30,7 +30,7 @@ pub fn prepare_storage(config: &Config) -> Result<(), String> {
         .clone()
         .try_acquire_owned()
         .map_err(|_| "证书部署仍在进行，请稍后重启服务".to_string())?;
-    crate::deployment::recover(Path::new(&config.output_dir))
+    cert_deployment::protocol::recover(&receiver_options(config), |_| {})
 }
 
 pub fn router(data: Arc<AppData>) -> Router {
@@ -138,12 +138,8 @@ async fn push(
     })))
 }
 
-fn push_inner(
-    data: &AppData,
-    body: &PushBody,
-) -> Result<(Vec<String>, String), (StatusCode, String)> {
-    let cfg = &data.cfg;
-    let options = cert_deployment::protocol::ReceiverOptions {
+fn receiver_options(cfg: &Config) -> cert_deployment::protocol::ReceiverOptions<'_> {
+    cert_deployment::protocol::ReceiverOptions {
         output_dir: Path::new(&cfg.output_dir),
         layout: &cfg.layout,
         reload: cert_deployment::protocol::ReloadOptions {
@@ -154,7 +150,15 @@ fn push_inner(
             service_name: &cfg.service_name,
             post_script: cfg.post_script.as_deref(),
         },
-    };
+    }
+}
+
+fn push_inner(
+    data: &AppData,
+    body: &PushBody,
+) -> Result<(Vec<String>, String), (StatusCode, String)> {
+    let cfg = &data.cfg;
+    let options = receiver_options(cfg);
     cert_deployment::protocol::deploy(&options, body, |line| data.state.log(line)).map_err(|e| {
         (
             if e.invalid_input {

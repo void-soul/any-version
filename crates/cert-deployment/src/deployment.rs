@@ -28,9 +28,22 @@ struct Operation {
     saved_old: bool,
 }
 
+#[derive(Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+enum Phase {
+    #[default]
+    Legacy,
+    Prepared,
+    Reloading,
+    FilesRestored,
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Journal {
     committed: bool,
+    #[serde(default)]
+    phase: Phase,
+    #[serde(default)]
+    reload_plan: Option<Vec<crate::reload_plan::Command>>,
     targets: Vec<(String, bool)>,
 }
 
@@ -46,7 +59,11 @@ fn write_journal(staging: &Path, journal: &Journal) -> Result<(), String> {
     std::fs::rename(temp, staging.join("journal.json")).map_err(|e| e.to_string())
 }
 
-fn recover_pending(root: &Path) -> Result<(), String> {
+fn recover_pending(
+    root: &Path,
+    fallback: Option<&[crate::reload_plan::Command]>,
+    execute: &mut impl FnMut(&[crate::reload_plan::Command]) -> Result<(), String>,
+) -> Result<(), String> {
     for entry in std::fs::read_dir(root).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         if !entry
@@ -62,10 +79,10 @@ fn recover_pending(root: &Path) -> Result<(), String> {
         }
         let journal = staging.join("journal.json");
         if journal.exists() {
-            let journal: Journal =
+            let mut journal: Journal =
                 serde_json::from_slice(&std::fs::read(&journal).map_err(|e| e.to_string())?)
                     .map_err(|e| format!("无法读取遗留部署计划 {}: {e}", staging.display()))?;
-            if !journal.committed {
+            if !journal.committed && journal.phase != Phase::FilesRestored {
                 for (index, (name, had_old)) in journal.targets.iter().enumerate().rev() {
                     validate_name(name)?;
                     let target = root.join(name);
@@ -85,6 +102,25 @@ fn recover_pending(root: &Path) -> Result<(), String> {
                     }
                 }
             }
+            if !journal.committed && journal.phase != Phase::Prepared {
+                if journal.reload_plan.is_none() {
+                    journal.reload_plan = Some(
+                        fallback
+                            .ok_or_else(|| {
+                                "遗留部署缺少重载计划，恢复未确认，计划已保留".to_string()
+                            })?
+                            .to_vec(),
+                    );
+                }
+                journal.phase = Phase::FilesRestored;
+                write_journal(&staging, &journal)?;
+                let plan = journal.reload_plan.as_deref().unwrap();
+                execute(plan).map_err(|e| {
+                    format!("旧证书文件已恢复，但运行态恢复未确认，计划保留供重试: {e}")
+                })?;
+                journal.committed = true;
+                write_journal(&staging, &journal)?;
+            }
         }
         std::fs::remove_dir_all(staging).map_err(|e| e.to_string())?;
     }
@@ -97,7 +133,23 @@ pub fn recover(root: &Path) -> Result<(), String> {
     }
     let root = root.canonicalize().map_err(|e| e.to_string())?;
     let _lock = OutputLock::try_acquire(&root)?;
-    recover_pending(&root)
+    recover_pending(&root, None, &mut |plan| {
+        crate::reload_plan::execute(plan, &|_| {}).map(|_| ())
+    })
+}
+
+pub(crate) fn recover_with(
+    root: &Path,
+    plan: &[crate::reload_plan::Command],
+) -> Result<(), String> {
+    if !root.exists() {
+        return Ok(());
+    }
+    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    let _lock = OutputLock::try_acquire(&root)?;
+    recover_pending(&root, Some(plan), &mut |plan| {
+        crate::reload_plan::execute(plan, &|_| {}).map(|_| ())
+    })
 }
 
 pub struct Deployment {
@@ -106,6 +158,8 @@ pub struct Deployment {
     operations: Vec<Operation>,
     finished: bool,
     preserve: bool,
+    phase: Phase,
+    reload_plan: Option<Vec<crate::reload_plan::Command>>,
     _output_lock: OutputLock,
 }
 
@@ -264,7 +318,9 @@ impl Deployment {
         std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
         let root = root.canonicalize().map_err(|e| e.to_string())?;
         let output_lock = OutputLock::try_acquire(&root)?;
-        recover_pending(&root)?;
+        recover_pending(&root, None, &mut |plan| {
+            crate::reload_plan::execute(plan, &|_| {}).map(|_| ())
+        })?;
         let staging = root.join(format!(".receiver-stage-{}", crate::random_hex(16)));
         create_private_dir(&staging, false)?;
         Ok(Self {
@@ -273,6 +329,8 @@ impl Deployment {
             operations: vec![],
             finished: false,
             preserve: false,
+            phase: Phase::Prepared,
+            reload_plan: None,
             _output_lock: output_lock,
         })
     }
@@ -350,6 +408,8 @@ impl Deployment {
     pub fn install(&mut self) -> Result<(), String> {
         let journal = Journal {
             committed: false,
+            phase: self.phase,
+            reload_plan: self.reload_plan.clone(),
             targets: self
                 .operations
                 .iter()
@@ -417,6 +477,48 @@ impl Deployment {
         }
     }
 
+    pub(crate) fn set_recovery_plan(&mut self, plan: Vec<crate::reload_plan::Command>) {
+        self.reload_plan = Some(plan);
+    }
+
+    fn persist_phase(&mut self, phase: Phase) -> Result<(), String> {
+        let journal = Journal {
+            committed: false,
+            phase,
+            reload_plan: self.reload_plan.clone(),
+            targets: self
+                .operations
+                .iter()
+                .map(|op| {
+                    (
+                        op.target.file_name().unwrap().to_string_lossy().to_string(),
+                        op.saved_old,
+                    )
+                })
+                .collect(),
+        };
+        write_journal(&self.staging, &journal)?;
+        self.phase = phase;
+        Ok(())
+    }
+
+    pub(crate) fn begin_reload(&mut self) -> Result<(), String> {
+        self.persist_phase(Phase::Reloading)
+    }
+
+    pub(crate) fn restore_for_reload(&mut self) -> Result<(), String> {
+        // Keep the plan until both files and the external service are confirmed.
+        self.preserve = true;
+        self.rollback()?;
+        self.persist_phase(Phase::FilesRestored)
+    }
+
+    pub(crate) fn confirm_restored(&mut self) -> Result<(), String> {
+        self.commit_journal()?;
+        self.preserve = false;
+        Ok(())
+    }
+
     pub fn finish(mut self) -> Result<(), String> {
         self.commit_journal()
     }
@@ -424,6 +526,8 @@ impl Deployment {
     pub(crate) fn commit_journal(&mut self) -> Result<(), String> {
         let journal = Journal {
             committed: true,
+            phase: self.phase,
+            reload_plan: self.reload_plan.clone(),
             targets: self
                 .operations
                 .iter()
@@ -443,6 +547,10 @@ impl Deployment {
 
 impl Drop for Deployment {
     fn drop(&mut self) {
+        if !self.finished && matches!(self.phase, Phase::Reloading | Phase::FilesRestored) {
+            // A panic/unwind must not discard the only evidence of an unconfirmed service state.
+            self.preserve = true;
+        }
         if !self.finished && !self.preserve {
             let _ = self.rollback();
         }
@@ -674,3 +782,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod recovery_tests;

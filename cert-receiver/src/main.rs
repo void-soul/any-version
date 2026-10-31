@@ -11,14 +11,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod config;
-use cert_deployment::deployment;
+mod lifecycle;
 mod server;
 
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -47,13 +47,16 @@ struct Stats {
 }
 
 struct ServerHandle {
-    shutdown: oneshot::Sender<()>,
+    shutdown: Option<oneshot::Sender<()>>,
+    completion: Arc<Mutex<std::sync::mpsc::Receiver<()>>>,
+    finished: Arc<AtomicBool>,
     addr: SocketAddr,
 }
 
 pub struct AppState {
     app: AppHandle,
     cfg_path: Mutex<PathBuf>,
+    lifecycle: Mutex<()>,
     cfg: Mutex<Config>,
     server: Mutex<Option<ServerHandle>>,
     stats: Mutex<Stats>,
@@ -78,6 +81,7 @@ impl AppState {
         Self {
             app,
             cfg_path: Mutex::new(cfg_path),
+            lifecycle: Mutex::new(()),
             cfg: Mutex::new(cfg),
             server: Mutex::new(None),
             stats: Mutex::new(Stats::default()),
@@ -138,7 +142,8 @@ impl AppState {
                 .server
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .is_some(),
+                .as_ref()
+                .is_some_and(|h| !h.finished.load(Ordering::SeqCst)),
             addr,
             pushes: s.pushes,
             fails: s.fails,
@@ -150,96 +155,6 @@ impl AppState {
 
     fn emit_status(&self) {
         let _ = self.app.emit(STATUS_EVENT, self.status());
-    }
-
-    /// 启动服务。先同步 `bind`，端口被占用能立刻把错误回给界面，而不是扔进后台任务里。
-    fn start_server(self: &Arc<Self>) -> Result<(), String> {
-        if self
-            .server
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_some()
-        {
-            return Ok(());
-        }
-        let cfg = self.cfg();
-        if let Err(e) = cfg.validate() {
-            self.log(format!("未启动：{}", e));
-            return Err(e);
-        }
-        if let Err(e) = server::prepare_storage(&cfg) {
-            self.log(format!("未启动，证书部署恢复失败：{e}"));
-            return Err(e);
-        }
-        let addr: SocketAddr = cfg
-            .listen_addr
-            .parse()
-            .map_err(|_| format!("监听地址不合法：{}", cfg.listen_addr))?;
-
-        let std_listener =
-            std::net::TcpListener::bind(addr).map_err(|e| format!("绑定 {} 失败：{}", addr, e))?;
-        std_listener
-            .set_nonblocking(true)
-            .map_err(|e| format!("设置非阻塞失败：{}", e))?;
-
-        let data = Arc::new(AppData {
-            cfg: cfg.clone(),
-            state: self.clone(),
-        });
-        let (tx, rx) = oneshot::channel::<()>();
-        let log_state = self.clone();
-        let run_id = self.run_seq.fetch_add(1, Ordering::SeqCst) + 1;
-        tauri::async_runtime::spawn(async move {
-            let listener = match tokio::net::TcpListener::from_std(std_listener) {
-                Ok(l) => l,
-                Err(e) => {
-                    log_state.log(format!("监听器转换失败：{}", e));
-                    return;
-                }
-            };
-            let app = server::router(data);
-            let served = axum::serve(
-                listener,
-                app.into_make_service_with_connect_info::<SocketAddr>(),
-            )
-            .with_graceful_shutdown(async {
-                let _ = rx.await;
-            })
-            .await;
-            if let Err(e) = served {
-                log_state.log(format!("服务异常退出：{}", e));
-            }
-            // 只有「当前这一代」还在跑才打停止日志：重启时旧任务收尾晚于新任务启动，
-            // 否则会出现「服务已就绪」之后紧跟一条「服务已停止」的假象。
-            if log_state.run_seq.load(Ordering::SeqCst) == run_id {
-                log_state.log("服务已停止");
-                log_state.emit_status();
-            }
-        });
-
-        *self.server.lock().unwrap_or_else(|e| e.into_inner()) =
-            Some(ServerHandle { shutdown: tx, addr });
-        // 「就绪」在这里同步打，不放到后台任务里：否则快速停止/重启时会串到
-        // 「服务已停止」后面，日志看着像先停了又起来。
-        self.log(format!(
-            "服务已就绪，监听 {}（布局 {}，重载 {}）",
-            addr, cfg.layout, cfg.reload_mode
-        ));
-        if addr.ip().is_unspecified() {
-            // 服务器场景确实需要 0.0.0.0，但这意味着整个网络都能访问，日志里留一句提醒
-            self.log("⚠ 正在监听所有网卡（0.0.0.0）：请确保共享 Token 足够强，并在防火墙限制来源");
-        }
-        self.emit_status();
-        Ok(())
-    }
-
-    fn stop_server(&self) {
-        let handle = self.server.lock().unwrap_or_else(|e| e.into_inner()).take();
-        if let Some(h) = handle {
-            let _ = h.shutdown.send(());
-            self.log("已请求停止服务");
-        }
-        self.emit_status();
     }
 }
 
@@ -276,44 +191,29 @@ fn bootstrap(state: State<'_, Arc<AppState>>) -> Bootstrap {
 
 /// 保存配置：校验 → 写盘 → 若服务在跑则用新配置重启（端口/token 改了必须重启才生效）。
 #[tauri::command]
-fn save_config(state: State<'_, Arc<AppState>>, config: Config) -> Result<Status, String> {
-    config.validate()?;
-    let path = state
-        .cfg_path
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone();
-    config::save(&path, &config)?;
-    {
-        let mut cur = state.cfg.lock().unwrap_or_else(|e| e.into_inner());
-        *cur = config.clone();
-    }
-    state.log(format!("配置已保存到 {}", path.display()));
-
-    let was_running = state
-        .server
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .is_some();
-    if was_running {
-        state.stop_server();
-        // 给旧监听器一点时间释放端口，否则同端口重启会 bind 失败
-        std::thread::sleep(std::time::Duration::from_millis(150));
-        state.start_server()?;
-    } else {
-        state.emit_status();
-    }
-    Ok(state.status())
+async fn save_config(state: State<'_, Arc<AppState>>, config: Config) -> Result<Status, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        state.apply_config(config)?;
+        Ok(state.status())
+    })
+    .await
+    .map_err(|e| format!("配置任务异常: {e}"))?
 }
 
 #[tauri::command]
-fn set_running(state: State<'_, Arc<AppState>>, running: bool) -> Result<Status, String> {
-    if running {
-        state.start_server()?;
-    } else {
-        state.stop_server();
-    }
-    Ok(state.status())
+async fn set_running(state: State<'_, Arc<AppState>>, running: bool) -> Result<Status, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if running {
+            state.start_server()?;
+        } else {
+            state.stop_server()?;
+        }
+        Ok(state.status())
+    })
+    .await
+    .map_err(|e| format!("启停任务异常: {e}"))?
 }
 
 /// 扫描输出目录里已收到的证书（读每份 meta.json）。
@@ -692,10 +592,11 @@ fn main() {
             build_tray(app)?;
 
             // 配置合法就自动把服务拉起来：托盘工具的预期是「开着就能收」
-            match state.start_server() {
-                Ok(()) => {}
-                Err(e) => state.log(format!("自动启动失败：{}", e)),
-            }
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(e) = state.start_server() {
+                    state.log(format!("自动启动失败：{e}"));
+                }
+            });
             Ok(())
         })
         .on_window_event(|window, event| {

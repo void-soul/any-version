@@ -440,12 +440,8 @@ async fn push(
     })))
 }
 
-fn push_inner(
-    data: &AppData,
-    body: &PushBody,
-) -> Result<(Vec<String>, String), (StatusCode, String)> {
-    let cfg = &data.cfg;
-    let options = cert_deployment::protocol::ReceiverOptions {
+fn receiver_options(cfg: &CertReceiverConfig) -> cert_deployment::protocol::ReceiverOptions<'_> {
+    cert_deployment::protocol::ReceiverOptions {
         output_dir: Path::new(&cfg.output_dir),
         layout: &cfg.layout,
         reload: cert_deployment::protocol::ReloadOptions {
@@ -456,7 +452,15 @@ fn push_inner(
             service_name: &cfg.service_name,
             post_script: cfg.post_script.as_deref(),
         },
-    };
+    }
+}
+
+fn push_inner(
+    data: &AppData,
+    body: &PushBody,
+) -> Result<(Vec<String>, String), (StatusCode, String)> {
+    let cfg = &data.cfg;
+    let options = receiver_options(cfg);
     cert_deployment::protocol::deploy(&options, body, |line| data.state.log(line)).map_err(|e| {
         (
             if e.invalid_input {
@@ -643,7 +647,7 @@ pub fn cert_receiver_logs() -> Vec<String> {
 #[tauri::command]
 pub fn cert_receiver_clear_logs() -> Vec<String> {
     let st = state();
-    st.logs.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    *st.logs.lock().unwrap_or_else(|e| e.into_inner()) = VecDeque::new();
     Vec::new()
 }
 
@@ -806,10 +810,20 @@ pub fn start_on_boot() {
     if !st.cfg().auto_start {
         return;
     }
-    if let Err(e) = st.start_server() {
-        st.log(format!("自动启动失败：{}", e));
-    }
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(e) = st.start_server() {
+            st.log(format!("自动启动失败：{}", e));
+        }
+    });
 }
 
 #[cfg(test)]
 mod tests;
+
+/// Only release logs after all receiver requests have completed shutdown.
+pub fn release_runtime_resources() -> Result<(), String> {
+    let st = state();
+    st.stop_server()?;
+    *st.logs.lock().unwrap_or_else(|e| e.into_inner()) = VecDeque::new();
+    Ok(())
+}

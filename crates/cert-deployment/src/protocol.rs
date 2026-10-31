@@ -174,6 +174,14 @@ fn directory(
         .map_err(internal)
 }
 
+/// Restore pending files and confirm the corresponding service state before accepting work.
+pub fn recover(options: &ReceiverOptions<'_>, log: impl Fn(&str)) -> Result<(), String> {
+    let plan = crate::reload_plan::plan(&options.reload, crate::reload_plan::Platform::current())?;
+    crate::deployment::recover_with(options.output_dir, &plan)?;
+    log("证书部署恢复检查完成");
+    Ok(())
+}
+
 pub fn deploy(
     options: &ReceiverOptions<'_>,
     body: &CertificatePush,
@@ -197,7 +205,11 @@ fn deploy_with(
 ) -> Result<(Vec<String>, String), DeploymentError> {
     let (domain, id) = resolve_target_names(options.layout, body)?;
     crate::deployment::validate_identity(&body.cert, &body.key).map_err(invalid)?;
+    let plan = crate::reload_plan::plan(&options.reload, crate::reload_plan::Platform::current())
+        .map_err(invalid)?;
+    crate::deployment::recover_with(options.output_dir, &plan).map_err(internal)?;
     let mut deployment = Deployment::new(options.output_dir).map_err(internal)?;
+    deployment.set_recovery_plan(plan);
     let mut written = vec![];
     match options.layout {
         "cert" => {
@@ -235,6 +247,7 @@ fn deploy_with(
         _ => return Err(invalid("证书部署布局无效")),
     }
     deployment.install().map_err(internal)?;
+    deployment.begin_reload().map_err(internal)?;
     let reload = match reload_operation() {
         Ok(result) => result,
         Err(error) => {
@@ -261,10 +274,15 @@ fn restore_after_failure(
     reload: &mut impl FnMut() -> Result<String, String>,
     error: String,
 ) -> DeploymentError {
-    match deployment.rollback() {
+    match deployment.restore_for_reload() {
         Err(rollback) => internal(format!("{error}；{rollback}；未重载未确认的文件")),
         Ok(()) => match reload() {
-            Ok(_) => internal(format!("{error}；已恢复原证书文件并重新加载原代次")),
+            Ok(_) => match deployment.confirm_restored() {
+                Ok(()) => internal(format!("{error}；已恢复原证书文件并重新加载原代次")),
+                Err(commit) => internal(format!(
+                    "{error}；旧代已重载但恢复日志确认失败，计划保留供重试: {commit}"
+                )),
+            },
             Err(recovery) => internal(format!(
                 "{error}；已恢复原证书文件；恢复后的重载也失败: {recovery}；运行态恢复未确认"
             )),
@@ -277,13 +295,7 @@ fn reload(options: &ReloadOptions<'_>, log: &impl Fn(&str)) -> Result<String, St
     if plan.is_empty() {
         return Ok("未配置重载".into());
     }
-    let mut output = String::new();
-    for command in plan {
-        log(command.message);
-        let args: Vec<_> = command.args.iter().map(String::as_str).collect();
-        output = crate::reload_command::run(&command.program, &args, command.cwd.as_deref())?;
-    }
-    Ok(output)
+    crate::reload_plan::execute(&plan, log)
 }
 
 #[cfg(test)]
@@ -443,7 +455,9 @@ mod tests {
                     .unwrap()
                     .path();
                 std::fs::create_dir(stage.join("journal.tmp")).unwrap();
-                deployment.commit_journal()
+                let result = deployment.commit_journal();
+                std::fs::remove_dir(stage.join("journal.tmp")).unwrap();
+                result
             },
         );
         let error = result.unwrap_err().message;

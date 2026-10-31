@@ -114,7 +114,7 @@ impl CertReceiverState {
             .clone()
             .try_acquire_owned()
             .map_err(|_| "证书部署仍在进行，请稍后重启服务".to_string())?;
-        cert_deployment::deployment::recover(Path::new(&cfg.output_dir))?;
+        cert_deployment::protocol::recover(&receiver_options(&cfg), |line| self.log(line))?;
         let addr: SocketAddr = cfg
             .listen_addr
             .parse()
@@ -137,14 +137,11 @@ impl CertReceiverState {
         let log_state = self.clone();
         let run_id = self.run_seq.fetch_add(1, Ordering::SeqCst) + 1;
         tauri::async_runtime::spawn(async move {
-            let _completion = ServerCompletion {
-                finished: task_finished,
-                done: done_tx,
-            };
+            let _completion = cert_deployment::lifecycle::ExitGuard::new(task_finished, done_tx);
             let listener = match tokio::net::TcpListener::from_std(std_listener) {
                 Ok(l) => l,
                 Err(e) => {
-                    _completion.finished.store(true, Ordering::SeqCst);
+                    _completion.mark_finished();
                     log_state.log(format!("监听器转换失败：{}", e));
                     log_state.emit_status();
                     return;
@@ -159,7 +156,7 @@ impl CertReceiverState {
                 let _ = rx.await;
             })
             .await;
-            _completion.finished.store(true, Ordering::SeqCst);
+            _completion.mark_finished();
             if let Err(e) = served {
                 log_state.log(format!("服务异常退出：{}", e));
             }
@@ -233,30 +230,17 @@ impl CertReceiverState {
         let old = self.cfg();
         let was_running = self.status().running;
         let restart = was_running && runtime_config_changed(&old, &cfg);
-        if restart {
-            self.stop_server_locked()?;
-        }
-        if let Err(error) = persist(&cfg) {
-            if restart {
-                let _ = self.start_server_locked();
-            }
-            return Err(error);
-        }
-        *self.cfg.lock().unwrap_or_else(|e| e.into_inner()) = cfg;
-        if restart {
-            if let Err(error) = self.start_server_locked() {
-                *self.cfg.lock().unwrap_or_else(|e| e.into_inner()) = old.clone();
-                let rollback = persist(&old);
-                let resume = self.start_server_locked();
-                return Err(format!(
-                    "新配置启动失败: {error}；恢复配置: {}；恢复服务: {}",
-                    rollback.err().unwrap_or_else(|| "成功".into()),
-                    resume.err().unwrap_or_else(|| "成功".into())
-                ));
-            }
-        }
+        let result = cert_deployment::lifecycle::apply_snapshot(
+            old,
+            cfg,
+            restart,
+            || self.stop_server_locked(),
+            |cfg| persist(cfg),
+            |cfg| *self.cfg.lock().unwrap_or_else(|e| e.into_inner()) = cfg,
+            || self.start_server_locked(),
+        );
         self.emit_status();
-        Ok(())
+        result
     }
 }
 
@@ -267,27 +251,9 @@ pub(super) fn runtime_config_changed(old: &CertReceiverConfig, new: &CertReceive
     old != *new
 }
 
-struct ServerCompletion {
-    finished: Arc<AtomicBool>,
-    done: std::sync::mpsc::Sender<()>,
-}
-impl Drop for ServerCompletion {
-    fn drop(&mut self) {
-        self.finished.store(true, Ordering::SeqCst);
-        let _ = self.done.send(());
-    }
-}
 pub(super) fn wait_for_server(
     handle: &ServerHandle,
     timeout: std::time::Duration,
 ) -> Result<(), String> {
-    if handle.finished.load(Ordering::SeqCst) {
-        return Ok(());
-    }
-    handle
-        .completion
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .recv_timeout(timeout)
-        .map_err(|_| "接收端仍在停止（可能有进行中的部署），请稍后重试".to_string())
+    cert_deployment::lifecycle::wait_for_exit(&handle.finished, &handle.completion, timeout)
 }

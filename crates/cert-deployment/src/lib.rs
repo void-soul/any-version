@@ -1,6 +1,7 @@
 //! Certificate deployment shared by local deployment and both HTTP receivers.
 //! This crate has no Tauri, application configuration or logging dependencies.
 pub mod deployment;
+pub mod lifecycle;
 pub mod protocol;
 pub mod reading;
 pub mod credentials;
