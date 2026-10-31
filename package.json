@@ -6,8 +6,7 @@
   "scripts": {
     "start": "node scripts/bundle-resources.mjs && set ANY_VERSION_PROXY_DEBUG=1 && tauri dev",
     "dev": "vite",
-    "build": "npm run build:receiver && node scripts/bundle-resources.mjs && tsc && vite build",
-    "build:receiver": "cargo build --release --locked --manifest-path cert-receiver/Cargo.toml",
+    "build": "node scripts/bundle-resources.mjs && tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "bump": "node scripts/bump-version.js",

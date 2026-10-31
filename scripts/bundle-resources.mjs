@@ -25,7 +25,6 @@ if (existsSync(destRoot)) {
 mkdirSync(join(destRoot, "ai-tools"), { recursive: true });
 mkdirSync(join(destRoot, "projects"), { recursive: true });
 mkdirSync(join(destRoot, "node-projects"), { recursive: true });
-mkdirSync(join(destRoot, "cert-receiver"), { recursive: true });
 
 function copyIfExists(srcRel, destRel) {
   const src = join(repoRoot, srcRel);
@@ -42,9 +41,5 @@ function copyIfExists(srcRel, destRel) {
 copyIfExists("ai-tools", "ai-tools");
 copyIfExists("projects", "projects");
 copyIfExists("node-projects", "node-projects");
-// 独立证书接收端：先执行 `npm run build:receiver` 生成 release exe。
-// 未构建时只拷贝示例配置，安装包里仍可查看配置说明。
-copyIfExists("cert-receiver/cert-receiver.toml.example", "cert-receiver/cert-receiver.toml.example");
-copyIfExists("cert-receiver/target/release/cert-receiver.exe", "cert-receiver/cert-receiver.exe");
 
 console.log("[bundle-resources] 完成：资源已就绪于 src-tauri/_up_");

@@ -36,8 +36,6 @@ src-tauri/src/commands/recovered_*.rs
 docs
 QA.md
 CLAUDE.md
-# cert-receiver（Tauri 小工具）：tauri-build 每次生成的 schema 目录
-cert-receiver/gen/
 # Tauri updater signing keys (NEVER commit the private key)
 src-tauri/keypair/
 *.key

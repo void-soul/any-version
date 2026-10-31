@@ -15,7 +15,7 @@ async function visit(relative) {
   }
 }
 
-for (const directory of ["src", "src-tauri/src", "cert-receiver/src", "crates/cert-deployment/src"]) {
+for (const directory of ["src", "src-tauri/src", "crates/cert-deployment/src"]) {
   await visit(directory);
 }
 

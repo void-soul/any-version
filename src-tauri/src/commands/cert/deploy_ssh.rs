@@ -24,7 +24,7 @@ pub(super) async fn deploy_to_node(
 ) -> Result<(), String> {
     match node.node_type.as_str() {
         "local" => super::deploy_local::deploy_local(node, cert, pems, target).await,
-        // Windows 接收端 / API / Docker 拉取，均走独立的 cert-receiver /push
+        // Windows 接收端 / API / Docker 拉取，均调用目标 Kira 内置接收端的 /push
         "windows" | "api" | "docker" => deploy_http_push(node, cert, pems, target).await,
         "ssh" => deploy_ssh(node, cert, pems, target),
         // 旧版 linux 节点保留原有「证书路径 + 私钥路径 + 重载命令」语义
@@ -124,7 +124,7 @@ pub(super) async fn deploy_http_push(
         return Err(format!("{} 节点缺少 url", node.node_type));
     }
     if token.is_empty() {
-        return Err("节点缺少共享 Token（需与 cert-receiver 的 token 一致）".into());
+        return Err("节点缺少共享 Token（需与目标 Kira 接收端的 Token 一致）".into());
     }
     let push_url = format!("{}/push", base);
     let body = serde_json::json!({

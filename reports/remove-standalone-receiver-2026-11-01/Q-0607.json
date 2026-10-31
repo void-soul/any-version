@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0607",
+  "date": "2026-11-01",
+  "category": "Refactor",
+  "status": "已验证",
+  "phenomenon": "Kira已经内置证书接收功能，独立cert-receiver子项目不再使用；删除该子项目并清理构建、CI、安装包资源和过时引导，避免继续编译分发废弃exe，同时保留内置接收与旧配置迁移兼容。",
+  "root_cause": "独立 **cert-receiver** 已由Kira内置接收端替代，但 **package.json**、资源复制和Tauri清单仍构建/分发旧exe，CI及架构扫描仍依赖已废弃目录，部署说明也未随集成更新。",
+  "solution": "1. 删除独立子项目全部源码、清单、UI、图标及本地生成目录，生产构建移除build:receiver前置步骤。\n2. 清理资源复制、Tauri资源glob、CI独立工具检查及架构扫描入口，重新打包清除旧资源副本。\n3. 更新中英文部署提示与后端说明，指向目标Kira的内置接收端；保留接收协议、事件名、旧TOML迁移及共享部署核心。\n4. 生产构建、前端426项及1116源码文件模块边界检查通过；内置证书/接收端Rust回归69项通过（0失败、0忽略），差异空白检查及残留构建引用检查通过。",
+  "files": "| File | Change |\n|------|--------|\n| **cert-receiver/** | 删除17个已跟踪文件及本地生成目录 |\n| **package.json** / **scripts/bundle-resources.mjs** | 移除独立exe构建和资源复制 |\n| **src-tauri/tauri.conf.json** / **.gitignore** | 清理安装包资源glob和废弃schema忽略项 |\n| **.github/workflows/ci.yml** / **scripts/check-module-boundaries.mjs** | 移除废弃子项目任务和扫描目录 |\n| **src/i18n/locales/zh/translation.json** / **src/i18n/locales/en/translation.json** | 接收端说明改用Kira内置功能 |\n| **src-tauri/src/commands/cert/deploy_ssh.rs** / **src-tauri/src/commands/cert_receiver.rs** | 修正部署提示与内嵌接收端说明 |",
+  "created_at": "2026-11-01 00:19:54",
+  "updated_at": "2026-11-01 00:22:16",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

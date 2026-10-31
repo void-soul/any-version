@@ -1,0 +1,14 @@
+独立证书接收工具移除记录（2026-11-01）
+
+删除cert-receiver整个子项目：17个已跟踪文件，以及本机target/gen等生成目录。
+移除npm build:receiver及其构建前置、CI独立工具检查、资源复制和Tauri资源glob、架构扫描目录及旧schema忽略项。
+中英文部署引导改为目标服务器的Kira内置接收端，后端Token提示同步更新。
+
+保留Kira内置接收模块、共享cert-deployment核心、现有HTTP协议/事件名和旧cert-receiver.toml只读迁移兼容。
+历史审计报告保留其当时的验证记录，不重写历史证据。
+
+验收：npm run build（资源重建、TypeScript、Vite）通过；前端53文件426项通过；
+内置证书/接收端Rust回归69项通过、0失败、0忽略；1116源码文件架构检查和git diff --check通过。
+已确认独立项目目录与src-tauri/_up_/cert-receiver均不存在，活动构建配置不再引用独立exe。
+未执行真实证书推送/服务重载或Git推送。QA追踪：Q-0607。
+qa.db原有修改及旧project-review报告保留，不纳入本次提交。

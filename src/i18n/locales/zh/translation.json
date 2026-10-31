@@ -3672,7 +3672,7 @@
     "httpWildcard": "HTTP 验证不支持泛域名，请改用 DNS 授权",
     "deployLinkHint": "部署方式只保存连接与凭据；在这里为域名关联部署方式，并按需填写目标域名。",
     "targetPh": "目标域名（留空则用首个域名）",
-    "receiverHint": "Windows 部署由独立的 cert-receiver.exe 提供接收服务：端口、Token、证书目录都在它自己的窗口里配置（仍存于 cert-receiver.toml），关窗口只收进托盘。这里无需填写域名。",
+    "receiverHint": "在目标服务器的 Kira「证书 → 接收端」中设置监听地址、Token 和证书目录，再填写该接收端的地址与相同 Token。这里无需填写域名。",
     "colNodes": "部署方式",
     "colDomain": "域名",
     "colDns": "DNS 插件",
