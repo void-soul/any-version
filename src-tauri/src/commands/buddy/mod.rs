@@ -395,3 +395,11 @@ pub use checkin_commands::*;
 
 mod session_commands;
 pub use session_commands::*;
+
+/// Release in-memory login state and directory/overview caches after operations stop.
+pub fn release_runtime_resources() -> Result<(), String> {
+    api::release_runtime_resources()?;
+    growth::release_runtime_resources();
+    session_transfer::codebuddy::clear_workspace_path_cache();
+    Ok(())
+}

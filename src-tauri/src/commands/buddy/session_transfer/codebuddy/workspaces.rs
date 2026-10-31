@@ -130,3 +130,7 @@ pub(crate) enum ConflictPolicy {
     /// 不产生冲突：两侧都改过时保留目标版本，记 skipped
     Suppressed,
 }
+
+pub(crate) fn clear_workspace_path_cache() {
+    *WORKSPACE_PATH_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = HashMap::new();
+}

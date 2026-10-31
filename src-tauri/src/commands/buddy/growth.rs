@@ -864,3 +864,8 @@ mod tests {
         assert_eq!(optional_non_negative(Some(&json!(-5))), None);
     }
 }
+
+pub(super) fn release_runtime_resources() {
+    *CACHE.lock().unwrap_or_else(|e| e.into_inner()) = HashMap::new();
+    *STREAK_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = HashMap::new();
+}

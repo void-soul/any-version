@@ -109,7 +109,11 @@ pub fn cache_stem(file: &str, item: &Value, quality: &str) -> String {
         .and_then(Value::as_str)
         .filter(|id| !id.is_empty())
         .map(str::to_string)
-        .or_else(|| item.get("title").and_then(Value::as_str).map(str::to_string))
+        .or_else(|| {
+            item.get("title")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
         .unwrap_or_else(|| "unknown".to_string());
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     file.hash(&mut hasher);
@@ -126,7 +130,10 @@ pub fn find_cached(stem: &str) -> Option<PathBuf> {
     let dir = cache_dir();
     for ext in AUDIO_EXTS {
         let candidate = dir.join(format!("{stem}.{ext}"));
-        if std::fs::metadata(&candidate).map(|meta| meta.len() > 0).unwrap_or(false) {
+        if std::fs::metadata(&candidate)
+            .map(|meta| meta.len() > 0)
+            .unwrap_or(false)
+        {
             return Some(candidate);
         }
     }
@@ -159,7 +166,9 @@ pub fn parse_resolved_source(file: &str, value: &Value) -> Result<ResolvedSource
         .and_then(Value::as_object)
         .map(|map| {
             map.iter()
-                .filter_map(|(key, value)| value.as_str().map(|value| (key.clone(), value.to_string())))
+                .filter_map(|(key, value)| {
+                    value.as_str().map(|value| (key.clone(), value.to_string()))
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -234,12 +243,43 @@ async fn resolve_source(
     item: Value,
     quality: String,
 ) -> Result<ResolvedSource, String> {
-    tauri::async_runtime::spawn_blocking(move || resolve_blocking(&file, &item, &quality))
-        .await
-        .map_err(|e| format!("取流任务失败: {e}"))?
+    let operation = crate::runtime_tasks::begin_operation("music")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _operation = operation;
+        crate::runtime_tasks::require_enabled("music")?;
+        resolve_blocking(&file, &item, &quality)
+    })
+    .await
+    .map_err(|e| format!("取流任务失败: {e}"))?
 }
 
 // ─── 下载 ───
+
+struct PendingDownload(PathBuf);
+impl PendingDownload {
+    fn create(dest: &Path) -> Result<(Self, std::fs::File), String> {
+        let mut random = [0; 16];
+        getrandom::getrandom(&mut random).map_err(|e| e.to_string())?;
+        let suffix: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+        let path = dest.with_file_name(format!(".kira-download-{suffix}.part"));
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|e| format!("创建下载暂存文件失败: {e}"))?;
+        Ok((Self(path), file))
+    }
+    fn commit(&self, dest: &Path) -> Result<(), String> {
+        let _operation = crate::runtime_tasks::begin_operation("music")?;
+        // Staging is a sibling: rename is same-filesystem and never exposes a partial copy.
+        std::fs::rename(&self.0, dest).map_err(|e| format!("保存音频失败（原文件未覆盖）: {e}"))
+    }
+}
+impl Drop for PendingDownload {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
 
 /// 流式下载到 `dest`。
 ///
@@ -255,7 +295,6 @@ async fn download_to(
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("创建目录 {} 失败: {e}", parent.display()))?;
     }
-    let part = dest.with_extension("part");
 
     let mut request = crate::commands::utils::get_http_client().get(&source.url);
     for (key, value) in &source.headers {
@@ -270,15 +309,17 @@ async fn download_to(
         },
     );
 
-    let response = request.send().await.map_err(|e| format!("请求音频失败: {e}"))?;
+    let response = request
+        .send()
+        .await
+        .map_err(|e| format!("请求音频失败: {e}"))?;
     let status = response.status();
     if !status.is_success() {
         return Err(format!("音源返回 {status}（直链可能已过期，重试即可）"));
     }
     let total = response.content_length().unwrap_or(0);
 
-    let mut file =
-        std::fs::File::create(&part).map_err(|e| format!("创建 {} 失败: {e}", part.display()))?;
+    let (part, mut file) = PendingDownload::create(dest)?;
     let mut stream = response.bytes_stream();
     let mut received: u64 = 0;
     let mut last_emit = Instant::now();
@@ -295,17 +336,14 @@ async fn download_to(
             );
         }
     }
+    file.sync_all()
+        .map_err(|e| format!("同步音频文件失败: {e}"))?;
     drop(file);
 
     if received == 0 {
-        let _ = std::fs::remove_file(&part);
         return Err("音源返回了空内容（直链可能已过期，重试即可）".to_string());
     }
-    // 同卷内改名是原子操作；跨卷时退回拷贝
-    if std::fs::rename(&part, dest).is_err() {
-        std::fs::copy(&part, dest).map_err(|e| format!("保存文件失败: {e}"))?;
-        let _ = std::fs::remove_file(&part);
-    }
+    part.commit(dest)?;
     let _ = app.emit(
         DOWNLOAD_PROGRESS_EVENT,
         json!({ "label": label, "received": received, "total": received, "done": true }),
@@ -349,7 +387,15 @@ pub async fn music_plugin_media_source(
     item: Value,
     quality: Option<String>,
 ) -> Result<ResolvedSource, String> {
-    resolve_source(file, item, quality.unwrap_or_else(|| "standard".to_string())).await
+    crate::runtime_tasks::run_if_enabled(
+        "music",
+        resolve_source(
+            file,
+            item,
+            quality.unwrap_or_else(|| "standard".to_string()),
+        ),
+    )
+    .await
 }
 
 /// 在线曲目「落盘」的结果
@@ -405,11 +451,15 @@ pub async fn play_pending(
     pending: &PendingOnline,
 ) -> Result<PlayerState, String> {
     let seq = pending.seq;
-    match materialize(app, &pending.file, &pending.item, &pending.quality).await {
-        Ok(m) => {
-            let path = m.path.to_string_lossy().to_string();
-            state.play_online_resolved(&path, &m.title, &m.artist, seq)
-        }
+    let result = crate::runtime_tasks::run_if_enabled("music", async {
+        let m = materialize(app, &pending.file, &pending.item, &pending.quality).await?;
+        crate::runtime_tasks::require_enabled("music")?;
+        let path = m.path.to_string_lossy().to_string();
+        state.play_online_resolved(&path, &m.title, &m.artist, seq)
+    })
+    .await;
+    match result {
+        Ok(player) => Ok(player),
         Err(err) => {
             // 失败也要清标记：不清的话巡查线程会一直以为「有曲目在下载」
             state.abandon_online(seq);
@@ -441,44 +491,53 @@ pub async fn music_plugin_play(
     hits: Option<Vec<OnlineTrackRef>>,
     index: Option<usize>,
 ) -> Result<PluginPlayOutcome, String> {
-    let quality = quality.unwrap_or_else(|| "standard".to_string());
-    let materialized = materialize(&app, &file, &item, &quality).await?;
-    let path = materialized.path.to_string_lossy().to_string();
-    // 记下来源：搜索结果清掉之后，「下载当前曲目」还要靠它重新取流
-    let origin = OnlineOrigin {
-        platform: super::player::plugin_display_name(&file),
-        file: file.clone(),
-        item: item.clone(),
-        quality: quality.clone(),
-    };
-    // 缓存文件名是内容哈希，必须把真实歌名交给播放器（否则播放条显示一串哈希）
-    let player = state.play_named(&path, &materialized.title, &materialized.artist, Some(origin))?;
+    crate::runtime_tasks::run_if_enabled("music", async {
+        let quality = quality.unwrap_or_else(|| "standard".to_string());
+        let materialized = materialize(&app, &file, &item, &quality).await?;
+        let path = materialized.path.to_string_lossy().to_string();
+        // 记下来源：搜索结果清掉之后，「下载当前曲目」还要靠它重新取流
+        let origin = OnlineOrigin {
+            platform: super::player::plugin_display_name(&file),
+            file: file.clone(),
+            item: item.clone(),
+            quality: quality.clone(),
+        };
+        // 缓存文件名是内容哈希，必须把真实歌名交给播放器（否则播放条显示一串哈希）
+        crate::runtime_tasks::require_enabled("music")?;
+        let player = state.play_named(
+            &path,
+            &materialized.title,
+            &materialized.artist,
+            Some(origin),
+        )?;
 
-    if let Some(hits) = hits {
-        let mut items: Vec<QueueItem> = hits
-            .into_iter()
-            .map(|hit| QueueItem::Online {
-                file: hit.file,
-                item: hit.item,
-                quality: quality.clone(),
-            })
-            .collect();
-        if !items.is_empty() {
-            let index = index.unwrap_or(0).min(items.len() - 1);
-            // 正在播的这首已经落盘 → 换成路径：回退 / 切模式时不必再取一次流
-            items[index] = QueueItem::Path(path.clone());
+        if let Some(hits) = hits {
+            let mut items: Vec<QueueItem> = hits
+                .into_iter()
+                .map(|hit| QueueItem::Online {
+                    file: hit.file,
+                    item: hit.item,
+                    quality: quality.clone(),
+                })
+                .collect();
+            if !items.is_empty() {
+                let index = index.unwrap_or(0).min(items.len() - 1);
+                // 正在播的这首已经落盘 → 换成路径：回退 / 切模式时不必再取一次流
+                items[index] = QueueItem::Path(path.clone());
+            }
+            state.set_queue_items(items, Some(&path))?;
         }
-        state.set_queue_items(items, Some(&path))?;
-    }
 
-    Ok(PluginPlayOutcome {
-        path,
-        from_cache: materialized.from_cache,
-        title: materialized.title,
-        artist: materialized.artist,
-        source: materialized.source,
-        player,
+        Ok(PluginPlayOutcome {
+            path,
+            from_cache: materialized.from_cache,
+            title: materialized.title,
+            artist: materialized.artist,
+            source: materialized.source,
+            player,
+        })
     })
+    .await
 }
 
 /// 下载到用户设置的下载目录，并登记进曲库。
@@ -490,7 +549,8 @@ pub async fn music_plugin_download(
     quality: Option<String>,
 ) -> Result<PluginDownloadOutcome, String> {
     let quality = quality.unwrap_or_else(|| "standard".to_string());
-    download_track(&app, &file, &item, &quality).await
+    crate::runtime_tasks::run_if_enabled("music", download_track(&app, &file, &item, &quality))
+        .await
 }
 
 /// 下载**正在播放**的那首在线曲目（可选音质，默认沿用当前缓存的音质）。
@@ -503,11 +563,16 @@ pub async fn music_plugin_download_current(
     state: State<'_, MusicPlayerState>,
     quality: Option<String>,
 ) -> Result<PluginDownloadOutcome, String> {
+    crate::runtime_tasks::require_enabled("music")?;
     let origin = state
         .current_online_origin()
         .ok_or_else(|| "当前播放的不是在线音源（本地曲目无需下载）".to_string())?;
     let quality = quality.unwrap_or(origin.quality);
-    download_track(&app, &origin.file, &origin.item, &quality).await
+    crate::runtime_tasks::run_if_enabled(
+        "music",
+        download_track(&app, &origin.file, &origin.item, &quality),
+    )
+    .await
 }
 
 /// 封面体积上限：超大图嵌进去会让文件虚胖，播放器也不会因此显示得更好。
@@ -593,6 +658,7 @@ async fn download_track(
         Some(url) => fetch_cover(url).await,
         None => None,
     };
+    let _tag_operation = crate::runtime_tasks::begin_operation("music")?;
     if let Err(err) = tags::write_tags(&dest, &meta, cover) {
         crate::exit_log!("[音乐] 写入标签失败（仅影响展示）: {err}");
     }
@@ -600,7 +666,12 @@ async fn download_track(
     // 登记要扫目录、读标签，属于阻塞活
     let library = tauri::async_runtime::spawn_blocking({
         let dir = dir.clone();
-        move || register_into_library(&dir)
+        let operation = crate::runtime_tasks::begin_operation("music")?;
+        move || {
+            let _operation = operation;
+            crate::runtime_tasks::require_enabled("music")?;
+            register_into_library(&dir)
+        }
     })
     .await
     .map_err(|e| format!("登记曲库任务失败: {e}"))??;
@@ -651,9 +722,7 @@ fn clear_dir(dir: &Path, keep: Option<&str>) -> Result<u64, String> {
 /// 只存在于数据目录里，用户无从手动清理，留着就一直是垃圾。
 /// 清掉不影响任何文件，只是下次播那首歌要再转一次。
 #[tauri::command]
-pub async fn music_plugin_clear_cache(
-    state: State<'_, MusicPlayerState>,
-) -> Result<u64, String> {
+pub async fn music_plugin_clear_cache(state: State<'_, MusicPlayerState>) -> Result<u64, String> {
     let playing = state.current_path();
     tauri::async_runtime::spawn_blocking(move || -> Result<u64, String> {
         let online = clear_dir(&cache_dir(), playing.as_deref())?;
@@ -714,13 +783,74 @@ pub async fn music_plugin_storage_info() -> Result<Value, String> {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn cancelling_download_future_removes_only_its_partial_file() {
+        let root = std::env::temp_dir().join(format!(
+            "music-part-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let destination = root.join("track.mp3");
+        std::fs::write(&destination, b"complete-original").unwrap();
+        let (ready, received) = tokio::sync::oneshot::channel();
+        let target = destination.clone();
+        let task = tokio::spawn(async move {
+            let (part, mut file) = PendingDownload::create(&target).unwrap();
+            std::io::Write::write_all(&mut file, b"partial").unwrap();
+            ready.send(part.0.clone()).unwrap();
+            std::future::pending::<()>().await;
+            drop(file);
+            drop(part);
+        });
+        let part = received.await.unwrap();
+        assert!(part.exists());
+        task.abort();
+        let _ = task.await;
+        assert!(!part.exists());
+        assert_eq!(std::fs::read(&destination).unwrap(), b"complete-original");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn simultaneous_downloads_have_independent_staging_files() {
+        let root = std::env::temp_dir().join(format!(
+            "music-stage-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let destination = root.join("track.mp3");
+        let (first, first_file) = PendingDownload::create(&destination).unwrap();
+        let (second, second_file) = PendingDownload::create(&destination).unwrap();
+        assert_ne!(first.0, second.0);
+        let first_path = first.0.clone();
+        drop(first_file);
+        drop(first);
+        assert!(!first_path.exists());
+        assert!(second.0.exists());
+        drop(second_file);
+        drop(second);
+        assert!(!destination.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     /// 文件名必须洗掉路径分隔符与 Windows 非法字符，否则会写到别的目录去。
     #[test]
     fn file_stems_are_sanitized() {
         assert_eq!(safe_file_stem("周杰伦 - 稻香"), "周杰伦 - 稻香");
         // 分隔符被换成下划线，前导点被削掉（免得生成近似隐藏文件的名字）
         assert_eq!(safe_file_stem("../../etc/passwd"), "_.._etc_passwd");
-        assert_eq!(safe_file_stem(r"AC\DC - Back: in Black?"), "AC_DC - Back_ in Black_");
+        assert_eq!(
+            safe_file_stem(r"AC\DC - Back: in Black?"),
+            "AC_DC - Back_ in Black_"
+        );
         assert_eq!(safe_file_stem("   "), "未命名");
         assert_eq!(safe_file_stem("..."), "未命名");
         assert!(safe_file_stem(&"あ".repeat(500)).chars().count() <= 120);
@@ -776,8 +906,16 @@ mod tests {
         let item = json!({ "id": "6128587", "title": "Hello Brother" });
         let a = cache_stem("audiomack.js", &item, "standard");
         assert_eq!(a, cache_stem("audiomack.js", &item, "standard"));
-        assert_ne!(a, cache_stem("audiomack.js", &item, "high"), "换音质不能复用旧缓存");
-        assert_ne!(a, cache_stem("other.js", &item, "standard"), "不同插件不能撞车");
+        assert_ne!(
+            a,
+            cache_stem("audiomack.js", &item, "high"),
+            "换音质不能复用旧缓存"
+        );
+        assert_ne!(
+            a,
+            cache_stem("other.js", &item, "standard"),
+            "不同插件不能撞车"
+        );
         assert_ne!(
             a,
             cache_stem("audiomack.js", &json!({ "id": "999" }), "standard"),

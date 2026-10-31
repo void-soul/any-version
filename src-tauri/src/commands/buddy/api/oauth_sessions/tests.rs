@@ -251,3 +251,41 @@ async fn concurrent_completion_polls_and_commits_once() {
     assert_eq!(polls.load(Ordering::SeqCst), 1);
     assert_eq!(writes.load(Ordering::SeqCst), 1);
 }
+
+#[tokio::test]
+async fn releasing_module_discards_ready_credentials_and_invalidates_optional_save() {
+    let sessions = OAuthSessions::default();
+    begin(&sessions, "pending");
+    sessions
+        .remember_ready(
+            BuddyPlatform::Workbuddy,
+            "pending",
+            sample_account("fake", "fake@example.invalid"),
+        )
+        .unwrap();
+    sessions.release().unwrap();
+    assert!(sessions
+        .state(BuddyPlatform::Workbuddy, "pending", now_timestamp())
+        .is_err());
+    assert!(sessions.inner.lock().unwrap().pending.is_empty());
+    begin(&sessions, "active");
+    let result = sessions
+        .finish(
+            BuddyPlatform::Workbuddy,
+            "active",
+            || async { Ok(sample_account("fake", "fake@example.invalid")) },
+            Ok,
+            |account| {
+                let sessions = &sessions;
+                async move {
+                    sessions.release().unwrap();
+                    Ok(account)
+                }
+            },
+            |_, _| panic!("released OAuth enrichment must not persist"),
+        )
+        .await;
+    assert!(result.is_ok());
+    assert!(sessions.inner.lock().unwrap().completed.is_empty());
+    assert!(sessions.gates.lock().unwrap().is_empty());
+}

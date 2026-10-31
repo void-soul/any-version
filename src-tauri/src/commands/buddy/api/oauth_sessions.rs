@@ -37,6 +37,17 @@ fn prune(inner: &mut Sessions, now: i64) {
     inner.completed.retain(|_, state| state.expires_at > now);
 }
 impl OAuthSessions {
+    pub(super) fn release(&self) -> Result<(), String> {
+        let mut inner = self.inner.lock().map_err(|_| "OAuth状态锁失败")?;
+        for generation in inner.generation.values_mut() {
+            *generation += 1;
+        }
+        inner.pending = HashMap::new();
+        inner.completed = HashMap::new();
+        drop(inner);
+        *self.gates.lock().map_err(|_| "OAuth完成锁失败")? = HashMap::new();
+        Ok(())
+    }
     pub(super) fn begin(
         &self,
         platform: BuddyPlatform,

@@ -366,3 +366,7 @@ mod tests;
 
 #[cfg(test)]
 mod checkin_regressions;
+
+pub(super) fn release_runtime_resources() -> Result<(), String> {
+    oauth_sessions().release()
+}

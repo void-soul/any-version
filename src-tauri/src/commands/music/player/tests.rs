@@ -2,6 +2,43 @@ use std::time::Instant;
 
 use super::*;
 
+#[test]
+fn disabling_releases_queue_names_and_pending_online_generation() {
+    let state = MusicPlayerState::default();
+    {
+        let mut inner = state.inner.lock();
+        inner.seq = 10;
+        inner.names.insert(
+            "fake".into(),
+            TrackName {
+                title: "title".into(),
+                artist: "artist".into(),
+            },
+        );
+        inner.queue.set(
+            vec![QueueItem::Path("fake".into())],
+            PlayMode::Sequence,
+            None,
+        );
+        inner.pending = Some(PendingOnline {
+            file: "fake".into(),
+            item: serde_json::json!({}),
+            quality: "fake".into(),
+            seq: 10,
+        });
+        inner.prefetched = Some("fake".into());
+        inner.status = PlayStatus::Paused;
+    }
+    state.release_resources();
+    let inner = state.inner.lock();
+    assert_eq!(inner.status, PlayStatus::Idle);
+    assert_eq!(inner.queue.len(), 0);
+    assert_eq!(inner.names.capacity(), 0);
+    assert!(inner.pending.is_none() && inner.prefetched.is_none());
+    assert!(inner.player.is_none() && inner.device.is_none());
+    assert_ne!(inner.seq, 10);
+}
+
 /// 设备报错一定触发重建（不管播放状态）。
 #[test]
 fn test_should_recover_on_output_lost() {

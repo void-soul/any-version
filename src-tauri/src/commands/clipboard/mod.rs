@@ -102,7 +102,9 @@ pub fn images_dir() -> std::path::PathBuf {
 
 /// 初始化剪贴板模块（应用启动时调用一次）
 pub fn init_clipboard_state(app: &tauri::AppHandle) -> Result<(), String> {
-    if !crate::runtime_tasks::is_enabled("clipboard") {return Ok(());}
+    if !crate::runtime_tasks::is_enabled("clipboard") {
+        return Ok(());
+    }
     if app.try_state::<ClipboardState>().is_some() {
         monitor::spawn_monitor(app.clone());
         return Ok(());
@@ -130,4 +132,19 @@ pub fn init_clipboard_state(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn stop_monitor() -> Result<(), String> {monitor::stop_monitor().await}
+pub async fn stop_monitor() -> Result<(), String> {
+    monitor::stop_monitor().await
+}
+
+/// Free SQLite's in-memory page cache while preserving the managed connection and history.
+pub fn release_runtime_resources(app: &tauri::AppHandle) -> Result<(), String> {
+    if let Some(state) = app.try_state::<ClipboardState>() {
+        state
+            .db
+            .lock()
+            .map_err(|e| e.to_string())?
+            .execute_batch("PRAGMA shrink_memory;")
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}

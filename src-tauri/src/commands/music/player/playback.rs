@@ -263,6 +263,23 @@ impl MusicPlayerState {
         Self::snapshot(&mut inner)
     }
 
+    /// Module shutdown releases the native output and decoded buffers as well as stopping playback.
+    pub fn release_resources(&self) {
+        let mut inner = self.inner.lock();
+        inner.seq = inner.seq.wrapping_add(1);
+        if let Some(player) = inner.player.take() {
+            player.stop();
+        }
+        inner.device = None;
+        inner.current = None;
+        inner.pending = None;
+        inner.prefetched = None;
+        inner.names = HashMap::new();
+        inner.queue = PlayQueue::default();
+        inner.status = PlayStatus::Idle;
+        self.output_lost.store(false, Ordering::SeqCst);
+    }
+
     pub fn seek(&self, position_ms: u64) -> Result<PlayerState, String> {
         let mut inner = self.inner.lock();
         // 输出已失效：先重建再跳转，否则 try_seek 会作用在一个已经死掉的流上
