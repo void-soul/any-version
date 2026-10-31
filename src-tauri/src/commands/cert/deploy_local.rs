@@ -131,16 +131,22 @@ pub(super) async fn deploy_local(
         ca: pems.2.clone(),
         expired_time: cert.not_after.clone().unwrap_or_default(),
     };
-    tauri::async_runtime::spawn_blocking(move || deployment.deploy(&body))
-        .await
-        .map_err(|e| format!("本机证书部署任务失败：{e}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        let _operation = crate::runtime_tasks::begin_operation("cert")?;
+        deployment.deploy(&body)
+    })
+    .await
+    .map_err(|e| format!("本机证书部署任务失败：{e}"))?
 }
 
 pub(super) async fn test_local(config: HashMap<String, String>) -> Result<String, String> {
     let deployment = LocalDeployment::from_config(&config)?;
-    tauri::async_runtime::spawn_blocking(move || deployment.probe())
-        .await
-        .map_err(|e| format!("本机证书目录检查失败：{e}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        let _operation = crate::runtime_tasks::begin_operation("cert")?;
+        deployment.probe()
+    })
+    .await
+    .map_err(|e| format!("本机证书目录检查失败：{e}"))?
 }
 
 #[cfg(test)]

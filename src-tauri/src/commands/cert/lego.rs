@@ -450,20 +450,6 @@ pub(super) fn lego_network_hint(stdout: &str, stderr: &str) -> Option<String> {
     None
 }
 
-/// 读一路子进程管道并逐行送进 mpsc；写日志由 `run_lego` 的主线程统一做。
-pub(super) fn read_pipe_lines(
-    pipe: impl std::io::Read,
-    is_stderr: bool,
-    tx: std::sync::mpsc::Sender<(bool, String)>,
-) {
-    use std::io::BufRead;
-    for line in std::io::BufReader::new(pipe).lines().map_while(Result::ok) {
-        if tx.send((is_stderr, line)).is_err() {
-            break; // 接收端已经结束（例如主线程提前返回），别再读了
-        }
-    }
-}
-
 /// `force` = 手动「申请」：即使还没到续期时间也要求 lego 重签。
 pub(super) fn run_lego(
     cert: &Certificate,
@@ -472,6 +458,7 @@ pub(super) fn run_lego(
     force: bool,
     log: &mut IssueLog,
 ) -> Result<(String, String, String), String> {
+    let _operation = crate::runtime_tasks::begin_operation("cert")?;
     let lego = find_lego();
     let cert_dir = ensure_dir().join(&cert.id);
     let _ = std::fs::create_dir_all(&cert_dir);
@@ -568,54 +555,33 @@ pub(super) fn run_lego(
         cmd_dbg
     ));
 
-    // 流式读取：两路管道必须**同时**读，否则子进程写满管道缓冲区就会卡死在那儿。
-    // 这里 stdout / stderr 各起一个读线程，行统一经 mpsc 回到本线程写日志/汇总，
-    // 保证日志顺序稳定且只有单写者。
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| {
-        let msg = format!(
-            "启动 lego 失败: {}（lego 路径={}；请确认 lego 在 bin/ 版本化目录、PATH 或数据目录的 bin/ 中，且架构匹配当前系统）",
-            e, lego
-        );
-        log.line(&msg);
-        msg
-    })?;
-
-    let (tx, rx) = std::sync::mpsc::channel::<(bool, String)>();
-    let mut readers = Vec::new();
-    if let Some(out) = child.stdout.take() {
-        let tx = tx.clone();
-        readers.push(std::thread::spawn(move || {
-            read_pipe_lines(out, false, tx);
-        }));
-    }
-    if let Some(err) = child.stderr.take() {
-        let tx = tx.clone();
-        readers.push(std::thread::spawn(move || {
-            read_pipe_lines(err, true, tx);
-        }));
-    }
-    drop(tx);
-
-    let mut stdout_all = String::new();
-    let mut stderr_all = String::new();
-    for (is_err, line) in rx {
-        if is_err {
-            stderr_all.push_str(&line);
-            stderr_all.push('\n');
-        } else {
-            stdout_all.push_str(&line);
-            stdout_all.push('\n');
+    // File-backed streaming avoids detached pipe readers when a module is disabled.
+    let mut pending = [Vec::<u8>::new(), Vec::<u8>::new()];
+    let output = cert_deployment::reload_command::capture_observed(
+        &mut cmd,
+        std::time::Duration::from_secs(30 * 60),
+        || !crate::runtime_tasks::is_enabled("cert"),
+        |stderr, bytes| {
+            let line = &mut pending[usize::from(stderr)];
+            for byte in bytes {
+                if *byte == b'\n' || line.len() == 65536 {
+                    log.line(String::from_utf8_lossy(line).trim_end_matches('\r'));
+                    line.clear();
+                }
+                if *byte != b'\n' {
+                    line.push(*byte);
+                }
+            }
+        },
+    )?;
+    for line in pending {
+        if !line.is_empty() {
+            log.line(String::from_utf8_lossy(&line));
         }
-        log.line(&line);
     }
-    for h in readers {
-        let _ = h.join();
-    }
-    let status = child
-        .wait()
-        .map_err(|e| format!("等待 lego 结束失败: {}", e))?;
+    let stdout_all = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr_all = String::from_utf8_lossy(&output.stderr).into_owned();
+    let status = output.status;
     if !status.success() {
         log.line(format!("lego 执行失败（退出码 {}）", status));
         let mut msg = format!(
@@ -664,4 +630,20 @@ pub(super) fn run_lego(
         )
     })?;
     Ok((pems.crt, pems.key, pems.issuer))
+}
+
+/// The worker owns its operation guard, even if an async scheduler is cancelled while it runs.
+pub(super) async fn run_lego_owned(
+    cert: Certificate,
+    cred: Option<Credential>,
+    renew: bool,
+    force: bool,
+    mut log: IssueLog,
+) -> Result<(IssueLog, Result<(String, String, String), String>), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = run_lego(&cert, cred.as_ref(), renew, force, &mut log);
+        (log, result)
+    })
+    .await
+    .map_err(|e| format!("证书申请工作线程失败: {e}"))
 }

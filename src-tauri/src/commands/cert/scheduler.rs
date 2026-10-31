@@ -35,7 +35,14 @@ pub fn start_scheduler(app: tauri::AppHandle) {
                 if !s.enabled {
                     Vec::new()
                 } else {
-                    let certs = load_certs();
+                    let certs = match load_certs_checked() {
+                        Ok(certs) => certs,
+                        Err(error) => {
+                            drop(s);
+                            scheduler_error(&app, format!("读取证书配置失败，本轮未续期: {error}"));
+                            Vec::new()
+                        }
+                    };
                     let now = Utc::now();
                     certs
                         .iter()
@@ -62,7 +69,10 @@ pub fn start_scheduler(app: tauri::AppHandle) {
                 let (ok, message) = match &result {
                     Ok(r) if r.deployment.fail_count > 0 => (
                         false,
-                        format!("证书已签发或仍有效，但 {} 个部署失败，请查看部署日志", r.deployment.fail_count),
+                        format!(
+                            "证书已签发或仍有效，但 {} 个部署失败，请查看部署日志",
+                            r.deployment.fail_count
+                        ),
                     ),
                     Ok(r) if r.renewed => (true, "已续期".to_string()),
                     Ok(r) => (
@@ -87,7 +97,13 @@ pub fn start_scheduler(app: tauri::AppHandle) {
                     });
                 }
                 // 续期结果通过已启用的通知渠道推送（未配置渠道时无操作）
-                let channels = load_json::<NotifyChannel>("notify_channels.json");
+                let channels = match load_json_checked::<NotifyChannel>("notify_channels.json") {
+                    Ok(channels) => channels,
+                    Err(error) => {
+                        scheduler_error(&app, format!("读取通知配置失败: {error}"));
+                        Vec::new()
+                    }
+                };
                 notify_all(
                     &channels,
                     if deployment_failed {
@@ -116,7 +132,9 @@ pub fn start_scheduler(app: tauri::AppHandle) {
                 s.enabled
             };
             if scheduler_enabled {
-                run_monitor_checks(true).await;
+                if let Err(error) = run_monitor_checks(true).await {
+                    scheduler_error(&app, format!("监控检查状态保存失败: {error}"));
+                }
             }
 
             // 更新运行时间（短锁）
@@ -127,4 +145,19 @@ pub fn start_scheduler(app: tauri::AppHandle) {
             s.next_run_at = Some((now + Duration::minutes(interval as i64)).to_rfc3339());
         }
     });
+}
+
+fn scheduler_error(app: &tauri::AppHandle, message: String) {
+    eprintln!("[cert scheduler] {message}");
+    app.state::<CertScheduler>()
+        .state
+        .lock()
+        .unwrap()
+        .push_log(SchedulerLogEntry {
+            at: Utc::now().to_rfc3339(),
+            cert_id: String::new(),
+            action: "state".into(),
+            ok: false,
+            message,
+        });
 }

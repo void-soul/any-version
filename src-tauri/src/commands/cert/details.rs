@@ -239,7 +239,7 @@ pub(super) fn collect_pem_files(cert_dir: &PathBuf) -> HashMap<String, String> {
 /// 查看证书：解析出的详情 + 目录内 PEM 原文。
 #[tauri::command]
 pub fn cert_detail(id: String) -> Result<CertDetail, String> {
-    let certs = load_certs();
+    let certs = load_certs_checked()?;
     let cert = find_cert(&certs, &id).ok_or_else(|| "证书不存在".to_string())?;
     let cert_dir = ensure_dir().join(&cert.id);
     let prefer = cert.domains.first().map(|s| s.as_str());
@@ -291,7 +291,7 @@ pub(super) fn build_zip(files: &[(String, String)]) -> Result<Vec<u8>, String> {
 /// - `lego/<原名>` lego 原生文件
 #[tauri::command]
 pub fn cert_export_zip(id: String, target_path: String) -> Result<String, String> {
-    let certs = load_certs();
+    let certs = load_certs_checked()?;
     let cert = find_cert(&certs, &id).ok_or_else(|| "证书不存在".to_string())?;
     let cert_dir = ensure_dir().join(&cert.id);
     let prefer = cert.domains.first().map(|s| s.as_str());

@@ -30,10 +30,13 @@ pub async fn issue_and_deploy(
     cert_id: &str,
     force: bool,
 ) -> Result<IssueResult, String> {
+    let _operation = crate::runtime_tasks::begin_operation("cert")?;
+    let _task = CertTaskGuard::acquire(cert_id)?;
     let mut log = IssueLog::new(app, cert_id);
-    let mut certs = load_certs();
-    let mut nodes = load_json::<DeployNode>("deploy_nodes.json");
-    let creds = load_json::<Credential>("credentials.json");
+    let mut certs = load_certs_checked()?;
+    let mut nodes = load_json_checked::<DeployNode>("deploy_nodes.json")?;
+    let expected_nodes = nodes.clone();
+    let creds = load_json_checked::<Credential>("credentials.json")?;
 
     let idx = certs
         .iter()
@@ -65,13 +68,16 @@ pub async fn issue_and_deploy(
     let cert_dir = ensure_dir().join(&cert.id);
     let fingerprint_before = cert_store_fingerprint(&cert_dir);
     let renew = has_existing_cert(&cert_dir);
-    let pems = match run_lego(&cert, cred.as_ref(), renew, force, &mut log) {
+    let (returned_log, issuance) = run_lego_owned(cert.clone(), cred, renew, force, log).await?;
+    log = returned_log;
+    let pems = match issuance {
         Ok(v) => v,
         Err(e) => {
             log.line(format!("✗ 申请失败：{}", e));
             certs[idx].status = "error".to_string();
             certs[idx].last_error = Some(e.clone());
-            save_json("certificates.json", &certs);
+            merge_certificate_state(&cert, &certs[idx])
+                .map_err(|persist| format!("{e}；状态保存失败: {persist}"))?;
             return Err(e);
         }
     };
@@ -109,7 +115,7 @@ pub async fn issue_and_deploy(
 
     // 域名列表 → 部署方式关联；target 用于 CDN / 负载均衡等需要目标域名的节点
     // Deploy the renewed validity metadata, rather than the pre-issuance snapshot.
-    let cert = certs[idx].clone();
+    let cert = merge_certificate_state(&cert, &certs[idx])?;
     let links = cert_links(&cert);
     let deployment = if links.is_empty() {
         log.line("（未关联任何部署方式，跳过部署）");
@@ -121,7 +127,7 @@ pub async fn issue_and_deploy(
     } else {
         let (summary, records) =
             deploy_links(&mut log, &cert, &pems, &mut nodes, &links, "issue").await;
-        append_deploy_history(&records);
+        append_deploy_history(&records)?;
         log.line(format!(
             "部署汇总：成功 {} 个，失败 {} 个",
             summary.ok_count, summary.fail_count
@@ -129,9 +135,11 @@ pub async fn issue_and_deploy(
         summary
     };
 
-    let updated = certs[idx].clone();
-    save_json("certificates.json", &certs);
-    save_json("deploy_nodes.json", &nodes);
+    merge_runtime("deploy_nodes.json", &expected_nodes, &nodes, NODE_RUNTIME)?;
+    let updated = load_certs_checked()?
+        .into_iter()
+        .find(|current| current.id == cert.id)
+        .ok_or("证书已删除，任务结果未回写")?;
     log.line(format!(
         "===== 结束：{} =====",
         if renewed {
@@ -210,13 +218,15 @@ pub(super) fn trim_deploy_history(mut all: Vec<DeployRecord>) -> Vec<DeployRecor
 }
 
 /// 追加部署记录；避免文件无限增长。
-pub(super) fn append_deploy_history(records: &[DeployRecord]) {
+pub(super) fn append_deploy_history(records: &[DeployRecord]) -> Result<(), String> {
     if records.is_empty() {
-        return;
+        return Ok(());
     }
-    let mut all = load_json::<DeployRecord>(DEPLOY_HISTORY_FILE);
-    all.extend(records.iter().cloned());
-    save_json(DEPLOY_HISTORY_FILE, &trim_deploy_history(all));
+    mutate_json(DEPLOY_HISTORY_FILE, |all: &mut Vec<DeployRecord>| {
+        all.extend_from_slice(records);
+        *all = trim_deploy_history(std::mem::take(all));
+        Ok(())
+    })
 }
 
 /// 把一枚证书推到给定的部署方式：逐个节点写日志、更新节点状态，并返回本次的记录。

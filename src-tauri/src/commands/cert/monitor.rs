@@ -167,12 +167,12 @@ pub(super) async fn check_one_monitor(
     }
 }
 
-pub(super) async fn run_monitor_checks(notify: bool) -> Vec<MonitorTarget> {
-    let mut monitors = load_json::<MonitorTarget>("monitors.json");
-    let channels = load_json::<NotifyChannel>("notify_channels.json");
+pub(super) async fn run_monitor_checks(notify: bool) -> Result<Vec<MonitorTarget>, String> {
+    let mut monitors = load_json_checked::<MonitorTarget>("monitors.json")?;
+    let expected = monitors.clone();
+    let channels = load_json_checked::<NotifyChannel>("notify_channels.json")?;
     for m in monitors.iter_mut() {
         check_one_monitor(m, &channels, notify).await;
     }
-    save_json("monitors.json", &monitors);
-    monitors
+    merge_runtime("monitors.json", &expected, &monitors, MONITOR_RUNTIME)
 }

@@ -5,8 +5,8 @@ use super::*;
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn monitor_list() -> Vec<MonitorTarget> {
-    load_json("monitors.json")
+pub fn monitor_list() -> Result<Vec<MonitorTarget>, String> {
+    load_json_checked("monitors.json")
 }
 
 #[tauri::command]
@@ -35,74 +35,80 @@ pub fn monitor_upsert(
         }
         None => default_notify_days(),
     };
-    let mut list = load_json::<MonitorTarget>("monitors.json");
-    let mid = id.unwrap_or_else(|| gen_id("mon"));
-    let target = if let Some(pos) = list.iter().position(|m| m.id == mid) {
-        let mut m = list[pos].clone();
-        m.host = host;
-        m.port = port.unwrap_or(m.port);
-        m.note = note.unwrap_or(m.note);
-        m.enabled = enabled.unwrap_or(m.enabled);
-        m.notify_days = thresholds;
-        m
-    } else {
-        MonitorTarget {
-            id: mid.clone(),
-            host,
-            port: port.unwrap_or(443),
-            note: note.unwrap_or_default(),
-            enabled: enabled.unwrap_or(true),
-            notify_days: thresholds,
-            not_after: None,
-            days_left: None,
-            subject: String::new(),
-            issuer: String::new(),
-            last_check_at: None,
-            last_error: None,
-            last_notify_bucket: None,
-            last_notified_at: None,
+    mutate_json("monitors.json", |list: &mut Vec<MonitorTarget>| {
+        let mid = id.unwrap_or_else(|| gen_id("mon"));
+        let target = if let Some(pos) = list.iter().position(|m| m.id == mid) {
+            let mut m = list[pos].clone();
+            m.host = host;
+            m.port = port.unwrap_or(m.port);
+            m.note = note.unwrap_or(m.note);
+            m.enabled = enabled.unwrap_or(m.enabled);
+            m.notify_days = thresholds;
+            m
+        } else {
+            MonitorTarget {
+                id: mid.clone(),
+                host,
+                port: port.unwrap_or(443),
+                note: note.unwrap_or_default(),
+                enabled: enabled.unwrap_or(true),
+                notify_days: thresholds,
+                not_after: None,
+                days_left: None,
+                subject: String::new(),
+                issuer: String::new(),
+                last_check_at: None,
+                last_error: None,
+                last_notify_bucket: None,
+                last_notified_at: None,
+            }
+        };
+        if let Some(pos) = list.iter().position(|m| m.id == mid) {
+            list[pos] = target.clone();
+        } else {
+            list.push(target.clone());
         }
-    };
-    if let Some(pos) = list.iter().position(|m| m.id == mid) {
-        list[pos] = target.clone();
-    } else {
-        list.push(target.clone());
-    }
-    save_json("monitors.json", &list);
-    Ok(target)
+
+        Ok(target)
+    })
 }
 
 #[tauri::command]
-pub fn monitor_delete(id: String) {
-    let list: Vec<MonitorTarget> = load_json::<MonitorTarget>("monitors.json")
-        .into_iter()
-        .filter(|m| m.id != id)
-        .collect();
-    save_json("monitors.json", &list);
+pub fn monitor_delete(id: String) -> Result<(), String> {
+    mutate_json("monitors.json", |list: &mut Vec<MonitorTarget>| {
+        list.retain(|m| m.id != id);
+        Ok(())
+    })
 }
 
 #[tauri::command]
 pub async fn monitor_check(id: String) -> Result<MonitorTarget, String> {
-    let mut list = load_json::<MonitorTarget>("monitors.json");
-    let channels = load_json::<NotifyChannel>("notify_channels.json");
-    let m = list
-        .iter_mut()
-        .find(|m| m.id == id)
-        .ok_or_else(|| "监控目标不存在".to_string())?;
-    check_one_monitor(m, &channels, true).await;
-    let out = m.clone();
-    save_json("monitors.json", &list);
-    Ok(out)
+    crate::runtime_tasks::run_if_enabled("cert", async move {
+        let mut list = load_json_checked::<MonitorTarget>("monitors.json")?;
+        let expected = list.clone();
+        let channels = load_json_checked::<NotifyChannel>("notify_channels.json")?;
+        let m = list
+            .iter_mut()
+            .find(|m| m.id == id)
+            .ok_or_else(|| "监控目标不存在".to_string())?;
+        check_one_monitor(m, &channels, true).await;
+        let current = merge_runtime("monitors.json", &expected, &list, MONITOR_RUNTIME)?;
+        current
+            .into_iter()
+            .find(|m| m.id == id)
+            .ok_or("监控目标已删除，旧检查结果未回写".into())
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn monitor_check_all() -> Vec<MonitorTarget> {
-    run_monitor_checks(true).await
+pub async fn monitor_check_all() -> Result<Vec<MonitorTarget>, String> {
+    crate::runtime_tasks::run_if_enabled("cert", run_monitor_checks(true)).await
 }
 
 #[tauri::command]
-pub fn notify_channel_list() -> Vec<NotifyChannel> {
-    load_json("notify_channels.json")
+pub fn notify_channel_list() -> Result<Vec<NotifyChannel>, String> {
+    load_json_checked("notify_channels.json")
 }
 
 #[tauri::command]
@@ -122,58 +128,61 @@ pub fn notify_channel_upsert(
     if url.trim().is_empty() {
         return Err("请填写 Webhook 地址".into());
     }
-    let mut list = load_json::<NotifyChannel>("notify_channels.json");
-    let cid = id.unwrap_or_else(|| gen_id("notify"));
-    let channel = if let Some(pos) = list.iter().position(|c| c.id == cid) {
-        let mut c = list[pos].clone();
-        c.channel_type = channel_type;
-        c.name = name;
-        c.config = config;
-        c.enabled = enabled.unwrap_or(c.enabled);
-        c.note = note.unwrap_or(c.note);
-        c
-    } else {
-        NotifyChannel {
-            id: cid.clone(),
-            channel_type,
-            name,
-            config,
-            enabled: enabled.unwrap_or(true),
-            note: note.unwrap_or_default(),
+    mutate_json("notify_channels.json", |list: &mut Vec<NotifyChannel>| {
+        let cid = id.unwrap_or_else(|| gen_id("notify"));
+        let channel = if let Some(pos) = list.iter().position(|c| c.id == cid) {
+            let mut c = list[pos].clone();
+            c.channel_type = channel_type;
+            c.name = name;
+            c.config = config;
+            c.enabled = enabled.unwrap_or(c.enabled);
+            c.note = note.unwrap_or(c.note);
+            c
+        } else {
+            NotifyChannel {
+                id: cid.clone(),
+                channel_type,
+                name,
+                config,
+                enabled: enabled.unwrap_or(true),
+                note: note.unwrap_or_default(),
+            }
+        };
+        if let Some(pos) = list.iter().position(|c| c.id == cid) {
+            list[pos] = channel.clone();
+        } else {
+            list.push(channel.clone());
         }
-    };
-    if let Some(pos) = list.iter().position(|c| c.id == cid) {
-        list[pos] = channel.clone();
-    } else {
-        list.push(channel.clone());
-    }
-    save_json("notify_channels.json", &list);
-    Ok(channel)
+
+        Ok(channel)
+    })
 }
 
 #[tauri::command]
-pub fn notify_channel_delete(id: String) {
-    let list: Vec<NotifyChannel> = load_json::<NotifyChannel>("notify_channels.json")
-        .into_iter()
-        .filter(|c| c.id != id)
-        .collect();
-    save_json("notify_channels.json", &list);
+pub fn notify_channel_delete(id: String) -> Result<(), String> {
+    mutate_json("notify_channels.json", |list: &mut Vec<NotifyChannel>| {
+        list.retain(|c| c.id != id);
+        Ok(())
+    })
 }
 
 #[tauri::command]
 pub async fn notify_channel_test(id: String) -> Result<String, String> {
-    let list = load_json::<NotifyChannel>("notify_channels.json");
-    let channel = list
-        .iter()
-        .find(|c| c.id == id)
-        .ok_or_else(|| "通知渠道不存在".to_string())?;
-    notify_send(
-        channel,
-        "AnyVersion 测试通知",
-        "这是一条测试消息：证书监控与部署通知已配置成功。",
-    )
-    .await?;
-    Ok("已发送".to_string())
+    crate::runtime_tasks::run_if_enabled("cert", async move {
+        let list = load_json_checked::<NotifyChannel>("notify_channels.json")?;
+        let channel = list
+            .iter()
+            .find(|c| c.id == id)
+            .ok_or_else(|| "通知渠道不存在".to_string())?;
+        notify_send(
+            channel,
+            "AnyVersion 测试通知",
+            "这是一条测试消息：证书监控与部署通知已配置成功。",
+        )
+        .await?;
+        Ok("已发送".to_string())
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------

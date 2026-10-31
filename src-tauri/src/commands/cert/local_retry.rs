@@ -67,6 +67,20 @@ pub(super) async fn retry_local_deployments(app: &tauri::AppHandle, attempted_is
         if links.is_empty() {
             continue;
         }
+        let _operation = match crate::runtime_tasks::begin_operation("cert") {
+            Ok(guard) => guard,
+            Err(error) => {
+                report_queue_error(app, format!("本机重试未执行: {error}"));
+                return;
+            }
+        };
+        let _task = match CertTaskGuard::acquire(&cert.id) {
+            Ok(guard) => guard,
+            Err(error) => {
+                eprintln!("[cert] 本机重试暂缓: {error}");
+                continue;
+            }
+        };
         let mut log = IssueLog::new(Some(app.clone()), &cert.id);
         log.line("重试本机部署，使用已有证书，不重新签发");
         let message = match read_lego_pems(
@@ -74,6 +88,7 @@ pub(super) async fn retry_local_deployments(app: &tauri::AppHandle, attempted_is
             cert.domains.first().map(String::as_str),
         ) {
             Some(pem) => {
+                let expected_nodes = nodes.clone();
                 let (summary, records) = deploy_links(
                     &mut log,
                     &cert,
@@ -83,8 +98,16 @@ pub(super) async fn retry_local_deployments(app: &tauri::AppHandle, attempted_is
                     "scheduler",
                 )
                 .await;
-                append_deploy_history(&records);
-                save_json("deploy_nodes.json", &nodes);
+                let persisted = append_deploy_history(&records).and_then(|_| {
+                    merge_runtime("deploy_nodes.json", &expected_nodes, &nodes, NODE_RUNTIME)
+                });
+                match persisted {
+                    Ok(current) => nodes = current,
+                    Err(error) => {
+                        report_queue_error(app, format!("本机部署结果保存失败: {error}"));
+                        return;
+                    }
+                }
                 (
                     summary.fail_count == 0,
                     format!(
