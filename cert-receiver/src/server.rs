@@ -64,7 +64,7 @@ fn require_token(headers: &HeaderMap, cfg: &Config) -> Result<(), (StatusCode, S
         .get(AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default();
-    let expected = format!("Bearer {}", cfg.token);
+    let expected = cert_deployment::credentials::bearer_authorization(&cfg.token);
     // 长度先比，再做字节级比较，避免明显的时间侧信道
     if auth.len() != expected.len() || auth.bytes().zip(expected.bytes()).any(|(a, b)| a != b) {
         return Err((StatusCode::UNAUTHORIZED, "invalid token".into()));
@@ -190,30 +190,6 @@ fn lower_md5(s: &str) -> String {
     format!("{:x}", md5::compute(s.as_bytes()))
 }
 
-fn find_cert_dir(root: &Path, cert_id: &str) -> Option<PathBuf> {
-    let direct = root.join(safe_name(cert_id));
-    if direct.join("fullchain.cer").is_file() {
-        return Some(direct);
-    }
-    // layout=domain/flat 时目录名不是证书 ID：扫描 meta.json
-    let entries = std::fs::read_dir(root).ok()?;
-    for e in entries.flatten() {
-        let p = e.path();
-        if !p.is_dir() {
-            continue;
-        }
-        let meta = p.join("meta.json");
-        if let Ok(text) = std::fs::read_to_string(&meta) {
-            if let Ok(v) = serde_json::from_str::<Value>(&text) {
-                if v.get("certificate_id").and_then(|x| x.as_str()) == Some(cert_id) {
-                    return Some(p);
-                }
-            }
-        }
-    }
-    None
-}
-
 async fn get_certificate(
     State(data): State<Arc<AppData>>,
     Query(q): Query<ApiQuery>,
@@ -243,7 +219,10 @@ async fn get_certificate(
     params.insert("apiId".to_string(), q.api_id.clone());
     params.insert("certificateId".to_string(), q.certificate_id.clone());
     params.insert("timestamp".to_string(), q.timestamp.clone());
-    params.insert("apiKey".to_string(), cfg.api_key.clone());
+    params.insert(
+        "apiKey".to_string(),
+        cert_deployment::credentials::api_key_for_sign(&cfg.api_key).to_string(),
+    );
     let string_for_sign = params
         .iter()
         .map(|(k, v)| format!("{}={}", k, v))
@@ -265,36 +244,37 @@ async fn get_certificate(
         .map_err(|_| (StatusCode::SERVICE_UNAVAILABLE, "证书服务正在停止".into()))?;
 
     let root = PathBuf::from(&cfg.output_dir);
-    if !root.is_dir() {
-        return Err((StatusCode::NOT_FOUND, "证书目录不存在".into()));
-    }
-    let _disk_lock = cert_deployment::deployment::OutputLock::try_acquire(&root)
-        .map_err(|e| (StatusCode::CONFLICT, e))?;
-    let dir = find_cert_dir(&root, &q.certificate_id).ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            format!("证书 {} 不存在", q.certificate_id),
-        )
-    })?;
-    let key = std::fs::read_to_string(dir.join("cert.key")).unwrap_or_default();
-    let cert = std::fs::read_to_string(dir.join("fullchain.cer")).unwrap_or_default();
-    let meta: Value = std::fs::read_to_string(dir.join("meta.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(Value::Null);
-    let expired = meta
-        .get("expired_time")
-        .and_then(|x| x.as_str())
-        .unwrap_or_default();
+    let id = q.certificate_id.clone();
+    let certificate =
+        tokio::task::spawn_blocking(move || cert_deployment::reading::read_certificate(&root, &id))
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("读取证书任务异常: {e}"),
+                )
+            })?
+            .map_err(|e| {
+                use cert_deployment::reading::ErrorKind;
+                (
+                    match e.kind {
+                        ErrorKind::NotFound => StatusCode::NOT_FOUND,
+                        ErrorKind::Busy => StatusCode::CONFLICT,
+                        ErrorKind::Invalid => StatusCode::BAD_REQUEST,
+                        ErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+                    },
+                    e.message,
+                )
+            })?;
     data.state.log(format!("拉取 {} 成功", q.certificate_id));
 
     Ok(Json(json!({
         "success": true,
         "msg": "成功",
         "payload": {
-            "certKey": key,
-            "fullChainCerts": cert,
-            "expiredTime": expired,
+            "certKey": certificate.key,
+            "fullChainCerts": certificate.full_chain,
+            "expiredTime": certificate.expired_time,
         }
     })))
 }

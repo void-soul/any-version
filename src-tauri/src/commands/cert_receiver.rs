@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use axum::{
@@ -109,9 +109,7 @@ impl CertReceiverConfig {
                 self.listen_addr
             ));
         }
-        if self.token.trim().is_empty() || self.token == "changeme" {
-            return Err("共享 Token 不能为空，也不能用示例值".into());
-        }
+        cert_deployment::credentials::validate_token(&self.token)?;
         if self.output_dir.trim().is_empty() {
             return Err("证书输出目录不能为空".into());
         }
@@ -240,7 +238,9 @@ struct Stats {
 }
 
 struct ServerHandle {
-    shutdown: tokio::sync::oneshot::Sender<()>,
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    completion: Arc<Mutex<std::sync::mpsc::Receiver<()>>>,
+    finished: Arc<AtomicBool>,
     addr: SocketAddr,
 }
 
@@ -258,6 +258,7 @@ pub struct Status {
 /// 接收端全局状态。用 `OnceLock` 而不是 Tauri `State`：
 /// axum handler 与命令层都要访问，全局单例最省事（一个进程只有一个接收端）。
 pub struct CertReceiverState {
+    lifecycle: Mutex<()>,
     cfg: Mutex<CertReceiverConfig>,
     server: Mutex<Option<ServerHandle>>,
     stats: Mutex<Stats>,
@@ -283,6 +284,7 @@ pub fn state() -> Arc<CertReceiverState> {
                 },
             };
             Arc::new(CertReceiverState {
+                lifecycle: Mutex::new(()),
                 cfg: Mutex::new(cfg),
                 server: Mutex::new(None),
                 stats: Mutex::new(Stats::default()),
@@ -317,181 +319,7 @@ fn persist(cfg: &CertReceiverConfig) -> Result<(), String> {
     crate::commands::config::save_config(&c)
 }
 
-impl CertReceiverState {
-    pub fn cfg(&self) -> CertReceiverConfig {
-        self.cfg.lock().unwrap_or_else(|e| e.into_inner()).clone()
-    }
-
-    /// 写一行日志：内存环形缓冲（界面首次加载用）+ 实时事件推送。
-    pub fn log(&self, line: impl Into<String>) {
-        let line = format!(
-            "[{}] {}",
-            chrono::Local::now().format("%H:%M:%S"),
-            line.into()
-        );
-        {
-            let mut logs = self.logs.lock().unwrap_or_else(|e| e.into_inner());
-            logs.push_back(line.clone());
-            while logs.len() > LOG_CAP {
-                logs.pop_front();
-            }
-        }
-        if let Some(app) = self.app.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
-            let _ = app.emit(LOG_EVENT, line);
-        }
-    }
-
-    /// 一次推送的结论：更新统计 + 写日志 + 通知界面。
-    pub fn record_push(&self, ok: bool, line: String) {
-        {
-            let mut s = self.stats.lock().unwrap_or_else(|e| e.into_inner());
-            if ok {
-                s.pushes += 1;
-            } else {
-                s.fails += 1;
-                s.last_error = line.clone();
-            }
-            s.last_push_at = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-            s.last_push_ok = ok;
-        }
-        self.log(line);
-        self.emit_status();
-    }
-
-    pub fn status(&self) -> Status {
-        let s = self.stats.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let guard = self.server.lock().unwrap_or_else(|e| e.into_inner());
-        Status {
-            running: guard.is_some(),
-            addr: guard
-                .as_ref()
-                .map(|h| h.addr.to_string())
-                .unwrap_or_else(|| self.cfg().listen_addr),
-            pushes: s.pushes,
-            fails: s.fails,
-            last_push_at: s.last_push_at,
-            last_push_ok: s.last_push_ok,
-            last_error: s.last_error,
-        }
-    }
-
-    pub fn logs_snapshot(&self) -> Vec<String> {
-        self.logs
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .iter()
-            .cloned()
-            .collect()
-    }
-
-    fn emit_status(&self) {
-        if let Some(app) = self.app.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
-            let _ = app.emit(STATUS_EVENT, self.status());
-        }
-    }
-
-    /// 启动服务。先同步 `bind`，端口被占用能立刻把错误回给界面，而不是扔进后台任务。
-    pub fn start_server(self: &Arc<Self>) -> Result<(), String> {
-        if self
-            .server
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_some()
-        {
-            return Ok(());
-        }
-        let cfg = self.cfg();
-        if let Err(e) = cfg.validate() {
-            self.log(format!("未启动：{}", e));
-            return Err(e);
-        }
-        let _permit = deployment_slot()
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| "证书部署仍在进行，请稍后重启服务".to_string())?;
-        cert_deployment::deployment::recover(Path::new(&cfg.output_dir))?;
-        let addr: SocketAddr = cfg
-            .listen_addr
-            .parse()
-            .map_err(|_| format!("监听地址不合法：{}", cfg.listen_addr))?;
-
-        let std_listener =
-            std::net::TcpListener::bind(addr).map_err(|e| format!("绑定 {} 失败：{}", addr, e))?;
-        std_listener
-            .set_nonblocking(true)
-            .map_err(|e| format!("设置非阻塞失败：{}", e))?;
-
-        let data = Arc::new(AppData {
-            cfg: cfg.clone(),
-            state: self.clone(),
-        });
-        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-        let log_state = self.clone();
-        let run_id = self.run_seq.fetch_add(1, Ordering::SeqCst) + 1;
-        tauri::async_runtime::spawn(async move {
-            let listener = match tokio::net::TcpListener::from_std(std_listener) {
-                Ok(l) => l,
-                Err(e) => {
-                    log_state.log(format!("监听器转换失败：{}", e));
-                    return;
-                }
-            };
-            let app = router(data);
-            let served = axum::serve(
-                listener,
-                app.into_make_service_with_connect_info::<SocketAddr>(),
-            )
-            .with_graceful_shutdown(async {
-                let _ = rx.await;
-            })
-            .await;
-            if let Err(e) = served {
-                log_state.log(format!("服务异常退出：{}", e));
-            }
-            // 只有「当前这一代」还在跑才打停止日志：重启时旧任务收尾晚于新任务启动，
-            // 否则会出现「服务已就绪」之后紧跟一条「服务已停止」的假象。
-            if log_state.run_seq.load(Ordering::SeqCst) == run_id {
-                log_state.log("服务已停止");
-                log_state.emit_status();
-            }
-        });
-
-        *self.server.lock().unwrap_or_else(|e| e.into_inner()) =
-            Some(ServerHandle { shutdown: tx, addr });
-        // 「就绪」同步打，避免快速重启时串到「服务已停止」后面
-        self.log(format!(
-            "服务已就绪，监听 {}（布局 {}，重载 {}）",
-            addr, cfg.layout, cfg.reload_mode
-        ));
-        if addr.ip().is_unspecified() {
-            self.log("⚠ 正在监听所有网卡（0.0.0.0）：请确保共享 Token 足够强，并在防火墙限制来源");
-        }
-        self.emit_status();
-        Ok(())
-    }
-
-    pub fn stop_server(&self) {
-        let handle = self.server.lock().unwrap_or_else(|e| e.into_inner()).take();
-        if let Some(h) = handle {
-            let _ = h.shutdown.send(());
-            self.log("已请求停止服务");
-        }
-        self.emit_status();
-    }
-
-    /// 保存配置。返回 `true` 表示「监听地址或 Token 变了，需要调用方重启服务」
-    /// —— 重启需要 `Arc<Self>`（要在后台任务里持有），放在命令层做。
-    pub fn apply_config(&self, cfg: CertReceiverConfig) -> Result<bool, String> {
-        cfg.validate()?;
-        let need_restart = {
-            let old = self.cfg();
-            old.listen_addr != cfg.listen_addr || old.token != cfg.token
-        };
-        persist(&cfg)?;
-        *self.cfg.lock().unwrap_or_else(|e| e.into_inner()) = cfg;
-        Ok(need_restart)
-    }
-}
+mod lifecycle;
 
 /* ─── HTTP ─── */
 
@@ -538,7 +366,7 @@ fn require_token(
         .get(AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default();
-    let expected = format!("Bearer {}", cfg.token);
+    let expected = cert_deployment::credentials::bearer_authorization(&cfg.token);
     // 长度先比，再做字节级比较，避免明显的时间侧信道
     if auth.len() != expected.len() || auth.bytes().zip(expected.bytes()).any(|(a, b)| a != b) {
         return Err((StatusCode::UNAUTHORIZED, "invalid token".into()));
@@ -656,30 +484,6 @@ fn lower_md5(s: &str) -> String {
     format!("{:x}", md5::compute(s.as_bytes()))
 }
 
-fn find_cert_dir(root: &Path, cert_id: &str) -> Option<PathBuf> {
-    let direct = root.join(safe_name(cert_id));
-    if direct.join("fullchain.cer").is_file() {
-        return Some(direct);
-    }
-    // layout=domain/flat 时目录名不是证书 ID：扫描 meta.json
-    let entries = std::fs::read_dir(root).ok()?;
-    for e in entries.flatten() {
-        let p = e.path();
-        if !p.is_dir() {
-            continue;
-        }
-        let meta = p.join("meta.json");
-        if let Ok(text) = std::fs::read_to_string(&meta) {
-            if let Ok(v) = serde_json::from_str::<Value>(&text) {
-                if v.get("certificate_id").and_then(|x| x.as_str()) == Some(cert_id) {
-                    return Some(p);
-                }
-            }
-        }
-    }
-    None
-}
-
 async fn get_certificate(
     State(data): State<Arc<AppData>>,
     Query(q): Query<ApiQuery>,
@@ -709,7 +513,10 @@ async fn get_certificate(
     params.insert("apiId".to_string(), q.api_id.clone());
     params.insert("certificateId".to_string(), q.certificate_id.clone());
     params.insert("timestamp".to_string(), q.timestamp.clone());
-    params.insert("apiKey".to_string(), cfg.api_key.clone());
+    params.insert(
+        "apiKey".to_string(),
+        cert_deployment::credentials::api_key_for_sign(&cfg.api_key).to_string(),
+    );
     let string_for_sign = params
         .iter()
         .map(|(k, v)| format!("{}={}", k, v))
@@ -730,36 +537,37 @@ async fn get_certificate(
         .map_err(|_| (StatusCode::SERVICE_UNAVAILABLE, "证书服务正在停止".into()))?;
 
     let root = PathBuf::from(&cfg.output_dir);
-    if !root.is_dir() {
-        return Err((StatusCode::NOT_FOUND, "证书目录不存在".into()));
-    }
-    let _disk_lock = cert_deployment::deployment::OutputLock::try_acquire(&root)
-        .map_err(|e| (StatusCode::CONFLICT, e))?;
-    let dir = find_cert_dir(&root, &q.certificate_id).ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            format!("证书 {} 不存在", q.certificate_id),
-        )
-    })?;
-    let key = std::fs::read_to_string(dir.join("cert.key")).unwrap_or_default();
-    let cert = std::fs::read_to_string(dir.join("fullchain.cer")).unwrap_or_default();
-    let meta: Value = std::fs::read_to_string(dir.join("meta.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(Value::Null);
-    let expired = meta
-        .get("expired_time")
-        .and_then(|x| x.as_str())
-        .unwrap_or_default();
+    let id = q.certificate_id.clone();
+    let certificate =
+        tokio::task::spawn_blocking(move || cert_deployment::reading::read_certificate(&root, &id))
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("读取证书任务异常: {e}"),
+                )
+            })?
+            .map_err(|e| {
+                use cert_deployment::reading::ErrorKind;
+                (
+                    match e.kind {
+                        ErrorKind::NotFound => StatusCode::NOT_FOUND,
+                        ErrorKind::Busy => StatusCode::CONFLICT,
+                        ErrorKind::Invalid => StatusCode::BAD_REQUEST,
+                        ErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+                    },
+                    e.message,
+                )
+            })?;
     data.state.log(format!("拉取 {} 成功", q.certificate_id));
 
     Ok(Json(json!({
         "success": true,
         "msg": "成功",
         "payload": {
-            "certKey": key,
-            "fullChainCerts": cert,
-            "expiredTime": expired,
+            "certKey": certificate.key,
+            "fullChainCerts": certificate.full_chain,
+            "expiredTime": certificate.expired_time,
         }
     })))
 }
@@ -794,31 +602,37 @@ pub fn cert_receiver_status() -> Status {
 }
 
 #[tauri::command]
-pub fn cert_receiver_start() -> Result<Status, String> {
+pub async fn cert_receiver_start() -> Result<Status, String> {
     crate::runtime_tasks::require_enabled("cert")?;
-    let st = state();
-    st.start_server()?;
-    Ok(st.status())
-}
-
-#[tauri::command]
-pub fn cert_receiver_stop() -> Status {
-    let st = state();
-    st.stop_server();
-    st.status()
-}
-
-#[tauri::command]
-pub fn cert_receiver_save_config(config: CertReceiverConfig) -> Result<Status, String> {
-    let st = state();
-    let need_restart = st.apply_config(config)?;
-    if need_restart {
-        st.stop_server();
-        // 给旧任务一点收尾时间，避免立刻 bind 同一个端口失败
-        std::thread::sleep(std::time::Duration::from_millis(120));
+    tauri::async_runtime::spawn_blocking(|| {
+        let st = state();
         st.start_server()?;
-    }
-    Ok(st.status())
+        Ok(st.status())
+    })
+    .await
+    .map_err(|e| format!("接收端启动任务异常: {e}"))?
+}
+
+#[tauri::command]
+pub async fn cert_receiver_stop() -> Result<Status, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let st = state();
+        st.stop_server()?;
+        Ok(st.status())
+    })
+    .await
+    .map_err(|e| format!("接收端停止任务异常: {e}"))?
+}
+
+#[tauri::command]
+pub async fn cert_receiver_save_config(config: CertReceiverConfig) -> Result<Status, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = state();
+        st.apply_config(config)?;
+        Ok(st.status())
+    })
+    .await
+    .map_err(|e| format!("接收端配置任务异常: {e}"))?
 }
 
 #[tauri::command]
@@ -929,7 +743,10 @@ fn url_encode(s: &str) -> String {
 fn pull_sign(api_id: &str, api_key: &str, certificate_id: &str, timestamp: &str) -> String {
     let mut params = BTreeMap::new();
     params.insert("apiId", api_id);
-    params.insert("apiKey", api_key);
+    params.insert(
+        "apiKey",
+        cert_deployment::credentials::api_key_for_sign(api_key),
+    );
     params.insert("certificateId", certificate_id);
     params.insert("timestamp", timestamp);
     let joined = params

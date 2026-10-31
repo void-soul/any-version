@@ -92,7 +92,11 @@ impl AppState {
 
     /// 写一行日志：内存环形缓冲（供界面首次加载）+ 实时事件推送。
     pub fn log(&self, line: impl Into<String>) {
-        let line = format!("[{}] {}", chrono::Local::now().format("%H:%M:%S"), line.into());
+        let line = format!(
+            "[{}] {}",
+            chrono::Local::now().format("%H:%M:%S"),
+            line.into()
+        );
         {
             let mut logs = self.logs.lock().unwrap_or_else(|e| e.into_inner());
             logs.push_back(line.clone());
@@ -150,7 +154,12 @@ impl AppState {
 
     /// 启动服务。先同步 `bind`，端口被占用能立刻把错误回给界面，而不是扔进后台任务里。
     fn start_server(self: &Arc<Self>) -> Result<(), String> {
-        if self.server.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
+        if self
+            .server
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+        {
             return Ok(());
         }
         let cfg = self.cfg();
@@ -167,8 +176,8 @@ impl AppState {
             .parse()
             .map_err(|_| format!("监听地址不合法：{}", cfg.listen_addr))?;
 
-        let std_listener = std::net::TcpListener::bind(addr)
-            .map_err(|e| format!("绑定 {} 失败：{}", addr, e))?;
+        let std_listener =
+            std::net::TcpListener::bind(addr).map_err(|e| format!("绑定 {} 失败：{}", addr, e))?;
         std_listener
             .set_nonblocking(true)
             .map_err(|e| format!("设置非阻塞失败：{}", e))?;
@@ -208,7 +217,8 @@ impl AppState {
             }
         });
 
-        *self.server.lock().unwrap_or_else(|e| e.into_inner()) = Some(ServerHandle { shutdown: tx, addr });
+        *self.server.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some(ServerHandle { shutdown: tx, addr });
         // 「就绪」在这里同步打，不放到后台任务里：否则快速停止/重启时会串到
         // 「服务已停止」后面，日志看着像先停了又起来。
         self.log(format!(
@@ -266,10 +276,7 @@ fn bootstrap(state: State<'_, Arc<AppState>>) -> Bootstrap {
 
 /// 保存配置：校验 → 写盘 → 若服务在跑则用新配置重启（端口/token 改了必须重启才生效）。
 #[tauri::command]
-fn save_config(
-    state: State<'_, Arc<AppState>>,
-    config: Config,
-) -> Result<Status, String> {
+fn save_config(state: State<'_, Arc<AppState>>, config: Config) -> Result<Status, String> {
     config.validate()?;
     let path = state
         .cfg_path
@@ -353,7 +360,10 @@ fn list_stored_certs(state: State<'_, Arc<AppState>>) -> Vec<StoredCert> {
             continue;
         }
         out.push(StoredCert {
-            dir: p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
+            dir: p
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default(),
             certificate_id,
             domains: v
                 .get("domains")
@@ -411,7 +421,10 @@ fn local_ipv4() -> Vec<String> {
 fn pull_sign(api_id: &str, api_key: &str, certificate_id: &str, timestamp: &str) -> String {
     let mut params = std::collections::BTreeMap::new();
     params.insert("apiId", api_id);
-    params.insert("apiKey", api_key);
+    params.insert(
+        "apiKey",
+        cert_deployment::credentials::api_key_for_sign(api_key),
+    );
     params.insert("certificateId", certificate_id);
     params.insert("timestamp", timestamp);
     let joined = params
@@ -490,11 +503,7 @@ fn pull_example(
 
 #[tauri::command]
 fn clear_logs(state: State<'_, Arc<AppState>>) -> Vec<String> {
-    state
-        .logs
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clear();
+    state.logs.lock().unwrap_or_else(|e| e.into_inner()).clear();
     Vec::new()
 }
 
@@ -724,5 +733,17 @@ mod tests {
     fn url_encode_escapes_only_when_needed() {
         assert_eq!(url_encode("cert-abc_1.2~"), "cert-abc_1.2~");
         assert_eq!(url_encode("a b/c"), "a%20b%2Fc");
+    }
+    #[test]
+    fn pull_sign_normalizes_api_key_like_request_verification() {
+        assert_eq!(
+            pull_sign("api", "  isolation-key\r\n", "cert", "123"),
+            pull_sign(
+                "api",
+                cert_deployment::credentials::api_key_for_sign("  isolation-key\r\n"),
+                "cert",
+                "123"
+            )
+        );
     }
 }

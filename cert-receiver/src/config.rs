@@ -64,11 +64,12 @@ impl Config {
     /// 保存前的校验：错误信息直接显示在界面上，所以都写成用户能照着做的句子。
     pub fn validate(&self) -> Result<(), String> {
         if self.listen_addr.parse::<std::net::SocketAddr>().is_err() {
-            return Err(format!("监听地址不合法：{}（应形如 127.0.0.1:9000）", self.listen_addr));
+            return Err(format!(
+                "监听地址不合法：{}（应形如 127.0.0.1:9000）",
+                self.listen_addr
+            ));
         }
-        if self.token.trim().is_empty() || self.token == "changeme" || self.token == "YOUR_SHARED_TOKEN" {
-            return Err("共享 Token 不能为空，也不能用示例值".into());
-        }
+        cert_deployment::credentials::validate_token(&self.token)?;
         if self.output_dir.trim().is_empty() {
             return Err("证书输出目录不能为空".into());
         }
@@ -128,8 +129,7 @@ pub fn load(path: &Path) -> Result<Config, String> {
 
 /// 写回配置文件（保留一段说明性注释；GUI 编辑会丢掉原有的手写注释）。
 pub fn save(path: &Path, cfg: &Config) -> Result<(), String> {
-    let body = toml::to_string_pretty(cfg)
-        .map_err(|e| format!("配置序列化失败: {}", e))?;
+    let body = toml::to_string_pretty(cfg).map_err(|e| format!("配置序列化失败: {}", e))?;
     let text = format!(
         "# 证书接收端配置（由 cert-receiver 界面维护）\n\
          # 查找顺序：--config <path> → exe 同目录 → 当前工作目录 → %ProgramData%\\Kira\\ → C:\\certs\\\n\n{}",
@@ -166,6 +166,10 @@ mod tests {
         let mut c = Config::fresh();
         assert!(c.validate().is_ok());
 
+        for token in ["changeme", "YOUR_SHARED_TOKEN", " YOUR_SHARED_TOKEN "] {
+            c.token = token.into();
+            assert!(c.validate().is_err());
+        }
         c.token = "  ".into();
         assert!(c.validate().unwrap_err().contains("Token"));
 

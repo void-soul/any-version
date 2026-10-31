@@ -24,7 +24,7 @@ async fn stop(app: &AppHandle, module: &str) -> Result<(), String> {
             super::buddy::twoapi::buddy2api_stop()?;
         }
         "cert" => {
-            super::cert_receiver::cert_receiver_stop();
+            super::cert_receiver::cert_receiver_stop().await?;
         }
         "mihomo" => {
             if let Some(state) = app.try_state::<super::mihomo::MihomoState>() {
