@@ -14,7 +14,7 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: (...args: Parameters<typeof listenMock>) => listenMock(...args),
 }));
 
-import { createEventBuffer } from "../eventBuffer";
+import { createEventBuffer, setEventBufferDisabledOwners } from "../eventBuffer";
 
 // 取出某事件名注册的 handler（后端 → 前端推送入口）
 function handlerOf(event: string): (e: { payload: unknown }) => void {
@@ -28,6 +28,47 @@ const flushMicrotasks = () => new Promise<void>((r) => setTimeout(r, 0));
 describe("eventBuffer", () => {
   beforeEach(() => {
     listenMock.mockClear();
+    setEventBufferDisabledOwners([]);
+  });
+
+  it("disabling an owner clears snapshots and releases a late listener; re-enable starts fresh", async () => {
+    let finish!: (stop: () => void) => void;
+    listenMock.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const buffer = createEventBuffer<number>("owner-delayed", { owner: "disabled-owner" });
+    const oldHandler = handlerOf("owner-delayed");
+    oldHandler({ payload: 1 });
+    await flushMicrotasks();
+    const version = buffer.version();
+    setEventBufferDisabledOwners(["disabled-owner"]);
+    expect(buffer.snapshot()).toEqual([]);
+    expect(buffer.version()).toBeGreaterThan(version);
+    oldHandler({ payload: 2 });
+    const stop = vi.fn(); finish(stop);
+    await flushMicrotasks();
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(buffer.snapshot()).toEqual([]);
+    setEventBufferDisabledOwners([]);
+    const handlers = listenMock.mock.calls.filter(([name]) => name === "owner-delayed");
+    expect(handlers).toHaveLength(2);
+    oldHandler({ payload: 3 });
+    handlers[1][1]({ payload: 4 });
+    await flushMicrotasks();
+    expect(buffer.snapshot()).toEqual([4]);
+  });
+
+  it("ordinary page changes retain the active subscription, while owner disable releases it", async () => {
+    const stop = vi.fn(); listenMock.mockResolvedValueOnce(stop);
+    const buffer = createEventBuffer<number>("owner-release", { owner: "release-owner" });
+    const unsubscribe = buffer.subscribe(() => {});
+    await flushMicrotasks();
+    unsubscribe(); // Activity hidden removes consumer Effects, not the module itself.
+    handlerOf("owner-release")({ payload: 7 });
+    setEventBufferDisabledOwners([]);
+    expect(buffer.snapshot()).toEqual([7]);
+    expect(stop).not.toHaveBeenCalled();
+    setEventBufferDisabledOwners(["release-owner"]);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(buffer.snapshot()).toEqual([]);
   });
 
   it("同一事件单例：重复创建返回同一实例，后端订阅只挂一次", async () => {

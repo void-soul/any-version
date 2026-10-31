@@ -72,6 +72,7 @@ export interface AiProgressEntry {
 export const mmAiProgressBuffer: EventBuffer<AiProgressEntry> = createEventBuffer<AiProgressEntry>(
   "mm-ai-progress",
   {
+    owner: "mindmap",
     transform: (p) => ({ ...(p as Omit<AiProgressEntry, "at">), at: Date.now() }),
     limit: 500,
   }

@@ -27,7 +27,7 @@ export const dbdAiProgressBuffer = createEventBuffer<{
     max?: number;
     errors?: number;
   };
-}>("dbd-ai-progress");
+}>("dbd-ai-progress", { owner: "dbdesigner" });
 
 /**
  * 流式构图：后端每写完一张表就推一份「到目前为止画得出来的图」。
@@ -37,7 +37,7 @@ export const dbdAiProgressBuffer = createEventBuffer<{
 // limit 8：只消费最新那份，旧的部分文档留着没用还占内存（每份都是全量节点）。
 export const dbdAiPartialBuffer = createEventBuffer<{ runId?: string; doc?: DbDesignDocument }>(
   "dbd-ai-partial",
-  { limit: 8 },
+  { limit: 8, owner: "dbdesigner" },
 );
 
 /** 流式落图时一行放几张表（只影响生成过程中的临时排布，最终仍走自动布局） */

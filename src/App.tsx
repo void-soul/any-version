@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { Activity } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
@@ -23,6 +23,8 @@ import { theamedAlert } from "./components/shared/ThemedAlert";
 import CommandPalette, { openCommandPalette } from "./components/shared/CommandPalette";
 import { commandPaletteItems, modulePaletteItems } from "./utils/paletteCommands";
 import "./App.css";
+import { reconcileModulePages } from "./utils/moduleLifecycle";
+import { setEventBufferDisabledOwners } from "./utils/eventBuffer";
 
 /** 模块按钮统一样式：胶囊里的模块入口、「更多」下拉里的模块条目共用同一套外观与 hover。
  *  同一种东西不该有第二种长相 —— 下拉条目原先另写了一套（字号 11 / 内边距 py-2 / 图标 3.5 /
@@ -157,7 +159,10 @@ export default function App() {
 
   // 懒挂载：仅渲染至少被访问过一次的页面，避免启动时全部组件同时初始化
   const [mountedPages, setMountedPages] = useState<Set<PageId>>(new Set(["launcher"]));
+  const disabledModulesRef = useRef(appearance.disabledModules);
+  disabledModulesRef.current = appearance.disabledModules;
   const switchPage = (page: PageId) => {
+    if (!MODULE_MAP[page] || (!MODULE_MAP[page].pinned && disabledModulesRef.current.includes(page))) return;
     setActivePage(page);
     setMountedPages((prev) => {
       if (prev.has(page)) return prev;
@@ -413,13 +418,15 @@ export default function App() {
     ? `app-bg-${appearance.backgroundTexture}`
     : "cyber-grid";
 
-  // 若当前激活模块被禁用，回退到「启动」模块
-  useEffect(() => {
-    if (appearance.disabledModules.includes(activePage)) {
-      switchPage("launcher");
+  useLayoutEffect(() => {
+    const enabled = allEnabled.map((module) => module.id);
+    setEventBufferDisabledOwners(MODULES.filter((module) => !enabled.includes(module.id)).map((module) => module.id));
+    const next = reconcileModulePages(activePage, mountedPages, enabled);
+    if (next.active !== activePage) setActivePage(next.active);
+    if (next.mounted.size !== mountedPages.size || [...next.mounted].some((id) => !mountedPages.has(id))) {
+      setMountedPages(next.mounted);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appearance.disabledModules]);
+  }, [allEnabled, activePage, mountedPages]);
 
   return (
     <div

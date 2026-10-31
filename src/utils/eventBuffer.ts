@@ -36,6 +36,8 @@ export interface EventBuffer<T = unknown> {
 }
 
 export interface EventBufferOptions<T> {
+  /** Module owning this buffer; disabling it releases native subscriptions and snapshots. */
+  owner?: string;
   /** 缓冲上限，超出丢弃最旧条目；默认 500 */
   limit?: number;
   /** 载荷 → 存储条目的转换；默认原样存储 */
@@ -44,6 +46,15 @@ export interface EventBufferOptions<T> {
 
 // 同一 Tauri 事件 → 全局唯一缓冲实例（单例注册表）。
 const buffersByEvent = new Map<string, EventBuffer<unknown>>();
+const ownerControls = new Map<string, Set<(enabled: boolean) => void>>();
+let disabledOwners = new Set<string>();
+
+export function setEventBufferDisabledOwners(disabled: readonly string[]): void {
+  disabledOwners = new Set(disabled);
+  for (const [owner, controls] of ownerControls) {
+    for (const control of controls) control(!disabledOwners.has(owner));
+  }
+}
 
 /**
  * 为某个 Tauri 事件创建（或复用）模块级缓冲。
@@ -111,6 +122,7 @@ export function createEventBuffer<T = unknown>(
       };
     },
     clear: () => {
+      snapshotCaches.delete(buffer as EventBuffer<unknown>);
       if (items.length === 0) return;
       items = [];
       scheduleNotify();
@@ -118,10 +130,39 @@ export function createEventBuffer<T = unknown>(
   };
 
   buffersByEvent.set(event, buffer as EventBuffer<unknown>);
-  listen(event, (e) => push(e.payload)).catch((err) => {
-    buffersByEvent.delete(event);
-    console.error(`[eventBuffer:${event}] 注册事件监听失败`, err);
-  });
+  let enabled = false;
+  let generation = 0;
+  let unlisten: (() => void) | undefined;
+  const setEnabled = (next: boolean) => {
+    if (enabled === next) return;
+    enabled = next;
+    const lease = ++generation;
+    unlisten?.();
+    unlisten = undefined;
+    if (!next) {
+      // Invalidate cached snapshots synchronously, before consumers can remount.
+      items = [];
+      snapshotCaches.delete(buffer as EventBuffer<unknown>);
+      version++;
+      scheduleNotify();
+      return;
+    }
+    listen(event, (e) => {
+      if (enabled && generation === lease) push(e.payload);
+    }).then((stop) => {
+      if (!enabled || generation !== lease) stop();
+      else unlisten = stop;
+    }).catch((err) => {
+      if (generation === lease) enabled = false;
+      console.error(`[eventBuffer:${event}] 注册事件监听失败`, err);
+    });
+  };
+  if (opts.owner) {
+    const controls = ownerControls.get(opts.owner) ?? new Set();
+    controls.add(setEnabled);
+    ownerControls.set(opts.owner, controls);
+  }
+  setEnabled(!opts.owner || !disabledOwners.has(opts.owner));
   return buffer;
 }
 

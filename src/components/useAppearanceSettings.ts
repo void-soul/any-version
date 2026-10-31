@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
+import { createModuleLayoutSaver } from "../utils/moduleLifecycle";
 import { theamedAlert, alertError } from "./shared/ThemedAlert";
 import { applyDensity } from "../utils/appearance";
 import { invoke } from "@tauri-apps/api/core";
@@ -130,18 +131,15 @@ export function useAppearanceSettings() {
   };
 
   // 保存模块布局（顶栏模块 + 禁用模块）
-  const saveModuleLayout = async (toolbar: string[], disabled: string[]) => {
-    setAppearance({ ...appearance, toolbarModules: toolbar, disabledModules: disabled });
-    try {
-      await invoke("set_module_layout", {
-        toolbarModules: toolbar,
-        disabledModules: disabled,
-      });
-      emit("appearance-updated");
-    } catch (e) {
-      console.error("保存模块布局失败", e);
-    }
-  };
+  const layoutSaver = useRef<ReturnType<typeof createModuleLayoutSaver<typeof appearance>> | null>(null);
+  if (!layoutSaver.current) layoutSaver.current = createModuleLayoutSaver({
+    save: (toolbarModules, disabledModules) => invoke("set_module_layout", { toolbarModules, disabledModules }),
+    read: () => invoke<typeof appearance>("get_appearance_config"),
+    apply: setAppearance,
+    notify: () => emit("appearance-updated"),
+    report: (error) => { void alertError(`保存模块布局失败：${String(error)}`); },
+  });
+  const saveModuleLayout = layoutSaver.current;
 
   // 物化「当前实际顶栏模块列表」：若用户尚未显式保存布局，则以默认顶栏列表为准。
   // 避免在空列表上增删导致「只保留一个模块、其余全部落到更多」。
