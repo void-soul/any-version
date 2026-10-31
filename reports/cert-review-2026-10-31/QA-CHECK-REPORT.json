@@ -1,0 +1,107 @@
+{
+  "date": "2026-10-31",
+  "entries": [
+    {
+      "qid": "Q-0591",
+      "status": "已验证",
+      "database_matches_snapshot": true,
+      "source_paths_verified": [
+        "src-tauri/src/commands/cert/deploy_local.rs",
+        "src-tauri/src/commands/cert/deploy_local/tests.rs",
+        "src-tauri/src/commands/cert/commands.rs",
+        "src-tauri/src/commands/cert/deploy_ssh.rs",
+        "src-tauri/src/commands/cert/store.rs",
+        "src-tauri/src/commands/cert.rs",
+        "src/components/SystemTools/CertManager.model.tsx",
+        "src/components/SystemTools/CertManager.NodeForm.tsx",
+        "src/components/SystemTools/CertManager.DeployNodes.tsx",
+        "src/components/SystemTools/CertManager.NodeForm.test.ts"
+      ],
+      "implementation_commits": [
+        "a42515d3893a398e7fc711ce8bdf954c81e06fda",
+        "7e26c403f874c1a823f6429349e917014ba90627"
+      ]
+    },
+    {
+      "qid": "Q-0592",
+      "status": "已验证",
+      "database_matches_snapshot": true,
+      "source_paths_verified": [
+        "src-tauri/src/commands/cert_receiver.rs",
+        "src-tauri/src/commands/cert_receiver/lifecycle.rs",
+        "src-tauri/src/commands/cert_receiver/tests.rs",
+        "src-tauri/src/commands/module_lifecycle.rs"
+      ],
+      "implementation_commits": [
+        "b9524887c783b4ff26bb5aa92b6bae11ab79cafd"
+      ]
+    },
+    {
+      "qid": "Q-0593",
+      "status": "已验证",
+      "database_matches_snapshot": true,
+      "source_paths_verified": [
+        "crates/cert-deployment/src/deployment.rs",
+        "crates/cert-deployment/src/protocol.rs"
+      ],
+      "implementation_commits": [
+        "a42515d3893a398e7fc711ce8bdf954c81e06fda"
+      ]
+    },
+    {
+      "qid": "Q-0594",
+      "status": "已验证",
+      "database_matches_snapshot": true,
+      "source_paths_verified": [
+        "crates/cert-deployment/src/credentials.rs",
+        "crates/cert-deployment/src/reading.rs",
+        "crates/cert-deployment/src/lib.rs",
+        "src-tauri/src/commands/cert_receiver.rs",
+        "src-tauri/src/commands/cert_receiver/tests.rs",
+        "cert-receiver/src/server.rs",
+        "cert-receiver/src/main.rs",
+        "cert-receiver/src/config.rs"
+      ],
+      "implementation_commits": [
+        "a42515d3893a398e7fc711ce8bdf954c81e06fda",
+        "b9524887c783b4ff26bb5aa92b6bae11ab79cafd"
+      ]
+    },
+    {
+      "qid": "Q-0595",
+      "status": "已验证",
+      "database_matches_snapshot": true,
+      "source_paths_verified": [
+        "crates/cert-deployment/src/deployment.rs",
+        "crates/cert-deployment/src/reload_command.rs",
+        "crates/cert-deployment/src/reload_plan.rs",
+        "crates/cert-deployment/Cargo.toml",
+        "crates/cert-deployment/Cargo.lock",
+        "src-tauri/Cargo.lock",
+        "cert-receiver/Cargo.lock"
+      ],
+      "implementation_commits": [
+        "a42515d3893a398e7fc711ce8bdf954c81e06fda"
+      ]
+    },
+    {
+      "qid": "Q-0596",
+      "status": "已验证",
+      "database_matches_snapshot": true,
+      "source_paths_verified": [
+        "src-tauri/src/commands/cert/pipeline.rs",
+        "src-tauri/src/commands/cert/scheduler.rs",
+        "src-tauri/src/commands/cert/local_retry.rs",
+        "src/components/SystemTools/CertManager.CertList.tsx",
+        "src/components/SystemTools/CertManager.model.tsx",
+        "src/components/SystemTools/CertManager.NodeForm.test.ts",
+        "src-tauri/src/commands/cert/local_pending.rs"
+      ],
+      "implementation_commits": [
+        "7e26c403f874c1a823f6429349e917014ba90627"
+      ]
+    }
+  ],
+  "preexisting_format_issues": 19,
+  "new_entry_format_issues": 0
+}

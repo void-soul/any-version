@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0591",
+  "date": "2026-10-31",
+  "category": "Feature",
+  "status": "已验证",
+  "phenomenon": "新增本机证书部署方式：Kira在服务器生成与部署证书时直接写指定目录，并复用接收端布局、重载和回滚机制，无需HTTP请求；覆盖Windows与Linux命令语义及前后端配置校验。",
+  "root_cause": "证书生成后缺少直接部署到本机的入口，旧windows/api/docker部署只能通过HTTP发送；复用接收落盘机制可避免另建一套文件及重载实现。",
+  "solution": "1. 新增local节点，校验绝对目录及布局/重载配置；保存节点时拒绝损坏配置并传播落盘错误。\n2. 本机测试只探测目录写权限，不执行重载；实际部署通过blocking worker调用共享protocol::deploy。\n3. 前端提供本机目录与四种布局/后续操作；不要求URL/Token，也不展示未生效的独立提前天数字段。\n4. 验证四种布局、显式目标、错误私钥不写入、重载失败回滚、共享目录锁及真实local dispatch。\n5. 验收：Windows环境主程序证书52项、共享库31项、独立端11项、前端420项测试通过；tsc、Vite、Rust all-targets check及架构检查通过。Unix条件测试未在本机执行，跨平台命令规划已做纯测试。 实现提交：**a42515d3893a398e7fc711ce8bdf954c81e06fda**、**7e26c403f874c1a823f6429349e917014ba90627**。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/cert/deploy_local.rs** | 本机配置、目录探测与无HTTP部署适配 |\n| **src-tauri/src/commands/cert/deploy_local/tests.rs** | 七项临时目录与假证书回归 |\n| **src-tauri/src/commands/cert/commands.rs** | local保存校验和目录测试路由 |\n| **src-tauri/src/commands/cert/deploy_ssh.rs** | 部署路由注册local |\n| **src-tauri/src/commands/cert/store.rs** | 节点checked读取与原子保存，错误向调用者返回 |\n| **src-tauri/src/commands/cert.rs** | 注册本机模块 |\n| **src/components/SystemTools/CertManager.model.tsx** | 本机类型与配置契约 |\n| **src/components/SystemTools/CertManager.NodeForm.tsx** | 本机配置表单与条件字段 |\n| **src/components/SystemTools/CertManager.DeployNodes.tsx** | 显示本机目录 |\n| **src/components/SystemTools/CertManager.NodeForm.test.ts** | 配置及结果提示回归 |",
+  "created_at": "2026-10-31 16:16:10",
+  "updated_at": "2026-10-31 16:51:14",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

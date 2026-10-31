@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0592",
+  "date": "2026-10-31",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "内嵌证书接收服务保存输出目录、布局、API密钥或重载配置后仍沿用启动快照，页面配置与实际服务不一致；启停仅通知退出且固定等待，可能在旧服务未停止时错误报告状态或并发重启。",
+  "root_cause": "HTTP AppData持启动时完整配置快照，但保存只比较监听地址与Token；停止仅发信号并清句柄、固定sleep后重启，既可能配置不生效，也可能未结束便报告停止。",
+  "solution": "1. 按全部运行字段判断是否重启，auto_start仅控制下次启动；停止状态保存不自动启动服务。\n2. 通过生命周期锁串行操作，用退出完成通知替代固定等待；停止期间保留可观测句柄，超时保留stopping状态并明确报错。\n3. 重启失败恢复旧配置并尝试恢复旧服务；保存/启动/停止在blocking worker执行，避免阻塞UI。\n4. 核对配置字段变化、真实完成通知、异常退出状态和停止中请求回调不会假报已停。\n5. 验收：Windows环境主程序证书52项、共享库31项、独立端11项、前端420项测试通过；tsc、Vite、Rust all-targets check及架构检查通过。Unix条件测试未在本机执行，跨平台命令规划已做纯测试。 实现提交：**b9524887c783b4ff26bb5aa92b6bae11ab79cafd**。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/cert_receiver.rs** | 异步命令及可观测服务句柄 |\n| **src-tauri/src/commands/cert_receiver/lifecycle.rs** | 配置应用、串行启停与退出确认 |\n| **src-tauri/src/commands/cert_receiver/tests.rs** | 生命周期纯隔离回归 |\n| **src-tauri/src/commands/module_lifecycle.rs** | 模块停用等待接收服务停止结果 |",
+  "created_at": "2026-10-31 16:16:10",
+  "updated_at": "2026-10-31 16:51:14",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

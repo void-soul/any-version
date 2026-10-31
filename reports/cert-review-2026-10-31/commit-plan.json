@@ -1,0 +1,69 @@
+[
+  {
+    "qid": "Q-0593",
+    "type": "fix",
+    "description": "Unify certificate deployment recovery and safe platform execution (#Q-0594 #Q-0595)",
+    "qa": [
+      "Q-0593",
+      "Q-0595"
+    ],
+    "files": [
+      "crates/cert-deployment/Cargo.toml",
+      "crates/cert-deployment/Cargo.lock",
+      "crates/cert-deployment/src/deployment.rs",
+      "crates/cert-deployment/src/lib.rs",
+      "crates/cert-deployment/src/protocol.rs",
+      "crates/cert-deployment/src/reload_command.rs",
+      "crates/cert-deployment/src/reload_plan.rs",
+      "crates/cert-deployment/src/credentials.rs",
+      "crates/cert-deployment/src/reading.rs",
+      "src-tauri/Cargo.lock",
+      "cert-receiver/Cargo.lock"
+    ]
+  },
+  {
+    "qid": "Q-0592",
+    "type": "fix",
+    "description": "Apply receiver configuration with confirmed lifecycle and complete reads (#Q-0594)",
+    "qa": [
+      "Q-0592",
+      "Q-0594"
+    ],
+    "files": [
+      "src-tauri/src/commands/cert_receiver.rs",
+      "src-tauri/src/commands/cert_receiver/lifecycle.rs",
+      "src-tauri/src/commands/cert_receiver/tests.rs",
+      "src-tauri/src/commands/module_lifecycle.rs",
+      "cert-receiver/src/config.rs",
+      "cert-receiver/src/main.rs",
+      "cert-receiver/src/server.rs"
+    ]
+  },
+  {
+    "qid": "Q-0591",
+    "type": "feat",
+    "description": "Deploy certificates locally with durable delivery retries (#Q-0596)",
+    "qa": [
+      "Q-0591",
+      "Q-0596"
+    ],
+    "files": [
+      "src-tauri/src/commands/cert.rs",
+      "src-tauri/src/commands/cert/commands.rs",
+      "src-tauri/src/commands/cert/deploy_local.rs",
+      "src-tauri/src/commands/cert/deploy_local/tests.rs",
+      "src-tauri/src/commands/cert/deploy_ssh.rs",
+      "src-tauri/src/commands/cert/local_retry.rs",
+      "src-tauri/src/commands/cert/local_pending.rs",
+      "src-tauri/src/commands/cert/models.rs",
+      "src-tauri/src/commands/cert/pipeline.rs",
+      "src-tauri/src/commands/cert/scheduler.rs",
+      "src-tauri/src/commands/cert/store.rs",
+      "src/components/SystemTools/CertManager.CertList.tsx",
+      "src/components/SystemTools/CertManager.DeployNodes.tsx",
+      "src/components/SystemTools/CertManager.NodeForm.tsx",
+      "src/components/SystemTools/CertManager.model.tsx",
+      "src/components/SystemTools/CertManager.NodeForm.test.ts"
+    ]
+  }
+]

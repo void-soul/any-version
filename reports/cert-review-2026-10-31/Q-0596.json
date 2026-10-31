@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0596",
+  "date": "2026-10-31",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "证书签发成功但部署失败仍显示和通知全成功，续期后新有效期使证书不再进入续期扫描，导致失败的本机部署不自动重试；需要分离签发与部署结果，并在后续扫描仅重试已有证书部署。",
+  "root_cause": "IssueResult只反映签发，部署失败汇总被丢弃；续期更新not_after后证书不再符合续期条件，失败本机部署没有后续自动执行机会。",
+  "solution": "1. IssueResult增加部署汇总，界面、日志和通知分别反映签发与部署结果；部署使用续期后的当前有效期快照。\n2. 部署前原子登记独立待部署队列，失败保留，成功按generation清除；旧成功不能清除新待办，重启或历史清理不丢失任务。\n3. 后续调度只选择当前仍关联的local任务，读取已有PEM直接部署，不重签；同轮签发已尝试项不立即重复。\n4. 待办/证书/节点配置损坏时停止重试且不覆盖；用六项队列回归、三项候选决策及两项前端结果提示回归验证。\n5. 验收：Windows环境主程序证书52项、共享库31项、独立端11项、前端420项测试通过；tsc、Vite、Rust all-targets check及架构检查通过。Unix条件测试未在本机执行，跨平台命令规划已做纯测试。 实现提交：**7e26c403f874c1a823f6429349e917014ba90627**。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/cert/pipeline.rs** | 返回独立部署结果 |\n| **src-tauri/src/commands/cert/scheduler.rs** | 正确通知和后续本机重试入口 |\n| **src-tauri/src/commands/cert/local_retry.rs** | 失败local链接选择和已有证书重试 |\n| **src/components/SystemTools/CertManager.CertList.tsx** | 部署失败不提示全成功 |\n| **src/components/SystemTools/CertManager.model.tsx** | 兼容新旧IssueResult及纯结果格式化 |\n| **src/components/SystemTools/CertManager.NodeForm.test.ts** | 结果提示回归 |\n| **src-tauri/src/commands/cert/local_pending.rs** | 独立持久化待办、generation清理及六项隔离回归 |",
+  "created_at": "2026-10-31 16:22:20",
+  "updated_at": "2026-10-31 16:51:17",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

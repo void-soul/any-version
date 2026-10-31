@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0593",
+  "date": "2026-10-31",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "共享证书部署完成重载后若持久化提交journal失败，会在析构时恢复旧文件但不恢复服务配置，导致运行代次与磁盘不一致；需要提交失败时的完整恢复及准确结果。",
+  "root_cause": "重载服务成功后finish写journal失败会触发Deployment析构回滚磁盘，服务却仍使用新代次；提交失败不等价于完成整个部署事务。",
+  "solution": "1. 把提交journal分成可在Deployment存活时确认的步骤。\n2. 重载失败或提交失败均显式回滚文件，再次执行重载以恢复旧代次；恢复失败明确返回运行态未确认。\n3. 用可注入重载/提交闭包验证提交失败、恢复后再次重载、回滚失败不重载未知文件。\n4. 验收：Windows环境主程序证书52项、共享库31项、独立端11项、前端420项测试通过；tsc、Vite、Rust all-targets check及架构检查通过。Unix条件测试未在本机执行，跨平台命令规划已做纯测试。 实现提交：**a42515d3893a398e7fc711ce8bdf954c81e06fda**。",
+  "files": "| File | Change |\n|------|--------|\n| **crates/cert-deployment/src/deployment.rs** | 可确认的journal提交步骤 |\n| **crates/cert-deployment/src/protocol.rs** | 提交失败的完整恢复及故障注入测试 |",
+  "created_at": "2026-10-31 16:16:10",
+  "updated_at": "2026-10-31 16:51:15",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

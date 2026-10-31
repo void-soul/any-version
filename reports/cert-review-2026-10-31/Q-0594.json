@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0594",
+  "date": "2026-10-31",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "证书接收端拉取接口在私钥或链文件读取失败时仍返回成功且内容为空，两端API密钥首尾空白签名不一致、示例Token校验规则不同；需要共享完整读取和证书私钥匹配校验并统一鉴权边界。",
+  "root_cause": "两端拉取分别吞掉key/chain读取错误且未验证完整匹配身份；API密钥签名与校验对空白处理不一致，示例Token拒绝规则也有差异。",
+  "solution": "1. 增加共享读取器，在输出锁内读取完整文件与元数据，验证证书私钥匹配；空链允许但文件缺失、拒读、坏元数据及不匹配不再返回成功。\n2. 两端在blocking worker读取，按不存在/忙/内部错误返回明确HTTP状态。\n3. 统一API密钥及Bearer配置首尾空白处理，并统一拒绝示例共享Token。\n4. 对完整代次、缺文件、不可读、错key、锁冲突、域名布局查找及签名归一化做隔离回归。\n5. 验收：Windows环境主程序证书52项、共享库31项、独立端11项、前端420项测试通过；tsc、Vite、Rust all-targets check及架构检查通过。Unix条件测试未在本机执行，跨平台命令规划已做纯测试。 实现提交：**a42515d3893a398e7fc711ce8bdf954c81e06fda**、**b9524887c783b4ff26bb5aa92b6bae11ab79cafd**。",
+  "files": "| File | Change |\n|------|--------|\n| **crates/cert-deployment/src/credentials.rs** | 共享鉴权规范与回归 |\n| **crates/cert-deployment/src/reading.rs** | 完整代次读取、身份验证和回归 |\n| **crates/cert-deployment/src/lib.rs** | 导出共享契约 |\n| **src-tauri/src/commands/cert_receiver.rs** | 内嵌拉取及鉴权接入 |\n| **src-tauri/src/commands/cert_receiver/tests.rs** | 签名及示例Token回归 |\n| **cert-receiver/src/server.rs** | 独立端拉取及鉴权接入 |\n| **cert-receiver/src/main.rs** | 拉取示例签名规范一致 |\n| **cert-receiver/src/config.rs** | 独立端Token校验一致 |",
+  "created_at": "2026-10-31 16:22:20",
+  "updated_at": "2026-10-31 16:51:16",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

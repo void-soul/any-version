@@ -1,0 +1,111 @@
+{
+  "date": "2026-10-31",
+  "baseline": "d995f21",
+  "implementation_head": "7e26c40",
+  "qa": {
+    "ids": [
+      "Q-0591",
+      "Q-0592",
+      "Q-0593",
+      "Q-0594",
+      "Q-0595",
+      "Q-0596"
+    ],
+    "status": "已验证",
+    "database_matches_snapshots": true,
+    "preexisting_format_issues": 19,
+    "new_format_issues": 0
+  },
+  "tests": {
+    "main_certificate": {
+      "passed": 52,
+      "failed": 0,
+      "ignored": 0
+    },
+    "shared_deployment": {
+      "passed": 31,
+      "failed": 0,
+      "ignored": 0
+    },
+    "standalone_receiver": {
+      "passed": 11,
+      "failed": 0,
+      "ignored": 0
+    },
+    "frontend": {
+      "files": 52,
+      "passed": 420,
+      "failed": 0
+    },
+    "typecheck": "passed",
+    "vite_build": "passed",
+    "rust_all_targets_check": "passed",
+    "architecture": {
+      "passed": true,
+      "source_files": 1106
+    },
+    "diff_check": "passed"
+  },
+  "platform": {
+    "executed_on": "Windows",
+    "linux_macos_command_plans": "tested as pure planning functions",
+    "unix_permissions_and_process_groups": "conditional tests added; not executed on Unix in this run"
+  },
+  "safety": {
+    "real_acme_issuance": false,
+    "real_certificate_push": false,
+    "real_service_reload": false,
+    "git_push": false
+  },
+  "feature": {
+    "local_deployment": true,
+    "http_required": false,
+    "shared_engine_with_receivers": true,
+    "durable_local_retry_queue": true,
+    "retry_requests_new_certificate": false,
+    "layouts": [
+      "cert",
+      "domain",
+      "both",
+      "flat"
+    ],
+    "post_actions": [
+      "none",
+      "command",
+      "nginx",
+      "service"
+    ]
+  },
+  "remaining_findings": [
+    {
+      "id": "R1",
+      "priority": "P1",
+      "topic": "Certificate configuration snapshot writes may overwrite concurrent changes"
+    },
+    {
+      "id": "R2",
+      "priority": "P1",
+      "topic": "SSH/legacy Linux deployment overwrites remote pair in separate steps"
+    },
+    {
+      "id": "R3",
+      "priority": "P1",
+      "topic": "1Panel unmatched records fall back to first certificate/site"
+    },
+    {
+      "id": "R4",
+      "priority": "P2",
+      "topic": "Historical standalone UI still uses legacy lifecycle"
+    },
+    {
+      "id": "R5",
+      "priority": "P2",
+      "topic": "Crash recovery restores files without restoring external service generation"
+    }
+  ],
+  "artifacts": {
+    "commits": "commit-index.json",
+    "qa_check": "QA-CHECK-REPORT.json",
+    "report": "FINAL-REPORT.txt"
+  }
+}
