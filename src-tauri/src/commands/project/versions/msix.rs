@@ -150,6 +150,7 @@ pub(super) async fn do_install(
         return Err(format!("下载失败: {}", e));
     }
 
+    crate::commands::foundation::owned_process::ensure_running("sdk")?;
     sync_install_step(&app, &id, "解压中");
 
     // 3. 解压
@@ -173,6 +174,7 @@ pub(super) async fn do_install(
         return Err(format!("解压失败: {}", e));
     }
 
+    crate::commands::foundation::owned_process::ensure_running("sdk")?;
     // 4. 安装到 versions_dir
     let dest_dir = Path::new(&config.versions_dir).join(&id).join(&version);
     let extract_subdir = dl_info.extract_subdir.as_deref().unwrap_or("");
@@ -188,6 +190,7 @@ pub(super) async fn do_install(
 
     // _guard 在此之后 drop 时会清理 temp_dir（正常流程也清理）
 
+    crate::commands::foundation::owned_process::ensure_running("sdk")?;
     // 5. 后置配置（从 JSON post_install 读取）
     if let Some(ref post_install) = def.post_install {
         if post_install
@@ -244,13 +247,17 @@ pub(super) async fn do_install(
             } else {
                 vec![]
             };
-            let _ = crate::commands::hidden_cmd::hidden_cmd(exe)
-                .args(&args)
-                .current_dir(&dest_dir)
-                .output();
+            let _ = crate::commands::foundation::owned_process::capture(
+                "sdk",
+                crate::commands::hidden_cmd::hidden_cmd(exe)
+                    .args(&args)
+                    .current_dir(&dest_dir),
+                std::time::Duration::from_secs(30 * 60),
+            );
         }
     }
 
+    crate::commands::foundation::owned_process::ensure_running("sdk")?;
     // 7. 首次安装时自动创建 junction。环境变量在托管/修复时统一配置，版本安装不隐式修改注册表。
     sync_install_step(&app, &id, "创建链接中");
     let junction_path = Path::new(&config.links_dir).join(&id);

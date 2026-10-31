@@ -3,9 +3,12 @@ use super::*;
 /// 取消正在进行的安装（中止下载/解压任务，RAII guard 自动清理临时文件）
 #[tauri::command]
 pub fn project_cancel_install(id: String) -> Result<(), String> {
-    let mut map = get_active_downloads().lock().unwrap();
-    if let Some(active) = map.remove(&id) {
-        active.abort_handle.abort();
+    let map = get_active_downloads().lock().unwrap();
+    if let Some(active) = map.get(&id) {
+        active.cancellation.cancel();
+        if let Some(handle) = &active.abort_handle {
+            handle.abort();
+        }
         Ok(())
     } else {
         Err(format!("没有正在进行的安装任务: {}", id))
@@ -244,4 +247,23 @@ pub fn detect_version_from_path(project_id: &str, path: &Path) -> Option<String>
         }
     }
     None
+}
+
+/// Cancel installation work only, never user-launched project services or terminals.
+pub fn cancel_all_installs() {
+    for entry in get_active_downloads()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+    {
+        entry.cancellation.cancel();
+        if let Some(handle) = &entry.abort_handle {
+            handle.abort();
+        }
+    }
+}
+pub async fn shutdown_module() -> Result<(), String> {
+    cancel_all_installs();
+    crate::runtime_tasks::wait_for_idle("sdk", std::time::Duration::from_secs(90)).await?;
+    crate::commands::foundation::owned_process::ensure_released("sdk")
 }

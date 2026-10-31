@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 use std::io::Write;
 
 pub mod path_templates;
+pub mod owned_process;
 
 /// Truncate by byte budget while preserving a valid UTF-8 character boundary.
 pub fn truncate_utf8(text: &str, max_bytes: usize) -> &str {

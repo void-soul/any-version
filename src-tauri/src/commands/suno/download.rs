@@ -1,5 +1,36 @@
 use super::*;
 
+use crate::commands::foundation::owned_process::{self, Cancellation};
+static BATCHES: std::sync::LazyLock<std::sync::Mutex<Vec<Cancellation>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new()));
+struct BatchGuard(Cancellation);
+impl Drop for BatchGuard {
+    fn drop(&mut self) {
+        BATCHES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|token| !token.same(&self.0));
+    }
+}
+struct PendingOutput(Option<PathBuf>);
+impl Drop for PendingOutput {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.take() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+pub fn cancel_all_downloads() {
+    for token in BATCHES.lock().unwrap_or_else(|e| e.into_inner()).iter() {
+        token.cancel();
+    }
+}
+pub async fn shutdown_module() -> Result<(), String> {
+    cancel_all_downloads();
+    crate::runtime_tasks::wait_for_idle("suno", std::time::Duration::from_secs(90)).await?;
+    owned_process::ensure_released("suno")
+}
+
 /// 下载并转码一批歌曲。
 #[tauri::command]
 pub async fn suno_download_songs(
@@ -7,35 +38,47 @@ pub async fn suno_download_songs(
     songs: Vec<DownloadRef>,
     dir: String,
 ) -> Result<DownloadReport, String> {
-    if songs.is_empty() {
-        return Err("没有要下载的歌曲".to_string());
-    }
-    let target = PathBuf::from(&dir);
-    std::fs::create_dir_all(&target).map_err(|e| format!("创建目录失败: {e}"))?;
+    let token = Cancellation::default();
+    BATCHES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(token.clone());
+    let cleanup = BatchGuard(token.clone());
+    owned_process::run("suno", token, move || async move {
+        let _cleanup = cleanup;
+        if songs.is_empty() {
+            return Err("没有要下载的歌曲".to_string());
+        }
+        let target = PathBuf::from(&dir);
+        std::fs::create_dir_all(&target).map_err(|e| format!("创建目录失败: {e}"))?;
 
-    let total = songs.len();
-    let mut succeeded = 0usize;
-    let mut succeeded_ids: Vec<String> = Vec::new();
-    let mut failed: Vec<String> = Vec::new();
+        let total = songs.len();
+        let mut succeeded = 0usize;
+        let mut succeeded_ids: Vec<String> = Vec::new();
+        let mut failed: Vec<String> = Vec::new();
 
-    for (i, song) in songs.iter().enumerate() {
-        match download_one(&app, song, &target, i + 1, total).await {
-            Ok(()) => {
-                succeeded += 1;
-                succeeded_ids.push(song.id.clone());
-                mark_downloaded(&song.id);
-            }
-            Err(e) => {
-                eprintln!("[Suno] 下载失败 {}: {}", song.title, e);
-                failed.push(format!("{}：{e}", song.title));
+        for (i, song) in songs.iter().enumerate() {
+            owned_process::ensure_running("suno")?;
+            match download_one(&app, song, &target, i + 1, total).await {
+                Ok(()) => {
+                    succeeded += 1;
+                    succeeded_ids.push(song.id.clone());
+                    owned_process::ensure_running("suno")?;
+                    mark_downloaded(&song.id);
+                }
+                Err(e) => {
+                    eprintln!("[Suno] 下载失败 {}: {}", song.title, e);
+                    failed.push(format!("{}：{e}", song.title));
+                }
             }
         }
-    }
-    Ok(DownloadReport {
-        succeeded,
-        succeeded_ids,
-        failed,
+        Ok(DownloadReport {
+            succeeded,
+            succeeded_ids,
+            failed,
+        })
     })
+    .await
 }
 
 /// 下载一首：mp4 落临时文件 → ffmpeg 提音轨转 mp3 → 清理临时文件。
@@ -46,8 +89,9 @@ pub(super) async fn download_one(
     current: usize,
     total: usize,
 ) -> Result<(), String> {
-    let tmp = std::env::temp_dir().join(format!("suno_{}.mp4", song.id));
-    let cover_tmp = std::env::temp_dir().join(format!("suno_{}_cover", song.id));
+    let scratch = owned_process::ScratchDir::new("suno-download")?;
+    let tmp = scratch.path().join("audio.mp4");
+    let cover_tmp = scratch.path().join("cover");
 
     let _ = app.emit(
         "suno-download-progress",
@@ -81,12 +125,16 @@ pub(super) async fn download_one(
     let out = dir.join(format!("{}.mp3", sanitize_filename(&song.title)));
     // 原子占位（避免并发下载同名的 TOCTOU）
     let out = unique_path(out)?;
+    let mut pending = PendingOutput(Some(out.clone()));
     let result = transcode_to_mp3(&tmp, cover, &out);
     let _ = std::fs::remove_file(&tmp);
     let _ = std::fs::remove_file(&cover_tmp);
     if result.is_err() {
         // 转码失败要把占位的 0 字节文件删掉，否则目录里留下残件
         let _ = std::fs::remove_file(&out);
+    }
+    if result.is_ok() {
+        pending.0 = None;
     }
     result
 }
@@ -176,7 +224,9 @@ pub(super) fn transcode_to_mp3(
         .arg("320k")
         .arg(output);
 
-    let status = cmd.status().map_err(|e| format!("启动 ffmpeg 失败: {e}"))?;
+    let status = owned_process::capture("suno", &mut cmd, std::time::Duration::from_secs(30 * 60))
+        .map_err(|e| format!("ffmpeg 未完成: {e}"))?
+        .status;
     if !status.success() {
         return Err(format!("ffmpeg 转码失败（exit {:?}）", status.code()));
     }
@@ -259,5 +309,24 @@ pub(super) fn unique_path(path: PathBuf) -> Result<PathBuf, String> {
             Ok(false) => n += 1,
             Err(e) => return Err(format!("创建文件失败 {}: {e}", candidate.display())),
         }
+    }
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+    #[test]
+    fn pending_output_cleanup_preserves_completed_outputs() {
+        let root = owned_process::ScratchDir::new("suno-output-test").unwrap();
+        let pending = root.path().join("pending.mp3");
+        let finished = root.path().join("finished.mp3");
+        std::fs::write(&pending, "partial").unwrap();
+        std::fs::write(&finished, "complete").unwrap();
+        drop(PendingOutput(Some(pending.clone())));
+        let mut complete = PendingOutput(Some(finished.clone()));
+        complete.0 = None;
+        drop(complete);
+        assert!(!pending.exists());
+        assert_eq!(std::fs::read_to_string(finished).unwrap(), "complete");
     }
 }

@@ -1,95 +1,59 @@
 use super::*;
 
+const MAX_DOM_BYTES: usize = 16 * 1024 * 1024;
+fn append_dom(dom: &mut Vec<u8>, bytes: &[u8]) -> bool {
+    if bytes.len() > MAX_DOM_BYTES.saturating_sub(dom.len()) {
+        return false;
+    }
+    dom.extend_from_slice(bytes);
+    true
+}
+
 /// 用 Edge 无头浏览器渲染页面，返回 JS 执行后的完整 DOM 文本。
 /// 关键：`--dump-dom` 输出的是渲染完成后的 DOM（含 JS 动态插入的内容）；
 /// `--virtual-time-budget` 让浏览器快进虚拟时间并等待异步内容（SPA/懒加载）落定。
 /// Edge 不存在或超时返回 None，调用方再决定是否回退普通 HTTP。
 pub(super) async fn render_dom_via_browser(url: &str) -> Option<String> {
-    let browser_path = match find_browser() {
-        Some(p) => p,
-        None => {
-            crate::exit_log::exit_log("[picky-render] 未找到可用浏览器（Edge/Chrome），跳过渲染");
-            return None;
-        }
-    };
-    // 每次渲染用全新的临时 user-data-dir（进程 id + 纳秒时间戳）：
-    // profile 锁被占用时无头进程会「静默失败」（退出码 0、0 字节输出、无 stderr），
-    // 复用同一目录在并发抓取（新增收藏自动补全元数据）或上次渲染超时残留孤儿进程时必然踩锁。
-    let tmp_profile = std::env::temp_dir().join(format!(
-        "kira-picky-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    ));
-    let args = [
-        "--headless",
-        "--disable-gpu",
-        "--no-sandbox",
-        "--disable-extensions",
-        // 隐藏自动化特征：无头浏览器默认 UA 带 HeadlessChrome，部分站点据此返回空壳/拦截
-        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0",
-        "--window-size=1280,900",
-        "--virtual-time-budget=12000",
-        "--dump-dom",
-        url,
-    ];
-    let run = |path: &std::path::PathBuf| {
-        tokio::time::timeout(
-            std::time::Duration::from_secs(35),
-            tokio::process::Command::new(path)
-                .args(&args)
-                // 超时/取消时终止浏览器进程，避免孤儿无头浏览器占住 profile 影响后续抓取
-                .kill_on_drop(true)
-                .arg(format!("--user-data-dir={}", tmp_profile.display()))
-                .output(),
-        )
-    };
-    let mut output = match run(&browser_path).await {
-        Ok(Ok(o)) => o,
-        Ok(Err(e)) => {
-            crate::exit_log::exit_log(&format!("[picky-render] spawn失败: {e} url={url}"));
-            return None;
-        }
-        Err(_) => {
-            crate::exit_log::exit_log(&format!("[picky-render] 超时(35s) url={url}"));
-            return None;
-        }
-    };
-    // 首次启动可能因冷启动/首建用户目录超时或无输出：有预算再试一次
-    if !output.status.success() || String::from_utf8_lossy(&output.stdout).trim().is_empty() {
-        output = match run(&browser_path).await {
-            Ok(Ok(o)) => o,
-            _ => {
-                crate::exit_log::exit_log(&format!("[picky-render] 重试失败 url={url}"));
-                return None;
+    use crate::commands::foundation::owned_process::{self, Cancellation, ScratchDir};
+    let browser_path = find_browser()?;
+    let url = url.to_string();
+    let token = Cancellation::default();
+    let worker_token = token.clone();
+    let result = owned_process::run("picky", token, move || async move {
+        let profile = ScratchDir::new("picky-headless")?;
+        let mut command = crate::commands::hidden_cmd::hidden_cmd(&browser_path);
+        command.args([
+            "--headless", "--disable-gpu", "--no-sandbox", "--disable-extensions",
+            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0",
+            "--window-size=1280,900", "--virtual-time-budget=12000", "--dump-dom", &url,
+        ]).arg(format!("--user-data-dir={}", profile.path().display()));
+        for attempt in 0..2 {
+            owned_process::ensure_running("picky")?;
+            let mut dom = Vec::new();
+            let mut oversized = false;
+            let result = owned_process::capture_observed("picky", &mut command, Duration::from_secs(35), |stderr,bytes| {
+                // Capture all DOM bytes separately from the returned Output's 64 KiB log cap.
+                if !stderr && !oversized && !append_dom(&mut dom, bytes) {
+                    oversized = true;
+                    worker_token.cancel();
+                }
+            });
+            if oversized { return Err("页面DOM超过16MiB，改用HTTP抓取".into()); }
+            let output = result?;
+            if output.status.success() && !dom.is_empty() {
+                let body = String::from_utf8_lossy(&dom).into_owned();
+                if !body.trim().is_empty() { return Ok(body); }
             }
-        };
-    }
-    if !output.status.success() {
-        crate::exit_log::exit_log(&format!(
-            "[picky-render] 非零退出 code={:?} stderr={} url={url}",
-            output.status.code(),
-            String::from_utf8_lossy(&output.stderr)
-                .chars()
-                .take(200)
-                .collect::<String>()
-        ));
-        return None;
-    }
-    let body = String::from_utf8_lossy(&output.stdout).to_string();
-    // 清理临时 profile（失败不影响结果；目录含纳秒时间戳，残留不占锁）
-    let _ = std::fs::remove_dir_all(&tmp_profile);
-    if body.trim().is_empty() {
-        crate::exit_log::exit_log(&format!("[picky-render] DOM为空 url={url}"));
-        None
-    } else {
-        crate::exit_log::exit_log(&format!(
-            "[picky-render] 成功 {} 字节 url={url}",
-            body.len()
-        ));
-        Some(body)
+            crate::exit_log::exit_log(&format!("[picky-render] 抓取未完成 attempt={} status={}", attempt+1, output.status));
+        }
+        Err("无头抓取没有返回有效DOM".into())
+    }).await;
+    match result {
+        Ok(body) => Some(body),
+        Err(error) => {
+            crate::exit_log::exit_log(&format!("[picky-render] {error}"));
+            None
+        }
     }
 }
 
@@ -258,5 +222,19 @@ pub(super) fn parse_attrs(tag: &str, mut on_attr: impl FnMut(String, String)) {
             }
             on_attr(key, tag[val_start..i].to_string());
         }
+    }
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+    #[test]
+    fn dom_observer_preserves_more_than_log_cap_but_refuses_oversize() {
+        let bytes = vec![b'x'; 128 * 1024];
+        let mut dom = Vec::new();
+        assert!(append_dom(&mut dom, &bytes));
+        assert_eq!(dom, bytes);
+        assert!(!append_dom(&mut dom, &vec![b'y'; MAX_DOM_BYTES]));
+        assert_eq!(dom.len(), 128 * 1024);
     }
 }

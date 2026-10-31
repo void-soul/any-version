@@ -15,7 +15,7 @@ pub(super) fn setup_temp_dir(prefix: &str) -> Result<(PathBuf, Box<dyn FnOnce() 
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let temp_dir = temp_root.join(format!("{}_{}", prefix, timestamp));
-    fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
+    fs::create_dir(&temp_dir).map_err(|e| e.to_string())?;
 
     let cleanup_path = temp_dir.clone();
     let cleanup = move || {
@@ -96,10 +96,17 @@ pub(super) fn extract_msi(src: &Path, dest: &Path) -> Result<(), String> {
     let dest_str = dest.to_string_lossy().to_string();
     let src_str = src.to_string_lossy().to_string();
 
-    let output = crate::commands::hidden_cmd::hidden_cmd("msiexec")
-        .args(["/a", &src_str, "/qn", &format!("TARGETDIR={}", dest_str)])
-        .output()
-        .map_err(|e| format!("msiexec 执行失败: {}", e))?;
+    let output = crate::commands::foundation::owned_process::capture(
+        "sdk",
+        crate::commands::hidden_cmd::hidden_cmd("msiexec").args([
+            "/a",
+            &src_str,
+            "/qn",
+            &format!("TARGETDIR={}", dest_str),
+        ]),
+        std::time::Duration::from_secs(30 * 60),
+    )
+    .map_err(|e| format!("msiexec 执行失败: {}", e))?;
 
     if !output.status.success() {
         return Err(format!("MSI 提取失败，退出码: {:?}", output.status.code()));

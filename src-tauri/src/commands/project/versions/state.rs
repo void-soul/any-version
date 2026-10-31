@@ -41,7 +41,8 @@ pub struct ActiveInstall {
 // 内部存 abort handle，查询时剥离，避免把 handle 序列化给前端。
 pub(super) struct ActiveInstallEntry {
     pub active: ActiveInstall,
-    pub abort_handle: AbortHandle,
+    pub abort_handle: Option<AbortHandle>,
+    pub cancellation: crate::commands::foundation::owned_process::Cancellation,
 }
 
 pub(super) struct TempDirGuard {
@@ -73,5 +74,60 @@ pub(super) fn sync_install_step(app: &AppHandle, sdk: &str, step: &str) {
     );
     if let Some(entry) = get_active_downloads().lock().unwrap().get_mut(sdk) {
         entry.active.step = step.to_string();
+    }
+}
+
+pub(super) struct InstallRegistrationGuard {
+    pub(super) id: String,
+    pub(super) cancellation: crate::commands::foundation::owned_process::Cancellation,
+}
+impl Drop for InstallRegistrationGuard {
+    fn drop(&mut self) {
+        let mut active = get_active_downloads()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if active
+            .get(&self.id)
+            .is_some_and(|entry| entry.cancellation.same(&self.cancellation))
+        {
+            active.remove(&self.id);
+        }
+    }
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+    #[test]
+    fn stale_install_cleanup_cannot_remove_new_registration() {
+        let id = "qa-isolated-install-registration".to_string();
+        let old = crate::commands::foundation::owned_process::Cancellation::default();
+        let new = crate::commands::foundation::owned_process::Cancellation::default();
+        get_active_downloads().lock().unwrap().insert(
+            id.clone(),
+            ActiveInstallEntry {
+                active: ActiveInstall {
+                    sdk: id.clone(),
+                    version: "fake".into(),
+                    step: "test".into(),
+                    downloaded: 0,
+                    total: 0,
+                    pct: 0,
+                    speed_str: String::new(),
+                },
+                abort_handle: None,
+                cancellation: new.clone(),
+            },
+        );
+        drop(InstallRegistrationGuard {
+            id: id.clone(),
+            cancellation: old,
+        });
+        assert!(get_active_downloads().lock().unwrap().contains_key(&id));
+        drop(InstallRegistrationGuard {
+            id: id.clone(),
+            cancellation: new,
+        });
+        assert!(!get_active_downloads().lock().unwrap().contains_key(&id));
     }
 }

@@ -29,63 +29,95 @@ pub async fn project_install_version(
     id: String,
     version: String,
 ) -> Result<(), String> {
-    // 预检：项目和下载信息
-    let config = load_config();
-    if !config.managed_items.contains(&id) {
-        return Err("项目尚未开启托管，无法下载/安装版本".to_string());
-    }
-    let def = crate::commands::project::registry::find_by_id(&id)
-        .ok_or_else(|| format!("未找到项目: {}", id))?;
-    let delegation = crate::commands::project::scanner::get_project_delegation(&config, &id, &def);
-    if !delegation.version_control {
-        return Err("项目尚未开启“版本控制与下载”功能，无法下载/安装版本".to_string());
-    }
-    // 配了 github_asset 的托管物走 assets 解析（资产名里有推不出来的值，例如 Ghidra 的构建日期）；
-    // 其余走 URL 模板。两条路径互斥，未配置时行为与从前完全一致。
-    let dl_info = match async_resolve_github_asset(&id, &version).await? {
-        Some(info) => info,
-        None => get_download_url(&id, &version)?,
-    };
-
-    let id_task = id.clone();
-    let version_task = version.clone();
-    let app_task = app.clone();
-
-    // 将实际安装逻辑移入可取消的 Tokio 任务
-    let handle =
-        tokio::spawn(async move { do_install(app_task, id_task, version_task, dl_info).await });
-
-    // 注册进行中的安装（含版本与起始进度），允许前端取消、并在前端挂载时恢复进度条
-    let abort_handle = handle.abort_handle();
-    get_active_downloads().lock().unwrap().insert(
-        id.clone(),
-        ActiveInstallEntry {
-            active: ActiveInstall {
-                sdk: id.clone(),
-                version,
-                step: "下载中".to_string(),
-                downloaded: 0,
-                total: 0,
-                pct: 0,
-                speed_str: "".to_string(),
-            },
-            abort_handle,
-        },
-    );
-
-    // 等待任务完成（或被取消）
-    let result = handle.await;
-    get_active_downloads().lock().unwrap().remove(&id);
-
-    match result {
-        Ok(inner) => {
-            inner?;
-            let _ = crate::tray::rebuild_tray_menu(&app);
-            Ok(())
+    crate::runtime_tasks::run_if_enabled("sdk", async move {
+        // 预检：项目和下载信息
+        let config = load_config();
+        if !config.managed_items.contains(&id) {
+            return Err("项目尚未开启托管，无法下载/安装版本".to_string());
         }
-        Err(e) if e.is_cancelled() => Err("安装已取消".to_string()),
-        Err(e) => Err(format!("安装任务异常: {}", e)),
-    }
+        let def = crate::commands::project::registry::find_by_id(&id)
+            .ok_or_else(|| format!("未找到项目: {}", id))?;
+        let delegation =
+            crate::commands::project::scanner::get_project_delegation(&config, &id, &def);
+        if !delegation.version_control {
+            return Err("项目尚未开启“版本控制与下载”功能，无法下载/安装版本".to_string());
+        }
+        // 配了 github_asset 的托管物走 assets 解析（资产名里有推不出来的值，例如 Ghidra 的构建日期）；
+        // 其余走 URL 模板。两条路径互斥，未配置时行为与从前完全一致。
+        let dl_info = match async_resolve_github_asset(&id, &version).await? {
+            Some(info) => info,
+            None => get_download_url(&id, &version)?,
+        };
+
+        let cancellation = crate::commands::foundation::owned_process::Cancellation::default();
+        let (start, ready) = tokio::sync::oneshot::channel::<()>();
+        let (send, receive) = tokio::sync::oneshot::channel();
+        let id_task = id.clone();
+        let version_task = version.clone();
+        let app_task = app.clone();
+        let worker_token = cancellation.clone();
+        {
+            let mut active = get_active_downloads()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if active.contains_key(&id) {
+                return Err("该项目已有安装进行中，请先取消或等待完成".into());
+            }
+            active.insert(
+                id.clone(),
+                ActiveInstallEntry {
+                    active: ActiveInstall {
+                        sdk: id.clone(),
+                        version,
+                        step: "下载中".into(),
+                        downloaded: 0,
+                        total: 0,
+                        pct: 0,
+                        speed_str: String::new(),
+                    },
+                    abort_handle: None,
+                    cancellation: cancellation.clone(),
+                },
+            );
+        }
+
+        let cleanup = InstallRegistrationGuard {
+            id: id.clone(),
+            cancellation: cancellation.clone(),
+        };
+        let abort_handle =
+            crate::runtime_tasks::spawn_owned("sdk", &format!("install-{id}"), async move {
+                let cleanup = cleanup;
+                if ready.await.is_err() {
+                    return;
+                }
+                let result = crate::commands::foundation::owned_process::run(
+                    "sdk",
+                    worker_token,
+                    move || async move {
+                        let _cleanup = cleanup;
+                        do_install(app_task, id_task, version_task, dl_info).await
+                    },
+                )
+                .await;
+                let _ = send.send(result);
+            })
+            .ok_or("模块已停用或安装任务尚在安全收尾")?;
+        if let Some(entry) = get_active_downloads()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(&id)
+        {
+            entry.abort_handle = Some(abort_handle);
+        }
+        let _ = start.send(());
+        receive
+            .await
+            .map_err(|_| "安装已取消或模块已停用".to_string())??;
+        let _ = crate::tray::rebuild_tray_menu(&app);
+        Ok(())
+    })
+    .await
 }
 
 /// npm 包类型的安装：在 versions_dir/{id}/{version} 目录下执行
@@ -101,10 +133,12 @@ pub(super) async fn do_npm_install(
     let dest_dir = Path::new(&config.versions_dir).join(&id).join(&version);
 
     // 1. 先确认 npm 可用（npm_pkg_name 型项目依赖 Node.js 环境）
-    let npm_probe = crate::commands::hidden_cmd::hidden_cmd("npm")
-        .arg("--version")
-        .output()
-        .map_err(|e| format!("未找到 npm，请先安装 Node.js: {}", e))?;
+    let npm_probe = crate::commands::foundation::owned_process::capture(
+        "sdk",
+        crate::commands::hidden_cmd::hidden_cmd("npm").arg("--version"),
+        std::time::Duration::from_secs(30 * 60),
+    )
+    .map_err(|e| format!("未找到 npm，请先安装 Node.js: {}", e))?;
     if !npm_probe.status.success() {
         return Err("npm 不可用，请先安装 Node.js".to_string());
     }
@@ -124,12 +158,15 @@ pub(super) async fn do_npm_install(
     };
     crate::exit_log!("[npm 安装] {} -> {}", id, version_spec);
 
-    let npm_result = crate::commands::hidden_cmd::hidden_cmd("npm")
-        .args(["install", "--prefix"])
-        .arg(&dest_dir)
-        .arg(&version_spec)
-        .output()
-        .map_err(|e| format!("npm install 执行失败: {}", e))?;
+    let npm_result = crate::commands::foundation::owned_process::capture(
+        "sdk",
+        crate::commands::hidden_cmd::hidden_cmd("npm")
+            .args(["install", "--prefix"])
+            .arg(&dest_dir)
+            .arg(&version_spec),
+        std::time::Duration::from_secs(30 * 60),
+    )
+    .map_err(|e| format!("npm install 执行失败: {}", e))?;
 
     if !npm_result.status.success() {
         let stderr = String::from_utf8_lossy(&npm_result.stderr);
@@ -146,6 +183,7 @@ pub(super) async fn do_npm_install(
     }
 
     // 若 `--prefix` 实际把内容装到了 dest_dir/.，但在 Windows 上 node_modules 就在 dest_dir 根下
+    crate::commands::foundation::owned_process::ensure_running("sdk")?;
     // 4. 首次安装时自动创建 junction
     sync_install_step(&app, &id, "创建链接中");
     let junction_path = Path::new(&config.links_dir).join(&id);
@@ -287,10 +325,17 @@ pub(super) async fn do_msix_install(
         script.push_str(&format!(" -DependencyPath {}", list));
     }
 
-    let out = crate::commands::hidden_cmd::hidden_cmd("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .output()
-        .map_err(|e| format!("执行 Add-AppxPackage 失败: {}", e))?;
+    let out = crate::commands::foundation::owned_process::capture(
+        "sdk",
+        crate::commands::hidden_cmd::hidden_cmd("powershell").args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &script,
+        ]),
+        std::time::Duration::from_secs(30 * 60),
+    )
+    .map_err(|e| format!("执行 Add-AppxPackage 失败: {}", e))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         let stdout = String::from_utf8_lossy(&out.stdout);
@@ -305,6 +350,7 @@ pub(super) async fn do_msix_install(
         ));
     }
 
+    crate::commands::foundation::owned_process::ensure_running("sdk")?;
     // 记录「已装版本」（即便它不由 versions_dir 承载），
     // 并让扫描器的 MSIX 版本缓存立即失效 —— 否则下一次扫描会读到缓存里旧的「未安装」，
     // 装完界面上还是空的。
