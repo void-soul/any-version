@@ -1,4 +1,9 @@
 use super::*;
+#[path = "deploy_ssh_transaction.rs"]
+mod transaction;
+use std::time::Duration;
+pub(super) use transaction::run_bounded;
+use transaction::{quote, PrivateFiles};
 
 // ---------------------------------------------------------------------------
 // 部署
@@ -156,90 +161,19 @@ pub(super) fn deploy_linux(
     node: &DeployNode,
     pems: &(String, String, String),
 ) -> Result<(), String> {
-    let host = node.config.get("host").cloned().unwrap_or_default();
-    let port = node
-        .config
-        .get("port")
-        .cloned()
-        .unwrap_or_else(|| "22".into());
-    let user = node.config.get("user").cloned().unwrap_or_default();
-    let cert_path = node.config.get("cert_path").cloned().unwrap_or_default();
-    let key_path = node.config.get("key_path").cloned().unwrap_or_default();
-    let reload = node.config.get("reload_cmd").cloned().unwrap_or_default();
-    if host.is_empty() || cert_path.is_empty() || key_path.is_empty() {
-        return Err("linux 节点缺少 host/cert_path/key_path".into());
+    let cert_path = cfg(node, "cert_path");
+    let key_path = cfg(node, "key_path");
+    if cert_path.is_empty() || key_path.is_empty() {
+        return Err("linux node requires cert_path/key_path".into());
     }
-    // 使用隔离安全子目录，避免私钥在通用临时文件目录下被其它非特权进程读取
-    let isolate_dir = std::env::temp_dir().join(format!(".cert_deploy_{}", node.id));
-    let _ = std::fs::create_dir_all(&isolate_dir);
-    let tmp = isolate_dir.join("cert.pem");
-    let tmp_key = isolate_dir.join("key.pem");
-    std::fs::write(&tmp, &pems.0).map_err(|e| e.to_string())?;
-    std::fs::write(&tmp_key, &pems.1).map_err(|e| e.to_string())?;
-
-    let target = format!("{}@{}", user, host);
-    let mut scp_cert_cmd = Command::new("scp");
-    #[cfg(windows)]
-    scp_cert_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    let scp_cert = scp_cert_cmd
-        .args([
-            "-P",
-            &port,
-            tmp.to_str().unwrap(),
-            &format!("{}:{}", target, cert_path),
-        ])
-        .output();
-    let mut scp_key_cmd = Command::new("scp");
-    #[cfg(windows)]
-    scp_key_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    let scp_key = scp_key_cmd
-        .args([
-            "-P",
-            &port,
-            tmp_key.to_str().unwrap(),
-            &format!("{}:{}", target, key_path),
-        ])
-        .output();
-    let _ = std::fs::remove_dir_all(&isolate_dir);
-    match scp_cert {
-        Ok(o) if o.status.success() => {}
-        Ok(o) => {
-            return Err(format!(
-                "scp 证书失败 ({}): {}",
-                o.status,
-                String::from_utf8_lossy(&o.stderr).trim()
-            ))
-        }
-        Err(e) => return Err(format!("scp 证书失败: {}", e)),
-    }
-    match scp_key {
-        Ok(o) if o.status.success() => {}
-        Ok(o) => {
-            return Err(format!(
-                "scp 私钥失败 ({}): {}",
-                o.status,
-                String::from_utf8_lossy(&o.stderr).trim()
-            ))
-        }
-        Err(e) => return Err(format!("scp 私钥失败: {}", e)),
-    }
-    if !reload.is_empty() {
-        let mut ssh_cmd = Command::new("ssh");
-        #[cfg(windows)]
-        ssh_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        match ssh_cmd.args(["-p", &port, &target, &reload]).output() {
-            Ok(o) if o.status.success() => {}
-            Ok(o) => {
-                return Err(format!(
-                    "远程重载命令失败 ({}): {}",
-                    o.status,
-                    String::from_utf8_lossy(&o.stderr).trim()
-                ))
-            }
-            Err(e) => return Err(format!("无法执行 ssh: {}", e)),
-        }
-    }
-    Ok(())
+    deploy_pair(
+        node,
+        pems,
+        &cert_path,
+        &key_path,
+        "",
+        &cfg(node, "reload_cmd"),
+    )
 }
 
 pub(super) fn remote_safe_name(s: &str) -> String {
@@ -311,11 +245,8 @@ pub(super) fn ssh_cmd_args(
         if pw.is_empty() {
             return Err("ssh 密码认证需要填写 password".into());
         }
-        if Command::new("sshpass").arg("-V").output().is_err() {
-            return Err("密码认证需要系统安装 sshpass；建议改用私钥认证".into());
-        }
         let mut c = Command::new("sshpass");
-        c.arg("-p").arg(pw).arg("ssh");
+        c.env("SSHPASS", pw).args(["-e", "ssh"]);
         c
     } else {
         Command::new("ssh")
@@ -325,7 +256,7 @@ pub(super) fn ssh_cmd_args(
     if let Some(key) = &auth.key {
         cmd.arg("-i").arg(key);
     }
-    cmd.arg("-o").arg("StrictHostKeyChecking=accept-new");
+    transport_options(&mut cmd, auth);
     cmd.arg("-p").arg(port);
     cmd.arg(&target).arg(remote_cmd);
     Ok((cmd, target))
@@ -357,7 +288,7 @@ pub(super) fn scp_upload(
     let target = format!("{}@{}", user, host);
     let mut cmd = if let Some(pw) = &auth.password {
         let mut c = Command::new("sshpass");
-        c.arg("-p").arg(pw).arg("scp");
+        c.env("SSHPASS", pw).args(["-e", "scp"]);
         c
     } else {
         Command::new("scp")
@@ -367,10 +298,10 @@ pub(super) fn scp_upload(
     if let Some(key) = &auth.key {
         cmd.arg("-i").arg(key);
     }
-    cmd.arg("-P").arg(port);
-    cmd.arg("-o").arg("StrictHostKeyChecking=accept-new");
+    cmd.arg("-O").arg("-P").arg(port);
+    transport_options(&mut cmd, auth);
     cmd.arg(local).arg(format!("{}:{}", target, remote));
-    let out = cmd.output().map_err(|e| format!("scp 失败: {}", e))?;
+    let out = run_bounded(&mut cmd, Duration::from_secs(60))?;
     if !out.status.success() {
         return Err(format!(
             "scp 失败 ({}): {}",
@@ -388,14 +319,11 @@ pub(super) fn deploy_ssh(
     pems: &(String, String, String),
     target: &str,
 ) -> Result<(), String> {
-    let auth = ssh_auth(node);
-    let cert_dir = {
-        let d = cfg(node, "cert_dir");
-        if d.is_empty() {
-            "/etc/nginx/certificates".to_string()
-        } else {
-            d
-        }
+    let cert_dir = cfg(node, "cert_dir");
+    let cert_dir = if cert_dir.is_empty() {
+        "/etc/nginx/certificates"
+    } else {
+        &cert_dir
     };
     let name = remote_safe_name(if target.trim().is_empty() {
         cert.domains.first().map(|s| s.as_str()).unwrap_or(&cert.id)
@@ -403,77 +331,111 @@ pub(super) fn deploy_ssh(
         target
     });
     let remote_dir = format!("{}/{}", cert_dir.trim_end_matches('/'), name);
-    let quoted_dir = remote_dir.replace('\'', "'\\''");
-
-    let pre = cfg(node, "pre_command");
-    if !pre.is_empty() {
-        let (mut cmd, _) = ssh_cmd_args(node, &auth, &pre)?;
-        let out = cmd
-            .output()
-            .map_err(|e| format!("执行前置命令失败: {}", e))?;
-        if !out.status.success() {
-            return Err(format!(
-                "前置命令失败 ({}): {}",
-                out.status,
-                String::from_utf8_lossy(&out.stderr).trim()
-            ));
-        }
-    }
-
-    let (mut mkdir_cmd, _) = ssh_cmd_args(node, &auth, &format!("mkdir -p '{}'", quoted_dir))?;
-    let mkdir = mkdir_cmd
-        .output()
-        .map_err(|e| format!("创建远端目录失败: {}", e))?;
-    if !mkdir.status.success() {
-        return Err(format!(
-            "创建远端目录失败 ({}): {}",
-            mkdir.status,
-            String::from_utf8_lossy(&mkdir.stderr).trim()
-        ));
-    }
-
-    let isolate_dir = std::env::temp_dir().join(format!(
-        ".cert_deploy_{}_{}",
-        node.id,
-        Utc::now().timestamp_millis()
-    ));
-    std::fs::create_dir_all(&isolate_dir).map_err(|e| e.to_string())?;
-    let local_cert = isolate_dir.join("fullchain.cer");
-    let local_key = isolate_dir.join("cert.key");
-    std::fs::write(&local_cert, &pems.0).map_err(|e| e.to_string())?;
-    std::fs::write(&local_key, &pems.1).map_err(|e| e.to_string())?;
-    let upload = scp_upload(
+    deploy_pair(
         node,
-        &auth,
-        &local_cert.to_string_lossy(),
-        &format!("{}/fullchain.cer", remote_dir),
+        pems,
+        &format!("{remote_dir}/fullchain.cer"),
+        &format!("{remote_dir}/cert.key"),
+        &cfg(node, "pre_command"),
+        &cfg(node, "post_command"),
     )
-    .and_then(|_| {
-        scp_upload(
+}
+
+fn transport_options(cmd: &mut Command, auth: &SshAuth) {
+    for option in [
+        "StrictHostKeyChecking=accept-new",
+        "ConnectTimeout=10",
+        "ConnectionAttempts=1",
+        "ServerAliveInterval=5",
+        "ServerAliveCountMax=2",
+        "NumberOfPasswordPrompts=1",
+        "RequestTTY=no",
+        "KbdInteractiveAuthentication=no",
+    ] {
+        cmd.args(["-o", option]);
+    }
+    cmd.args([
+        "-o",
+        if auth.password.is_some() {
+            "BatchMode=no"
+        } else {
+            "BatchMode=yes"
+        },
+    ]);
+}
+
+fn remote_run(node: &DeployNode, auth: &SshAuth, script: &str) -> Result<(), String> {
+    let (mut cmd, _) = ssh_cmd_args(
+        node,
+        auth,
+        &format!(
+            "timeout --signal=TERM --kill-after=5s 75s sh -c {}",
+            quote(script)
+        ),
+    )?;
+    let out = run_bounded(&mut cmd, Duration::from_secs(90))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "SSH transaction failed ({}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        ))
+    }
+}
+
+fn deploy_pair(
+    node: &DeployNode,
+    pems: &(String, String, String),
+    cert_path: &str,
+    key_path: &str,
+    pre: &str,
+    post: &str,
+) -> Result<(), String> {
+    if cert_path == key_path || !cert_path.starts_with('/') || !key_path.starts_with('/') {
+        return Err("SSH certificate/key targets must be distinct absolute paths".into());
+    }
+    let auth = ssh_auth(node);
+    let files = PrivateFiles::new()?;
+    let cert = files.write("cert.pem", &pems.0)?;
+    let key = files.write("key.pem", &pems.1)?;
+    let suffix = transaction::nonce()?;
+    let cs = format!("{cert_path}.kira-{suffix}.new");
+    let ks = format!("{key_path}.kira-{suffix}.new");
+    let prepare = format!("set -eu; umask 077; {}\nmkdir -p -- \"$(dirname -- {})\" \"$(dirname -- {})\"; : > {}; : > {}",
+        if pre.trim().is_empty() { ":" } else { pre }, quote(cert_path), quote(key_path), quote(&cs), quote(&ks));
+    if let Err(error) = remote_run(node, &auth, &prepare) {
+        let _ = remote_run(
             node,
             &auth,
-            &local_key.to_string_lossy(),
-            &format!("{}/cert.key", remote_dir),
-        )
-    });
-    let _ = std::fs::remove_dir_all(&isolate_dir);
-    upload?;
-
-    let post = cfg(node, "post_command");
-    if !post.is_empty() {
-        let (mut cmd, _) = ssh_cmd_args(node, &auth, &post)?;
-        let out = cmd
-            .output()
-            .map_err(|e| format!("执行后置命令失败: {}", e))?;
-        if !out.status.success() {
-            return Err(format!(
-                "后置命令失败 ({}): {}",
-                out.status,
-                String::from_utf8_lossy(&out.stderr).trim()
-            ));
-        }
+            &format!("rm -f -- {} {}", quote(&cs), quote(&ks)),
+        );
+        return Err(format!("{error}; live pair untouched"));
     }
-    Ok(())
+    let uploaded = scp_upload(node, &auth, &cert.to_string_lossy(), &quote(&cs))
+        .and_then(|_| scp_upload(node, &auth, &key.to_string_lossy(), &quote(&ks)));
+    if let Err(error) = uploaded {
+        let cleanup = remote_run(
+            node,
+            &auth,
+            &format!("rm -f -- {} {}", quote(&cs), quote(&ks)),
+        );
+        return Err(format!(
+            "{error}; live pair untouched; stage cleanup: {}",
+            if cleanup.is_ok() {
+                "confirmed"
+            } else {
+                "unconfirmed"
+            }
+        ));
+    }
+    remote_run(
+        node,
+        &auth,
+        &transaction::install_script(cert_path, key_path, &suffix, post),
+    )
+    .map_err(|e| format!("{e}; if KIRA_ROLLBACK_CONFIRMED is absent, recovery is unconfirmed"))
 }
 
 pub(super) async fn deploy_webhook(
