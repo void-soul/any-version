@@ -33,18 +33,9 @@ pub const ENTERPRISE_PACKAGE_CODE: &str = "TCACA_code_enterprise";
 
 // ─── OAuth 待处理状态（按平台隔离） ───
 
-#[derive(Clone)]
-struct PendingOAuthState {
-    login_id: String,
-    expires_at: i64,
-    state: String,
-    cancelled: bool,
-}
-
-fn pending_states() -> &'static Mutex<HashMap<String, PendingOAuthState>> {
-    static STATES: OnceLock<Mutex<HashMap<String, PendingOAuthState>>> = OnceLock::new();
-    STATES.get_or_init(|| Mutex::new(HashMap::new()))
-}
+mod oauth_sessions;
+pub use oauth_sessions::finish_oauth_login;
+use oauth_sessions::{oauth_sessions, PendingOAuthState};
 
 fn now_timestamp() -> i64 {
     chrono::Utc::now().timestamp()

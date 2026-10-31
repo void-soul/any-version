@@ -127,16 +127,7 @@ pub async fn buddy_oauth_complete(
     login_id: String,
 ) -> Result<BuddyAccount, String> {
     let platform = platform_from_str(&platform)?;
-    let account = api::oauth_complete(platform, &login_id).await?;
-    let saved = store::upsert_account(platform, account)?;
-    // 登录后补全用量
-    match api::refresh_payload_for_account(platform, &saved).await {
-        Ok((refreshed, _)) => Ok(store::upsert_account(platform, refreshed)?),
-        Err(e) => {
-            eprintln!("[Buddy OAuth] 登录后刷新失败，保留原账号信息: {}", e);
-            Ok(saved)
-        }
-    }
+    api::finish_oauth_login(platform, &login_id).await
 }
 
 #[tauri::command]

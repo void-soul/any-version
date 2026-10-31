@@ -33,6 +33,8 @@ pub(super) fn decorate_login_url(
 }
 
 pub async fn oauth_start(platform: BuddyPlatform) -> Result<OAuthStartResponse, String> {
+    // A new login intent invalidates previous completions before any network await.
+    oauth_sessions().cancel(platform, None)?;
     let client = build_client()?;
     let platform_name = oauth_platform_name(platform);
     let url = format!(
@@ -93,18 +95,16 @@ pub async fn oauth_start(platform: BuddyPlatform) -> Result<OAuthStartResponse, 
     };
     let verification_uri = decorate_login_url(&base_verification_uri, None, &login_session_id);
 
-    pending_states()
-        .lock()
-        .map_err(|_| "获取锁失败".to_string())?
-        .insert(
-            platform.as_str().to_string(),
-            PendingOAuthState {
-                login_id: login_id.clone(),
-                expires_at: now_timestamp() + OAUTH_TIMEOUT_SECONDS as i64,
-                state: state.clone(),
-                cancelled: false,
-            },
-        );
+    oauth_sessions().begin(
+        platform,
+        PendingOAuthState {
+            login_id: login_id.clone(),
+            expires_at: now_timestamp() + OAUTH_TIMEOUT_SECONDS as i64,
+            state: state.clone(),
+            token_ready: None,
+            ready: None,
+        },
+    )?;
 
     eprintln!(
         "[Buddy OAuth] 登录已启动: platform={}, login_id={}",
@@ -209,16 +209,7 @@ pub(super) async fn fetch_account_info(
 }
 
 pub fn oauth_cancel(platform: BuddyPlatform, login_id: Option<&str>) -> Result<(), String> {
-    let mut pending = pending_states()
-        .lock()
-        .map_err(|_| "获取锁失败".to_string())?;
-    if let Some(state) = pending.get_mut(platform.as_str()) {
-        if login_id.is_none() || login_id == Some(state.login_id.as_str()) {
-            state.cancelled = true;
-            pending.remove(platform.as_str());
-        }
-    }
-    Ok(())
+    oauth_sessions().cancel(platform, login_id)
 }
 
 /// 轮询官方 token 接口直到用户完成授权
@@ -226,30 +217,18 @@ pub async fn oauth_complete(
     platform: BuddyPlatform,
     login_id: &str,
 ) -> Result<BuddyAccount, String> {
+    if let Some(saved) = oauth_sessions().completed(platform, login_id, now_timestamp())? {
+        return Ok(saved);
+    }
+    let initial = oauth_sessions().state(platform, login_id, now_timestamp())?;
+    if let Some(account) = initial.ready {
+        return Ok(account);
+    }
     let client = build_client()?;
     let start = now_timestamp();
 
     loop {
-        let state_info = {
-            let pending = pending_states()
-                .lock()
-                .map_err(|_| "获取锁失败".to_string())?;
-            match pending.get(platform.as_str()) {
-                None => return Err("没有待处理的登录请求".to_string()),
-                Some(s) => {
-                    if s.login_id != login_id {
-                        return Err("login_id 不匹配".to_string());
-                    }
-                    if s.cancelled {
-                        return Err("登录已取消".to_string());
-                    }
-                    if now_timestamp() > s.expires_at {
-                        return Err("登录超时".to_string());
-                    }
-                    s.clone()
-                }
-            }
-        };
+        let state_info = oauth_sessions().state(platform, login_id, now_timestamp())?;
 
         let url = format!(
             "{}{}/auth/token?state={}",
@@ -258,17 +237,27 @@ pub async fn oauth_complete(
             state_info.state
         );
 
-        match client
-            .get(&url)
-            .header("X-No-Authorization", "true")
-            .header("X-No-User-Id", "true")
-            .header("X-No-Enterprise-Id", "true")
-            .header("X-No-Department-Info", "true")
-            .send()
-            .await
-        {
-            Ok(resp) => {
-                if let Ok(body) = resp.json::<Value>().await {
+        let polled = match state_info.token_ready {
+            Some(data) => Ok(json!({"code":0,"data":data})),
+            None => match client
+                .get(&url)
+                .header("X-No-Authorization", "true")
+                .header("X-No-User-Id", "true")
+                .header("X-No-Enterprise-Id", "true")
+                .header("X-No-Department-Info", "true")
+                .send()
+                .await
+            {
+                Ok(resp) => resp
+                    .json::<Value>()
+                    .await
+                    .map_err(|error| error.to_string()),
+                Err(error) => Err(error.to_string()),
+            },
+        };
+        match polled {
+            Ok(body) => {
+                {
                     let code = body.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
                     if code == 0 || code == 200 {
                         if let Some(data) = body.get("data") {
@@ -279,6 +268,11 @@ pub async fn oauth_complete(
                                 .unwrap_or("")
                                 .to_string();
                             if !access_token.is_empty() {
+                                oauth_sessions().remember_token(
+                                    platform,
+                                    login_id,
+                                    data.clone(),
+                                )?;
                                 eprintln!(
                                     "[Buddy OAuth] 获取 token 成功: platform={}",
                                     platform.as_str()
@@ -376,6 +370,11 @@ pub async fn oauth_complete(
                                     created_at: 0,
                                     last_used: 0,
                                 };
+                                oauth_sessions().remember_ready(
+                                    platform,
+                                    login_id,
+                                    account.clone(),
+                                )?;
                                 return Ok(account);
                             }
                         }
@@ -388,10 +387,7 @@ pub async fn oauth_complete(
         }
 
         if now_timestamp() - start > OAUTH_TIMEOUT_SECONDS as i64 {
-            pending_states()
-                .lock()
-                .map_err(|_| "获取锁失败".to_string())?
-                .remove(platform.as_str());
+            oauth_sessions().cancel(platform, Some(login_id))?;
             return Err("登录超时".to_string());
         }
 
