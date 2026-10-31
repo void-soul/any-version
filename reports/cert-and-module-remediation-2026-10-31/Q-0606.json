@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0606",
+  "date": "2026-10-31",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "模块禁用只在少数启动函数检查，已卸载页面的迟到invoke或外部事件仍能调用禁用模块业务；需要从实际IPC注册推导准入策略，同时保留跨模块共享设置能力。",
+  "root_cause": "仅页面导航隐藏模块不能约束后端 **invoke**；散落的命令前缀判断会误伤公共AI配置，也可能漏掉业务命令。",
+  "solution": "1. 在组合根解析 **app_commands.rs** 注册路径建立命令owner映射，分发前拒绝已停用模块业务命令；保留共享设置和AI传输配置。\n2. 后端固定模块catalog与前端catalog回归比对，布局更新拒绝未知模块和禁用设置页。\n3. 增加运行态查询 **get_module_runtime_status**，显示enabled、受管任务数和活动事务数；该功能是生命周期控制，不构成安全沙箱。\n4. 验收：module_policy3项及模块目录一致性回归通过；1120个源码文件模块边界检查通过。 Rust all-targets、差异空白检查通过；本轮不访问真实CA/云服务或重载真实服务。Unix条件测试未在Unix主机执行，远程POSIX脚本模板另有Git Bash隔离执行证据。 实现提交：**b2a04d867b00590f33a44d9c742e095499ecb9b4**。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/module_policy.rs** | 注册路径owner规则及映射回归 |\n| **src-tauri/src/app_commands.rs** | 统一IPC准入和诊断命令注册 |\n| **src-tauri/src/lib.rs** | 注册组合根策略 |\n| **src-tauri/src/commands/module_lifecycle.rs** | 布局验证及诊断入口 |\n| **reports/cert-and-module-remediation-2026-10-31/** | QA快照、测试摘要、逐文件提交索引与最终报告 |",
+  "created_at": "2026-10-31 17:27:19",
+  "updated_at": "2026-10-31 18:08:34",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

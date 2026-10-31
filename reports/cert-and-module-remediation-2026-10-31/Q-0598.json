@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0598",
+  "date": "2026-10-31",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "证书风险R2：SSH与旧Linux部署依次覆盖远端证书和私钥，第二次上传或后置动作失败不能恢复完整旧代次；命令无界且临时私钥清理和权限不足，需要可确认远端事务和有界执行。",
+  "root_cause": "SSH/Linux旧路径按顺序直接覆盖证书和私钥，缺少成对校验、备份恢复及期限；只恢复文件也无法确认已加载新代次的外部运行态。",
+  "solution": "1. 新代次上传到各目标同目录随机暂存文件，校验公钥一致后由单个带锁远程脚本安装；失败恢复原文件或符号链接。\n2. 文件恢复后重放后置重载命令，分别记录FILES/RUNTIME恢复结论；任一未确认保留备份与锁，不宣称完整回滚。\n3. SSH/scp/远程脚本/本机命令均有界，私钥临时目录隔离权限并RAII清理，密码通过环境变量而非argv。\n4. Git Bash提取真实模板的6个隔离fixture通过，包含第二次移动失败、新代次已加载后失败、恢复失败和shell errexit；共享执行器46项通过。断网/强杀仍可能中断远端恢复，调用方明确报告未知状态。\n5. 验收：共享执行器及部署库46项通过；实际脚本模板在Windows Git Bash下6/6假服务场景通过。 Rust all-targets、差异空白检查通过；本轮不访问真实CA/云服务或重载真实服务。Unix条件测试未在Unix主机执行，远程POSIX脚本模板另有Git Bash隔离执行证据。 实现提交：**170ac529d9565f44442ee6dcf9eeca4c8c636e42**。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/cert/deploy_ssh.rs** | 暂存上传、统一远程事务和期限 |\n| **src-tauri/src/commands/cert/deploy_ssh_transaction.rs** | 私密临时文件、校验与双阶段恢复脚本及Unix回归 |\n| **crates/cert-deployment/src/reload_command.rs** | 有界进程树回收及文件输出捕获 |\n| **reports/cert-and-module-remediation-2026-10-31/verify-ssh-restore.py** | Windows Git Bash可重跑的6项假服务验证 |",
+  "created_at": "2026-10-31 17:27:16",
+  "updated_at": "2026-10-31 18:08:31",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0605",
+  "date": "2026-10-31",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "模块停用后音乐音频输出、播放队列、Buddy OAuth与成长缓存、接收日志和SQLite页面缓存仍占内存；需要模块私有释放接口且不删除磁盘业务数据。",
+  "root_cause": "禁用页面后部分原生资源和可增长缓存仍由全局state持有：**播放器/音频host**、Buddy OAuth/工作区缓存、翻译popup、接收日志和SQLite页缓存；部分迟到工作可能重新填充。",
+  "solution": "1. 在任务收尾后停止播放器与音频host，替换队列、名称及预取buffer；停止在线下载及防止迟到播放重建。\n2. 释放Buddy内存缓存和OAuth session并保留generation防迟到回填，销毁翻译及Picky自有隐藏窗口，清接收/证书/代理运行缓存；Mihomo仅停止成功后清运行配置和告警缓存。\n3. 剪贴板停止监听并用 **PRAGMA shrink_memory** 释放空闲页，不删历史/配置；不承诺操作系统RSS立即归零或卸载可执行代码。\n4. 验收：原生播放器释放、OAuth迟到回填、在线下载暂存清理及自有进程worker回归通过；不使用真实音频设备。 Rust all-targets、差异空白检查通过；本轮不访问真实CA/云服务或重载真实服务。Unix条件测试未在Unix主机执行，远程POSIX脚本模板另有Git Bash隔离执行证据。 实现提交：**cddc2fd41f2055067a99d49a2d171afb632e11f4**、**d713b2bc3ed4c3fce45921f6ef55ef061964fdaf**、**1f498b62e9c52876dfe0a61b08e6821bd406c68f**、**b2a04d867b00590f33a44d9c742e095499ecb9b4**。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/music/player/playback.rs / tests.rs** | 播放器原生资源与队列释放回归 |\n| **src-tauri/src/commands/music/plugin_playback.rs** | 在线请求取消及临时文件清理 |\n| **src-tauri/src/commands/buddy/mod.rs / api.rs** | 释放入口与迟到OAuth提交防护 |\n| **src-tauri/src/commands/buddy/api/oauth_sessions.rs / tests.rs** | session缓存释放及generation回归 |\n| **src-tauri/src/commands/buddy/growth.rs** | 成长缓存重置 |\n| **src-tauri/src/commands/buddy/session_transfer/codebuddy/workspaces.rs** | 工作区路径缓存重置 |\n| **src-tauri/src/commands/ai/translate.rs** | popup及翻译结果缓存释放 |\n| **src-tauri/src/commands/cert_receiver.rs** | 停止确认后清空接收日志 |\n| **src-tauri/src/commands/clipboard/mod.rs** | 停止后SQLite空闲页回收 |\n| **src-tauri/src/commands/module_lifecycle.rs** | 组合各模块清理、Mihomo缓存重置 |",
+  "created_at": "2026-10-31 17:27:19",
+  "updated_at": "2026-10-31 18:08:34",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

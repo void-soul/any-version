@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0597",
+  "date": "2026-10-31",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "证书风险R1：长耗时签发和部署保存启动时的整表快照，会覆盖期间新增、编辑或删除的证书和节点；需要串行原子配置变更及按ID合并运行字段，不复活删除对象。",
+  "root_cause": "**R1**：把任务启动时的Vec快照当最终权威，缺少单锁checked读改原子写和运行字段合并契约。",
+  "solution": "1. 所有证书/节点/凭据/监控/通知CRUD迁单锁mutate_json，坏JSON和IO错误返回Result；未变更不重写。长任务按现存ID及配置/运行字段CAS只提交运行字段，删除不复活、用户编辑不覆盖；证书配置冲突明确报错。history追加同样串行checked。单证书任务注册guard防重叠，与runtime OperationGuard/run_if_enabled及run_lego_owned协作安全禁用；不在锁内执行网络或ACME。节点删除/解除关联在同锁读完两表，第二写失败尝试恢复关联并报告恢复是否确认。\n2. 通过临时配置和响应fixture回归验证；不访问真实服务。\n3. 验收：证书及接收相关69项通过，其中配置并发/延时结果/损坏配置/无变化更新等10项回归通过。 Rust all-targets、差异空白检查通过；本轮不访问真实CA/云服务或重载真实服务。Unix条件测试未在Unix主机执行，远程POSIX脚本模板另有Git Bash隔离执行证据。 实现提交：**3b62c97608e79a086bf93d3bc5363d6cc84f6716**。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/cert/store.rs** | 统一配置事务、runtime CAS、任务guard、错误传播 |\n| **src-tauri/src/commands/cert/commands.rs** / **monitor_commands.rs** | 全部CRUD/查询checked结果与手动长任务取消保护 |\n| **src-tauri/src/commands/cert/pipeline.rs** / **local_retry.rs** / **monitor.rs** | 删除旧快照整表回写，按ID合并运行字段 |\n| **src-tauri/src/commands/cert/scheduler.rs** / **details.rs** | 后台错误显式日志、checked读取 |\n| **src-tauri/src/commands/cert/store/concurrency_tests.rs** | 10项临时目录/并发/延时结果回归 |",
+  "created_at": "2026-10-31 17:27:16",
+  "updated_at": "2026-10-31 18:08:31",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

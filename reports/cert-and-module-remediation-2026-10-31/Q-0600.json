@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0600",
+  "date": "2026-10-31",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "证书风险R4：独立接收端停止即清句柄、固定等待后重启，后台服务可能尚未结束且新配置启动失败后缺少一致恢复；需要退出确认和可观测生命周期。",
+  "root_cause": "独立接收端的 **ServerHandle** 在通知停止后即丢弃，配置保存用固定睡眠猜测端口释放，未串行确认旧服务结束。",
+  "solution": "1. 抽取共享 **lifecycle** 退出通知及配置变更事务，串行执行停止、等待退出、持久化及新配置启动。\n2. 停止超时保留句柄和实际运行状态，保存或新启动失败恢复旧配置与旧服务；移除固定150ms等待。\n3. 使用假服务和临时配置测试状态回退，不停止真实服务。\n4. 验收：共享生命周期fixture与独立接收端11项通过；保存失败、启动失败及停止状态有界恢复通过。 Rust all-targets、差异空白检查通过；本轮不访问真实CA/云服务或重载真实服务。Unix条件测试未在Unix主机执行，远程POSIX脚本模板另有Git Bash隔离执行证据。 实现提交：**cddc2fd41f2055067a99d49a2d171afb632e11f4**。",
+  "files": "| File | Change |\n|------|--------|\n| **crates/cert-deployment/src/lifecycle.rs** | 共享可测试的生命周期事务和退出guard |\n| **cert-receiver/src/lifecycle.rs** | 独立服务串行启停和配置恢复 |\n| **cert-receiver/src/main.rs** | UI命令改异步有界等待 |\n| **cert-receiver/src/config.rs** | 同目录临时文件原子保存 |\n| **cert-receiver/src/server.rs** | 完成信号与真实退出状态 |",
+  "created_at": "2026-10-31 17:27:17",
+  "updated_at": "2026-10-31 18:08:32",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

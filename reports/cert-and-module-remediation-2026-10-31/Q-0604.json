@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0604",
+  "date": "2026-10-31",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "模块关闭服务时只停止监听任务但accepted连接、代理请求及响应流仍存活，代理配置和凭据引用未清理；需要按服务实例回收子连接和完成通知。",
+  "root_cause": "只abort HTTP监听/代理owner不代表已接受连接、上游请求或流式响应结束；**axum graceful_shutdown** 不能单独保证半截请求头马上关闭，RTSP日志reader/自有child缺少统一回收。",
+  "solution": "1. HTTP监听及连接登记模块owner并保存完成信号，停止后确认listener及accepted连接退出。\n2. 代理StopGuard向handler、上游请求、流式body及accepted TCP IO传播取消；已删除实例清除凭据，等待有界且超时明确失败。\n3. RTSP自有进程终止树后确认退出，先禁迟到日志再join reader；失败保留实例供重试，启动guard关闭start/stop竞态；使用回环与fakechild回归。\n4. 验收：代理生命周期5项、HTTP生命周期1项、RTSP生命周期4项native回归通过，含半截HTTP头及未退出reader重试。 Rust all-targets、差异空白检查通过；本轮不访问真实CA/云服务或重载真实服务。Unix条件测试未在Unix主机执行，远程POSIX脚本模板另有Git Bash隔离执行证据。 实现提交：**1f60aa4a1427fe11c451c964fe8bc12c16cccd30**。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/http_server.rs** | 监听及子连接owner登记与确认退出 |\n| **src-tauri/src/commands/http_server_lifecycle.rs** | HTTP停止及回环回归 |\n| **src-tauri/src/proxy/server.rs** | 实例owner停止组合 |\n| **src-tauri/src/proxy/server/lifecycle.rs** | 请求/stream取消、完成等待及回归 |\n| **src-tauri/src/proxy/server/connection.rs** | 半截HTTP头连接级取消 |\n| **src-tauri/src/proxy/server/observability.rs** | 配置Arc身份校验及凭据释放 |\n| **src-tauri/src/commands/rtsp_server.rs** | 启动guard、自有进程与输出reader接入 |\n| **src-tauri/src/commands/rtsp_server_lifecycle.rs** | 有界终止/回收与迟到写入防护 |",
+  "created_at": "2026-10-31 17:27:19",
+  "updated_at": "2026-10-31 18:08:34",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

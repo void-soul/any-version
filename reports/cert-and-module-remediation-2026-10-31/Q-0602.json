@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0602",
+  "date": "2026-10-31",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "模块关闭后直接IPC发起的异步请求不属于已登记任务，关闭与重新启用之间旧请求仍可返回或写回；需要按模块代次取消在途操作，安全收尾阻塞事务并等待完成。",
+  "root_cause": "原 **runtime_tasks** 只登记部分spawn任务，直接IPC Future、脱离调用的blocking worker及手动AI任务未共享取消代次；取消时登记表未必清理，安全文件事务也不能随意drop。",
+  "solution": "1. 增加模块epoch租约、**run_if_enabled**、blocking worker的 **OperationGuard** 及有界idle等待；拒绝新任务，旧generation不会因快速启用复活。\n2. 长HTTP/AI入口绑定所属模块，Future取消时通过RAII清取消/询问/运行登记；证书lego和本机事务worker在内部持guard，取消自有进程或完成回滚后才归零。\n3. 停用先广播和abort，等待已准入启动及文件事务收尾，再释放原生资源；超时保留未完成句柄并返回错误，启用前重新确认cleanup。SDK安装及Suno转码共用自有进程执行器，外部用户项目服务不强杀。\n4. 共享worker在排队前捕获代次，awaiter释放先置取消token；Picky独立profile及浏览器进程树同样回收，DOM超过16MiB明确退回HTTP而不使用截断内容。\n5. 验收：模块runtime4项、共享worker3项及AI/请求登记/临时文件回归通过；主工程1585项通过。 Rust all-targets、差异空白检查通过；本轮不访问真实CA/云服务或重载真实服务。Unix条件测试未在Unix主机执行，远程POSIX脚本模板另有Git Bash隔离执行证据。 实现提交：**bd87712aecb4f580962a080541b91b2080ef9716**、**3b62c97608e79a086bf93d3bc5363d6cc84f6716**、**be092aee67e7a6882f711a2158af3a771d99fd6b**、**d713b2bc3ed4c3fce45921f6ef55ef061964fdaf**、**1f498b62e9c52876dfe0a61b08e6821bd406c68f**、**b2a04d867b00590f33a44d9c742e095499ecb9b4**。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/runtime_tasks.rs** / **src-tauri/src/commands/foundation/owned_process.rs** | 租约、代次取消、受管任务及安全事务计数 |\n| **src-tauri/src/commands/module_lifecycle.rs** | 停止/收尾/清理顺序和失败重试 |\n| **src-tauri/src/commands/ai/translate.rs** | 翻译Future取消及迟到popup防护 |\n| **src-tauri/src/commands/mindmap/commands/** | 长AI入口和取消询问RAII |\n| **src-tauri/src/commands/db_designer/ai/generation.rs** | 设计器AI Future及登记清理 |\n| **src-tauri/src/commands/favorites/** | 收藏长请求、Agent和运行登记RAII |\n| **src-tauri/src/commands/api/** | API执行和AI导入Future取消 |\n| **src-tauri/src/commands/picky/** | 同步任务受管及隐藏窗口释放 |\n| **src-tauri/src/commands/suno/** | 请求和自有转码取消及临时文件收尾 |\n| **src-tauri/src/commands/project/versions/** | SDK安装取消和登记清理 |\n| **src-tauri/src/commands/cert/lego.rs / deploy_local.rs** | 自有ACME进程和部署worker安全收尾 |",
+  "created_at": "2026-10-31 17:27:18",
+  "updated_at": "2026-10-31 18:08:33",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

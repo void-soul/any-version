@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0599",
+  "date": "2026-10-31",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "证书风险R3：1Panel上传证书或查找站点未精确匹配时使用列表第一条，可能绑定其他证书或网站；必须唯一确定匹配，没有或多个目标时失败闭合。",
+  "root_cause": "**R3**：将模糊/排序搜索结果当唯一身份，忽略分页、重复候选和实际证书内容。",
+  "solution": "1. 网站先按primaryDomain（缺省才name）唯一精确匹配；上传提供确定ID时GET该ID详情并验证ID+叶子DER SHA256指纹；无ID时仅精确描述候选逐个读详情验证指纹且必须唯一，彻底删除first回退。搜索分页不完整或超上限失败闭合。每次请求前检查cert模块启用，不调用真实API验证。\n2. 通过临时配置和响应fixture回归验证；不访问真实服务。\n3. 验收：1Panel六项响应fixture通过，覆盖无匹配、多匹配、ID/指纹错误及描述歧义。 Rust all-targets、差异空白检查通过；本轮不访问真实CA/云服务或重载真实服务。Unix条件测试未在Unix主机执行，远程POSIX脚本模板另有Git Bash隔离执行证据。 实现提交：**2a74fe85abb4102c0fa066d66a408248e1560873**。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/cert/deploy_onepanel.rs** | 唯一精确网站、确定ID/指纹确认、分页和禁用检查 |\n| **src-tauri/src/commands/cert/deploy_onepanel/tests.rs** | 6响应fixture和纯指纹回归 |",
+  "created_at": "2026-10-31 17:27:17",
+  "updated_at": "2026-10-31 18:08:31",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

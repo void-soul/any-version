@@ -1,0 +1,213 @@
+[
+  {
+    "qid": "Q-0602",
+    "qa": [
+      "Q-0602"
+    ],
+    "commit": "bd87712aecb4f580962a080541b91b2080ef9716",
+    "message": "fix: #Q-0602 Track cancellable module leases and safe worker drains",
+    "files": [
+      "src-tauri/src/runtime_tasks.rs"
+    ]
+  },
+  {
+    "qid": "Q-0598",
+    "qa": [
+      "Q-0598"
+    ],
+    "commit": "170ac529d9565f44442ee6dcf9eeca4c8c636e42",
+    "message": "fix: #Q-0598 Deploy SSH certificate pairs with bounded commands and confirmed rollback",
+    "files": [
+      "crates/cert-deployment/src/reload_command.rs",
+      "src-tauri/src/commands/cert/deploy_ssh.rs",
+      "src-tauri/src/commands/cert/deploy_ssh_transaction.rs"
+    ]
+  },
+  {
+    "qid": "Q-0601",
+    "qa": [
+      "Q-0600",
+      "Q-0601",
+      "Q-0605"
+    ],
+    "commit": "cddc2fd41f2055067a99d49a2d171afb632e11f4",
+    "message": "fix: #Q-0601 Recover runtime certificate generations and confirm receiver lifecycle (#Q-0600 #Q-0605)",
+    "files": [
+      "cert-receiver/src/config.rs",
+      "cert-receiver/src/lifecycle.rs",
+      "cert-receiver/src/main.rs",
+      "cert-receiver/src/server.rs",
+      "crates/cert-deployment/src/deployment.rs",
+      "crates/cert-deployment/src/deployment/recovery_tests.rs",
+      "crates/cert-deployment/src/lib.rs",
+      "crates/cert-deployment/src/lifecycle.rs",
+      "crates/cert-deployment/src/protocol.rs",
+      "crates/cert-deployment/src/reload_plan.rs",
+      "src-tauri/src/commands/cert_receiver.rs",
+      "src-tauri/src/commands/cert_receiver/lifecycle.rs"
+    ]
+  },
+  {
+    "qid": "Q-0597",
+    "qa": [
+      "Q-0597",
+      "Q-0602"
+    ],
+    "commit": "3b62c97608e79a086bf93d3bc5363d6cc84f6716",
+    "message": "fix: #Q-0597 Serialize certificate configuration changes and preserve concurrent edits (#Q-0602)",
+    "files": [
+      "src-tauri/src/commands/cert/commands.rs",
+      "src-tauri/src/commands/cert/deploy_local.rs",
+      "src-tauri/src/commands/cert/details.rs",
+      "src-tauri/src/commands/cert/lego.rs",
+      "src-tauri/src/commands/cert/local_retry.rs",
+      "src-tauri/src/commands/cert/monitor.rs",
+      "src-tauri/src/commands/cert/monitor_commands.rs",
+      "src-tauri/src/commands/cert/pipeline.rs",
+      "src-tauri/src/commands/cert/scheduler.rs",
+      "src-tauri/src/commands/cert/store.rs",
+      "src-tauri/src/commands/cert/store/concurrency_tests.rs"
+    ]
+  },
+  {
+    "qid": "Q-0599",
+    "qa": [
+      "Q-0599"
+    ],
+    "commit": "2a74fe85abb4102c0fa066d66a408248e1560873",
+    "message": "fix: #Q-0599 Require exact 1Panel site and certificate identity",
+    "files": [
+      "src-tauri/src/commands/cert/deploy_onepanel.rs",
+      "src-tauri/src/commands/cert/deploy_onepanel/tests.rs"
+    ]
+  },
+  {
+    "qid": "Q-0604",
+    "qa": [
+      "Q-0604"
+    ],
+    "commit": "1f60aa4a1427fe11c451c964fe8bc12c16cccd30",
+    "message": "fix: #Q-0604 Close owned connections and reap RTSP resources on shutdown",
+    "files": [
+      "src-tauri/src/commands/http_server.rs",
+      "src-tauri/src/commands/http_server_lifecycle.rs",
+      "src-tauri/src/commands/rtsp_server.rs",
+      "src-tauri/src/commands/rtsp_server_lifecycle.rs",
+      "src-tauri/src/proxy/server.rs",
+      "src-tauri/src/proxy/server/connection.rs",
+      "src-tauri/src/proxy/server/lifecycle.rs",
+      "src-tauri/src/proxy/server/observability.rs"
+    ]
+  },
+  {
+    "qid": "Q-0602",
+    "qa": [
+      "Q-0602"
+    ],
+    "commit": "be092aee67e7a6882f711a2158af3a771d99fd6b",
+    "message": "fix: #Q-0602 Cancel owned SDK installs transcodes and isolated browser processes",
+    "files": [
+      "src-tauri/src/commands/foundation.rs",
+      "src-tauri/src/commands/foundation/owned_process.rs",
+      "src-tauri/src/commands/picky/browser.rs",
+      "src-tauri/src/commands/project/versions/archives.rs",
+      "src-tauri/src/commands/project/versions/installation.rs",
+      "src-tauri/src/commands/project/versions/lifecycle.rs",
+      "src-tauri/src/commands/project/versions/msix.rs",
+      "src-tauri/src/commands/project/versions/state.rs",
+      "src-tauri/src/commands/suno/download.rs"
+    ]
+  },
+  {
+    "qid": "Q-0605",
+    "qa": [
+      "Q-0605",
+      "Q-0602"
+    ],
+    "commit": "d713b2bc3ed4c3fce45921f6ef55ef061964fdaf",
+    "message": "fix: #Q-0605 Release module caches native playback and cancelled downloads (#Q-0602)",
+    "files": [
+      "src-tauri/src/commands/buddy/api.rs",
+      "src-tauri/src/commands/buddy/api/oauth_sessions.rs",
+      "src-tauri/src/commands/buddy/api/oauth_sessions/tests.rs",
+      "src-tauri/src/commands/buddy/growth.rs",
+      "src-tauri/src/commands/buddy/mod.rs",
+      "src-tauri/src/commands/buddy/session_transfer/codebuddy/workspaces.rs",
+      "src-tauri/src/commands/clipboard/mod.rs",
+      "src-tauri/src/commands/music/player/playback.rs",
+      "src-tauri/src/commands/music/player/tests.rs",
+      "src-tauri/src/commands/music/plugin_playback.rs"
+    ]
+  },
+  {
+    "qid": "Q-0602",
+    "qa": [
+      "Q-0602",
+      "Q-0605"
+    ],
+    "commit": "1f498b62e9c52876dfe0a61b08e6821bd406c68f",
+    "message": "fix: #Q-0602 Cancel direct module requests and clean async registries (#Q-0605)",
+    "files": [
+      "src-tauri/src/commands/ai/translate.rs",
+      "src-tauri/src/commands/api/commands/execution.rs",
+      "src-tauri/src/commands/api/commands/interchange.rs",
+      "src-tauri/src/commands/api/commands/unit_tests.rs",
+      "src-tauri/src/commands/api/import_ai.rs",
+      "src-tauri/src/commands/db_designer/ai/generation.rs",
+      "src-tauri/src/commands/favorites/agent.rs",
+      "src-tauri/src/commands/favorites/commands.rs",
+      "src-tauri/src/commands/favorites/commands/bilibili_import.rs",
+      "src-tauri/src/commands/favorites/commands/checking.rs",
+      "src-tauri/src/commands/favorites/commands/classification.rs",
+      "src-tauri/src/commands/favorites/commands/content.rs",
+      "src-tauri/src/commands/favorites/commands/github_import.rs",
+      "src-tauri/src/commands/favorites/commands/tests.rs",
+      "src-tauri/src/commands/favorites/commands/zhihu_import.rs",
+      "src-tauri/src/commands/mindmap/commands.rs",
+      "src-tauri/src/commands/mindmap/commands/agent_session.rs",
+      "src-tauri/src/commands/mindmap/commands/regenerate.rs",
+      "src-tauri/src/commands/mindmap/commands/routing.rs",
+      "src-tauri/src/commands/mindmap/commands/tests.rs",
+      "src-tauri/src/commands/picky/bookmarks.rs",
+      "src-tauri/src/commands/picky/metadata.rs",
+      "src-tauri/src/commands/picky/mod.rs",
+      "src-tauri/src/commands/picky/sync.rs",
+      "src-tauri/src/commands/picky/webview.rs",
+      "src-tauri/src/commands/suno/profiles.rs"
+    ]
+  },
+  {
+    "qid": "Q-0603",
+    "qa": [
+      "Q-0603"
+    ],
+    "commit": "4ef0d5a6ea28d18fe8a09fb75ee5fe70d6852703",
+    "message": "fix: #Q-0603 Unmount disabled modules and release event snapshots",
+    "files": [
+      "src/App.tsx",
+      "src/components/dbdesigner/DbDesignerPanel.model.tsx",
+      "src/components/mindmap/agentShared.state.tsx",
+      "src/components/useAppearanceSettings.ts",
+      "src/utils/__tests__/eventBuffer.test.ts",
+      "src/utils/__tests__/moduleLifecycle.test.ts",
+      "src/utils/eventBuffer.ts",
+      "src/utils/moduleLifecycle.ts"
+    ]
+  },
+  {
+    "qid": "Q-0606",
+    "qa": [
+      "Q-0606",
+      "Q-0602",
+      "Q-0605"
+    ],
+    "commit": "b2a04d867b00590f33a44d9c742e095499ecb9b4",
+    "message": "fix: #Q-0606 Enforce module admission and confirm lifecycle transitions (#Q-0602 #Q-0605)",
+    "files": [
+      "src-tauri/src/app_commands.rs",
+      "src-tauri/src/commands/module_lifecycle.rs",
+      "src-tauri/src/lib.rs",
+      "src-tauri/src/module_policy.rs"
+    ]
+  }
+]

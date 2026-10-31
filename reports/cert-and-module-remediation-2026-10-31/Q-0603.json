@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0603",
+  "date": "2026-10-31",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "模块禁用后前端仍保留mounted页面标记和模块级事件缓冲监听，布局保存失败也可能让界面与实际配置漂移；需要真正卸载、释放缓冲并以实际配置对齐设置。",
+  "root_cause": "React **Activity** 保留已访问页面，关闭模块未从挂载集合删除；模块级事件订阅及 **WeakMap** 快照仍持有结果，设置保存失败时乐观界面与真实配置不一致。",
+  "solution": "1. 根据已启用模块协调活动页与挂载集合，关闭即卸载，迟到导航不能打开禁用页。\n2. 事件buffer绑定owner，停用退订、清空条目与快照缓存，迟到listen按generation退订；重启重新订阅。\n3. 设置布局串行保存，成功或失败均读取持久化配置再更新页面并报告错误；前端426项测试与TypeScript检查通过。\n4. 验收：前端53个测试文件426项通过；TypeScript与Vite构建通过，事件退订和页面卸载均有回归。 Rust all-targets、差异空白检查通过；本轮不访问真实CA/云服务或重载真实服务。Unix条件测试未在Unix主机执行，远程POSIX脚本模板另有Git Bash隔离执行证据。 实现提交：**4ef0d5a6ea28d18fe8a09fb75ee5fe70d6852703**。",
+  "files": "| File | Change |\n|------|--------|\n| **src/App.tsx** | 关闭模块卸载及导航保护 |\n| **src/utils/moduleLifecycle.ts** | 页面协调和保存状态机 |\n| **src/utils/eventBuffer.ts** | owner订阅释放及快照清空 |\n| **src/utils/__tests__/moduleLifecycle.test.ts** | 卸载、失败读取和并发保存回归 |\n| **src/utils/__tests__/eventBuffer.test.ts** | 关闭重启及迟到订阅回归 |\n| **src/components/useAppearanceSettings.ts** | 接入真实配置协调 |\n| **src/components/mindmap/agentShared.state.tsx** | 思维导图buffer归属 |\n| **src/components/dbdesigner/DbDesignerPanel.model.tsx** | 设计器buffer归属 |",
+  "created_at": "2026-10-31 17:27:18",
+  "updated_at": "2026-10-31 18:08:33",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

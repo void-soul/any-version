@@ -1,0 +1,183 @@
+{
+  "baseline": "f37bb9e049017483d65baac532c7e1be5e129330",
+  "date": "2026-10-31",
+  "environment": "Windows; Rust fixtures requiring loopback/junction/process trees accepted outside process sandbox",
+  "results": {
+    "rust_main": {
+      "passed": 1585,
+      "failed": 0,
+      "ignored": 6
+    },
+    "certificate_and_receiver_main": {
+      "passed": 69,
+      "failed": 0
+    },
+    "shared_deployment": {
+      "passed": 46,
+      "failed": 0
+    },
+    "standalone_receiver": {
+      "passed": 11,
+      "failed": 0
+    },
+    "frontend": {
+      "files": 53,
+      "passed": 426,
+      "failed": 0
+    },
+    "ssh_script_posix_fixtures": {
+      "passed": 6,
+      "failed": 0
+    },
+    "typescript": "passed",
+    "production_build": "passed",
+    "rust_all_targets": "passed with compiler warnings",
+    "module_boundaries": {
+      "passed": true,
+      "source_files": 1120
+    },
+    "diff_whitespace": "passed"
+  },
+  "limits": [
+    "Six existing tests require real WorkBuddy/network or audio hardware and remain ignored.",
+    "No real certificate issuance, cloud/SSH deployment or service restart.",
+    "No Unix host execution; POSIX deployment script template executed with Git Bash fake fixtures.",
+    "Stopping releases owned resources, not compiled code or a guarantee of immediate RSS reduction."
+  ],
+  "local_ignored_evidence": {
+    "rust_main": {
+      "path": "final-native-tests.log",
+      "sha256": "908cea9b363244705c30db5af2db657a964c47df27bfe952ad54a4424965d7d7"
+    },
+    "shared_deployment": {
+      "path": "shared-tests-confirmed.log",
+      "sha256": "f3972983cde019c5cae2af3a806df47f6b484a8ee8ad2806f9a67204034c1984"
+    },
+    "standalone_receiver": {
+      "path": "receiver-tests.log",
+      "sha256": "20b22726fc32f1d370fee1324c07dd8f0a68e08d901005de54884e20425bc231"
+    },
+    "frontend": {
+      "path": "frontend-tests.log",
+      "sha256": "96d693f6a25679c445f46ff25c2b303e2bb75a0cdbe9d3003228af6451b2c1ef"
+    },
+    "typescript": {
+      "path": "tsc.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "production_build": {
+      "path": "vite.log",
+      "sha256": "2a68b19a284f5c3be993294d01bb6e64cfb9f7af24b04c101d113c99f9c2b17d"
+    },
+    "all_targets": {
+      "path": "all-targets.log",
+      "sha256": "00a22a9f3b4dcfa637cca6530ed832a11783df7f1f8844d249f46464127f8f43"
+    },
+    "architecture": {
+      "path": "architecture-final.log",
+      "sha256": "8c0a63bced20328472f57b5212fc6f9b2e60bdc0e5d6867a2ff24ddf73dc6d66"
+    },
+    "ssh_posix": {
+      "path": "ssh-posix-tests.log",
+      "sha256": "d9a1cea1ee690326435deb8aeafbf9a97b6e306fac140371c5f845e28f5a0400"
+    }
+  },
+  "accepted_source_commit": "b2a04d867b00590f33a44d9c742e095499ecb9b4",
+  "source_paths": 94,
+  "source_sha256": {
+    "src-tauri/src/runtime_tasks.rs": "4005b257c55577fa8843a1c771af9d281806f615ad347e85c57f060ee47a4850",
+    "crates/cert-deployment/src/reload_command.rs": "ddaf9b3219ed3209d44687629de18d7ce9cef81ddebb3a9aa38d833eef450a65",
+    "src-tauri/src/commands/cert/deploy_ssh.rs": "92dd3a4139e6192434c3985c5b2961d17e146f6ae472648ff7e762d70bba8e18",
+    "src-tauri/src/commands/cert/deploy_ssh_transaction.rs": "bf73f9d5cc2e1eac785c7d2eb7406f543a38a867733c9bd56ca606348e524581",
+    "cert-receiver/src/config.rs": "d1564efcc9e0c02bdbaa33aaf23394604ee38924c994f42fb58eac170ede863b",
+    "cert-receiver/src/lifecycle.rs": "4822a28e1f29244edeffc5e0a02772750ce97c49cb25d89d64865330431259c5",
+    "cert-receiver/src/main.rs": "b4865dfa866f459ee40623301c82ed613ed8d4f61a48e6e371761aa1d6002b59",
+    "cert-receiver/src/server.rs": "682869d911f124de328bcadf17bfe21c8cdb68adc67440906e715acc88ba9c5b",
+    "crates/cert-deployment/src/deployment.rs": "0a2ad8347eb013bb38f7b2fe9f0a32af4837bbf62f42a7968f95a9fea7161ad3",
+    "crates/cert-deployment/src/deployment/recovery_tests.rs": "9d8024c91f42a7e0ade1e744c0785d0419fa740fa499d4689345e08e8b1e3f66",
+    "crates/cert-deployment/src/lib.rs": "f00b20ef0cf0bf216b8dbfd02021c14882d1d30a89819de7482201871b9ef0a1",
+    "crates/cert-deployment/src/lifecycle.rs": "020e94579d0cdd2c9ad078d96b44cf41b7f22e4433a5686295a0c1abe2257a1f",
+    "crates/cert-deployment/src/protocol.rs": "6989178991f9c326db5f830748a6b6d6fb77a798ab1ef8110ece41e7c09a9c23",
+    "crates/cert-deployment/src/reload_plan.rs": "db41a8db8425a95824fd77d226259b57c062b19bcecdd92ff46c770e5cef6a41",
+    "src-tauri/src/commands/cert_receiver.rs": "8bb95725e5701602aff5048c3c285ede8c4a62d0b12a3916fe7c544583dc4b3c",
+    "src-tauri/src/commands/cert_receiver/lifecycle.rs": "0abe99fdc0be7b0762dff65a873951b14a00da6b2783836e4e0d06cec80a87aa",
+    "src-tauri/src/commands/cert/commands.rs": "439d18586d743a1ea5063e0ef432d2788d8577579855f08d285057314b075674",
+    "src-tauri/src/commands/cert/deploy_local.rs": "30cddd21529814d8224f1873aa5c3c4ebcb59f437becfc3d7e9321abbc5e2d1a",
+    "src-tauri/src/commands/cert/details.rs": "b283e2fbec3299645cd7b4eb7ff8112753b91b7789d32af6af806bd4d524e1f4",
+    "src-tauri/src/commands/cert/lego.rs": "bf7f7e97a8fd85e0e587f7d6a350361f2660600b555ef51cf8688d52f6c6a543",
+    "src-tauri/src/commands/cert/local_retry.rs": "9a1c0b60c14e04add9422c6d447d74c6b46c6c2d9f73c52e250b43c2997da8da",
+    "src-tauri/src/commands/cert/monitor.rs": "64a0da6a4a8ffd3b4628f6db0a38baa63b997dc16866b24c478e76605e1cb18c",
+    "src-tauri/src/commands/cert/monitor_commands.rs": "a011c4a1b90294c3cb27f10dc512fb8c7e56d57ef66d58e036a8c57f7d504dba",
+    "src-tauri/src/commands/cert/pipeline.rs": "efe5d64bb393ff1f933738a6cf2346fbd4cda972a768a76c52ebb4b77694e829",
+    "src-tauri/src/commands/cert/scheduler.rs": "a3ef9d8e27b137a978357a208961ccb9bca2537b2db334ba0e8da39ba98bda43",
+    "src-tauri/src/commands/cert/store.rs": "0266caf5f44889b44d2d740c45481be776e4c7d831eeeed725fe23945b4d1e47",
+    "src-tauri/src/commands/cert/store/concurrency_tests.rs": "c14107c26af4851f35467dccd9d793d93cd1cfd5ed9ed8f7c87973c04a8bae29",
+    "src-tauri/src/commands/cert/deploy_onepanel.rs": "e34f2601b713832ecc9d6861cf531fbad55bf1ddf7dc5ff1eedea675bb0ccb31",
+    "src-tauri/src/commands/cert/deploy_onepanel/tests.rs": "389577cc717fce65c16d55581d32b412edecd382a758e311a70268c152d6aca6",
+    "src-tauri/src/commands/http_server.rs": "738b317614ca46b0310bec4d20df11b10b08d276398d98869a1650c259b4f690",
+    "src-tauri/src/commands/http_server_lifecycle.rs": "01212a260adf0397e9fd386fc45c4a9cefe3955d204ea9b5e7fc55f0e88eecdb",
+    "src-tauri/src/commands/rtsp_server.rs": "2c554f20a8f6035bb8392343a6dad73b3cd16763bc115ca66a21a60cfb125bc4",
+    "src-tauri/src/commands/rtsp_server_lifecycle.rs": "c252c23b48094d129385729689d766945299f5ae7339cdf2c6f3f6147c8970f5",
+    "src-tauri/src/proxy/server.rs": "304e4b9290b3430e7847dccb38c6b534e26b83a7ae6d7cedbf72e2a10a6c5596",
+    "src-tauri/src/proxy/server/connection.rs": "64718af72de726b9f6001d46095a9f9471b13b8ba5f3fa4e70fff9822870d1a3",
+    "src-tauri/src/proxy/server/lifecycle.rs": "c88b95ba832a2201e45be068ff771ebde95f193007fd8f9fb004252b4b6a8a0f",
+    "src-tauri/src/proxy/server/observability.rs": "d9a7f54a021b404d6a7995e9611dbaec343e6e80c72071fedd4833b898785265",
+    "src-tauri/src/commands/foundation.rs": "1ab87b46a4d333e6b1c4cd83773ab3124cdf6254e061b1a5286b1fb24407b6ae",
+    "src-tauri/src/commands/foundation/owned_process.rs": "42a4b9443e4869adde34063058757561e4c87fa58d56836cbbba591b855c494a",
+    "src-tauri/src/commands/picky/browser.rs": "4c9ff11d90abf3e88c6ec04630a20e510628458c8bce0bc6244d79174185a7e0",
+    "src-tauri/src/commands/project/versions/archives.rs": "4ac6676fbc32b10e3e9d084e6a0992347e1b23e8aa2a78c8fc1e5ede4c654a07",
+    "src-tauri/src/commands/project/versions/installation.rs": "7b8bef83b15fa36944d51c69512ccee60cbee5fe3fb5f07d8ca57de39d4aa900",
+    "src-tauri/src/commands/project/versions/lifecycle.rs": "6856a76acdc11a3a2d209a67acfae75b21f2aeef565874cebbea7d4dc939c29c",
+    "src-tauri/src/commands/project/versions/msix.rs": "d9b0c3af060cd980d659244928dcd862c3d9ef24554eadf11e2286269cfe73de",
+    "src-tauri/src/commands/project/versions/state.rs": "bd1c3a73287f564af1fe12a2e8c3cda77a15fc5964f9bd97659f98b38974ddb3",
+    "src-tauri/src/commands/suno/download.rs": "5e0b630ce6ed6db8989ebcf8db0cfef39af60dd8b5ce01c5ba97e11b02a2ed3a",
+    "src-tauri/src/commands/buddy/api.rs": "6adf9501215ff447b4c438526b486513ba0a74abbc93b632e1647ff1d3c74d40",
+    "src-tauri/src/commands/buddy/api/oauth_sessions.rs": "e3e0f4f2d5f714c2ed35acdaf0323c4e86838f80d3fae7a41ea42f208817add1",
+    "src-tauri/src/commands/buddy/api/oauth_sessions/tests.rs": "d3c8d7e9214044a83c6062008201b149bbcd5957d76c78af1ae674860f24b2dd",
+    "src-tauri/src/commands/buddy/growth.rs": "70a2b6e0685f2c192927223ba053f46c9cdedc1cbc4920df7ea1774e97f7040f",
+    "src-tauri/src/commands/buddy/mod.rs": "82044be7a36efa529155d9d95e9aaaf75ffe8464a391ac93210b3a33d8da382e",
+    "src-tauri/src/commands/buddy/session_transfer/codebuddy/workspaces.rs": "93654d12fe437f15fcd88f4e07c1e885875b93e368dbdac148cb1931e42a1842",
+    "src-tauri/src/commands/clipboard/mod.rs": "25f5b93166f569fc62a4110dfa1589e74e7fc38980dc2366247610d4351a5cc0",
+    "src-tauri/src/commands/music/player/playback.rs": "7ed947952ef9bcc1eb21e387525359f98c105ea0c74b653ca3f41a76def00835",
+    "src-tauri/src/commands/music/player/tests.rs": "b372bd960a14d2df6e742715d80ec954d7c04b8dd8d208d25f4097d671ce3d29",
+    "src-tauri/src/commands/music/plugin_playback.rs": "bf982470c36bf9da0428386aec919f1d4eee751d2f478e00ced49f9ba7d9da42",
+    "src-tauri/src/commands/ai/translate.rs": "0b6994f48b60794031eca37497078d0794015abfeedf3f87a5c0fac0abd30c5f",
+    "src-tauri/src/commands/api/commands/execution.rs": "33ad6f2caf4a601bcb0681eb2e068708966848c95920de311ae107b88ebc0970",
+    "src-tauri/src/commands/api/commands/interchange.rs": "75987c0f1b800561823b885f178c30b5b5fa4e42fc6b6422d0ba3d6672d548d4",
+    "src-tauri/src/commands/api/commands/unit_tests.rs": "bec3a202f717ec7021c403491d1233463e9423074979d6dfc0fca91121ffcce2",
+    "src-tauri/src/commands/api/import_ai.rs": "3776b2b6ffee86ed8c1b4b259447387df423c19827126989f03ea76dc913d7b1",
+    "src-tauri/src/commands/db_designer/ai/generation.rs": "c056d5af8f5c28046b0f3bb3e5a91e52fce1a5ad771c4aef05d234dd885d062f",
+    "src-tauri/src/commands/favorites/agent.rs": "7988f6bd66aeab899194170c07aedd3449c862b10ebbbd1a8b48e9d3ec5a1e0c",
+    "src-tauri/src/commands/favorites/commands.rs": "075889ec1058f22363c99d522bcdef515700d1494a79db2989d16f3a3124c644",
+    "src-tauri/src/commands/favorites/commands/bilibili_import.rs": "1091ee7caf03bb371f15a46b255cfead0465a30bb2a867764fe2d9337b718ed2",
+    "src-tauri/src/commands/favorites/commands/checking.rs": "fc8c3620fcc668e6b51a0720d1a23bdfdcead6a0c47361b9e5aa872ff20f73c5",
+    "src-tauri/src/commands/favorites/commands/classification.rs": "ff8cfacc9ba5ae64fcaf90229eab39ffbda64540f631a77beb799b7c7395e456",
+    "src-tauri/src/commands/favorites/commands/content.rs": "cea0ee816a80e7e21655f1768cf7c1151bc84d2241ae79ff182ba2d0c4ee6643",
+    "src-tauri/src/commands/favorites/commands/github_import.rs": "b36b5ddb778d1e43d0ebcc3d3fde36e81845ea009cd67c774a19e637e789713f",
+    "src-tauri/src/commands/favorites/commands/tests.rs": "5a4e9791f2bcc15a865f45e65bf27dd277f373e6b7a2abd1152833d253f69a96",
+    "src-tauri/src/commands/favorites/commands/zhihu_import.rs": "10571488b81c0ab53e65f452823d898f684e960fce85d4b8cf74ac498c1f6421",
+    "src-tauri/src/commands/mindmap/commands.rs": "ff928f624908d9ac28c2ac573177f64c2d7cea4bd71d490d6d0d6523d56c3c3e",
+    "src-tauri/src/commands/mindmap/commands/agent_session.rs": "8dcc125e5b70577e1295901a2a1950d4b407edccafa2de65c436ca52dd051335",
+    "src-tauri/src/commands/mindmap/commands/regenerate.rs": "f30bea65124778bedffce45a4311ca28db21b668845bc99752c663a985c9c04e",
+    "src-tauri/src/commands/mindmap/commands/routing.rs": "cada195266d7792829493fa6e63429ac30f939b0556501e6e89572577881d012",
+    "src-tauri/src/commands/mindmap/commands/tests.rs": "0f98ecca2facd1653b8c6a015a580636bf9ac0c05b7cd437f6825fb46fa2b52b",
+    "src-tauri/src/commands/picky/bookmarks.rs": "a7b44bd70b9478f5652e8dbdcdc442790e51b1cf0abff8013a32af527e8af282",
+    "src-tauri/src/commands/picky/metadata.rs": "63ddcbf78ecbf5577d6b23f46ae6d4d1e3b860136e077e10a9ebfb9af9585e8f",
+    "src-tauri/src/commands/picky/mod.rs": "1a05e8cc0842170f294adb86fd5ef6bb3f5312d5e450cebcd639415980d70a96",
+    "src-tauri/src/commands/picky/sync.rs": "9ece5f8b20dff03ffdec76cccd7cda45748d04cf0d4d6041f2923d366a172f69",
+    "src-tauri/src/commands/picky/webview.rs": "520bb91231325494a18bb11c3c66ef7526704637d8f9bda62b2f3e7a432f3793",
+    "src-tauri/src/commands/suno/profiles.rs": "18d5827ec764d98c1c55daad74da235c704a14b07aedbdcbb976b279f2b76554",
+    "src/App.tsx": "cd98a50fe04a86f91de1acf16714e37e886882503c83f2ee7ec85888fd1917d7",
+    "src/components/dbdesigner/DbDesignerPanel.model.tsx": "4ddf96c70f9d8ad161a8728b9a37c0e323f467f6f95dac7acca8622e4545acef",
+    "src/components/mindmap/agentShared.state.tsx": "013b0986b1d3905d5c75a707680b8febeb98e32ecb962e082fdc62dfa624236a",
+    "src/components/useAppearanceSettings.ts": "efd185aca2bd85e6ea68191ce7e40ed4eddf490fd675492b4ab1ca9d17e779c7",
+    "src/utils/__tests__/eventBuffer.test.ts": "dfba34333a330dd4fb8e4b0bc16b9277bdbe164055eda5db90267bd50c2a333d",
+    "src/utils/__tests__/moduleLifecycle.test.ts": "6f72f33df8f9c0dcc5e37035329d255e4c44e5270bae4e62182a0506eb24fb9f",
+    "src/utils/eventBuffer.ts": "f4ba2085a74615bb3119028accf73b07e7b972134d3f6804cf51387915972ab3",
+    "src/utils/moduleLifecycle.ts": "f98f90658a8037c01936428dafb30f105e710ad7cf9eba4c8ec980dd577ea90d",
+    "src-tauri/src/app_commands.rs": "1409cb71443e8caddf05216f24afec2c615e0d2fc8695f7d34496e23e8a60d00",
+    "src-tauri/src/commands/module_lifecycle.rs": "d9014cd51a3f7c871dec30ed3e41b5c3aae07cacb8b9d4bb256007afb16d6d18",
+    "src-tauri/src/lib.rs": "62e465a03b95ed33151099461927812c19d03742eb809f87bf24576be92cc522",
+    "src-tauri/src/module_policy.rs": "6ba3f74dbc6db30d85dfa3d40c26e6b7f1e0a2b599a64761c1373fc0faa7ccbb"
+  }
+}
