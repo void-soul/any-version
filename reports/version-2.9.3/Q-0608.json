@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0608",
+  "date": "2026-11-01",
+  "category": "Build",
+  "status": "已验证",
+  "phenomenon": "提交当前Kira 2.9.3版本升级：package.json、Cargo.toml及Tauri配置已升至2.9.3，需要检查锁文件中的本地包版本同步，确保版本一致且locked构建不被旧版本元数据阻断。",
+  "root_cause": "应用的 **package.json**、**Cargo.toml** 和 **tauri.conf.json** 已更新，但 **Cargo.lock** 中本地 **kira** 包仍是2.9.2，版本元数据不一致。",
+  "solution": "1. 保留现有三处2.9.3版本修改，仅同步Cargo.lock中kira本地包版本，依赖及校验和不变。\n2. JSON/TOML解析确认四处版本均为2.9.3；cargo metadata --locked --offline --no-deps通过，差异空白检查通过。\n3. 按当前用户提交授权单独提交本版本批次；原有qa.db改动与旧未跟踪报告保留。",
+  "files": "| File | Change |\n|------|--------|\n| **package.json** | 前端包版本2.9.3 |\n| **src-tauri/Cargo.toml** | Rust应用包版本2.9.3 |\n| **src-tauri/tauri.conf.json** | 桌面发布版本2.9.3 |\n| **src-tauri/Cargo.lock** | 本地kira包版本同步2.9.3 |",
+  "created_at": "2026-11-01 00:44:28",
+  "updated_at": "2026-11-01 00:44:46",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}
