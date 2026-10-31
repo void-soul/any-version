@@ -641,52 +641,56 @@ pub async fn mm_ai_from_project(
     app: tauri::AppHandle,
     input: AiGenerateProjectInput,
 ) -> Result<AiImportResult, String> {
-    let pp = input.project_path.trim().to_string();
-    if pp.is_empty() {
-        return Err("路径为空".into());
-    }
-    let pname = std::path::Path::new(&pp)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("项目")
-        .to_string();
-    let app_opt = Some(app);
-    // 本次运行的取消标志：按 run_id 独立，前后端共用同一标识
-    let run_id = if input.run_id.trim().is_empty() {
-        "import".to_string()
-    } else {
-        input.run_id.clone()
-    };
-    let cancel = ai_cancel_flag(&run_id);
-    let result = async {
-        emit_progress(&app_opt, "scan", serde_json::json!({}));
-        // 扫描（含技术栈/目录规模/标记等仓库证据）
-        let context = crate::commands::mindmap::scan::scan_project_with_hint(
-            &pp,
-            input.user_hint.as_deref(),
-        )?;
-        emit_progress(&app_opt, "scan", serde_json::json!({ "done": true }));
-        let (provider, model) = resolve_provider_model(&input.provider_id, &input.model_id)?;
-        run_ai_router(
-            &provider,
-            &model,
-            "project",
-            &context,
-            &pname,
-            Some(&pp),
-            &app_opt,
-            &cancel,
-            input.depth.clamp(1, 5),
-            &input.views,
-            &run_id,
-            Some(&input.document_id),
-            input.replace_existing,
-        )
-        .await
-    }
-    .await;
-    ai_drop_flag(&run_id);
-    result
+    crate::runtime_tasks::run_if_enabled("mindmap", async move {
+        let pp = input.project_path.trim().to_string();
+        if pp.is_empty() {
+            return Err("路径为空".into());
+        }
+        let pname = std::path::Path::new(&pp)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("项目")
+            .to_string();
+        let app_opt = Some(app);
+        // 本次运行的取消标志：按 run_id 独立，前后端共用同一标识
+        let run_id = if input.run_id.trim().is_empty() {
+            "import".to_string()
+        } else {
+            input.run_id.clone()
+        };
+        let cancel = ai_cancel_flag(&run_id);
+        let _cleanup = AiRunCleanup::new(&run_id, &cancel);
+        let result = async {
+            emit_progress(&app_opt, "scan", serde_json::json!({}));
+            // 扫描（含技术栈/目录规模/标记等仓库证据）
+            let context = crate::commands::mindmap::scan::scan_project_with_hint(
+                &pp,
+                input.user_hint.as_deref(),
+            )?;
+            emit_progress(&app_opt, "scan", serde_json::json!({ "done": true }));
+            let (provider, model) = resolve_provider_model(&input.provider_id, &input.model_id)?;
+            run_ai_router(
+                &provider,
+                &model,
+                "project",
+                &context,
+                &pname,
+                Some(&pp),
+                &app_opt,
+                &cancel,
+                input.depth.clamp(1, 5),
+                &input.views,
+                &run_id,
+                Some(&input.document_id),
+                input.replace_existing,
+            )
+            .await
+        }
+        .await;
+        ai_drop_flag(&run_id);
+        result
+    })
+    .await
 }
 
 #[tauri::command]
@@ -694,39 +698,43 @@ pub async fn mm_ai_from_text(
     app: tauri::AppHandle,
     input: AiGenerateTextInput,
 ) -> Result<AiImportResult, String> {
-    let text = input.text.trim().to_string();
-    if text.is_empty() {
-        return Err("文本为空".into());
-    }
-    let title = if input.title.trim().is_empty() {
-        "需求分析"
-    } else {
-        input.title.trim()
-    };
-    let (provider, model) = resolve_provider_model(&input.provider_id, &input.model_id)?;
-    let app_opt = Some(app);
-    let run_id = if input.run_id.trim().is_empty() {
-        "import".to_string()
-    } else {
-        input.run_id.clone()
-    };
-    let cancel = ai_cancel_flag(&run_id);
-    let result = run_ai_router(
-        &provider,
-        &model,
-        "text",
-        &text,
-        title,
-        None,
-        &app_opt,
-        &cancel,
-        3,
-        &[],
-        &run_id,
-        Some(&input.document_id),
-        input.replace_existing,
-    )
-    .await;
-    ai_drop_flag(&run_id);
-    result
+    crate::runtime_tasks::run_if_enabled("mindmap", async move {
+        let text = input.text.trim().to_string();
+        if text.is_empty() {
+            return Err("文本为空".into());
+        }
+        let title = if input.title.trim().is_empty() {
+            "需求分析"
+        } else {
+            input.title.trim()
+        };
+        let (provider, model) = resolve_provider_model(&input.provider_id, &input.model_id)?;
+        let app_opt = Some(app);
+        let run_id = if input.run_id.trim().is_empty() {
+            "import".to_string()
+        } else {
+            input.run_id.clone()
+        };
+        let cancel = ai_cancel_flag(&run_id);
+        let _cleanup = AiRunCleanup::new(&run_id, &cancel);
+        let result = run_ai_router(
+            &provider,
+            &model,
+            "text",
+            &text,
+            title,
+            None,
+            &app_opt,
+            &cancel,
+            3,
+            &[],
+            &run_id,
+            Some(&input.document_id),
+            input.replace_existing,
+        )
+        .await;
+        ai_drop_flag(&run_id);
+        result
+    })
+    .await
 }

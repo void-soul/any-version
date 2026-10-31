@@ -20,10 +20,12 @@ pub async fn fav_import_github(
     app: tauri::AppHandle,
     max_pages: Option<usize>,
 ) -> Result<ImportResult, String> {
-    begin_task(TASK_GITHUB)?;
-    let out = import_github_inner(app, max_pages).await;
-    end_task(TASK_GITHUB);
-    out
+    crate::runtime_tasks::run_if_enabled("favorites", async move {
+        let _task = TaskGuard::begin(TASK_GITHUB)?;
+        let out = import_github_inner(app, max_pages).await;
+        out
+    })
+    .await
 }
 
 pub(super) async fn import_github_inner(

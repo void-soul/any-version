@@ -14,10 +14,12 @@ pub(super) fn zhihu_cookie() -> Result<String, String> {
 /// 所以间隔 [`zhihu::PAGE_DELAY_MS`] 是账号安全措施，不是性能参数。
 #[tauri::command]
 pub async fn fav_import_zhihu(app: tauri::AppHandle) -> Result<ImportResult, String> {
-    begin_task(TASK_ZHIHU)?;
-    let out = import_zhihu_inner(app).await;
-    end_task(TASK_ZHIHU);
-    out
+    crate::runtime_tasks::run_if_enabled("favorites", async move {
+        let _task = TaskGuard::begin(TASK_ZHIHU)?;
+        let out = import_zhihu_inner(app).await;
+        out
+    })
+    .await
 }
 
 pub(super) async fn import_zhihu_inner(app: tauri::AppHandle) -> Result<ImportResult, String> {

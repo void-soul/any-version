@@ -4,7 +4,10 @@ use super::*;
 
 #[tauri::command]
 pub async fn api_send_request(input: SendRequestInput) -> Result<SendRequestOutput, String> {
-    crate::commands::api::exec::execute_request_cancellable(&input).await
+    crate::runtime_tasks::run_if_enabled("api", async move {
+        crate::commands::api::exec::execute_request_cancellable(&input).await
+    })
+    .await
 }
 
 /// 取消当前进行中的请求（前端「取消」按钮）。

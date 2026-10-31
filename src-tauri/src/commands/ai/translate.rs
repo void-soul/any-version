@@ -6,10 +6,10 @@
 //! 同时提供「划词翻译」链路：模拟 Ctrl+C 读取前台窗口选中文本 → 翻译 →
 //! 在独立悬浮窗(translate-popup)中展示结果（带钉住/关闭）。
 
+use super::channel;
+use super::config::load_ai_config;
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
-use super::config::load_ai_config;
-use super::channel;
 
 /// 全局默认 AI 模型配置（provider + model）+ 划词翻译目标语言。
 ///
@@ -32,6 +32,20 @@ static LAST_TRANSLATE_RESULT: std::sync::Mutex<Option<serde_json::Value>> =
     std::sync::Mutex::new(None);
 static POPUP_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static TRANSLATE_REQUEST_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Called after tracked translations have stopped; disk history and shared model settings remain.
+pub fn release_runtime_resources(app: &tauri::AppHandle) -> Result<(), String> {
+    *LAST_TRANSLATE_RESULT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = None;
+    POPUP_READY.store(false, std::sync::atomic::Ordering::Release);
+    if let Some(window) = app.get_webview_window(POPUP_LABEL) {
+        window
+            .destroy()
+            .map_err(|e| format!("关闭翻译悬浮窗失败: {e}"))?;
+    }
+    Ok(())
+}
 
 /// 保存最近结果快照，且保证版本号单调递增：
 /// trigger_selection_translate 与 translate_text 都会写入快照，后写的
@@ -308,7 +322,9 @@ fn resolve_translation_target_with(
 }
 
 /// 回退供应商：第一个有 api_key 且配置了 OpenAI 端点的供应商。
-fn fallback_provider(cfg: &crate::commands::ai::models::AiConfig) -> Result<(crate::commands::ai::models::AiProvider, Option<String>), String> {
+fn fallback_provider(
+    cfg: &crate::commands::ai::models::AiConfig,
+) -> Result<(crate::commands::ai::models::AiProvider, Option<String>), String> {
     let p = cfg
         .providers
         .iter()
@@ -337,6 +353,8 @@ pub async fn translate_text(
     model_id: Option<String>,
     target_lang: Option<String>,
 ) -> Result<String, String> {
+    crate::runtime_tasks::run_if_enabled("translate", async move {
+
     let text = text.trim().to_string();
     if text.is_empty() {
         return Err("待翻译文本为空".to_string());
@@ -417,6 +435,8 @@ pub async fn translate_text(
     set_last_translate_result(ok_payload);
 
     Ok(content)
+
+    }).await
 }
 
 // ─── 划词翻译：读取前台窗口选中文本 ───
@@ -453,7 +473,11 @@ pub(crate) fn simulate_copy_selection() {
         ctrl_up.Anonymous.ki.dwFlags = KEYEVENTF_KEYUP;
         inputs.push(ctrl_up);
 
-        SendInput(inputs.len() as u32, inputs.as_mut_ptr(), std::mem::size_of::<INPUT>() as i32);
+        SendInput(
+            inputs.len() as u32,
+            inputs.as_mut_ptr(),
+            std::mem::size_of::<INPUT>() as i32,
+        );
     }
 }
 
@@ -518,12 +542,14 @@ fn read_wide_string(ptr: *const u16) -> Option<String> {
 const POPUP_LABEL: &str = "translate-popup";
 
 fn contains_cjk(text: &str) -> bool {
-    text.chars().any(|ch| matches!(
-        ch,
-        '\u{3400}'..='\u{4DBF}'
-            | '\u{4E00}'..='\u{9FFF}'
-            | '\u{F900}'..='\u{FAFF}'
-    ))
+    text.chars().any(|ch| {
+        matches!(
+            ch,
+            '\u{3400}'..='\u{4DBF}'
+                | '\u{4E00}'..='\u{9FFF}'
+                | '\u{F900}'..='\u{FAFF}'
+        )
+    })
 }
 
 fn emit_translate_payload(app: &tauri::AppHandle, payload: &serde_json::Value) {
@@ -593,7 +619,9 @@ fn popup_position(win_w: i32, win_h: i32) -> Option<(i32, i32)> {
 
 /// 把悬浮窗移动到鼠标当前位置（复用窗口时调用）。
 fn position_popup_at_cursor(win: &tauri::WebviewWindow) {
-    let size = win.outer_size().unwrap_or(tauri::PhysicalSize::new(400, 480));
+    let size = win
+        .outer_size()
+        .unwrap_or(tauri::PhysicalSize::new(400, 480));
     if let Some((x, y)) = popup_position(size.width as i32, size.height as i32) {
         let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
     }
@@ -637,11 +665,13 @@ pub async fn trigger_selection_translate(
     app: tauri::AppHandle,
     target_lang: Option<String>,
 ) -> Result<(), String> {
+    crate::runtime_tasks::run_if_enabled("translate", async move {
+
     // 1. 先记住/模拟复制前台窗口选中文本
     crate::exit_log!("[划词翻译] 开始，模拟 Ctrl+C");
     simulate_copy_selection();
     // 稍等剪贴板更新
-    std::thread::sleep(std::time::Duration::from_millis(120));
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
     let text = match read_clipboard_text() {
         Some(t) => {
             crate::exit_log!("[划词翻译] 读取到选中文本 {} 字符: {:?}", t.chars().count(), t.chars().take(30).collect::<String>());
@@ -685,6 +715,7 @@ pub async fn trigger_selection_translate(
     set_last_translate_result(show_payload.clone());
     let app_for_main = app.clone();
     let _ = app.run_on_main_thread(move || {
+        if !crate::runtime_tasks::is_enabled("translate") { return; }
         let win = app_for_main.get_webview_window(POPUP_LABEL);
         if let Some(w) = win.as_ref() {
             let _ = w.show();
@@ -725,6 +756,8 @@ pub async fn trigger_selection_translate(
     emit_translate_payload(&app, &ok_payload);
     crate::exit_log!("[划词翻译] 结果已推送");
     Ok(())
+
+    }).await
 }
 
 /// 关闭/隐藏悬浮窗（前端钉住关闭时调用）。
@@ -737,25 +770,36 @@ pub fn hide_translate_popup(app: tauri::AppHandle) {
 
 /// 直接通过悬浮窗展示指定翻译（供前端 TranslatePanel 复用，避免重复建窗）。
 #[tauri::command]
-pub async fn show_translate_result(app: tauri::AppHandle, source: String, result: String, target: String) -> Result<(), String> {
-    ensure_translate_popup(&app)?;
-    let payload = serde_json::json!({ "source": source, "result": result, "target": target });
-    // 与 trigger_selection_translate 保持一致：保存最近结果供前端拉取，
-    // 窗口操作放主线程执行，并额外聚焦 WebView2（否则收不到 focus/blur 事件）。
-    set_last_translate_result(payload.clone());
-    let app2 = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        if let Some(w) = app2.get_webview_window(POPUP_LABEL) {
-            let _ = w.show();
-            // 跟随鼠标：把悬浮窗移到当前光标位置
-            position_popup_at_cursor(&w);
-            let _ = w.set_focus();
-            let webview: &tauri::Webview<tauri::Wry> = w.as_ref();
-            let _ = webview.set_focus();
-        }
-    });
-    emit_translate_payload(&app, &payload);
-    Ok(())
+pub async fn show_translate_result(
+    app: tauri::AppHandle,
+    source: String,
+    result: String,
+    target: String,
+) -> Result<(), String> {
+    crate::runtime_tasks::run_if_enabled("translate", async move {
+        ensure_translate_popup(&app)?;
+        let payload = serde_json::json!({ "source": source, "result": result, "target": target });
+        // 与 trigger_selection_translate 保持一致：保存最近结果供前端拉取，
+        // 窗口操作放主线程执行，并额外聚焦 WebView2（否则收不到 focus/blur 事件）。
+        set_last_translate_result(payload.clone());
+        let app2 = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if !crate::runtime_tasks::is_enabled("translate") {
+                return;
+            }
+            if let Some(w) = app2.get_webview_window(POPUP_LABEL) {
+                let _ = w.show();
+                // 跟随鼠标：把悬浮窗移到当前光标位置
+                position_popup_at_cursor(&w);
+                let _ = w.set_focus();
+                let webview: &tauri::Webview<tauri::Wry> = w.as_ref();
+                let _ = webview.set_focus();
+            }
+        });
+        emit_translate_payload(&app, &payload);
+        Ok(())
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -763,7 +807,13 @@ mod global_default_tests {
     use super::*;
     use crate::commands::ai::models::{AiConfig, AiProvider, ModelEntry};
 
-    fn provider(id: &str, key: &str, url: &str, models: &[&str], active: Option<&str>) -> AiProvider {
+    fn provider(
+        id: &str,
+        key: &str,
+        url: &str,
+        models: &[&str],
+        active: Option<&str>,
+    ) -> AiProvider {
         AiProvider {
             id: id.to_string(),
             name: id.to_string(),
@@ -775,7 +825,11 @@ mod global_default_tests {
             google_url: String::new(),
             models: models
                 .iter()
-                .map(|m| ModelEntry { id: m.to_string(), name: m.to_string(), custom_params: vec![] })
+                .map(|m| ModelEntry {
+                    id: m.to_string(),
+                    name: m.to_string(),
+                    custom_params: vec![],
+                })
                 .collect(),
             active_model_id: active.map(|s| s.to_string()),
             custom_headers: Vec::new(),
@@ -803,10 +857,14 @@ mod global_default_tests {
     #[test]
     fn fallback_when_default_provider_missing() {
         let cfg = config(vec![
-            provider("a", "", "https://x/v1", &["m1"], None),     // 无 key，不可用
+            provider("a", "", "https://x/v1", &["m1"], None), // 无 key，不可用
             provider("b", "sk-1", "https://y/v1", &["m2"], None), // 首个可用
         ]);
-        let saved = TranslateConfig { provider_id: Some("gone".into()), model_id: Some("mx".into()), target_lang: None };
+        let saved = TranslateConfig {
+            provider_id: Some("gone".into()),
+            model_id: Some("mx".into()),
+            target_lang: None,
+        };
         let (p, m) = resolve_translation_target_with(&cfg, &saved, &None, &None).unwrap();
         assert_eq!(p.id, "b");
         assert_eq!(m, "m2");
@@ -819,7 +877,11 @@ mod global_default_tests {
             provider("a", "sk-1", "https://x/v1", &["m1", "m2"], Some("m1")),
             provider("b", "sk-2", "https://y/v1", &["m3"], None),
         ]);
-        let saved = TranslateConfig { provider_id: Some("b".into()), model_id: Some("m3".into()), target_lang: None };
+        let saved = TranslateConfig {
+            provider_id: Some("b".into()),
+            model_id: Some("m3".into()),
+            target_lang: None,
+        };
         let (p, m) = resolve_translation_target_with(&cfg, &saved, &None, &None).unwrap();
         assert_eq!(p.id, "b");
         assert_eq!(m, "m3");
@@ -828,9 +890,21 @@ mod global_default_tests {
     /// 显式传入的模型优先于全局默认
     #[test]
     fn explicit_params_win_over_default() {
-        let cfg = config(vec![provider("a", "sk-1", "https://x/v1", &["m1", "m2"], None)]);
-        let saved = TranslateConfig { provider_id: Some("a".into()), model_id: Some("m1".into()), target_lang: None };
-        let (p, m) = resolve_translation_target_with(&cfg, &saved, &Some("a".into()), &Some("m2".into())).unwrap();
+        let cfg = config(vec![provider(
+            "a",
+            "sk-1",
+            "https://x/v1",
+            &["m1", "m2"],
+            None,
+        )]);
+        let saved = TranslateConfig {
+            provider_id: Some("a".into()),
+            model_id: Some("m1".into()),
+            target_lang: None,
+        };
+        let (p, m) =
+            resolve_translation_target_with(&cfg, &saved, &Some("a".into()), &Some("m2".into()))
+                .unwrap();
         assert_eq!(p.id, "a");
         assert_eq!(m, "m2");
     }
@@ -842,7 +916,11 @@ mod global_default_tests {
             provider("a", "sk-1", "https://x/v1", &["m1"], None),
             provider("b", "", "https://y/v1", &["m2"], None), // 默认指向 b（无 key）
         ]);
-        let saved = TranslateConfig { provider_id: Some("b".into()), model_id: Some("m2".into()), target_lang: None };
+        let saved = TranslateConfig {
+            provider_id: Some("b".into()),
+            model_id: Some("m2".into()),
+            target_lang: None,
+        };
         let (p, m) = resolve_translation_target_with(&cfg, &saved, &None, &None).unwrap();
         assert_eq!(p.id, "a");
         assert_eq!(m, "m1");

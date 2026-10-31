@@ -31,28 +31,32 @@ pub async fn fav_github_readme(
     id: i64,
     refresh: Option<bool>,
 ) -> Result<db::CachedContent, String> {
-    if refresh != Some(true) {
-        if let Some(cached) = db::with_conn(|conn| db::get_content(conn, id))? {
-            return Ok(cached);
+    crate::runtime_tasks::run_if_enabled("favorites", async move {
+        if refresh != Some(true) {
+            if let Some(cached) = db::with_conn(|conn| db::get_content(conn, id))? {
+                return Ok(cached);
+            }
         }
-    }
 
-    let (source, full_name, _) = db::with_conn(|conn| db::find_by_id(conn, id))?
-        .ok_or_else(|| format!("条目 {} 不存在", id))?;
-    if source != github::SOURCE {
-        return Err("只有 GitHub 条目支持查看 README".to_string());
-    }
-    let token = db::with_conn(|conn| db::get_credential(conn, github::SOURCE))?.unwrap_or_default();
-
-    for name in github::README_ZH_CANDIDATES {
-        if let Some(text) = github::fetch_file_text(&token, &full_name, name).await? {
-            return cache_readme(id, &text, Some(name));
+        let (source, full_name, _) = db::with_conn(|conn| db::find_by_id(conn, id))?
+            .ok_or_else(|| format!("条目 {} 不存在", id))?;
+        if source != github::SOURCE {
+            return Err("只有 GitHub 条目支持查看 README".to_string());
         }
-    }
-    match github::fetch_default_readme(&token, &full_name).await? {
-        Some((name, text)) => cache_readme(id, &text, Some(&name)),
-        None => Err(format!("{} 没有 README", full_name)),
-    }
+        let token =
+            db::with_conn(|conn| db::get_credential(conn, github::SOURCE))?.unwrap_or_default();
+
+        for name in github::README_ZH_CANDIDATES {
+            if let Some(text) = github::fetch_file_text(&token, &full_name, name).await? {
+                return cache_readme(id, &text, Some(name));
+            }
+        }
+        match github::fetch_default_readme(&token, &full_name).await? {
+            Some((name, text)) => cache_readme(id, &text, Some(&name)),
+            None => Err(format!("{} 没有 README", full_name)),
+        }
+    })
+    .await
 }
 
 /// 写入 README 缓存并回读（回读是为了带上统一的 `fetchedAt`）。

@@ -308,3 +308,21 @@ async fn cancelling_run_wakes_waiting_ask() {
     assert!(rx.await.unwrap().is_null());
     assert!(ask_send_answer(run_id, serde_json::json!("late")).is_err());
 }
+
+#[tokio::test]
+async fn dropped_ai_future_releases_run_flags_and_waiting_answer() {
+    let id = "isolated-module-cancel-cleanup";
+    let flag = ai_cancel_flag(id);
+    let (answer, mut received) = tokio::sync::oneshot::channel();
+    ask_register(id, answer);
+    let guard = AiRunCleanup::new(id, &flag);
+    let pending = async move {
+        let _guard = guard;
+        std::future::pending::<()>().await;
+    };
+    drop(pending);
+    assert!(is_cancelled(&flag));
+    assert!(!cancel_registry().lock().unwrap().contains_key(id));
+    assert!(!ask_registry().lock().unwrap().contains_key(id));
+    assert!(received.try_recv().is_ok());
+}

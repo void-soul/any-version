@@ -6,10 +6,12 @@ use super::*;
 /// 同样幂等：第二次导入 added = 0。
 #[tauri::command]
 pub async fn fav_import_bilibili(app: tauri::AppHandle) -> Result<ImportResult, String> {
-    begin_task(TASK_BILIBILI)?;
-    let out = import_bilibili_inner(app).await;
-    end_task(TASK_BILIBILI);
-    out
+    crate::runtime_tasks::run_if_enabled("favorites", async move {
+        let _task = TaskGuard::begin(TASK_BILIBILI)?;
+        let out = import_bilibili_inner(app).await;
+        out
+    })
+    .await
 }
 
 pub(super) async fn import_bilibili_inner(app: tauri::AppHandle) -> Result<ImportResult, String> {

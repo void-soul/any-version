@@ -117,6 +117,13 @@ pub(super) const WEBVIEW_EXTRACT_JS: &str = r#"(function () {
 /// 串行化元数据抓取（新增收藏自动补全与手动重抓共用同一隐藏窗口，避免并发建窗）。
 pub(super) static WEBVIEW_FETCH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+struct FetchWindowGuard(tauri::WebviewWindow);
+impl Drop for FetchWindowGuard {
+    fn drop(&mut self) {
+        let _ = self.0.destroy();
+    }
+}
+
 /// 用应用内隐藏 WebView 抓取页面元数据。
 /// 流程：建隐藏窗口 → 轮询 document.readyState 至 complete（≤18s）→ 静置 2.5s
 /// （等 SPA 标题/OG 落定）→ eval_with_callback 提取 JSON → 销毁窗口。
@@ -154,6 +161,7 @@ pub(super) async fn fetch_meta_via_webview(
             return None;
         }
     };
+    let _window_cleanup = FetchWindowGuard(w.clone());
     let cleanup = |app: &tauri::AppHandle| {
         if let Some(w) = app.get_webview_window(FETCH_VIEW_LABEL) {
             let _ = w.destroy();

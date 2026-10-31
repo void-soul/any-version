@@ -180,15 +180,17 @@ pub async fn mm_agent_chat(
     app: tauri::AppHandle,
     input: AgentChatInput,
 ) -> Result<AgentChatResult, String> {
-    let app_opt = Some(app);
-    let user_text = input.message.trim().to_string();
-    let run_id = if input.run_id.trim().is_empty() {
-        "agent".to_string()
-    } else {
-        input.run_id.clone()
-    };
-    let cancel = ai_cancel_flag(&run_id);
-    let result = async {
+    crate::runtime_tasks::run_if_enabled("mindmap", async move {
+        let app_opt = Some(app);
+        let user_text = input.message.trim().to_string();
+        let run_id = if input.run_id.trim().is_empty() {
+            "agent".to_string()
+        } else {
+            input.run_id.clone()
+        };
+        let cancel = ai_cancel_flag(&run_id);
+        let _cleanup = AiRunCleanup::new(&run_id, &cancel);
+        let result = async {
         // mut：Agent 的写工具会把变更同步进这份快照，同一轮里后续读工具才看得到
         let mut full =
             crate::commands::mindmap::db::load_full(&input.document_id)?.ok_or("文档不存在")?;
@@ -289,8 +291,10 @@ pub async fn mm_agent_chat(
         })
     }
     .await;
-    ai_drop_flag(&run_id);
-    result
+        ai_drop_flag(&run_id);
+        result
+    })
+    .await
 }
 
 /// 取文档的 Agent 会话 id（不存在则新建）。

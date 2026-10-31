@@ -7,8 +7,8 @@
 //! 与外部 AI 工具无关，通过用户已配置的供应商（含 api_key、openai_url）
 //! 发起非流式 chat/completions 请求（共享通道 ai/channel.rs，与 ai/translate.rs 同一套模式）。
 
-use super::models::ApiProject;
 use super::commands::{api_import_postman, load_project_template};
+use super::models::ApiProject;
 
 /// 参与 AI 分析的文件类型（按扩展名）。
 const INTERESTING_EXTS: &[&str] = &["ts", "tsx", "js", "java", "kt"];
@@ -43,7 +43,10 @@ fn resolve_ai_target(
             .ok_or_else(|| "未配置可用的 AI 供应商（需要 api_key + OpenAI 端点）".to_string())?,
     };
     if provider.api_key.is_empty() || provider.openai_url.is_empty() {
-        return Err(format!("供应商「{}」未配置 api_key 或 OpenAI 端点", provider.name));
+        return Err(format!(
+            "供应商「{}」未配置 api_key 或 OpenAI 端点",
+            provider.name
+        ));
     }
     let model = model_id
         .clone()
@@ -76,7 +79,19 @@ fn collect_source_files(dir: &str) -> Result<Vec<(String, String)>, String> {
             let p = entry.path();
             let name = entry.file_name().to_string_lossy().to_lowercase();
             if p.is_dir() {
-                if matches!(name.as_str(), "node_modules" | "target" | "dist" | "build" | ".git" | ".idea" | "out" | "coverage" | ".next" | ".nuxt") {
+                if matches!(
+                    name.as_str(),
+                    "node_modules"
+                        | "target"
+                        | "dist"
+                        | "build"
+                        | ".git"
+                        | ".idea"
+                        | "out"
+                        | "coverage"
+                        | ".next"
+                        | ".nuxt"
+                ) {
                     continue;
                 }
                 if name.starts_with('.') {
@@ -90,11 +105,19 @@ fn collect_source_files(dir: &str) -> Result<Vec<(String, String)>, String> {
                     .map(|e| INTERESTING_EXTS.contains(&e))
                     .unwrap_or(false);
                 // 只关注可能含接口的文件名特征
-                let fname = p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
-                let likely_api = fname.contains("controller") || fname.contains("route") || fname.contains("api");
-                let in_api_dir = p
-                    .components()
-                    .any(|c| c.as_os_str().to_string_lossy().to_lowercase().contains("api"));
+                let fname = p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_lowercase())
+                    .unwrap_or_default();
+                let likely_api = fname.contains("controller")
+                    || fname.contains("route")
+                    || fname.contains("api");
+                let in_api_dir = p.components().any(|c| {
+                    c.as_os_str()
+                        .to_string_lossy()
+                        .to_lowercase()
+                        .contains("api")
+                });
                 if !is_interesting {
                     continue;
                 }
@@ -113,7 +136,9 @@ fn collect_source_files(dir: &str) -> Result<Vec<(String, String)>, String> {
         }
     }
     if out.is_empty() {
-        return Err("目录中没有找到接口相关源文件（controller/route/api 下的 ts/js/java/kt）".to_string());
+        return Err(
+            "目录中没有找到接口相关源文件（controller/route/api 下的 ts/js/java/kt）".to_string(),
+        );
     }
     Ok(out)
 }
@@ -132,9 +157,13 @@ fn build_prompt(dir: &str, files: &[(String, String)]) -> String {
     parts.push_str("4. method 用标准大写：GET/POST/PUT/PATCH/DELETE。\n");
     parts.push_str("5. 路径参数用 {id} 花括号形式（不要用 :id）。\n");
     parts.push_str("6. 请求体：JSON 请求用 {\"mode\": \"raw\", \"raw\": \"{...}\", \"options\": {\"raw\": {\"language\": \"json\"}}}；form 用 {\"mode\": \"urlencoded\", \"urlencoded\": [{\"key\": ..., \"value\": ..., \"enabled\": true}]}。\n");
-    parts.push_str("7. header 数组格式：[{\"key\": \"Content-Type\", \"value\": \"application/json\"}]。\n");
+    parts.push_str(
+        "7. header 数组格式：[{\"key\": \"Content-Type\", \"value\": \"application/json\"}]。\n",
+    );
     parts.push_str("8. 认证：如果在代码中看到 JWT/Bearer 认证，在 header 里给出 {\"key\": \"Authorization\", \"value\": \"Bearer {{token}}\"} 占位形式。\n");
-    parts.push_str("9. 尽力覆盖所有接口，宁多勿漏；每个接口都要有可读的中文 name 和 description。\n");
+    parts.push_str(
+        "9. 尽力覆盖所有接口，宁多勿漏；每个接口都要有可读的中文 name 和 description。\n",
+    );
     parts.push_str("10. 忽略配置类、数据库实体类等非接口文件内容。\n\n");
     parts.push_str(&format!(
         "## 源文件（共 {} 个，超出部分已截断）\n",
@@ -175,61 +204,64 @@ pub async fn api_import_with_ai(
     provider_id: Option<String>,
     model_id: Option<String>,
 ) -> Result<(usize, String), String> {
-    // 1. 收集源文件
-    let files = collect_source_files(&dir)?;
-    crate::exit_log!(
-        "[api-ai-import] 收集到 {} 个源文件，目录={}",
-        files.len(),
-        dir
-    );
+    crate::runtime_tasks::run_if_enabled("api", async move {
+        // 1. 收集源文件
+        let files = collect_source_files(&dir)?;
+        crate::exit_log!(
+            "[api-ai-import] 收集到 {} 个源文件，目录={}",
+            files.len(),
+            dir
+        );
 
-    // 2. 解析 AI 目标（供应商+模型）
-    let (provider, model) = resolve_ai_target(&provider_id, &model_id)?;
+        // 2. 解析 AI 目标（供应商+模型）
+        let (provider, model) = resolve_ai_target(&provider_id, &model_id)?;
 
-    // 3. 读取项目信息（用于提示词中的集合名）
-    let project: ApiProject = load_project_template(&project_id)?;
+        // 3. 读取项目信息（用于提示词中的集合名）
+        let project: ApiProject = load_project_template(&project_id)?;
 
-    // 4. 构造提示词并请求
-    let mut prompt = build_prompt(&dir, &files);
-    prompt.push_str(&format!(
-        "\n## 集合名称\n请把 collection 的 name 设为「{}」。\n",
-        project.name
-    ));
-
-    // 共享 AI 请求通道（ai/channel.rs）：TTFB 超时 + send 重试提供连接韧性。
-    crate::exit_log!(
-        "[api-ai-import] provider={} model={} prompt_chars={}",
-        provider.name,
-        model,
-        prompt.len()
-    );
-
-    let outcome = crate::commands::ai::channel::complete_chat(
-        &crate::commands::ai::channel::NoHooks,
-        &provider,
-        &model,
-        "你是接口分析专家，只输出 Postman Collection v2.1 格式的合法 JSON。",
-        &prompt,
-        0.2,
-        None,
-        crate::commands::ai::usage::tool_ids::API_IMPORT,
-    )
-    .await?;
-    let content = outcome.text;
-    // 用量已由 ai::channel 统一记账（tool_id=api-import），这里不再重复落库
-
-    // 5. 提取 JSON 并导入
-    let json = extract_json(&content)?;
-    if json.len() > AI_JSON_MAX_BYTES {
-        return Err(format!(
-            "AI 生成的集合过大（{:.1} MB），上限 {:.1} MB",
-            json.len() as f64 / 1_048_576.0,
-            AI_JSON_MAX_BYTES as f64 / 1_048_576.0
+        // 4. 构造提示词并请求
+        let mut prompt = build_prompt(&dir, &files);
+        prompt.push_str(&format!(
+            "\n## 集合名称\n请把 collection 的 name 设为「{}」。\n",
+            project.name
         ));
-    }
-    let count = api_import_postman(json, project_id, module_id)?;
-    crate::exit_log!("[api-ai-import] 导入完成，接口数={}", count);
-    Ok((count, format!("{} · {}", provider.name, model)))
+
+        // 共享 AI 请求通道（ai/channel.rs）：TTFB 超时 + send 重试提供连接韧性。
+        crate::exit_log!(
+            "[api-ai-import] provider={} model={} prompt_chars={}",
+            provider.name,
+            model,
+            prompt.len()
+        );
+
+        let outcome = crate::commands::ai::channel::complete_chat(
+            &crate::commands::ai::channel::NoHooks,
+            &provider,
+            &model,
+            "你是接口分析专家，只输出 Postman Collection v2.1 格式的合法 JSON。",
+            &prompt,
+            0.2,
+            None,
+            crate::commands::ai::usage::tool_ids::API_IMPORT,
+        )
+        .await?;
+        let content = outcome.text;
+        // 用量已由 ai::channel 统一记账（tool_id=api-import），这里不再重复落库
+
+        // 5. 提取 JSON 并导入
+        let json = extract_json(&content)?;
+        if json.len() > AI_JSON_MAX_BYTES {
+            return Err(format!(
+                "AI 生成的集合过大（{:.1} MB），上限 {:.1} MB",
+                json.len() as f64 / 1_048_576.0,
+                AI_JSON_MAX_BYTES as f64 / 1_048_576.0
+            ));
+        }
+        let count = api_import_postman(json, project_id, module_id)?;
+        crate::exit_log!("[api-ai-import] 导入完成，接口数={}", count);
+        Ok((count, format!("{} · {}", provider.name, model)))
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -266,9 +298,18 @@ mod tests {
 
         let files = collect_source_files(dir.to_str().unwrap()).unwrap();
         let names: Vec<String> = files.iter().map(|(p, _)| p.clone()).collect();
-        assert!(names.iter().any(|p| p.contains("users.controller.ts")), "应收集 controller 文件");
-        assert!(!names.iter().any(|p| p.contains("node_modules")), "应跳过 node_modules");
-        assert!(!names.iter().any(|p| p.contains("app.module.ts")), "模块文件不应被收集");
+        assert!(
+            names.iter().any(|p| p.contains("users.controller.ts")),
+            "应收集 controller 文件"
+        );
+        assert!(
+            !names.iter().any(|p| p.contains("node_modules")),
+            "应跳过 node_modules"
+        );
+        assert!(
+            !names.iter().any(|p| p.contains("app.module.ts")),
+            "模块文件不应被收集"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

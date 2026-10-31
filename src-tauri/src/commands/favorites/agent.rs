@@ -9,10 +9,10 @@
 use serde_json::json;
 use tauri::Emitter;
 
+use super::db;
 use crate::commands::ai::channel::{complete_chat_messages, CompleteOutcome, NoHooks};
 use crate::commands::ai::config::load_ai_config;
 use crate::commands::ai::models::AiProvider;
-use super::db;
 
 /// Agent 可用的工具（OpenAI function calling 格式）。
 pub const FAV_AGENT_TOOLS: &str = r##"[
@@ -84,8 +84,12 @@ fn compact_context(messages: &mut Vec<serde_json::Value>, state: &mut FavAgentSt
         if budget <= CONTEXT_CHAR_BUDGET {
             break;
         }
-        let Some(msg) = messages.get_mut(*idx) else { continue; };
-        let Some(content) = msg.get("content").and_then(|v| v.as_str()) else { continue; };
+        let Some(msg) = messages.get_mut(*idx) else {
+            continue;
+        };
+        let Some(content) = msg.get("content").and_then(|v| v.as_str()) else {
+            continue;
+        };
         // 折叠：只留前 200 字符（够看到「命中 N 条」和前几条标题）
         let head: String = content.chars().take(200).collect();
         let condensed = format!("{head}…（较早的结果已折叠，需要明细请用原关键词重新检索）");
@@ -125,7 +129,12 @@ fn pick_provider_model(
     let config = load_ai_config();
     let provider = provider_id
         .and_then(|pid| config.providers.iter().find(|p| p.id == pid))
-        .or_else(|| config.providers.iter().find(|p| !p.api_key.trim().is_empty()))
+        .or_else(|| {
+            config
+                .providers
+                .iter()
+                .find(|p| !p.api_key.trim().is_empty())
+        })
         .ok_or_else(|| "还没有配置可用的供应商（请先在 AI 模块「模型」页添加一个）".to_string())?
         .clone();
     let model = model_id
@@ -145,129 +154,155 @@ pub async fn fav_agent_search(
     model_id: Option<String>,
     prompt: String,
 ) -> Result<FavAgentReply, String> {
-    let text = prompt.trim();
-    if text.is_empty() {
-        return Err("请先说出你想找什么".to_string());
-    }
-    let (provider, model) = pick_provider_model(provider_id.as_deref(), model_id.as_deref())?;
-    // 轮数来自模块设置（与思维导图「Agent 轮数」同一口径），不再硬编码
-    let max_rounds = super::settings::load_settings().agent_rounds;
+    crate::runtime_tasks::run_if_enabled("favorites", async move {
+        let text = prompt.trim();
+        if text.is_empty() {
+            return Err("请先说出你想找什么".to_string());
+        }
+        let (provider, model) = pick_provider_model(provider_id.as_deref(), model_id.as_deref())?;
+        // 轮数来自模块设置（与思维导图「Agent 轮数」同一口径），不再硬编码
+        let max_rounds = super::settings::load_settings().agent_rounds;
 
-    let mut messages: Vec<serde_json::Value> = vec![
-        json!({ "role": "system", "content": system_prompt() }),
-        json!({ "role": "user", "content": text }),
-    ];
-    let mut steps: Vec<FavAgentStep> = Vec::new();
-    let mut state = FavAgentState::default();
+        let mut messages: Vec<serde_json::Value> = vec![
+            json!({ "role": "system", "content": system_prompt() }),
+            json!({ "role": "user", "content": text }),
+        ];
+        let mut steps: Vec<FavAgentStep> = Vec::new();
+        let mut state = FavAgentState::default();
 
-    for _round in 0..max_rounds {
-        let outcome: CompleteOutcome = complete_chat_messages(
+        for _round in 0..max_rounds {
+            let outcome: CompleteOutcome = complete_chat_messages(
+                &NoHooks,
+                &provider,
+                &model,
+                &messages,
+                0.3,
+                Some(FAV_AGENT_TOOLS),
+                // 记账下沉到通道：tool_id 必传，收藏检索的消耗自动进 AI 模块用量面板
+                crate::commands::ai::usage::tool_ids::FAVORITES,
+            )
+            .await?;
+
+            // 这一轮的真实思考内容。以前这里发的是硬编码的「检索中…」——
+            // 那既不透明也没有信息量，用户看到的是我们自己编的一句话，
+            // 而不是模型到底在想什么（`CompleteOutcome.reasoning` 一直有值，只是没往外发）。
+            if let Some(reasoning) = outcome
+                .reasoning
+                .as_deref()
+                .filter(|r| !r.trim().is_empty())
+            {
+                let thought = FavAgentStep {
+                    step: "reasoning".to_string(),
+                    text: reasoning.trim().to_string(),
+                    tool: None,
+                };
+                steps.push(thought.clone());
+                emit(&app, &thought);
+            }
+
+            let tool_calls = outcome
+                .message
+                .as_ref()
+                .and_then(|m| m.get("tool_calls"))
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if tool_calls.is_empty() {
+                let answer = if outcome.text.trim().is_empty() {
+                    "没能整理出结果，请换个说法再试一次。".to_string()
+                } else {
+                    outcome.text.clone()
+                };
+                let done = FavAgentStep {
+                    step: "done".to_string(),
+                    text: answer.clone(),
+                    tool: None,
+                };
+                steps.push(done.clone());
+                emit(&app, &done);
+                return Ok(FavAgentReply {
+                    text: answer,
+                    steps,
+                });
+            }
+
+            if let Some(message) = outcome.message.clone() {
+                messages.push(message);
+            }
+            for call in tool_calls {
+                let id = call
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let name = call
+                    .get("function")
+                    .and_then(|f| f.get("name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let args_raw = call
+                    .get("function")
+                    .and_then(|f| f.get("arguments"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("{}");
+                let args: serde_json::Value = serde_json::from_str(args_raw).unwrap_or(json!({}));
+
+                let call_step = FavAgentStep {
+                    step: "toolCall".to_string(),
+                    text: name.clone(),
+                    tool: Some(name.clone()),
+                };
+                steps.push(call_step.clone());
+                emit(&app, &call_step);
+
+                let result = run_tool(&mut state, &name, &args);
+                let result_step = FavAgentStep {
+                    step: "toolResult".to_string(),
+                    text: result.clone(),
+                    tool: Some(name.clone()),
+                };
+                steps.push(result_step.clone());
+                emit(&app, &result_step);
+
+                state.results.push((messages.len(), result.chars().count()));
+                messages.push(json!({ "role": "tool", "tool_call_id": id, "content": result }));
+            }
+            // 每轮结束压一次上下文：超预算就把最早的检索结果折叠成一行，
+            // 否则后面每一轮都要重发前面所有完整结果（token 二次增长）。
+            compact_context(&mut messages, &mut state);
+        }
+
+        messages
+            .push(json!({ "role": "user", "content": "请直接给出整理好的结果（不要再检索）。" }));
+        let final_outcome = complete_chat_messages(
             &NoHooks,
             &provider,
             &model,
             &messages,
             0.3,
-            Some(FAV_AGENT_TOOLS),
-            // 记账下沉到通道：tool_id 必传，收藏检索的消耗自动进 AI 模块用量面板
+            None,
             crate::commands::ai::usage::tool_ids::FAVORITES,
         )
         .await?;
-
-        // 这一轮的真实思考内容。以前这里发的是硬编码的「检索中…」——
-        // 那既不透明也没有信息量，用户看到的是我们自己编的一句话，
-        // 而不是模型到底在想什么（`CompleteOutcome.reasoning` 一直有值，只是没往外发）。
-        if let Some(reasoning) = outcome.reasoning.as_deref().filter(|r| !r.trim().is_empty()) {
-            let thought = FavAgentStep {
-                step: "reasoning".to_string(),
-                text: reasoning.trim().to_string(),
-                tool: None,
-            };
-            steps.push(thought.clone());
-            emit(&app, &thought);
-        }
-
-        let tool_calls = outcome
-            .message
-            .as_ref()
-            .and_then(|m| m.get("tool_calls"))
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        if tool_calls.is_empty() {
-            let answer = if outcome.text.trim().is_empty() {
-                "没能整理出结果，请换个说法再试一次。".to_string()
-            } else {
-                outcome.text.clone()
-            };
-            let done = FavAgentStep { step: "done".to_string(), text: answer.clone(), tool: None };
-            steps.push(done.clone());
-            emit(&app, &done);
-            return Ok(FavAgentReply { text: answer, steps });
-        }
-
-        if let Some(message) = outcome.message.clone() {
-            messages.push(message);
-        }
-        for call in tool_calls {
-            let id = call.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            let name = call
-                .get("function")
-                .and_then(|f| f.get("name"))
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string();
-            let args_raw = call
-                .get("function")
-                .and_then(|f| f.get("arguments"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("{}");
-            let args: serde_json::Value = serde_json::from_str(args_raw).unwrap_or(json!({}));
-
-            let call_step = FavAgentStep {
-                step: "toolCall".to_string(),
-                text: name.clone(),
-                tool: Some(name.clone()),
-            };
-            steps.push(call_step.clone());
-            emit(&app, &call_step);
-
-            let result = run_tool(&mut state, &name, &args);
-            let result_step = FavAgentStep {
-                step: "toolResult".to_string(),
-                text: result.clone(),
-                tool: Some(name.clone()),
-            };
-            steps.push(result_step.clone());
-            emit(&app, &result_step);
-
-            state.results.push((messages.len(), result.chars().count()));
-            messages.push(json!({ "role": "tool", "tool_call_id": id, "content": result }));
-        }
-        // 每轮结束压一次上下文：超预算就把最早的检索结果折叠成一行，
-        // 否则后面每一轮都要重发前面所有完整结果（token 二次增长）。
-        compact_context(&mut messages, &mut state);
-    }
-
-    messages.push(json!({ "role": "user", "content": "请直接给出整理好的结果（不要再检索）。" }));
-    let final_outcome = complete_chat_messages(
-        &NoHooks,
-        &provider,
-        &model,
-        &messages,
-        0.3,
-        None,
-        crate::commands::ai::usage::tool_ids::FAVORITES,
-    )
-    .await?;
-    let answer = if final_outcome.text.trim().is_empty() {
-        "检索步数用完了还没整理好，请缩小需求范围再试。".to_string()
-    } else {
-        final_outcome.text.clone()
-    };
-    let done = FavAgentStep { step: "done".to_string(), text: answer.clone(), tool: None };
-    steps.push(done.clone());
-    emit(&app, &done);
-    Ok(FavAgentReply { text: answer, steps })
+        let answer = if final_outcome.text.trim().is_empty() {
+            "检索步数用完了还没整理好，请缩小需求范围再试。".to_string()
+        } else {
+            final_outcome.text.clone()
+        };
+        let done = FavAgentStep {
+            step: "done".to_string(),
+            text: answer.clone(),
+            tool: None,
+        };
+        steps.push(done.clone());
+        emit(&app, &done);
+        Ok(FavAgentReply {
+            text: answer,
+            steps,
+        })
+    })
+    .await
 }
 
 /// 把查询拆成多个检索词：「Rust 爬虫」这种传单个子串必然 0 命中（SQL 是 `LIKE '%词%'`）。
@@ -276,7 +311,21 @@ pub fn split_terms(keyword: &str) -> Vec<String> {
     keyword
         .split(|c: char| {
             c.is_whitespace()
-                || matches!(c, '、' | '，' | ',' | '。' | '.' | '；' | ';' | '／' | '/' | '｜' | '|' | '+' | '＋')
+                || matches!(
+                    c,
+                    '、' | '，'
+                        | ','
+                        | '。'
+                        | '.'
+                        | '；'
+                        | ';'
+                        | '／'
+                        | '/'
+                        | '｜'
+                        | '|'
+                        | '+'
+                        | '＋'
+                )
         })
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
@@ -302,7 +351,11 @@ fn resolve_category(tag: &str) -> Option<i64> {
         .next()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .and_then(|leaf| db::with_conn(|conn| db::find_category_by_name(conn, leaf)).ok().flatten())
+        .and_then(|leaf| {
+            db::with_conn(|conn| db::find_category_by_name(conn, leaf))
+                .ok()
+                .flatten()
+        })
 }
 
 /// 一次检索：多词分别查再合并打分（标题命中权重高于简介命中），最后去重。
@@ -320,7 +373,10 @@ fn tool_search_favorites(state: &mut FavAgentState, args: &serde_json::Value) ->
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .and_then(resolve_category);
-    let source = args.get("source").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let source = args
+        .get("source")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
 
     let terms = split_terms(keyword);
     // 关键词为空 → 浏览模式：不带关键词，按最近更新取一批
@@ -387,7 +443,10 @@ fn tool_search_favorites(state: &mut FavAgentState, args: &serde_json::Value) ->
             if keyword.trim().is_empty() {
                 "收藏库里没有匹配的条目".to_string()
             } else {
-                format!("关键词「{}」没有命中任何收藏（可换个更短的核心名词，或留空按最近更新浏览）", keyword)
+                format!(
+                    "关键词「{}」没有命中任何收藏（可换个更短的核心名词，或留空按最近更新浏览）",
+                    keyword
+                )
             }
         } else {
             "本次命中的条目都已在前面的结果里出现过（不重复列出），请换关键词或换分类".to_string()
@@ -413,14 +472,21 @@ fn tool_search_favorites(state: &mut FavAgentState, args: &serde_json::Value) ->
                 r.id,
                 r.title,
                 r.source,
-                if r.tags.is_empty() { "未分类".to_string() } else { r.tags.join("/") },
+                if r.tags.is_empty() {
+                    "未分类".to_string()
+                } else {
+                    r.tags.join("/")
+                },
                 r.url,
                 desc
             )
         })
         .collect::<Vec<_>>()
         .join("\n");
-    truncate_chars(&format!("命中 {} 条：\n{}", total, body), TOOL_RESULT_CHAR_LIMIT)
+    truncate_chars(
+        &format!("命中 {} 条：\n{}", total, body),
+        TOOL_RESULT_CHAR_LIMIT,
+    )
 }
 
 /// 截断到指定字符数（中文按字符切，避免切出半个 UTF-8）。
@@ -468,7 +534,10 @@ fn run_tool(state: &mut FavAgentState, name: &str, args: &serde_json::Value) -> 
                             } else {
                                 format!("{}/{}", prefix, n.name)
                             };
-                            out.push(format!("{}（本层 {} 条 / 含子级 {} 条）", path, n.count, n.total));
+                            out.push(format!(
+                                "{}（本层 {} 条 / 含子级 {} 条）",
+                                path, n.count, n.total
+                            ));
                             walk(&n.children, &path, out);
                         }
                     }
@@ -489,7 +558,10 @@ fn run_tool(state: &mut FavAgentState, name: &str, args: &serde_json::Value) -> 
             }
             Err(e) => format!("读取分类失败：{}", e),
         },
-        other => format!("未知工具 {}（只能用 search_favorites / get_favorite_content / list_favorite_tags）", other),
+        other => format!(
+            "未知工具 {}（只能用 search_favorites / get_favorite_content / list_favorite_tags）",
+            other
+        ),
     }
 }
 
@@ -529,7 +601,8 @@ mod tests {
         for i in 0..5 {
             let big = "x".repeat(4000);
             state.results.push((messages.len(), big.chars().count()));
-            messages.push(json!({ "role": "tool", "tool_call_id": format!("c{i}"), "content": big }));
+            messages
+                .push(json!({ "role": "tool", "tool_call_id": format!("c{i}"), "content": big }));
         }
         compact_context(&mut messages, &mut state);
 
@@ -546,7 +619,10 @@ mod tests {
         }
         // 最新的那条不该被折叠（模型还要用它整理结果）
         let last = state.results.last().unwrap().0;
-        assert!(messages[last]["content"].as_str().unwrap().contains("xxxxxx"));
+        assert!(messages[last]["content"]
+            .as_str()
+            .unwrap()
+            .contains("xxxxxx"));
     }
 
     /// 预算内时什么都不动（幂等，避免每轮无谓地重写消息）。
@@ -579,7 +655,8 @@ mod tests {
     /// 工具集里 keyword 不再是必填（留空 = 浏览兜底），且仍是合法 JSON。
     #[test]
     fn tools_spec_makes_keyword_optional_and_stays_valid_json() {
-        let spec: serde_json::Value = serde_json::from_str(FAV_AGENT_TOOLS).expect("工具集必须是合法 JSON");
+        let spec: serde_json::Value =
+            serde_json::from_str(FAV_AGENT_TOOLS).expect("工具集必须是合法 JSON");
         let arr = spec.as_array().unwrap();
         let search = arr
             .iter()

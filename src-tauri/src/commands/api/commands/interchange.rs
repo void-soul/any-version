@@ -138,10 +138,13 @@ pub async fn api_import_swagger(
     project_id: String,
     module_id: Option<String>,
 ) -> Result<usize, String> {
-    let json = crate::commands::api::import::fetch_swagger_source(&source).await?;
-    let (_module, _base, drafts) = crate::commands::api::import::parse_swagger(&json)?;
-    let count = insert_drafts(project_id, module_id, drafts)?;
-    Ok(count)
+    crate::runtime_tasks::run_if_enabled("api", async move {
+        let json = crate::commands::api::import::fetch_swagger_source(&source).await?;
+        let (_module, _base, drafts) = crate::commands::api::import::parse_swagger(&json)?;
+        let count = insert_drafts(project_id, module_id, drafts)?;
+        Ok(count)
+    })
+    .await
 }
 
 #[tauri::command]

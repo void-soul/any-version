@@ -15,17 +15,19 @@ pub async fn fav_classify(
     limit: Option<usize>,
     reclassify: Option<bool>,
 ) -> Result<ClassifyResult, String> {
-    begin_task(TASK_CLASSIFY)?;
-    let out = classify_inner(
-        app,
-        provider_id,
-        model_id,
-        limit,
-        reclassify.unwrap_or(false),
-    )
-    .await;
-    end_task(TASK_CLASSIFY);
-    out
+    crate::runtime_tasks::run_if_enabled("favorites", async move {
+        let _task = TaskGuard::begin(TASK_CLASSIFY)?;
+        let out = classify_inner(
+            app,
+            provider_id,
+            model_id,
+            limit,
+            reclassify.unwrap_or(false),
+        )
+        .await;
+        out
+    })
+    .await
 }
 
 /// 让 AI 给出「分类层级整体整理」方案（只生成、不落库）。
@@ -38,81 +40,84 @@ pub async fn fav_plan_category_moves(
     provider_id: Option<String>,
     model_id: Option<String>,
 ) -> Result<organize::CategoryMovePlan, String> {
-    let cfg = crate::commands::ai::config::load_ai_config();
-    let (provider, model) = resolve_ai_target(&cfg, &provider_id, &model_id)?;
-    let cats = db::with_conn(|conn| db::category_briefs(conn))?;
-    let considered = cats.iter().filter(|c| c.kind != "follow").count();
-    // 少于两个主题分类时不可能形成父子关系，直接返回空方案，不白花一次模型调用
-    if considered < 2 {
-        return Ok(organize::CategoryMovePlan {
-            model,
-            considered,
-            groups: Vec::new(),
-            moves: Vec::new(),
-            skipped: Vec::new(),
-        });
-    }
+    crate::runtime_tasks::run_if_enabled("favorites", async move {
+        let cfg = crate::commands::ai::config::load_ai_config();
+        let (provider, model) = resolve_ai_target(&cfg, &provider_id, &model_id)?;
+        let cats = db::with_conn(|conn| db::category_briefs(conn))?;
+        let considered = cats.iter().filter(|c| c.kind != "follow").count();
+        // 少于两个主题分类时不可能形成父子关系，直接返回空方案，不白花一次模型调用
+        if considered < 2 {
+            return Ok(organize::CategoryMovePlan {
+                model,
+                considered,
+                groups: Vec::new(),
+                moves: Vec::new(),
+                skipped: Vec::new(),
+            });
+        }
 
-    let prompt = organize::build_prompt(&cats);
-    let started = std::time::Instant::now();
-    // 必须走流式：400 个分类的方案输出可能要几分钟，非流式要等整段生成完才返回响应头，
-    // 会直接撞上 180s 的 TTFB 上限。流式只要首块到达就拿到响应头，后续多少块都收得下。
-    let outcome = crate::commands::ai::channel::stream_chat_with_resume(
-        &crate::commands::ai::channel::NoHooks,
-        &provider,
-        &model,
-        organize::SYSTEM_PROMPT,
-        &prompt,
-        0.2,
-        |_, _| {},
-    )
-    .await
-    .map_err(|e| format!("{}（供应商: {}，模型: {}）", e, provider.name, model))?;
-    if let Some(usage) = &outcome.usage {
-        crate::commands::ai::usage::log_usage_from_json_timed(
-            crate::commands::ai::usage::tool_ids::FAVORITES,
-            &model,
-            Some(&provider.id),
-            usage,
-            started.elapsed().as_millis() as u64,
-        );
-    }
-    // 个别网关不认 stream:true（回普通 JSON），SSE 会读到空文本；退回非流式再取一次
-    let text = if outcome.text.trim().is_empty() {
-        crate::commands::ai::channel::complete_chat(
+        let prompt = organize::build_prompt(&cats);
+        let started = std::time::Instant::now();
+        // 必须走流式：400 个分类的方案输出可能要几分钟，非流式要等整段生成完才返回响应头，
+        // 会直接撞上 180s 的 TTFB 上限。流式只要首块到达就拿到响应头，后续多少块都收得下。
+        let outcome = crate::commands::ai::channel::stream_chat_with_resume(
             &crate::commands::ai::channel::NoHooks,
             &provider,
             &model,
             organize::SYSTEM_PROMPT,
             &prompt,
             0.2,
-            None,
-            crate::commands::ai::usage::tool_ids::FAVORITES,
+            |_, _| {},
         )
         .await
-        .map_err(|e| format!("{}（供应商: {}，模型: {}）", e, provider.name, model))?
-        .text
-    } else {
-        outcome.text
-    };
+        .map_err(|e| format!("{}（供应商: {}，模型: {}）", e, provider.name, model))?;
+        if let Some(usage) = &outcome.usage {
+            crate::commands::ai::usage::log_usage_from_json_timed(
+                crate::commands::ai::usage::tool_ids::FAVORITES,
+                &model,
+                Some(&provider.id),
+                usage,
+                started.elapsed().as_millis() as u64,
+            );
+        }
+        // 个别网关不认 stream:true（回普通 JSON），SSE 会读到空文本；退回非流式再取一次
+        let text = if outcome.text.trim().is_empty() {
+            crate::commands::ai::channel::complete_chat(
+                &crate::commands::ai::channel::NoHooks,
+                &provider,
+                &model,
+                organize::SYSTEM_PROMPT,
+                &prompt,
+                0.2,
+                None,
+                crate::commands::ai::usage::tool_ids::FAVORITES,
+            )
+            .await
+            .map_err(|e| format!("{}（供应商: {}，模型: {}）", e, provider.name, model))?
+            .text
+        } else {
+            outcome.text
+        };
 
-    let (groups, raw_moves) = organize::parse_plan(&text)?;
-    let plan = organize::build_plan(&cats, &groups, &raw_moves);
-    crate::exit_log!(
-        "[收藏] 整理类目方案: model={}, considered={}, groups={}, moves={}, skipped={}",
-        model,
-        considered,
-        plan.groups.len(),
-        plan.moves.len(),
-        plan.skipped.len()
-    );
-    Ok(organize::CategoryMovePlan {
-        model,
-        considered,
-        groups: plan.groups,
-        moves: plan.moves,
-        skipped: plan.skipped,
+        let (groups, raw_moves) = organize::parse_plan(&text)?;
+        let plan = organize::build_plan(&cats, &groups, &raw_moves);
+        crate::exit_log!(
+            "[收藏] 整理类目方案: model={}, considered={}, groups={}, moves={}, skipped={}",
+            model,
+            considered,
+            plan.groups.len(),
+            plan.moves.len(),
+            plan.skipped.len()
+        );
+        Ok(organize::CategoryMovePlan {
+            model,
+            considered,
+            groups: plan.groups,
+            moves: plan.moves,
+            skipped: plan.skipped,
+        })
     })
+    .await
 }
 
 /// 应用整理方案：可按需新建分组，再只改已有分类的 `parent_id` / `sort_order`。

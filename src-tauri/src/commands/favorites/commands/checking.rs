@@ -11,10 +11,12 @@ pub async fn fav_check_gone(
     app: tauri::AppHandle,
     all: Option<bool>,
 ) -> Result<CheckResult, String> {
-    begin_task(TASK_CHECK)?;
-    let out = check_gone_inner(app, all).await;
-    end_task(TASK_CHECK);
-    out
+    crate::runtime_tasks::run_if_enabled("favorites", async move {
+        let _task = TaskGuard::begin(TASK_CHECK)?;
+        let out = check_gone_inner(app, all).await;
+        out
+    })
+    .await
 }
 
 pub(super) async fn check_gone_inner(

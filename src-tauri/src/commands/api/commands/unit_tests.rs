@@ -66,27 +66,31 @@ pub async fn api_run_unit_test(
     // 可选：直接使用当前（可能未保存的）请求配置执行断言
     input_override: Option<SendRequestInput>,
 ) -> Result<Vec<UnitTestRunOutput>, String> {
-    let tests = api_list_unit_tests(endpoint_id.clone())?;
-    if tests.is_empty() {
-        return Err("该接口还没有单元测试，请先添加断言".to_string());
-    }
-    let input = if let Some(ov) = input_override {
-        ov
-    } else {
-        let ep = api_get_endpoint(endpoint_id.clone())?;
-        crate::commands::api::exec::endpoint_to_input(&ep, &variables)
-    };
-    let mut outputs = Vec::new();
-    for test in tests {
-        let output = crate::commands::api::exec::execute_request_cancellable(&input).await?;
-        let results = crate::commands::api::exec::evaluate_assertions(&test.assertions, &output);
-        let pass = results.iter().all(|r| r.pass);
-        outputs.push(UnitTestRunOutput {
-            pass,
-            time_ms: output.time_ms,
-            status: output.status,
-            results,
-        });
-    }
-    Ok(outputs)
+    crate::runtime_tasks::run_if_enabled("api", async move {
+        let tests = api_list_unit_tests(endpoint_id.clone())?;
+        if tests.is_empty() {
+            return Err("该接口还没有单元测试，请先添加断言".to_string());
+        }
+        let input = if let Some(ov) = input_override {
+            ov
+        } else {
+            let ep = api_get_endpoint(endpoint_id.clone())?;
+            crate::commands::api::exec::endpoint_to_input(&ep, &variables)
+        };
+        let mut outputs = Vec::new();
+        for test in tests {
+            let output = crate::commands::api::exec::execute_request_cancellable(&input).await?;
+            let results =
+                crate::commands::api::exec::evaluate_assertions(&test.assertions, &output);
+            let pass = results.iter().all(|r| r.pass);
+            outputs.push(UnitTestRunOutput {
+                pass,
+                time_ms: output.time_ms,
+                status: output.status,
+                results,
+            });
+        }
+        Ok(outputs)
+    })
+    .await
 }

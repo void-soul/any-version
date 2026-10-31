@@ -90,10 +90,40 @@ fn begin_task(task: &str) -> Result<(), String> {
 }
 
 /// 任务收工（成功失败都要调，否则后面的任务会被永久挡住）。
+#[cfg(test)]
 fn end_task(task: &str) {
     let mut g = RUNNING.lock().unwrap_or_else(tasks_lock);
     if let Some(pos) = g.iter().position(|t| t == task) {
         g.remove(pos);
+    }
+}
+
+/// Run ownership must be released when a module cancellation drops its future.
+struct TaskGuard<'a> {
+    task: &'static str,
+    running: &'a Mutex<Vec<String>>,
+    cancelled: &'a Mutex<Vec<String>>,
+}
+impl TaskGuard<'static> {
+    fn begin(task: &'static str) -> Result<Self, String> {
+        begin_task(task)?;
+        Ok(Self {
+            task,
+            running: &RUNNING,
+            cancelled: &CANCEL,
+        })
+    }
+}
+impl Drop for TaskGuard<'_> {
+    fn drop(&mut self) {
+        self.running
+            .lock()
+            .unwrap_or_else(tasks_lock)
+            .retain(|task| task != self.task);
+        self.cancelled
+            .lock()
+            .unwrap_or_else(tasks_lock)
+            .retain(|task| task != self.task);
     }
 }
 

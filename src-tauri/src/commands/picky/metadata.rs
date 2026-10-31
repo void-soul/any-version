@@ -35,45 +35,48 @@ pub async fn picky_fetch_url_meta(
     app: tauri::AppHandle,
     url: String,
 ) -> Result<FetchedMeta, String> {
-    let mut url = url.trim().to_string();
-    if url.is_empty() {
-        return Err("URL 不能为空".into());
-    }
-    if !url.contains("://") {
-        url = format!("https://{url}");
-    }
-    // 1) 应用内隐藏 WebView（首选）
-    if let Some(r) = fetch_meta_via_webview(&app, &url).await {
-        let mut m: FetchedMeta = r.into();
-        m.source = "webview".into();
-        return Ok(m);
-    }
-    // 2) 无头浏览器渲染
-    if let Some(dom) = render_dom_via_browser(&url).await {
-        let r = parse_rendered_meta(&dom, &url);
-        if r.title.is_some() || r.description.is_some() || r.image_url.is_some() {
+    crate::runtime_tasks::run_if_enabled("picky", async move {
+        let mut url = url.trim().to_string();
+        if url.is_empty() {
+            return Err("URL 不能为空".into());
+        }
+        if !url.contains("://") {
+            url = format!("https://{url}");
+        }
+        // 1) 应用内隐藏 WebView（首选）
+        if let Some(r) = fetch_meta_via_webview(&app, &url).await {
             let mut m: FetchedMeta = r.into();
-            m.source = "browser".into();
+            m.source = "webview".into();
             return Ok(m);
         }
-    }
-    // 3) 普通 HTTP（窄兜底：仅标题/favicon）
-    if let Ok(m) = crate::commands::launcher::windows::fetch_url_metadata_with_timeout(
-        &url,
-        std::time::Duration::from_secs(10),
-    )
-    .await
-    {
-        if !m.title.is_empty() {
-            return Ok(FetchedMeta {
-                title: Some(m.title),
-                favicon_url: m.icon,
-                source: "http".into(),
-                ..Default::default()
-            });
+        // 2) 无头浏览器渲染
+        if let Some(dom) = render_dom_via_browser(&url).await {
+            let r = parse_rendered_meta(&dom, &url);
+            if r.title.is_some() || r.description.is_some() || r.image_url.is_some() {
+                let mut m: FetchedMeta = r.into();
+                m.source = "browser".into();
+                return Ok(m);
+            }
         }
-    }
-    Err("无法抓取页面元数据（站点可能拦截了请求，或需要登录）".into())
+        // 3) 普通 HTTP（窄兜底：仅标题/favicon）
+        if let Ok(m) = crate::commands::launcher::windows::fetch_url_metadata_with_timeout(
+            &url,
+            std::time::Duration::from_secs(10),
+        )
+        .await
+        {
+            if !m.title.is_empty() {
+                return Ok(FetchedMeta {
+                    title: Some(m.title),
+                    favicon_url: m.icon,
+                    source: "http".into(),
+                    ..Default::default()
+                });
+            }
+        }
+        Err("无法抓取页面元数据（站点可能拦截了请求，或需要登录）".into())
+    })
+    .await
 }
 
 /// 解析渲染后 DOM 的元数据：标题 / 描述 / 图片 / favicon。

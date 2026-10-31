@@ -147,3 +147,21 @@ fn begin_end_task_guards_conflicts() {
     assert!(begin_task(TASK_CLASSIFY).is_ok(), "导入结束后归类可开工");
     end_task(TASK_CLASSIFY);
 }
+
+#[test]
+fn dropping_pending_task_releases_its_own_registries() {
+    let running = Mutex::new(vec!["isolated".into(), "other".into()]);
+    let cancelled = Mutex::new(vec!["isolated".into(), "other".into()]);
+    let guard = TaskGuard {
+        task: "isolated",
+        running: &running,
+        cancelled: &cancelled,
+    };
+    let pending = async move {
+        let _guard = guard;
+        std::future::pending::<()>().await;
+    };
+    drop(pending);
+    assert_eq!(*running.lock().unwrap(), ["other"]);
+    assert_eq!(*cancelled.lock().unwrap(), ["other"]);
+}

@@ -49,3 +49,15 @@ pub use sync::*;
 
 #[cfg(test)]
 mod tests;
+
+/// Called after cancellation; only the application's hidden metadata window is destroyed.
+pub fn release_runtime_resources(app: &tauri::AppHandle) -> Result<(), String> {
+    *LAST_CHANGE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    PENDING_RESYNC.store(false, Ordering::SeqCst);
+    if let Some(window) = app.get_webview_window(FETCH_VIEW_LABEL) {
+        window
+            .destroy()
+            .map_err(|e| format!("关闭收藏抓取窗口失败: {e}"))?;
+    }
+    Ok(())
+}

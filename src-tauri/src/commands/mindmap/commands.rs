@@ -57,6 +57,34 @@ fn ai_drop_flag(run_id: &str) {
     cancel_registry().lock().unwrap().remove(run_id);
 }
 
+/// Dropping a module-cancelled future must also release its run-local registries.
+struct AiRunCleanup {
+    id: String,
+    flag: CancelFlag,
+}
+impl AiRunCleanup {
+    fn new(id: &str, flag: &CancelFlag) -> Self {
+        Self {
+            id: id.into(),
+            flag: flag.clone(),
+        }
+    }
+}
+impl Drop for AiRunCleanup {
+    fn drop(&mut self) {
+        self.flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        let mut registry = cancel_registry().lock().unwrap_or_else(|e| e.into_inner());
+        if registry
+            .get(&self.id)
+            .is_some_and(|flag| std::sync::Arc::ptr_eq(flag, &self.flag))
+        {
+            registry.remove(&self.id);
+        }
+        drop(registry);
+        ask_send_cancel(&self.id);
+    }
+}
+
 fn is_cancelled(flag: &std::sync::atomic::AtomicBool) -> bool {
     flag.load(std::sync::atomic::Ordering::Relaxed)
 }
