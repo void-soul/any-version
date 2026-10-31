@@ -1,0 +1,143 @@
+{
+  "date": "2026-10-31",
+  "scope": "Q-0580 through Q-0590",
+  "product_changes": false,
+  "new_qa_entries": 0,
+  "entries": [
+    {
+      "qid": "Q-0580",
+      "status": "已验证",
+      "database_matches_snapshot": true,
+      "source_paths_verified_in_HEAD": [
+        "src-tauri/src/commands/buddy/store.rs",
+        "src-tauri/src/commands/buddy/store/identity.rs",
+        "src-tauri/src/commands/buddy/store/tests/regressions.rs"
+      ],
+      "implementation_commit": "b791c5baf95d08940a519c4a09040e2e5a1970cd"
+    },
+    {
+      "qid": "Q-0581",
+      "status": "已验证",
+      "database_matches_snapshot": true,
+      "source_paths_verified_in_HEAD": [
+        "src-tauri/src/commands/buddy/store.rs",
+        "src-tauri/src/commands/buddy/store/identity.rs",
+        "src-tauri/src/commands/buddy/store/tests/regressions.rs"
+      ],
+      "implementation_commit": "b791c5baf95d08940a519c4a09040e2e5a1970cd"
+    },
+    {
+      "qid": "Q-0582",
+      "status": "已验证",
+      "database_matches_snapshot": true,
+      "source_paths_verified_in_HEAD": [
+        "src-tauri/src/commands/buddy/api.rs",
+        "src-tauri/src/commands/buddy/api/checkin.rs",
+        "src-tauri/src/commands/buddy/api/checkin_regressions.rs",
+        "src-tauri/src/commands/buddy/auto_checkin.rs",
+        "src-tauri/src/commands/buddy/auto_checkin/planning.rs",
+        "src-tauri/src/commands/buddy/auto_checkin/cycle.rs",
+        "src-tauri/src/commands/buddy/auto_checkin/tests.rs"
+      ],
+      "implementation_commit": "5702ada29ab39ae84ee32fb4d78cccdc7cda75d9"
+    },
+    {
+      "qid": "Q-0583",
+      "status": "已验证",
+      "database_matches_snapshot": true,
+      "source_paths_verified_in_HEAD": [
+        "src-tauri/src/commands/buddy/codebuddy_cn.rs",
+        "src-tauri/src/commands/buddy/codebuddy_cn/switch_transaction.rs"
+      ],
+      "implementation_commit": "c59232bb9ac5f62807f1b8662aaf5033866a254f"
+    },
+    {
+      "qid": "Q-0584",
+      "status": "已验证",
+      "database_matches_snapshot": true,
+      "source_paths_verified_in_HEAD": [
+        "src-tauri/src/commands/buddy/codebuddy_cn.rs",
+        "src-tauri/src/commands/buddy/codebuddy_cn/switch_transaction.rs",
+        "src-tauri/src/commands/buddy/switch_commands.rs"
+      ],
+      "implementation_commit": "c59232bb9ac5f62807f1b8662aaf5033866a254f"
+    },
+    {
+      "qid": "Q-0585",
+      "status": "已验证",
+      "database_matches_snapshot": true,
+      "source_paths_verified_in_HEAD": [
+        "src-tauri/src/commands/buddy/store.rs",
+        "src-tauri/src/commands/buddy/store/identity.rs",
+        "src-tauri/src/commands/buddy/store/tests/regressions.rs"
+      ],
+      "implementation_commit": "b791c5baf95d08940a519c4a09040e2e5a1970cd"
+    },
+    {
+      "qid": "Q-0586",
+      "status": "已验证",
+      "database_matches_snapshot": true,
+      "source_paths_verified_in_HEAD": [
+        "src-tauri/src/commands/buddy/store.rs",
+        "src-tauri/src/commands/buddy/store/identity.rs",
+        "src-tauri/src/commands/buddy/account_commands.rs",
+        "src-tauri/src/commands/buddy/store/tests/regressions.rs"
+      ],
+      "implementation_commit": "b791c5baf95d08940a519c4a09040e2e5a1970cd"
+    },
+    {
+      "qid": "Q-0587",
+      "status": "已验证",
+      "database_matches_snapshot": true,
+      "source_paths_verified_in_HEAD": [
+        "src-tauri/src/commands/buddy/store.rs",
+        "src-tauri/src/commands/buddy/store/account_index.rs",
+        "src-tauri/src/commands/buddy/store/tests/regressions.rs"
+      ],
+      "implementation_commit": "b791c5baf95d08940a519c4a09040e2e5a1970cd"
+    },
+    {
+      "qid": "Q-0588",
+      "status": "已验证",
+      "database_matches_snapshot": true,
+      "source_paths_verified_in_HEAD": [
+        "src-tauri/src/commands/buddy/store.rs",
+        "src-tauri/src/commands/buddy/store/tests/regressions.rs"
+      ],
+      "implementation_commit": "b791c5baf95d08940a519c4a09040e2e5a1970cd"
+    },
+    {
+      "qid": "Q-0589",
+      "status": "已验证",
+      "database_matches_snapshot": true,
+      "source_paths_verified_in_HEAD": [
+        "src/components/buddy/BuddyPanel.tsx",
+        "src/components/buddy/useBuddyAccountImport.tsx",
+        "src/components/buddy/useBuddyAccountMaintenance.tsx",
+        "src/components/buddy/platformScope.ts",
+        "src/components/buddy/useBuddyPlatformScope.ts",
+        "src/components/buddy/loadBuddyPlatform.ts",
+        "src/components/buddy/runBuddyAccountSwitch.ts",
+        "src/components/buddy/__tests__/platformScope.test.ts"
+      ],
+      "implementation_commit": "f801edf495a22466236e735c0a5030e2a35a826d"
+    },
+    {
+      "qid": "Q-0590",
+      "status": "已验证",
+      "database_matches_snapshot": true,
+      "source_paths_verified_in_HEAD": [
+        "src-tauri/src/commands/buddy/api.rs",
+        "src-tauri/src/commands/buddy/api/oauth.rs",
+        "src-tauri/src/commands/buddy/api/oauth_sessions.rs",
+        "src-tauri/src/commands/buddy/usage_commands.rs",
+        "src-tauri/src/commands/buddy/api/oauth_sessions/tests.rs",
+        "src-tauri/src/commands/buddy/store/oauth_enrichment.rs",
+        "src-tauri/src/commands/buddy/store/tests/regressions.rs"
+      ],
+      "implementation_commit": "3e3d02345acfabb2c5b73b5c9667c6bcc9641985"
+    }
+  ],
+  "prior_validation": "Buddy 274 passed; Rust 1517 passed / 6 ignored; Vitest 412 passed; typecheck and production build passed",
+  "format_note": "19 pre-existing historical file-table issues are outside this batch; all 11 current entries have valid four-section content"
+}
