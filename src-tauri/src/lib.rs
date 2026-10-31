@@ -1,4 +1,5 @@
 mod app_commands;
+mod module_policy;
 pub mod commands;
 pub mod exit_log;
 pub mod proxy;

@@ -2,7 +2,7 @@
 use crate::{commands, tray};
 
 pub(crate) fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
-    tauri::generate_handler![
+    let dispatch: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
         // ---- 开发者工具模块（串口/网络/数据库） ----
         commands::serialtool::serial_list_ports,
         commands::serialtool::serial_open,
@@ -36,6 +36,7 @@ pub(crate) fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         commands::config::set_density,
         commands::config::set_module_order,
         commands::module_lifecycle::set_module_layout,
+        commands::module_lifecycle::get_module_runtime_status,
         commands::config::import_custom_font,
         commands::config::clear_custom_font,
         commands::config::list_system_fonts,
@@ -865,5 +866,12 @@ pub(crate) fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         commands::state_sync::state_sync_save_config,
         commands::state_sync::state_sync_export,
         commands::state_sync::state_sync_import,
-    ]
+    ];
+    move |invoke: tauri::ipc::Invoke<tauri::Wry>| {
+        if let Err(error) = crate::module_policy::check_command(invoke.message.command()) {
+            invoke.resolver.reject(error);
+            return true;
+        }
+        dispatch(invoke)
+    }
 }
