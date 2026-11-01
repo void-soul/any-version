@@ -42,12 +42,18 @@ pub(super) fn load_projects() -> ProjectsFile {
 /// 读写分离出「路径可注入」的版本：单测必须能指向临时目录，
 /// 否则测试会往用户真实的数据目录里写 projects.json。
 pub(super) fn load_projects_from(path: &Path) -> ProjectsFile {
-    if let Ok(data) = fs::read_to_string(path) {
-        if let Ok(v) = serde_json::from_str::<ProjectsFile>(&data) {
-            return v;
+    read_projects_checked(path).unwrap_or_default()
+}
+
+fn read_projects_checked(path: &Path) -> Result<ProjectsFile, String> {
+    let data = match fs::read_to_string(path) {
+        Ok(data) => data,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ProjectsFile::default())
         }
-    }
-    ProjectsFile::default()
+        Err(error) => return Err(format!("读取项目列表失败: {error}")),
+    };
+    serde_json::from_str(&data).map_err(|error| format!("项目列表格式无效: {error}"))
 }
 
 pub(super) fn save_projects_to(path: &Path, f: &ProjectsFile) -> Result<(), String> {
@@ -57,8 +63,8 @@ pub(super) fn save_projects_to(path: &Path, f: &ProjectsFile) -> Result<(), Stri
 
 /// 列出全部项目（安装作用域）。
 #[tauri::command]
-pub fn list_projects() -> Vec<SkillProject> {
-    load_projects().projects
+pub fn list_projects() -> Result<Vec<SkillProject>, String> {
+    Ok(read_projects_checked(&projects_path())?.projects)
 }
 
 /// 添加项目：只收「存在且确实是目录」的路径，规范化后按同一路径去重。
@@ -133,4 +139,71 @@ pub(crate) fn project_dir_of(project_id: &str) -> Result<String, String> {
         .find(|p| p.id == project_id)
         .map(|p| p.path)
         .ok_or_else(|| format!("项目不存在: {}", project_id))
+}
+
+/// Open only an existing directory belonging to a registered AI project.
+#[tauri::command]
+pub fn open_skill_project_directory(
+    app: tauri::AppHandle,
+    project_id: String,
+) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let directory = registered_directory_at(&projects_path(), &project_id)?;
+    app.opener()
+        .open_path(directory.to_string_lossy().into_owned(), None::<&str>)
+        .map_err(|e| format!("打开项目目录失败: {e}"))
+}
+
+fn registered_directory_at(file: &Path, id: &str) -> Result<PathBuf, String> {
+    let project = read_projects_checked(file)?
+        .projects
+        .into_iter()
+        .find(|project| project.id == id)
+        .ok_or("项目不存在，请刷新项目列表")?;
+    let path = PathBuf::from(project.path);
+    if !path.is_absolute() || !path.is_dir() {
+        return Err(format!(
+            "项目目录不存在或不是有效的绝对目录: {}",
+            path.display()
+        ));
+    }
+    Ok(path)
+}
+
+#[cfg(test)]
+mod directory_tests {
+    use super::*;
+    #[test]
+    fn refresh_reports_corrupt_or_unreadable_lists_without_replacing_them() {
+        let root = std::env::temp_dir().join(gen_project_id());
+        fs::create_dir(&root).unwrap();
+        let file = root.join("projects.json");
+        assert!(read_projects_checked(&file).unwrap().projects.is_empty());
+        fs::write(&file, "broken json").unwrap();
+        assert!(read_projects_checked(&file).is_err());
+        assert!(registered_directory_at(&file, "anything").is_err());
+        assert_eq!(fs::read_to_string(&file).unwrap(), "broken json");
+        assert!(read_projects_checked(&root).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn opens_only_registered_existing_directories() {
+        let root = std::env::temp_dir().join(gen_project_id());
+        fs::create_dir(&root).unwrap();
+        let config = root.join("projects.json");
+        let folder = root.join("project with spaces");
+        fs::create_dir(&folder).unwrap();
+        let project = add_project_at(&config, &folder.to_string_lossy()).unwrap();
+        assert_eq!(
+            registered_directory_at(&config, &project.id).unwrap(),
+            folder
+        );
+        assert!(registered_directory_at(&config, &folder.to_string_lossy()).is_err());
+        fs::remove_dir(&folder).unwrap();
+        assert!(registered_directory_at(&config, &project.id).is_err());
+        fs::write(&folder, "not a directory").unwrap();
+        assert!(registered_directory_at(&config, &project.id).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
 }

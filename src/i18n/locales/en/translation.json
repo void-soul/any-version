@@ -3366,7 +3366,7 @@
     "projBrokenClean": "Clean up",
     "projCountHint": "{{linked}} from libraries · {{local}} project-own",
     "projCountBrokenHint": "{{n}} broken link(s): the skill is gone from the library but the link is still in the project",
-    "projCountRefresh": "Recount skills per project",
+    "projCountRefresh": "Refresh projects, skill counts and current project details",
     "installToDirs": "Install into",
     "scanDirAll": "select all",
     "scanDirHint": "Installed into <project>/{{dir}}/skills/ as a junction pointing at the same file in the library (no copy). The list comes from each AI tool's native scan dir: {{dir}}",

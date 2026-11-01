@@ -2,8 +2,7 @@ import { McpManagedSourceEditor } from "./McpManagedSourceEditor";
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { openPath } from "@tauri-apps/plugin-opener";
-import { useProjects, type SkillProject } from "./useProjects";
+import { useProjects, openProjectDir, refreshProjectsAndSelection, type SkillProject } from "./useProjects";
 import { useTranslation } from "react-i18next";
 import { Plug, Plus, Trash2, RefreshCw, Server, Edit3, Link2, Check, Search, FolderOpen, ChevronDown, Wand2 } from "lucide-react";
 import { alertError, theamedAlert } from "../shared/ThemedAlert";
@@ -33,6 +32,7 @@ export default function McpManager() {
    *  这里不会刷新，两边会各看到一份不同的项目列表。 */
   const {
     projects,
+    error: projectsError,
     selProject,
     setSelProject,
     picked: pickedProjects,
@@ -800,7 +800,7 @@ export default function McpManager() {
                 </button>
               )}
               <button
-                onClick={() => { void load(); void reloadProjCounts(); }}
+                onClick={() => void refreshProjectsAndSelection(async (id) => { await load(); await loadProjMcps(id); await reloadProjCounts(); })}
                 className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-slate-200 cursor-pointer"
                 title={t("mcp.refresh")}
               >
@@ -809,6 +809,7 @@ export default function McpManager() {
             </div>
           </div>
 
+          {projectsError && <div role="alert" className="text-tiny text-red-400 break-all">{projectsError}</div>}
           {projects.length === 0 ? (
             <p className="text-tiny text-slate-500 px-1 py-2">{t("mcp.noProjects")}</p>
           ) : (
@@ -857,7 +858,7 @@ export default function McpManager() {
                   </button>
                   {/* 打开项目目录：装完想去项目里看一眼 .mcp.json 长什么样 */}
                   <button
-                    onClick={() => void openPath(p.path).catch((e) => alertError(String(e)))}
+                    onClick={() => void openProjectDir(p.id).catch((e) => alertError(String(e)))}
                     className="text-slate-600 hover:text-[var(--module-accent)] cursor-pointer flex-shrink-0"
                     title={t("mcp.projectOpenDir")}
                   >

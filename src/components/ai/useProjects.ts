@@ -1,6 +1,5 @@
 ﻿import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { openPath } from "@tauri-apps/plugin-opener";
 
 /**
  * 「项目」是技能与 MCP 共用的概念（都是「装给某个项目」），后端也共用同一个
@@ -38,6 +37,7 @@ interface ProjectsState {
   picked: Set<string>;
   counts: Record<string, ProjectSkillCount>;
   loading: boolean;
+  error: string | null;
 }
 
 const EMPTY_COUNTS: Record<string, ProjectSkillCount> = {};
@@ -48,6 +48,7 @@ let state: ProjectsState = {
   picked: new Set(),
   counts: EMPTY_COUNTS,
   loading: true,
+  error: null,
 };
 
 const listeners = new Set<() => void>();
@@ -73,15 +74,8 @@ let inFlight: Promise<void> | null = null;
 
 /** 技能计数：一次扫完所有项目，比逐个 `list_project_skills` 便宜得多 */
 async function loadCounts(): Promise<Record<string, ProjectSkillCount>> {
-  try {
-    const list = await invoke<ProjectSkillCount[]>("list_project_skill_counts");
-    const map: Record<string, ProjectSkillCount> = {};
-    for (const c of list) map[c.projectId] = c;
-    return map;
-  } catch (e) {
-    console.error("读取项目技能数失败:", e);
-    return state.counts;
-  }
+  const list = await invoke<ProjectSkillCount[]>("list_project_skill_counts");
+  return Object.fromEntries(list.map((count) => [count.projectId, count]));
 }
 
 /**
@@ -90,9 +84,16 @@ async function loadCounts(): Promise<Record<string, ProjectSkillCount>> {
  * 并发调用会合并成同一次请求：两个页面同时挂载时都调它，
  * 不去重就会发两遍 IPC、把盘扫两遍（而两页拿到的是同一份数据）。
  */
-export async function reloadProjects(): Promise<void> {
-  if (inFlight) return inFlight;
-  inFlight = (async () => {
+export async function reloadProjects(force = false): Promise<void> {
+  if (inFlight) {
+    const pending = inFlight;
+    await pending;
+    if (!force) return;
+    if (inFlight === pending) inFlight = null;
+    return reloadProjects();
+  }
+  setState({ loading: true, error: null });
+  const task = (async () => {
     try {
       const list = await invoke<SkillProject[]>("list_projects");
       const counts = await loadCounts();
@@ -108,21 +109,26 @@ export async function reloadProjects(): Promise<void> {
         picked: new Set([...state.picked].filter((id) => list.some((p) => p.id === id))),
       });
     } catch (e) {
-      console.error("加载项目列表失败:", e);
+      setState({ error: String(e) });
     } finally {
       setState({ loading: false });
     }
   })();
+  inFlight = task;
   try {
-    await inFlight;
+    await task;
   } finally {
-    inFlight = null;
+    if (inFlight === task) inFlight = null;
   }
 }
 
 /** 只重算技能计数（装/删技能后用，不必重读项目清单） */
 export async function reloadProjectCounts(): Promise<void> {
-  setState({ counts: await loadCounts() });
+  try {
+    setState({ counts: await loadCounts(), error: null });
+  } catch (error) {
+    setState({ error: String(error) });
+  }
 }
 
 export const setSelProject = (id: string) => setState({ selProject: id });
@@ -150,11 +156,17 @@ export function togglePick(id: string) {
  */
 export async function removeProject(id: string): Promise<void> {
   await invoke("remove_project", { id });
-  await reloadProjects();
+  await reloadProjects(true);
 }
 
-export async function openProjectDir(path: string): Promise<void> {
-  await openPath(path);
+export async function openProjectDir(projectId: string): Promise<void> {
+  await invoke("open_skill_project_directory", { projectId });
+}
+
+/** Refresh the persisted list before loading the current selection, including an unchanged ID. */
+export async function refreshProjectsAndSelection(load: (id: string) => Promise<void>): Promise<void> {
+  await reloadProjects(true);
+  if (!state.error) await load(state.selProject);
 }
 
 /**
@@ -184,6 +196,7 @@ export function useProjects() {
     allPicked,
     counts: snap.counts,
     loading: snap.loading,
+    error: snap.error,
     reload: reloadProjects,
     reloadCounts: reloadProjectCounts,
     openProjectDir,

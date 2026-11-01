@@ -229,6 +229,7 @@ pub(crate) fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         commands::ai::skills::get_skill_meta,
         commands::ai::skills::update_skill_meta,
         commands::ai::skills::list_projects,
+        commands::ai::skills::open_skill_project_directory,
         commands::ai::skills::add_project,
         commands::ai::skills::remove_project,
         commands::ai::skills::install_skill_to_project,

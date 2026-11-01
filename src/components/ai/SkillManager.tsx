@@ -14,11 +14,10 @@ import { useSkillDirectoryActions } from "./useSkillDirectoryActions";
 import { useSkillPreview } from "./useSkillPreview";
 import { useSkillInstallation } from "./useSkillInstallation";
 import { useSkillMetadataEditor } from "./useSkillMetadataEditor";
-import { useState, useEffect, useMemo } from 'react';
-import { useProjects } from './useProjects';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { useProjects, openProjectDir, refreshProjectsAndSelection } from './useProjects';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
-import { openPath } from '@tauri-apps/plugin-opener';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen as listenEvent } from '@tauri-apps/api/event';
 import { Search, Tag, Store, Download, Trash2, CheckCircle, AlertTriangle, X, Loader2, ChevronDown, Filter, Sparkles, FolderOpen, Plus, Link2, RotateCw } from 'lucide-react';
@@ -83,13 +82,11 @@ export default function SkillManager() {
   const [showBuiltin, setShowBuiltin] = useState(false);
 
   // ── 项目（技能的作用域） ──
-  /**
-    * 项目清单来自**共享 store**（./useProjects）—— MCP 页读的是同一份快照。
-    * 之前只是共用 hook 代码、各存一份 useState，加上两页 keep-alive 常驻，
-    * 于是「在技能页删掉的项目在 MCP 页还在」——后端早就改了，只有前端不同步。
-    */
+  // 技能与MCP共用项目清单。
     const {
       projects,
+      loading: projectsLoading,
+      error: projectsError,
       selProject: selProjectRaw,
       setSelProject: setSelProjectRaw,
       picked: pickedProjects,
@@ -184,12 +181,14 @@ export default function SkillManager() {
   const loadProjects = reloadProjects;
 
   /** 查看项目时按需拉它的技能清单（不预先拉所有项目的，避免无用 IO） */
+  const detailGeneration = useRef(0);
   const loadProjectSkills = async (pid: string) => {
+    const generation = ++detailGeneration.current;
     try {
       const list = await invoke<ProjectSkillEntry[]>('list_project_skills', { projectId: pid });
-      setProjSkills((m) => ({ ...m, [pid]: list }));
+      if (generation === detailGeneration.current) setProjSkills((m) => ({ ...m, [pid]: list }));
     } catch (e: any) {
-      setProjMsg({ id: pid, msg: String(e), ok: false });
+      if (generation === detailGeneration.current) setProjMsg({ id: pid, msg: String(e), ok: false });
     }
   };
 
@@ -328,11 +327,18 @@ export default function SkillManager() {
     });
   };
 
-  /** 切换右侧正在查看的项目，并按需拉它的技能清单 */
-  const selectProject = async (id: string) => {
-    setSelProject(id);
-    if (!projSkills[id]) await loadProjectSkills(id);
-  };
+  useEffect(() => {
+    if (selProject) void loadProjectSkills(selProject);
+    return () => { detailGeneration.current++; };
+  }, [selProject]);
+
+  const selectProject = (id: string) => setSelProject(id);
+  const refreshProjectList = () => refreshProjectsAndSelection(async (id) => {
+    detailGeneration.current++;
+    setProjSkills({});
+    setProjMsg(null);
+    if (id) await loadProjectSkills(id);
+  });
 
   const toggleProjectPick = (id: string) => {
     setPickedProjects((s) => {
@@ -619,11 +625,12 @@ export default function SkillManager() {
                     </button>
                     {/* 计数是实时扫盘的结果，装完/删完技能数字会过期，给一个手动刷新 */}
                     <button
-                      onClick={() => void loadProjCounts()}
+                      onClick={() => void refreshProjectList()}
+                      disabled={projectsLoading}
                       className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-slate-200 cursor-pointer"
                       title={t("skillmgr.projCountRefresh")}
                     >
-                      <RotateCw className="w-3 h-3" />
+                      <RotateCw className={`w-3 h-3 ${projectsLoading ? "animate-spin" : ""}`} />
                     </button>
                     <button
                       onClick={() => void addProject()}
@@ -634,6 +641,7 @@ export default function SkillManager() {
                   </div>
                 </div>
 
+                {projectsError && <div role="alert" className="text-tiny text-red-400 break-all">{projectsError}</div>}
                 {projects.length === 0 ? (
                   <div className="text-center py-10 text-slate-500 text-tiny">{t("skillmgr.projEmpty")}</div>
                 ) : (
@@ -660,13 +668,9 @@ export default function SkillManager() {
                           <div className="text-tiny font-semibold text-slate-200 truncate">{p.name || p.path}</div>
                           <div className="text-micro text-slate-500 font-mono truncate">{p.path}</div>
                         </button>
-                        {/* 打开项目目录：装完技能想去项目里看一眼 junction 落在哪。
-                            失败时**透出原始错误**，不要换成「项目可能已被移动或删除」那种
-                            猜测 —— 实测路径全部存在时，那句提示会把排查方向带偏
-                            （真实原因可能是权限、路径在非挂载盘、或 shell 调用失败）。
-                            与 McpManager 的同名按钮保持一致的做法。 */}
+                        {/* 后端按已登记项目ID校验目录后打开。 */}
                         <button
-                          onClick={() => void openPath(p.path).catch((e) => setProjMsg({ id: p.id, msg: String(e), ok: false }))}
+                          onClick={() => void openProjectDir(p.id).catch((e) => setProjMsg({ id: p.id, msg: String(e), ok: false }))}
                           className="text-slate-600 hover:text-[var(--module-accent)] cursor-pointer flex-shrink-0"
                           title={t("skillmgr.projOpenDir")}
                         >

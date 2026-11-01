@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0610",
+  "date": "2026-11-01",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "AI技能模块的项目列表刷新按钮仅更新计数，不能重读项目列表或更新已缓存的项目技能；需要完整刷新项目、计数、当前项目详情并明确展示失败，兼顾共享MCP项目状态。",
+  "root_cause": "技能页刷新按钮只调用 **reloadProjectCounts**，没有重读项目清单；右侧 **projSkills** 缓存只在首次选择时加载。共享store吞掉读取错误，旧inFlight结果也可能被当作手动刷新结果。",
+  "solution": "1. 手动刷新串行等待已有请求后强制重读项目列表和计数，重新协调选中项与勾选集合，再刷新当前项目详情；相同ID也重新读取。MCP共享页同步接入完整刷新。\n2. 技能详情用generation拒绝迟到旧响应；切换选择自动读取，刷新清旧缓存，项目列表读取/扫描失败保留最后成功快照并显示错误和加载状态。\n3. 后端项目列表读取区分首次缺文件与损坏/IO错误；损坏文件不覆盖。新增5项前端回归及后端读取错误fixture，TypeScript、生产构建、前端431项及1117源码文件架构检查通过。\n4. 验收：技能模块Rust34项、前端54文件431项通过，包含5项新增共享项目store回归；TypeScript、生产构建、1117源码架构及差异空白检查通过。系统资源管理器未做真实交互，目录分发与目录校验使用mock/临时目录验证。 中英文按钮提示同步为完整刷新范围；追加项目store及翻译校验7项通过。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/ai/useProjects.ts** | 强制重读、错误和加载状态、当前选择协调 |\n| **src/components/ai/SkillManager.tsx** | 完整刷新、详情generation与状态反馈 |\n| **src/components/ai/McpManager.tsx** | 共享项目列表与详情刷新、错误展示 |\n| **src/components/ai/projects.test.ts** | 刷新选择、并发旧请求与读取失败回归 |\n| **src-tauri/src/commands/ai/skills/projects.rs** | checked读取及坏JSON保留回归 |\n| **src/i18n/locales/zh/translation.json** / **src/i18n/locales/en/translation.json** | 刷新提示说明完整刷新范围 |",
+  "created_at": "2026-11-01 22:13:20",
+  "updated_at": "2026-11-01 22:20:03",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

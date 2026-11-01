@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0609",
+  "date": "2026-11-01",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "AI技能页及共用项目管理无法打开已添加项目目录，提示not allowed to open；需要修复项目目录打开链路，保留已登记目录校验，避免给任意路径开放权限。",
+  "root_cause": "项目目录按钮直接调用前端 **openPath**，已声明的opener命令权限没有提供用户自选项目路径的scope，插件拒绝路径；技能页与MCP页重复使用相同错误入口。",
+  "solution": "1. 增加 **open_skill_project_directory** 后端命令，只接收已登记项目ID，checked读取项目列表，并确认目标是存在的绝对目录后交给系统打开。\n2. 技能和MCP页统一通过共享 **openProjectDir** 调用；不扩大前端任意路径权限。\n3. 临时目录fixture验证已登记目录、未知ID、已删除目录及普通文件；前端回归验证按ID调用，错误继续反馈给用户。\n4. 验收：技能模块Rust34项、前端54文件431项通过，包含5项新增共享项目store回归；TypeScript、生产构建、1117源码架构及差异空白检查通过。系统资源管理器未做真实交互，目录分发与目录校验使用mock/临时目录验证。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/ai/skills/projects.rs** | 已登记目录校验、系统打开及fixture |\n| **src-tauri/src/app_commands.rs** | 注册目录打开命令 |\n| **src/components/ai/useProjects.ts** | 共用按ID打开入口 |\n| **src/components/ai/SkillManager.tsx** / **McpManager.tsx** | 替换前端受限openPath调用 |\n| **src/components/ai/projects.test.ts** | 按项目ID分发回归 |",
+  "created_at": "2026-11-01 22:13:20",
+  "updated_at": "2026-11-01 22:19:03",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}
