@@ -589,10 +589,19 @@ pub fn supports_reasoning_effort(model: &str) -> bool {
 ///
 /// 抄自 cc-switch d6e05152：无差别把 `max` 压成 `xhigh` 会丢掉这些模型的最强档。
 fn supports_max_reasoning_effort(model: &str) -> bool {
-    matches!(
-        model_basename(model).as_str(),
-        "gpt-5.6" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna" | "gpt-6-astra"
-    )
+    let base = model_basename(model);
+    let Some(rest) = base.strip_prefix("gpt-") else {
+        return false;
+    };
+    let (version, variant) = rest.split_once('-').unwrap_or((rest, ""));
+    if !matches!(variant, "" | "sol" | "terra" | "luna" | "astra") {
+        return false;
+    }
+    let (major, minor) = version.split_once('.').unwrap_or((version, "0"));
+    match (major.parse::<u32>(), minor.parse::<u32>()) {
+        (Ok(major), Ok(minor)) => major > 5 || (major == 5 && minor >= 6),
+        _ => false,
+    }
 }
 
 /// 从 Anthropic 形态请求体解析出应发给 OpenAI 上游的 `reasoning_effort`。

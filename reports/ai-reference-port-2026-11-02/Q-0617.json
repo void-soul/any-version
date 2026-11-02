@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0617",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "代理使用固定模型名单判断max思考档，GPT新版本Sol/Terra/Luna/Astra模型的max被静默降为xhigh，需要按版本及变体判断并验证旧模型回退。",
+  "root_cause": "参考 **cc-switch 39183b59** 按版本和变体识别max；我方 **supports_max_reasoning_effort** 固定名单遗漏GPT新版本，max降为xhigh。",
+  "solution": "1. 在 **optimizers.rs** 按GPT版本>=5.6及空/sol/terra/luna/astra变体判断max，继续使用model_basename支持供应商前缀。\n2. 旧模型、其他变体、快照和畸形版本保持xhigh回退。\n3. 回归测试在旧实现上失败，修复后纳入代理回归；不修改前端设置。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/proxy/optimizers.rs** | 实现或回归验证 |\n| **src-tauri/src/proxy/optimizers/tests.rs** | 实现或回归验证 |",
+  "created_at": "2026-11-02 15:44:39",
+  "updated_at": "2026-11-02 15:54:48",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

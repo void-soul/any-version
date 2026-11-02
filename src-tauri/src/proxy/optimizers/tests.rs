@@ -269,3 +269,35 @@ fn optimize_thinking_openai_injects_nothing_for_unsupported_model() {
     optimize_thinking_openai(&mut body);
     assert!(body.get("reasoning_effort").is_none(), "{body}");
 }
+
+#[test]
+fn max_effort_tracks_version_and_variant() {
+    let body = json!({"output_config":{"effort":"max"}});
+    for model in [
+        "gpt-6-sol",
+        "gpt-6.1-terra",
+        "GPT-6.1-Luna",
+        "vendor/gpt-6.1-astra",
+        "gpt-5.10-sol",
+    ] {
+        assert_eq!(
+            resolve_reasoning_effort(model, &body),
+            Some("max"),
+            "{model}"
+        );
+    }
+    for model in [
+        "gpt-5.5",
+        "gpt-6-pro",
+        "gpt-6.1-codex",
+        "gpt-6.1-sol-2026-10-01",
+        "gpt-x-sol",
+        "gpt-6..1",
+    ] {
+        assert_eq!(
+            resolve_reasoning_effort(model, &body),
+            Some("xhigh"),
+            "{model}"
+        );
+    }
+}
