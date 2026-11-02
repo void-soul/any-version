@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0642",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "日志查看：卸载未取消大文件索引/搜索，部分DOM监听和反馈计时器未清理，旧搜索会覆盖新搜索，读取和索引缺少资源边界；统一工具栏。",
+  "root_cause": "**LogViewer**异步索引/搜索yield后不核对生命周期与请求，部分原生监听没有解绑，反馈timer/rAF不清理；无字节/行数/单行预算，Float64索引占用偏大，复制fallback不检查成功。",
+  "solution": "",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/LogViewer.tsx** | 日志索引/生命周期/公共控件或回归 |\n| **src/components/logViewer/runtime.ts** | 日志索引/生命周期/公共控件或回归 |\n| **src/components/logViewer/index.ts** | 日志索引/生命周期/公共控件或回归 |\n| **src/components/logViewer/index.test.ts** | 日志索引/生命周期/公共控件或回归 |\n| **src/components/logViewer/styles.ts** | 日志索引/生命周期/公共控件或回归 |\n| **src/i18n/locales/zh/translation.json** | 日志索引/生命周期/公共控件或回归 |\n| **src/i18n/locales/en/translation.json** | 日志索引/生命周期/公共控件或回归 |\n",
+  "created_at": "2026-11-02 17:51:51",
+  "updated_at": "2026-11-02 17:57:12",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

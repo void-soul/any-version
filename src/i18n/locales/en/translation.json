@@ -5618,7 +5618,15 @@
     "dropHint": "Drag a log file here",
     "dropHint2": "or click \"Open file\" to pick one &nbsp;·&nbsp; supports 200MB+ files",
     "noFile": "No file open",
-    "parsingOverlay": "Parsing file…"
+    "parsingOverlay": "Parsing file…",
+    "fileTooLarge": "Log files must be 256 MiB or smaller.",
+    "tooManyLines": "This log exceeds one million lines. Open a smaller section.",
+    "lineTooLong": "A log line exceeds 1 MiB. Open a smaller section.",
+    "copyFail": "Copy failed. Please try again.",
+    "autoTail": "Auto follow",
+    "errorCount": "{{n}} errors",
+    "warnCount": "{{n}} warnings",
+    "shownCount": "{{n}} shown"
   },
   "envmgr": {
     "title": "Environment Variables",

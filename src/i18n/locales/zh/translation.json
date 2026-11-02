@@ -5618,7 +5618,15 @@
     "dropHint": "拖拽日志文件到此处",
     "dropHint2": "或点击「打开文件」选择 &nbsp;·&nbsp; 支持 200MB+ 大文件",
     "noFile": "未打开文件",
-    "parsingOverlay": "正在解析文件…"
+    "parsingOverlay": "正在解析文件…",
+    "fileTooLarge": "日志文件不能超过 256 MiB。",
+    "tooManyLines": "日志超过 100 万行，请分段查看。",
+    "lineTooLong": "日志中单行超过 1 MiB，请分段查看。",
+    "copyFail": "复制失败，请重试。",
+    "autoTail": "自动跟随",
+    "errorCount": "{{n}} 错误",
+    "warnCount": "{{n}} 警告",
+    "shownCount": "显示 {{n}} 行"
   },
   "envmgr": {
     "title": "环境变量",
