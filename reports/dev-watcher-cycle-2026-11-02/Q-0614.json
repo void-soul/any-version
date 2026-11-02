@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0614",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "Kira开发运行时Vite文件监听进入.agents/skills中的junction，外部qa-log与secure-git-commit互相链接导致ELOOP和重复错误；需要排除技能挂载树并禁止跟随符号链接，同时验证正常前端源码变更仍能被监听，不修改用户外部技能库。",
+  "root_cause": "**Vite server.watch** 只忽略src-tauri，默认跟随符号链接；本项目.agents/skills通过junction指向外部技能库，而其中qa-log与secure-git-commit存在双向junction，监听器递归stat进入循环并报ELOOP。Redis external_running是独立状态日志，非该错误来源。",
+  "solution": "1. **server.watch.followSymlinks=false**，显式排除.agents、.codebuddy、.claude、.workbuddy、.openclaw等技能挂载树，保留src-tauri原有忽略项；不删除链接、不修改外部技能库。\n2. 新增真实Vite watcher隔离脚本，在临时目录创建双向循环junction及5种技能挂载、额外未忽略链接；确认不递归这些目录且普通src源码仍产生change事件，最后关闭watcher并仅清理自有临时树。\n3. Windows原生隔离回归通过（AppContainer不允许创建junction）；前端56文件440项、TypeScript/生产构建、1124源码架构及差异空白检查通过。重新启动开发进程可确保新监听配置生效。",
+  "files": "| File | Change |\n|------|--------|\n| **vite.config.ts** | 禁止跟随符号链接并排除技能挂载目录 |\n| **scripts/check-dev-watcher.mjs** | 循环junction及正常源码监听的真实Vite隔离回归 |\n| **reports/dev-watcher-cycle-2026-11-02/** | QA快照、原因与验证记录 |",
+  "created_at": "2026-11-02 11:00:12",
+  "updated_at": "2026-11-02 11:04:19",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

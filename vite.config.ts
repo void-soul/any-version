@@ -36,8 +36,13 @@ export default defineConfig(async () => ({
       }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // Skills are mounted junctions, not frontend sources; their dependencies can form cycles.
+      followSymlinks: false,
+      ignored: [
+        "**/src-tauri/**",
+        "**/.agents/**", "**/.codebuddy/**", "**/.claude/**",
+        "**/.workbuddy/**", "**/.openclaw/**",
+      ],
     },
   },
 }));

@@ -1,0 +1,12 @@
+开发监听ELOOP修复（2026-11-02）
+
+已确认项目的.agents/skills联接外部技能目录，外部qa-log与secure-git-commit又互相联接。
+错误文本来自Vite watcher；Redis external_running属于正常状态输出，与ELOOP独立。
+
+修复：Vite watch不跟随符号链接，排除5种技能挂载树，继续忽略src-tauri。
+不删除项目技能链接，不修改外部技能库；已有循环链接仍保留，前端监听不再递归它们。
+
+验证：node scripts/check-dev-watcher.mjs（Windows原生环境）通过。
+夹具在系统临时目录创建双向循环及技能挂载，断言无ELOOP、不进入链接树，并确认src文件变更仍可监听；结束关闭watcher且拆除自建链接。
+前端56文件440项、TypeScript、生产构建、1124源码架构和差异空白检查通过。
+重新启动开发进程，确保旧watcher被替换。QA追踪Q-0614；其他并行改动和qa.db保留，未推送。
