@@ -124,7 +124,7 @@ export const MD_RECENT_KEY = "any_version_markdown_recent";
 export const MD_RECENT_FILES_KEY = "any_version_markdown_recent_files";
 
 /** 预览图片的 data URL 缓存：同一文档反复渲染不重复读盘 */
-export const imageCache = new Map<string, Promise<string | null>>();
+export { imageCache } from "./MarkdownReader.imageCache";
 
 export const formatSize = (n: number): string => {
   if (n < 1024) return `${n} B`;

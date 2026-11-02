@@ -2573,7 +2573,9 @@
     "recent": "Recently opened",
     "imageFailed": "Image failed to load",
     "expand": "Expand",
-    "collapse": "Collapse"
+    "collapse": "Collapse",
+    "maxTabs": "Up to 12 documents can be open. Close another tab first.",
+    "largePreviewPaused": "Rich preview is paused for this large document. Use edit mode or split the file into smaller sections."
   },
   "clip": {
     "yesterday": "Yesterday {{hm}}",

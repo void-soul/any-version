@@ -18,10 +18,22 @@ import { theamedConfirm } from "../shared/ThemedAlert";
 import "katex/dist/katex.min.css";
 import { FolderOpen, X, FileText, Search, PanelLeftClose, PanelLeftOpen, RefreshCw, AlertCircle, Pencil, Eye, Save, Check, Columns, FilePlus, Folder, Download, Printer, ArrowUp, ArrowDown, Replace } from "lucide-react";
 import { MD_RECENT_FILES_KEY, MD_RECENT_KEY, isExternal, slugify, type AssocStatus, type Heading, type MarkdownEntry, type RecentFile, type Tab, wrapSelection } from "./MarkdownReader.model";
+import { btnSecondary } from "../shared/Button";
+import { useMarkdownEditing } from "./useMarkdownEditing";
+import { imageCache } from "./MarkdownReader.imageCache";
 import { LoaderCircle } from "./MarkdownReader.LoaderCircle";
 
 export default function MarkdownReader() {
-  const [tabs, setTabs] = useState<Tab[]>([]);
+  const [tabs, setRawTabs] = useState<Tab[]>([]);
+  const tabsRef = useRef<Tab[]>([]);
+  const setTabs = useCallback((update: React.SetStateAction<Tab[]>) => {
+    const next = typeof update === "function" ? update(tabsRef.current) : update;
+    tabsRef.current = next; setRawTabs(next);
+  }, []);
+  const alive = useRef(false);
+  const noticeTimer = useRef<number | null>(null);
+  const scanRequest = useRef(0);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; scanRequest.current++; imageCache.clear(); if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current); }; }, []);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [siblings, setSiblings] = useState<MarkdownEntry[]>([]);
   const [siblingRoot, setSiblingRoot] = useState<string>("");
@@ -32,7 +44,6 @@ export default function MarkdownReader() {
   const { t } = useTranslation();
   const [mode, setMode] = useState<"view" | "edit">("view"); // 默认预览
   const [split, setSplit] = useState(false);                 // 编辑+预览分栏
-  const [saving, setSaving] = useState(false);
   const [assoc, setAssoc] = useState<AssocStatus | null>(null);
   const [showAssoc, setShowAssoc] = useState(false);
   const [cursor, setCursor] = useState({ line: 1, col: 1 }); // 光标行列（编辑态状态栏）
@@ -44,8 +55,6 @@ export default function MarkdownReader() {
   const previewPaneRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
-  const saveTimer = useRef<number | null>(null);
-  const lastUndoAt = useRef<Map<string, number>>(new Map());
   const openingRef = useRef<Set<string>>(new Set());
   const splitSyncRef = useRef<"editor" | "preview" | null>(null);
   const restoredRef = useRef(false);
@@ -56,8 +65,10 @@ export default function MarkdownReader() {
   );
 
   const flashNotice = useCallback((msg: string) => {
+    if (!alive.current) return;
     setNotice(msg);
-    window.setTimeout(() => setNotice((n) => (n === msg ? null : n)), 2600);
+    if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+    noticeTimer.current = window.setTimeout(() => setNotice(null), 2600);
   }, []);
 
   const loadAssoc = useCallback(async () => {
@@ -75,27 +86,31 @@ export default function MarkdownReader() {
     if (restoredRef.current) return;
     restoredRef.current = true;
     let alive = true;
+    let completed = false;
     try {
       const saved = JSON.parse(localStorage.getItem(MD_RECENT_KEY) || "null");
       const paths: string[] = Array.isArray(saved?.paths)
         ? saved.paths.filter((p: unknown): p is string => typeof p === "string" && !!p)
         : [];
-      if (paths.length === 0) return;
+      if (paths.length === 0) { completed = true; return; }
       (async () => {
         for (const p of paths) {
           if (!alive) return;
           await openPath(p);
         }
+        completed = true;
         // 恢复上次激活的标签（openPath 会逐个激活，最后再切回来）
         if (alive && typeof saved?.activePath === "string" && paths.includes(saved.activePath)) {
           setActivePath(saved.activePath);
         }
       })();
     } catch {
+      completed = true;
       // 忽略恢复失败（文件可能已被删除），回落到空白状态
     }
     return () => {
       alive = false;
+      if (!completed) restoredRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -139,22 +154,23 @@ export default function MarkdownReader() {
 
   /** 扫描某个文件所在目录的全部 markdown */
   const scanSiblings = useCallback(async (fromPath: string) => {
+    const request = ++scanRequest.current;
     setScanning(true);
     try {
       const list = await invoke<MarkdownEntry[]>("list_sibling_markdown", {
         path: fromPath,
         maxDepth: 3,
       });
+      if (!alive.current || request !== scanRequest.current) return;
       setSiblings(list);
       const sep = fromPath.includes("\\") ? "\\" : "/";
       setSiblingRoot(fromPath.slice(0, fromPath.lastIndexOf(sep)));
     } catch (e) {
-      console.error(e);
-      setSiblings([]);
+      if (alive.current && request === scanRequest.current) flashNotice(String(e));
     } finally {
-      setScanning(false);
+      if (alive.current && request === scanRequest.current) setScanning(false);
     }
-  }, []);
+  }, [flashNotice]);
 
   /**
    * 打开一个文件为选项卡。已打开则直接激活，避免重复标签。
@@ -167,23 +183,15 @@ export default function MarkdownReader() {
       if (openingRef.current.has(path)) return;
       openingRef.current.add(path);
 
-      let existed = false;
-      setTabs((prev) => {
-        if (prev.some((t) => t.path === path)) {
-          existed = true;
-          return prev;
-        }
-        const sep = path.includes("\\") ? "\\" : "/";
-        const name = path.slice(path.lastIndexOf(sep) + 1);
-        return [...prev, { path, name, content: "", error: null, loading: true, dirty: false, savedContent: "", undo: [], redo: [] }];
-      });
-
-      // 打开文件即刷新左侧同目录列表，保证「文件导航」始终可用。
-      void scanSiblings(path);
-      if (existed) {
-        openingRef.current.delete(path);
-        return;
+      if (tabsRef.current.some((tab) => tab.path === path)) {
+        openingRef.current.delete(path); void scanSiblings(path); return;
       }
+      if (tabsRef.current.length >= 12) {
+        openingRef.current.delete(path); flashNotice(t("mdreader.maxTabs")); return;
+      }
+      const name = path.split(/[\\/]/).pop() || path;
+      setTabs((previous) => [...previous, { path, name, content: "", error: null, loading: true, dirty: false, savedContent: "", undo: [], redo: [] }]);
+      void scanSiblings(path);
 
       // 写入「最近打开」，最多保留 12 条
       try {
@@ -213,7 +221,7 @@ export default function MarkdownReader() {
         openingRef.current.delete(path);
       }
     },
-    [scanSiblings]
+    [scanSiblings, flashNotice, setTabs, t]
   );
 
   /** 系统「打开方式」/ 单实例传入的 .md：模块挂载或收到事件时取走待打开队列 */
@@ -308,12 +316,17 @@ export default function MarkdownReader() {
     }
   }, [openPath]);
 
+  const { setContent, undo, redo, saveActive, reloadActive, saving, isSaving, forgetHistory } = useMarkdownEditing(active, activePath, setTabs, flashNotice);
+
   const closeTab = useCallback(
     async (path: string, e?: React.MouseEvent) => {
       e?.stopPropagation();
       // 未保存确认要 await，所以不能在 setTabs 的 updater 里问（updater 必须同步返回）
-      const tab = tabs.find((x) => x.path === path);
+      if (isSaving(path)) return;
+      const tab = tabsRef.current.find((x) => x.path === path);
       if (tab?.dirty && !(await theamedConfirm(t("mdreader.dirtyCloseConfirm", { name: tab.name })))) return;
+      if (!alive.current || isSaving(path)) return;
+      forgetHistory(path);
       setTabs((prev) => {
         const idx = prev.findIndex((x) => x.path === path);
         const next = prev.filter((x) => x.path !== path);
@@ -327,102 +340,6 @@ export default function MarkdownReader() {
     },
     [activePath, tabs]
   );
-
-  /** 编辑器内容变更（带撤销栈；连续输入按 800ms 合并成一次撤销） */
-  const setContent = useCallback((path: string, next: string, pushUndo = true) => {
-    const now = Date.now();
-    const last = lastUndoAt.current.get(path) ?? 0;
-    lastUndoAt.current.set(path, now);
-    const mergeTyping = now - last < 800;
-    setTabs((prev) =>
-      prev.map((t) => {
-        if (t.path !== path) return t;
-        // 只有小幅增删（逐字输入）才并入上一次撤销点，批量替换仍单独入栈
-        const smallEdit = Math.abs(next.length - t.content.length) <= 2;
-        const undo = pushUndo && !(mergeTyping && smallEdit) ? [...t.undo.slice(-200), t.content] : t.undo;
-        return { ...t, content: next, undo, redo: [], dirty: next !== t.savedContent };
-      })
-    );
-  }, []);
-
-  /** 撤销/重做 */
-  const undo = useCallback(() => {
-    lastUndoAt.current.delete(activePath ?? "");
-    setTabs((prev) =>
-      prev.map((t) => {
-        if (t.path !== activePath || t.undo.length === 0) return t;
-        const prevContent = t.undo[t.undo.length - 1];
-        return {
-          ...t,
-          content: prevContent,
-          undo: t.undo.slice(0, -1),
-          redo: [...t.redo, t.content],
-          dirty: prevContent !== t.savedContent,
-        };
-      })
-    );
-  }, [activePath]);
-
-  const redo = useCallback(() => {
-    lastUndoAt.current.delete(activePath ?? "");
-    setTabs((prev) =>
-      prev.map((t) => {
-        if (t.path !== activePath || t.redo.length === 0) return t;
-        const nextContent = t.redo[t.redo.length - 1];
-        return {
-          ...t,
-          content: nextContent,
-          undo: [...t.undo, t.content],
-          redo: t.redo.slice(0, -1),
-          dirty: nextContent !== t.savedContent,
-        };
-      })
-    );
-  }, [activePath]);
-
-  /** 保存到磁盘 */
-  const saveActive = useCallback(async () => {
-    if (!active || !active.dirty || saving) return;
-    setSaving(true);
-    try {
-      await invoke("write_text_file", { path: active.path, content: active.content });
-      setTabs((prev) =>
-        prev.map((t) => (t.path === active.path ? { ...t, savedContent: t.content, dirty: false } : t))
-      );
-      flashNotice(t("mdreader.saved"));
-    } catch (e) {
-      flashNotice(t("mdreader.saveFail", { err: String(e) }));
-    } finally {
-      setSaving(false);
-    }
-  }, [active, saving, flashNotice]);
-
-  // 自动保存（2s 防抖）
-  useEffect(() => {
-    if (!active?.dirty) return;
-    if (saveTimer.current) window.clearTimeout(saveTimer.current);
-    saveTimer.current = window.setTimeout(() => { void saveActive(); }, 2000);
-    return () => { if (saveTimer.current) window.clearTimeout(saveTimer.current); };
-  }, [active?.content, active?.dirty, saveActive, active]);
-
-  const reloadActive = useCallback(async () => {
-    if (!active) return;
-    if (active.dirty && !(await theamedConfirm(t("mdreader.reloadDirtyConfirm")))) return;
-    const path = active.path;
-    setTabs((prev) =>
-      prev.map((t) => (t.path === path ? { ...t, loading: true, error: null } : t))
-    );
-    try {
-      const content = await invoke<string>("read_text_file", { path });
-      setTabs((prev) =>
-        prev.map((t) => (t.path === path ? { ...t, content, savedContent: content, loading: false, dirty: false, undo: [], redo: [] } : t))
-      );
-    } catch (e) {
-      setTabs((prev) =>
-        prev.map((t) => (t.path === path ? { ...t, error: String(e), loading: false } : t))
-      );
-    }
-  }, [active]);
 
   /**
    * 文档内链接点击：本地相对链接交给后端解析成绝对路径，
@@ -715,13 +632,13 @@ export default function MarkdownReader() {
     flashNotice,
   });
 
-  const btn =
-    "flex items-center gap-1 rounded-md px-2 py-1 text-caption font-medium text-slate-300 bg-white/5 hover:bg-white/10 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed";
+  const btn = btnSecondary;
   const tbtn =
-    "inline-flex items-center justify-center h-7 w-7 rounded-md text-slate-300 bg-white/5 hover:bg-white/10 transition-colors cursor-pointer disabled:opacity-30";
+    "ui-icon-btn h-8 w-8";
   const assocAll = assoc ? assoc.md && assoc.markdown : false;
 
   const preview = active && !active.loading && !active.error && (
+    active.content.length > 2 * 1024 * 1024 ? <p role="status" className="ui-note text-caption m-4">{t("mdreader.largePreviewPaused")}</p> :
     <MarkdownPreviewContent
       headingIdByLine={headingIdByLine}
       toggleTaskAtLine={toggleTaskAtLine}
@@ -798,7 +715,7 @@ export default function MarkdownReader() {
           <FilePlus className="w-3.5 h-3.5" />
           {t("mdreader.newFile")}
         </button>
-        <button onClick={reloadActive} disabled={!active} className={btn}>
+        <button onClick={reloadActive} disabled={!active || saving || active.loading} className={btn}>
           <RefreshCw className="w-3.5 h-3.5" />
           {t("mdreader.reload")}
         </button>
@@ -855,7 +772,7 @@ export default function MarkdownReader() {
           {t("mdreader.assocBtn")}{assoc ? (assocAll ? " ✓" : "") : ""}
         </button>
         {notice && (
-          <div className="flex items-center gap-1 text-tiny text-amber-300">
+          <div role="status" className="flex items-center gap-1 text-tiny text-amber-300">
             <AlertCircle className="w-3 h-3" />
             {notice}
           </div>
@@ -923,6 +840,7 @@ export default function MarkdownReader() {
       {/* 选项卡条 */}
       {tabs.length > 0 && (
         <MarkdownDocumentTabs
+          busy={saving}
           tabs={tabs}
           setActivePath={setActivePath}
           setMode={setMode}

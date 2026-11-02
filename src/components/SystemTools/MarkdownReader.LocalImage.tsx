@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import "katex/dist/katex.min.css";
@@ -8,10 +8,21 @@ import { imageCache, isExternal } from "./MarkdownReader.model";
 export function LocalImage({ docPath, src, alt }: { docPath: string; src: string; alt: string }) {
   const { t } = useTranslation();
   const external = isExternal(src);
+  const anchor = useRef<HTMLSpanElement>(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") { setVisible(true); return; }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) { setVisible(true); observer.disconnect(); }
+    }, { rootMargin: "400px" });
+    if (anchor.current) observer.observe(anchor.current);
+    return () => observer.disconnect();
+  }, []);
   const [url, setUrl] = useState<string | null | undefined>(external ? src : undefined);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
+    if (!visible) return;
     setFailed(false);
     if (!src || external) {
       setUrl(src || null);
@@ -29,9 +40,10 @@ export function LocalImage({ docPath, src, alt }: { docPath: string; src: string
       .then((u) => { if (alive) setUrl(u); })
       .catch(() => { if (alive) { setUrl(null); setFailed(true); } });
     return () => { alive = false; };
-  }, [docPath, src, external]);
+  }, [docPath, src, external, visible]);
 
   if (!src) return null;
+  if (!visible) return <span ref={anchor} className="block min-h-8 text-caption text-slate-500">{alt || src}</span>;
   if (url === undefined) {
     // 读取中：先显示替代文本，避免布局跳动
     return <span className="text-tiny text-slate-600">{alt || src}</span>;
@@ -44,5 +56,5 @@ export function LocalImage({ docPath, src, alt }: { docPath: string; src: string
       </span>
     );
   }
-  return <img src={url || ""} alt={alt} className="max-w-full rounded my-3" onError={() => setFailed(true)} />;
+  return <img loading="lazy" decoding="async" src={url || ""} alt={alt} className="max-w-full rounded my-3" onError={() => setFailed(true)} />;
 }

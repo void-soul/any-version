@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0645",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "Markdown：保存期间新编辑被错误标为已保存，重复打开使用异步updater标记可能覆盖编辑；撤销全量快照及图片Promise缓存无预算，需统一操作控件及资源清理。",
+  "root_cause": "**saveActive**写入captured content却将回写时的最新内容当savedContent；openPath通过异步updater设置existed不可靠；每次撤销保存完整文档且图片Promise全局Map无界；控件独立样式。",
+  "solution": "",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/SystemTools/MarkdownReader.tsx** | Markdown文档所有权/内存预算或公共UI/回归 |\n| **src/components/SystemTools/useMarkdownEditing.ts** | Markdown文档所有权/内存预算或公共UI/回归 |\n| **src/components/SystemTools/MarkdownReader.state.ts** | Markdown文档所有权/内存预算或公共UI/回归 |\n| **src/components/SystemTools/MarkdownReader.state.test.ts** | Markdown文档所有权/内存预算或公共UI/回归 |\n| **src/components/SystemTools/MarkdownReader.model.tsx** | Markdown文档所有权/内存预算或公共UI/回归 |\n| **src/components/SystemTools/MarkdownReader.LocalImage.tsx** | Markdown文档所有权/内存预算或公共UI/回归 |\n| **src/components/SystemTools/MarkdownReader.imageCache.ts** | Markdown文档所有权/内存预算或公共UI/回归 |\n| **src/components/SystemTools/MarkdownReader.imageCache.test.ts** | Markdown文档所有权/内存预算或公共UI/回归 |\n| **src/components/SystemTools/MarkdownDocumentTabs.tsx** | Markdown文档所有权/内存预算或公共UI/回归 |\n| **src/i18n/locales/zh/translation.json** | Markdown文档所有权/内存预算或公共UI/回归 |\n| **src/i18n/locales/en/translation.json** | Markdown文档所有权/内存预算或公共UI/回归 |\n",
+  "created_at": "2026-11-02 18:06:26",
+  "updated_at": "2026-11-02 18:13:12",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}
