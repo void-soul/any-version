@@ -1,3 +1,4 @@
+import { btnSecondary } from "../shared/Button";
 import { useTranslation } from "react-i18next";
 import { Settings2 } from "lucide-react";
 import type { ApiEndpoint, PresetHeaderSet } from "./types";
@@ -29,12 +30,13 @@ export function ApiRequestHeadersEditor({ hideCommonHeaders, setHideCommonHeader
         <select
           value=""
           onChange={(e) => { if (e.target.value) applyPreset(e.target.value); }}
-          className="bg-black/30 border border-white/10 rounded-md px-1.5 py-1 text-tiny text-slate-300 cursor-pointer"
+          aria-label={t("api.applyPreset")}
+          className="ui-input h-9 px-2 cursor-pointer"
         >
           <option value="">{t("api.applyPreset")}</option>
           {presetSets.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
-        <button onClick={() => setPresetModal(true)} className="flex items-center gap-1 text-tiny px-2 py-1 rounded bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer">
+        <button onClick={() => setPresetModal(true)} className={btnSecondary}>
           <Settings2 className="w-3 h-3" /> {t("api.managePreset")}
         </button>
       </div>

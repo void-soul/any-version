@@ -1,3 +1,4 @@
+import { btnSecondary } from "../shared/Button";
 import type { SendRequestOutput, ExtractResult } from "./types";
 import { useTranslation } from "react-i18next";
 import { Copy, Check, Terminal, FileDown } from "lucide-react";
@@ -24,10 +25,12 @@ export function ApiResponseToolbar({ response, setBodyMode, bodyMode, copyBody, 
           <span className="text-tiny text-slate-500">{fmtTime(response.time_ms)}</span>
       <span className="text-tiny text-slate-500">{response.size_bytes > 1024 * 1024 ? `${(response.size_bytes / 1024 / 1024).toFixed(1)}MB` : `${(response.size_bytes / 1024).toFixed(1)}KB`}</span>
       {response.body_truncated && <span className="text-tiny text-amber-400">{t("api.bodyTruncated")}</span>}
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex flex-wrap items-center gap-2">
         <div className="flex gap-0.5 bg-black/30 rounded p-0.5">
           {(["pretty", "raw"] as const).map((m) => (
             <button
+              type="button"
+              aria-pressed={bodyMode === m}
               key={m}
               onClick={() => setBodyMode(m)}
               className={`px-1.5 py-0.5 rounded text-tiny cursor-pointer ${bodyMode === m ? "bg-white/10 text-cyan-300" : "text-slate-500 hover:text-slate-300"}`}
@@ -36,13 +39,13 @@ export function ApiResponseToolbar({ response, setBodyMode, bodyMode, copyBody, 
             </button>
           ))}
         </div>
-        <button onClick={copyBody} className="flex items-center gap-1 text-tiny px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer">
+        <button onClick={copyBody} className={btnSecondary}>
           {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />} {copied ? t("api.copied") : t("api.copyBody")}
         </button>
-        <button onClick={saveResponseBody} title={t("api.saveBodyTip")} className="flex items-center gap-1 text-tiny px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer">
+        <button onClick={saveResponseBody} title={t("api.saveBodyTip")} className={btnSecondary}>
           <FileDown className="w-3 h-3" /> {t("api.saveBody")}
         </button>
-        <button onClick={copyAsCurl} title={t("api.copyCurlTip")} className="flex items-center gap-1 text-tiny px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-400 cursor-pointer">
+        <button onClick={copyAsCurl} title={t("api.copyCurlTip")} className={btnSecondary}>
           {curlCopied ? <Check className="w-3 h-3 text-emerald-400" /> : <Terminal className="w-3 h-3" />} {curlCopied ? t("api.copiedCurl") : t("api.copyCurl")}
         </button>
         {extractResults.length > 0 && (

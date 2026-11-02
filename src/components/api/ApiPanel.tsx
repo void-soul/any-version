@@ -1,3 +1,4 @@
+import { btnPrimary, btnSecondary, btnDanger } from "../shared/Button";
 import { useApiCollectionExport } from "./useApiCollectionExport";
 import { ApiResponseToolbar } from "./ApiResponseToolbar";
 import { ApiRequestHeadersEditor } from "./ApiRequestHeadersEditor";
@@ -21,7 +22,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Send, Plus, Trash2, Save, ChevronRight, FlaskConical, Gauge, BookOpen, ListChecks, Loader2, Pencil, KeyRound, Cookie, SlidersHorizontal, FileText, TestTube2, Braces, Link2, Star, Square, Wand2, ListOrdered } from "lucide-react";
 import type { ApiProject, ApiEnvironment, ApiModule, ApiEndpoint, KeyValueItem, PresetHeaderSet, UnitTest, UnitTestRunOutput, LoadTestConfig, LoadTestRun, ApiHistoryEntry } from "./types";
 import { METHODS, defaultAuthorization, defaultSettings } from "./types";
-import { emptyEndpoint, fmtTime, prettyJson, KvEditor, AuthPanel, SettingsPanel, ACCENT, VarInput } from "./panelParts";
+import { emptyEndpoint, fmtTime, prettyJson, KvEditor, AuthPanel, SettingsPanel, VarInput } from "./panelParts";
 import { PresetHeadersModal, EnvModal, ProjectModal, ModuleModal } from "./panelModals";
 import VexEmptyState from "../VexEmptyState";
 import { UnitTestsPanel, DocsPanel, ImportModal } from "./panelSubs";
@@ -655,25 +656,25 @@ export default function ApiPanel() {
       {draft ? (
         <div className="flex-1 min-w-0 flex flex-col">
           {/* 顶部工具条 */}
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-white/10">
+          <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-white/10">
             <select
               value={draft.method}
               onChange={(e) => updateDraft({ method: e.target.value })}
-              className="bg-black/30 border border-white/10 rounded-md px-1.5 py-1.5 text-body font-bold cursor-pointer focus:outline-none"
+              className="ui-input h-9 px-2 font-medium cursor-pointer"
             >
               {METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
             <input
               value={draft.name}
               onChange={(e) => updateDraft({ name: e.target.value })}
-              className="w-40 bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200 focus:outline-none"
+              className="ui-input w-40 h-9 px-2"
               placeholder={t("api.endpointNamePh")}
             />
             <VarInput
               value={draft.url}
               envVars={variables}
               onChange={(v) => updateDraft({ url: v })}
-              className="flex-1 bg-black/30 border border-white/10 rounded-md px-2 py-1.5 text-body text-slate-200 font-mono focus:outline-none focus:border-[var(--module-accent)]/60"
+              className="ui-input flex-1 min-w-[180px] h-9 px-2 font-mono"
               placeholder="https://api.example.com/users/{{userId}}"
               onKeyDown={(e) => e.key === "Enter" && sendRequest()}
             />
@@ -688,9 +689,9 @@ export default function ApiPanel() {
             )}
             <button
               onClick={sendRequest}
-              disabled={sending}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-md text-body font-semibold text-white cursor-pointer disabled:opacity-50"
-              style={{ background: ACCENT }}
+              disabled={sending || !draft.url.trim()}
+              aria-busy={sending}
+              className={btnPrimary}
             >
               {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
               {sending ? t("api.sending") : t("api.send")}
@@ -699,12 +700,12 @@ export default function ApiPanel() {
               <button
                 onClick={cancelRequest}
                 title={t("api.cancelRequestTip")}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-body bg-rose-500/15 text-rose-300 hover:bg-rose-500/25 border border-rose-500/30 cursor-pointer"
+                className={btnDanger}
               >
                 <Square className="w-3.5 h-3.5" /> {t("api.cancelRequest")}
               </button>
             )}
-            <button onClick={() => saveDraft()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-body bg-white/5 hover:bg-white/10 text-slate-300 cursor-pointer">
+            <button onClick={() => saveDraft()} className={btnSecondary}>
               <Save className="w-3.5 h-3.5" /> {t("common.save")}
             </button>
             {selectedId && (

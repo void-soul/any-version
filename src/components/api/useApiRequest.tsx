@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -25,6 +25,18 @@ export function useApiRequest({ envs, activeEnvId, draft, setEnvs, activeProject
   const [response, setResponse] = useState<SendRequestOutput | null>(null);
 
   const [sending, setSending] = useState(false);
+  const sendInFlight = useRef(false);
+  const bodyTimer = useRef<number | null>(null);
+  const curlTimer = useRef<number | null>(null);
+  const active = useRef(true);
+  useEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+      if (bodyTimer.current !== null) window.clearTimeout(bodyTimer.current);
+      if (curlTimer.current !== null) window.clearTimeout(curlTimer.current);
+    };
+  }, []);
 
   const [copied, setCopied] = useState(false);
 
@@ -122,7 +134,8 @@ export function useApiRequest({ envs, activeEnvId, draft, setEnvs, activeProject
   };
 
   const sendRequest = async () => {
-    if (!draft || !currentInput) return;
+    if (!draft || !currentInput || !currentInput.url.trim() || sendInFlight.current) return;
+    sendInFlight.current = true;
     setSending(true);
     try {
       const out = await invoke<SendRequestOutput>("api_send_request", { input: currentInput });
@@ -145,6 +158,7 @@ export function useApiRequest({ envs, activeEnvId, draft, setEnvs, activeProject
       const cancelled = msg.includes("请求已取消");
       setResponse({ ok: false, status: 0, status_text: cancelled ? t("api.cancelled") : t("api.statusError"), headers: [], body: msg, body_truncated: false, time_ms: 0, size_bytes: 0 });
     } finally {
+      sendInFlight.current = false;
       setSending(false);
     }
   };
@@ -165,9 +179,13 @@ export function useApiRequest({ envs, activeEnvId, draft, setEnvs, activeProject
   // 当前请求复制为 cURL 命令
   const copyAsCurl = async () => {
     if (!draft) return;
-    await navigator.clipboard.writeText(toCurl(draft));
-    setCurlCopied(true);
-    setTimeout(() => setCurlCopied(false), 1200);
+    try {
+      await navigator.clipboard.writeText(toCurl(draft));
+      if (!active.current) return;
+      setCurlCopied(true);
+      if (curlTimer.current !== null) window.clearTimeout(curlTimer.current);
+      curlTimer.current = window.setTimeout(() => setCurlCopied(false), 1200);
+    } catch (error) { if (active.current) theamedAlert(String(error)); }
   };
 
   // ─── 响应变量提取规则编辑 ───
@@ -194,9 +212,13 @@ export function useApiRequest({ envs, activeEnvId, draft, setEnvs, activeProject
 
   const copyBody = async () => {
     if (!response) return;
-    await navigator.clipboard.writeText(response.body);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
+    try {
+      await navigator.clipboard.writeText(response.body);
+      if (!active.current) return;
+      setCopied(true);
+      if (bodyTimer.current !== null) window.clearTimeout(bodyTimer.current);
+      bodyTimer.current = window.setTimeout(() => setCopied(false), 1200);
+    } catch (error) { if (active.current) theamedAlert(String(error)); }
   };
 
 const renderResponseContent = () => response && (<div className="flex-1 min-h-0 grid grid-cols-[minmax(180px,24%)_1fr_220px]">
