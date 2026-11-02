@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { btnPrimary, btnSecondary } from "../shared/Button";
+import { useRef, useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { CRED_FIELDS, DNS_PROVIDER_MAP, parseKV, type FieldSpec } from "./CertManager.model";
@@ -15,6 +16,8 @@ export function CredForm({ onDone }: { onDone: () => void }) {
   const [customText, setCustomText] = useState("");
   const [note, setNote] = useState("");
   const [err, setErr] = useState("");
+  const [saving, setSaving] = useState(false);
+  const saveInFlight = useRef(false);
 
   useEffect(() => {
     setData(makeData(CRED_FIELDS[credType] || []));
@@ -28,7 +31,10 @@ export function CredForm({ onDone }: { onDone: () => void }) {
   const isCustom = credType === "custom";
 
   const submit = async () => {
+    if (saveInFlight.current) return;
     setErr("");
+    saveInFlight.current = true;
+    setSaving(true);
     try {
       await invoke("credential_upsert", {
         name,
@@ -39,20 +45,23 @@ export function CredForm({ onDone }: { onDone: () => void }) {
       onDone();
     } catch (e) {
       setErr(String(e));
+    } finally {
+      saveInFlight.current = false;
+      setSaving(false);
     }
   };
 
   const fields = CRED_FIELDS[credType] || [];
 
   return (
-    <div className="rounded-ctl border border-white/10 bg-white/5 p-4 space-y-3">
+    <fieldset disabled={saving} aria-busy={saving} className="ui-card min-w-0 p-4 space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <label className="text-caption text-slate-400">
           {t("certmgr.name")}
-          <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" placeholder={t("certmgr.namePh")} />
+          <input value={name} onChange={(e) => setName(e.target.value)} className="ui-input mt-1 w-full px-2.5 py-1.5" placeholder={t("certmgr.namePh")} />
         </label>
         <label className="text-caption text-slate-400">          {t("certmgr.dnsProvider")}
-            <select value={credType} onChange={(e) => setCredType(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none">
+            <select value={credType} onChange={(e) => setCredType(e.target.value)} className="ui-input mt-1 w-full px-2.5 py-1.5">
             {([...DNS_PROVIDER_MAP, { id: "custom", label: t("certmgr.custom") }]).map((p) => (
               <option key={p.id} value={p.id} className="bg-slate-800 text-slate-200">{t(p.label)}</option>
             ))}
@@ -75,7 +84,7 @@ export function CredForm({ onDone }: { onDone: () => void }) {
                   type={f.type}
                   value={data[f.key] ?? ""}
                   onChange={(e) => setField(f.key, e.target.value)}
-                  className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none"
+                  className="ui-input mt-1 w-full px-2.5 py-1.5"
                   placeholder={f.placeholder || ""}
                 />
               </label>
@@ -85,13 +94,13 @@ export function CredForm({ onDone }: { onDone: () => void }) {
       )}
       <label className="text-caption text-slate-400 block">
         {t("certmgr.remark")}
-        <input value={note} onChange={(e) => setNote(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" />
+        <input value={note} onChange={(e) => setNote(e.target.value)} className="ui-input mt-1 w-full px-2.5 py-1.5" />
       </label>
-      {err && <div className="text-caption text-rose-400">{err}</div>}
+      {err && <div role="alert" className="ui-note ui-note-error text-body px-3 py-2 break-words">{err}</div>}
       <div className="flex gap-2">
-        <button onClick={submit} className="px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-caption font-semibold">{t("certmgr.save")}</button>
-        <button onClick={onDone} className="px-3 py-1.5 rounded-ctl bg-white/10 text-slate-300 text-caption">{t("certmgr.cancel")}</button>
+        <button type="button" onClick={submit} className={btnPrimary}>{saving ? t("common.loading") : t("certmgr.save")}</button>
+        <button type="button" onClick={onDone} className={btnSecondary}>{t("certmgr.cancel")}</button>
       </div>
-    </div>
+    </fieldset>
   );
 }

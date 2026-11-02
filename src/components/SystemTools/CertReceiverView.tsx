@@ -74,6 +74,7 @@ export default function CertReceiverView() {
   const [logs, setLogs] = useState<string[]>([]);
   const [stored, setStored] = useState<StoredCert[]>([]);
   const [busy, setBusy] = useState(false);
+  const actionInFlight = useRef(false);
   const [showToken, setShowToken] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [apiId, setApiId] = useState("kira-pull");
@@ -164,7 +165,8 @@ export default function CertReceiverView() {
     setCfg((prev) => (prev ? { ...prev, ...p } : prev));
 
   const save = async () => {
-    if (!cfg) return;
+    if (!cfg || actionInFlight.current) return;
+    actionInFlight.current = true;
     setBusy(true);
     try {
       const st = await invoke<ReceiverStatus>("cert_receiver_save_config", { config: cfg });
@@ -173,11 +175,14 @@ export default function CertReceiverView() {
     } catch (e) {
       alertError(String(e));
     } finally {
+      actionInFlight.current = false;
       setBusy(false);
     }
   };
 
   const toggle = async () => {
+    if (actionInFlight.current) return;
+    actionInFlight.current = true;
     setBusy(true);
     try {
       const cmd = status?.running ? "cert_receiver_stop" : "cert_receiver_start";
@@ -186,6 +191,7 @@ export default function CertReceiverView() {
     } catch (e) {
       alertError(String(e));
     } finally {
+      actionInFlight.current = false;
       setBusy(false);
     }
   };

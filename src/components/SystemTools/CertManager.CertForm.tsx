@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { btnPrimary, btnSecondary } from "../shared/Button";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { DNS_PROVIDER_MAP, NODE_TYPE_LABELS, type Certificate, type Credential, type DeployLink, type DeployNode } from "./CertManager.model";
@@ -29,9 +30,14 @@ export function CertForm({
     return Object.fromEntries(src.map((l) => [l.node_id, l.target]));
   });
   const [err, setErr] = useState("");
+  const [saving, setSaving] = useState(false);
+  const saveInFlight = useRef(false);
 
   const submit = async () => {
+    if (saveInFlight.current) return;
     setErr("");
+    saveInFlight.current = true;
+    setSaving(true);
     try {
       const domList = domains
         .split(/[,\s]+/)
@@ -83,30 +89,33 @@ export function CertForm({
       onDone();
     } catch (e) {
       setErr(String(e));
+    } finally {
+      saveInFlight.current = false;
+      setSaving(false);
     }
   };
 
   return (
-    <div className="rounded-ctl border border-white/10 bg-white/5 p-4 space-y-3">
+    <fieldset disabled={saving} aria-busy={saving} className="ui-card min-w-0 p-4 space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <label className="text-caption text-slate-400">
           {t("certmgr.domainLabel")}
-          <input value={domains} onChange={(e) => setDomains(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" placeholder="*.example.com, example.com" />
+          <input value={domains} onChange={(e) => setDomains(e.target.value)} className="ui-input mt-1 w-full px-2.5 py-1.5" placeholder="*.example.com, example.com" />
         </label>
         <label className="text-caption text-slate-400">
           {t("certmgr.emailLabel")}
-          <input value={email} onChange={(e) => setEmail(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" placeholder="admin@example.com" />
+          <input value={email} onChange={(e) => setEmail(e.target.value)} className="ui-input mt-1 w-full px-2.5 py-1.5" placeholder="admin@example.com" />
         </label>
         <label className="text-caption text-slate-400">
           CA
-          <select value={ca} onChange={(e) => setCa(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none">
+          <select value={ca} onChange={(e) => setCa(e.target.value)} className="ui-input mt-1 w-full px-2.5 py-1.5">
             <option value="letsencrypt" className="bg-slate-800 text-slate-200">{t("certmgr.letsencrypt")}</option>
             <option value="letsencrypt-staging" className="bg-slate-800 text-slate-200">{t("certmgr.letsencryptStaging")}</option>
           </select>
         </label>
         <label className="text-caption text-slate-400">
           {t("certmgr.validation")}
-          <select value={validation} onChange={(e) => setValidation(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none">
+          <select value={validation} onChange={(e) => setValidation(e.target.value)} className="ui-input mt-1 w-full px-2.5 py-1.5">
             <option value="dns" className="bg-slate-800 text-slate-200">{t("certmgr.validationDns")}</option>
             <option value="http" className="bg-slate-800 text-slate-200">{t("certmgr.validationHttp")}</option>
             <option value="cname" disabled className="bg-slate-800 text-slate-500">{t("certmgr.validationCname")}</option>
@@ -115,14 +124,14 @@ export function CertForm({
         {validation === "http" && (
           <label className="text-caption text-slate-400">
             {t("certmgr.httpPort")}
-            <input type="number" value={httpPort} onChange={(e) => setHttpPort(Number(e.target.value))} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" />
+            <input type="number" value={httpPort} onChange={(e) => setHttpPort(Number(e.target.value))} className="ui-input mt-1 w-full px-2.5 py-1.5" />
           </label>
         )}
         {validation === "dns" && (
           <>
             <label className="text-caption text-slate-400">
               {t("certmgr.dnsProvider")}
-              <select value={dnsProvider} onChange={(e) => setDnsProvider(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none">
+              <select value={dnsProvider} onChange={(e) => setDnsProvider(e.target.value)} className="ui-input mt-1 w-full px-2.5 py-1.5">
                 {[...DNS_PROVIDER_MAP, { id: "custom", label: t("certmgr.custom") }].map((p) => (
                   <option key={p.id} value={p.id} className="bg-slate-800 text-slate-200">{t(p.label)}</option>
                 ))}
@@ -130,7 +139,7 @@ export function CertForm({
             </label>
             <label className="text-caption text-slate-400">
               {t("certmgr.credLabel")}
-              <select value={credentialId} onChange={(e) => setCredentialId(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none">
+              <select value={credentialId} onChange={(e) => setCredentialId(e.target.value)} className="ui-input mt-1 w-full px-2.5 py-1.5">
                 <option value="">{t("certmgr.select")}</option>
                 {creds.map((c) => (
                   <option key={c.id} value={c.id}>{c.name}（{c.type}）</option>
@@ -141,7 +150,7 @@ export function CertForm({
         )}
         <label className="text-caption text-slate-400">
           {t("certmgr.renewDays")}
-          <input type="number" value={renewBefore} onChange={(e) => setRenewBefore(Number(e.target.value))} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" />
+          <input type="number" value={renewBefore} onChange={(e) => setRenewBefore(Number(e.target.value))} className="ui-input mt-1 w-full px-2.5 py-1.5" />
         </label>
       </div>
 
@@ -190,13 +199,13 @@ export function CertForm({
         </div>
       </div>
 
-      {err && <div className="text-caption text-rose-400">{err}</div>}
+      {err && <div role="alert" className="ui-note ui-note-error text-body px-3 py-2 break-words">{err}</div>}
       <div className="flex gap-2">
-        <button onClick={submit} className="px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-caption font-semibold">
-          {initial ? t("certmgr.save") : t("certmgr.createSave")}
+        <button type="button" onClick={submit} className={btnPrimary}>
+          {saving ? t("common.loading") : initial ? t("certmgr.save") : t("certmgr.createSave")}
         </button>
-        <button onClick={onDone} className="px-3 py-1.5 rounded-ctl bg-white/10 text-slate-300 text-caption">{t("certmgr.cancel")}</button>
+        <button type="button" onClick={onDone} className={btnSecondary}>{t("certmgr.cancel")}</button>
       </div>
-    </div>
+    </fieldset>
   );
 }

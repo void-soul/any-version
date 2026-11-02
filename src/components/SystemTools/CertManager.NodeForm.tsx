@@ -1,3 +1,4 @@
+import { btnPrimary, btnSecondary } from "../shared/Button";
 import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
@@ -16,6 +17,8 @@ export function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDo
   const [deployBefore, setDeployBefore] = useState(initial?.deploy_before_days || 7);
   const [note, setNote] = useState(initial?.note || "");
   const [err, setErr] = useState("");
+  const [saving, setSaving] = useState(false);
+  const saveInFlight = useRef(false);
   // 首次挂载保留 initial 配置；只有用户切换类型时才清空字段
   const firstTypeRun = useRef(true);
 
@@ -32,12 +35,15 @@ export function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDo
   };
 
   const submit = async () => {
+    if (saveInFlight.current) return;
     setErr("");
     if (nodeType === "local") {
       if (!data.output_dir?.trim()) return setErr("请填写本机证书目录");
       if (data.reload_mode === "command" && !data.reload_command?.trim()) return setErr("请填写重载命令");
       if (data.reload_mode === "service" && !data.service_name?.trim()) return setErr("请填写服务名称");
     }
+    saveInFlight.current = true;
+    setSaving(true);
     try {
       await invoke("deploy_node_upsert", {
         id: initial?.id,
@@ -50,21 +56,24 @@ export function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDo
       onDone();
     } catch (e) {
       setErr(String(e));
+    } finally {
+      saveInFlight.current = false;
+      setSaving(false);
     }
   };
 
   const fields = visibleNodeFields(nodeType, data);
 
   return (
-    <div className="rounded-ctl border border-white/10 bg-white/5 p-4 space-y-3">
+    <fieldset disabled={saving} aria-busy={saving} className="ui-card min-w-0 p-4 space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <label className="text-caption text-slate-400">
           {t("certmgr.name")}
-          <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" />
+          <input value={name} onChange={(e) => setName(e.target.value)} className="ui-input mt-1 w-full px-2.5 py-1.5" />
         </label>
         <label className="text-caption text-slate-400">
           {t("certmgr.type")}
-          <select value={nodeType} onChange={(e) => setNodeType(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none">
+          <select value={nodeType} onChange={(e) => setNodeType(e.target.value)} className="ui-input mt-1 w-full px-2.5 py-1.5">
             {Object.keys(NODE_FIELDS).map((k) => (
               <option key={k} value={k} className="bg-slate-800 text-slate-200">{NODE_TYPE_LABELS[k] ?? k}</option>
             ))}
@@ -80,7 +89,7 @@ export function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDo
               <select
                 value={data[f.key] ?? ""}
                 onChange={(e) => setField(f.key, e.target.value)}
-                className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none"
+                className="ui-input mt-1 w-full px-2.5 py-1.5"
               >
                 <option value="">{t("certmgr.select")}</option>
                 {f.select.map((o) => (
@@ -100,7 +109,7 @@ export function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDo
                 type={f.type}
                 value={data[f.key] ?? ""}
                 onChange={(e) => setField(f.key, e.target.value)}
-                className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none"
+                className="ui-input mt-1 w-full px-2.5 py-1.5"
                 placeholder={f.placeholder || ""}
               />
             )}
@@ -118,18 +127,18 @@ export function NodeForm({ initial, onDone }: { initial: DeployNode | null; onDo
       <div className="grid grid-cols-2 gap-3">
         {nodeType !== "local" && <label className="text-caption text-slate-400">
           {t("certmgr.deployDays")}
-          <input type="number" value={deployBefore} onChange={(e) => setDeployBefore(Number(e.target.value))} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" />
+          <input type="number" value={deployBefore} onChange={(e) => setDeployBefore(Number(e.target.value))} className="ui-input mt-1 w-full px-2.5 py-1.5" />
         </label>}
         <label className="text-caption text-slate-400">
           {t("certmgr.remark")}
-          <input value={note} onChange={(e) => setNote(e.target.value)} className="mt-1 w-full bg-black/30 rounded px-2 py-1.5 text-slate-200 outline-none" />
+          <input value={note} onChange={(e) => setNote(e.target.value)} className="ui-input mt-1 w-full px-2.5 py-1.5" />
         </label>
       </div>
-      {err && <div className="text-caption text-rose-400">{err}</div>}
+      {err && <div role="alert" className="ui-note ui-note-error text-body px-3 py-2 break-words">{err}</div>}
       <div className="flex gap-2">
-        <button onClick={submit} className="px-3 py-1.5 rounded-ctl bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-caption font-semibold">{t("certmgr.save")}</button>
-        <button onClick={onDone} className="px-3 py-1.5 rounded-ctl bg-white/10 text-slate-300 text-caption">{t("certmgr.cancel")}</button>
+        <button type="button" onClick={submit} className={btnPrimary}>{saving ? t("common.loading") : t("certmgr.save")}</button>
+        <button type="button" onClick={onDone} className={btnSecondary}>{t("certmgr.cancel")}</button>
       </div>
-    </div>
+    </fieldset>
   );
 }

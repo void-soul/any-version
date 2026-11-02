@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0629",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "按顺序检查证书模块，证书/凭据/部署节点保存表单无忙状态与同步提交闸，接收页保存启停可重入，控件样式和错误语义不一致；需统一UI且保留签发部署契约。",
+  "root_cause": "证书/凭据/节点submit没有同步闸和忙状态；多个点击可重复发保存命令，接收保存/启停也只靠异步state禁用按钮。表单自造底色、按钮、输入样式与错误标签，导航缺少选择语义。",
+  "solution": "1. 三个保存表单加同步闸和saving，校验早退仍能经finally解锁；fieldset保存中禁用编辑/取消，错误role=alert，统一ui-card/ui-input及公共按钮。\n2. 接收保存和启停复用同一个同步action闸，finally释放；保持返回status及提示流程。\n3. 证书页导航复用ui-row，补aria-pressed与min-w-0，保持各业务tab按原规则挂载。\n4. 构建、449前端测试、1133文件架构检查通过。未执行真实签发、部署、接收启停、凭据保存或修改后端契约，真实UI回归待补。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/SystemTools/CertManager.tsx** | 证书入口与保存UI |\n| **src/components/SystemTools/CertManager.CertForm.tsx** | 证书入口与保存UI |\n| **src/components/SystemTools/CertManager.CredForm.tsx** | 证书入口与保存UI |\n| **src/components/SystemTools/CertManager.NodeForm.tsx** | 证书入口与保存UI |\n| **src/components/SystemTools/CertReceiverView.tsx** | 证书入口与保存UI |",
+  "created_at": "2026-11-02 16:43:45",
+  "updated_at": "2026-11-02 16:45:01",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

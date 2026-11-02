@@ -35,11 +35,13 @@ export default function CertManager() {
           { k: "receiver" as const, label: t("certmgr.tabReceiver"), icon: RadioTower },
         ]).map(({ k, label, icon: Icon }) => (
           <button
+            type="button"
+            aria-pressed={tab === k}
             key={k}
             onClick={() => changeTab(k)}
-            className={`w-full px-3 py-2 rounded-ctl text-caption font-semibold flex items-center gap-2 transition-all cursor-pointer text-left ${
+            className={`ui-row w-full px-3 h-9 text-caption font-semibold gap-2 text-left ${
               tab === k
-                ? "bg-[var(--module-accent)] text-white shadow-md shadow-[var(--module-accent-ring)]"
+                ? "ui-row-active"
                 : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
             }`}
           >
@@ -48,7 +50,7 @@ export default function CertManager() {
           </button>
         ))}
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4">
+      <div className="flex-1 min-w-0 min-h-0 overflow-y-auto px-6 py-4">
         {tab === "certs" && <CertList />}
         {tab === "nodes" && <DeployNodes />}
         {tab === "creds" && <Credentials />}
