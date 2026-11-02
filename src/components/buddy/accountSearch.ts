@@ -5,7 +5,7 @@ export function filterBuddyAccounts(accounts: BuddyAccount[], query: string): Bu
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   if (!terms.length) return accounts;
   return accounts.filter((account) => {
-    const fields = [account.nickname, account.email, account.uid, account.id,
+    const fields = [account.remark, account.nickname, account.email, account.uid, account.id,
       account.enterpriseName, ...(account.tags ?? [])].filter(Boolean).map((value) => value!.toLowerCase());
     return terms.every((term) => fields.some((value) => value.includes(term)));
   });

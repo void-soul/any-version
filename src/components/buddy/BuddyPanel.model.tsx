@@ -6,6 +6,7 @@ export interface BuddyAccount {
   email: string;
   uid?: string | null;
   nickname?: string | null;
+  remark?: string | null;
   enterpriseId?: string | null;
   enterpriseName?: string | null;
   tags?: string[] | null;

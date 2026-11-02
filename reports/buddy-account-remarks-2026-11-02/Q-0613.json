@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0613",
+  "date": "2026-11-02",
+  "category": "Feature",
+  "status": "已验证",
+  "phenomenon": "Buddy手机号显示脱敏后难以辨认账号，需要为每个账号保存可编辑备注：填写时名称优先显示备注，留空恢复原有昵称/邮箱/UID；重启、刷新后仍保留，备注也可搜索，不改变登录身份和接口昵称。",
+  "root_cause": "Buddy名称直接使用上游昵称/邮箱/UID，手机号作为昵称时上游已脱敏；缺少独立于认证数据及接口刷新的本地账号备注，无法用自定义名称区分。",
+  "solution": "1. 新增按平台和账号ID保存的本地备注文件，单锁checked读改原子写；清空删除该备注，最多200字符。保存前确认账号存在及ID合法，坏文件报错并保留原文，不覆盖其他账号备注。\n2. 列表载入时附加备注；备注与token/昵称分离，刷新和重新登录不会覆盖。名称旁新增编辑弹框，成功后更新当前平台账号，错误可见，迟到响应按平台lease拦截。\n3. 共用显示函数优先备注，再回退原昵称/邮箱/UID；空白备注恢复原名，搜索兼容备注及原脱敏名称，完整号码仅来自用户手动填写。\n4. 后端存储35项（含新增3项）、前端56文件440项（含新增4项）通过，TypeScript、生产构建和1124源码架构检查通过；未修改真实账号数据。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/buddy/store/remarks.rs** / **store.rs** | 本地备注持久化、错误保护及并发回归 |\n| **src-tauri/src/commands/buddy/account_commands.rs** / **src-tauri/src/app_commands.rs** | 账号备注读写IPC和列表字段 |\n| **src/components/buddy/BuddyPanel.model.tsx** | 列表备注字段类型 |\n| **src/components/buddy/BuddyAccountName.tsx** / **accountDisplayName.ts** | 编辑弹框及备注优先显示 |\n| **src/components/buddy/BuddyPanel.tsx** / **accountSearch.ts** | 名称/搜索接入及保存后更新 |\n| **src/components/buddy/__tests__/accountDisplayName.test.ts** | 回退、身份保留、备注搜索和手动完整号码回归 |\n| **src/i18n/locales/zh/translation.json** / **src/i18n/locales/en/translation.json** | 备注编辑及搜索中英文文案 |",
+  "created_at": "2026-11-02 10:29:28",
+  "updated_at": "2026-11-02 10:36:52",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

@@ -788,6 +788,7 @@ pub(crate) fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         commands::otp::otp_scan_qr,
         // ---- Buddy 账号管理（WorkBuddy / CodeBuddy CN：切换/用量/签到/会话） ----
         commands::buddy::buddy_list_accounts,
+        commands::buddy::buddy_set_account_remark,
         commands::buddy::buddy_delete_account,
         commands::buddy::buddy_get_account_view,
         commands::buddy::buddy_set_primary_account,

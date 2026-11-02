@@ -1,3 +1,5 @@
+import { BuddyAccountName } from "./BuddyAccountName";
+import { buddyAccountDisplayName } from "./accountDisplayName";
 import { BuddyAccountSearch, useBuddyAccountSearch } from "./BuddyAccountSearch";
 import { runBuddyAccountSwitch, formatBuddySwitchResult } from "./runBuddyAccountSwitch";
 import { loadBuddyPlatform } from "./loadBuddyPlatform";
@@ -15,7 +17,7 @@ import { useBuddyClientPaths } from "./useBuddyClientPaths";
 import { useBuddyCheckin } from "./useBuddyCheckin";
 import { useBuddySessions } from "./useBuddySessions";
 import { useBuddyConflictCenter } from "./useBuddyConflictCenter";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
@@ -332,11 +334,7 @@ export default function BuddyPanel() {
     };
   }, [platform, platformScope, loadCalendar, calendarMonth]);
 
-  const displayName = useMemo(
-    () => (acc: BuddyAccount) =>
-      acc.nickname?.trim() || acc.email || acc.uid || "unknown",
-    []
-  );
+  const displayName = buddyAccountDisplayName;
 
   /** `https://www.codebuddy.cn` → `www.codebuddy.cn`（tooltip 里去掉 scheme，读起来更短） */
   const shortOrigin = (origin?: string | null) => {
@@ -808,7 +806,7 @@ export default function BuddyPanel() {
                             <CircleAlert className="h-3.5 w-3.5" />
                           </span>
                         )}
-                        <span className="font-semibold text-white truncate max-w-[150px]" title={acc.email}>{displayName(acc)}</span>
+                        <BuddyAccountName account={acc} platform={platform} scope={platformScope} onSaved={(id, remark) => setAccounts((previous) => previous.map((account) => account.id === id ? { ...account, remark } : account))} />
                       </div>
                       {/* 积分：构成条（一段一方块，块内是剩余天数）+ 右侧剩余总额 —— 填充列 */}
                       <div

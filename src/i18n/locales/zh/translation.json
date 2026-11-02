@@ -5672,8 +5672,12 @@
     "askAnswered": "已回答 AI 的提问"
   },
   "buddy": {
+    "editAccountRemark": "编辑账号备注",
+    "accountRemark": "备注",
+    "accountRemarkPlaceholder": "例如：完整手机号或便于识别的名称",
+    "accountRemarkHint": "填写后优先显示备注；清空并保存后恢复原名称。",
     "accountSearch": "搜索账号",
-    "accountSearchPlaceholder": "搜索昵称 / 邮箱 / UID / 手机号 / 标签",
+    "accountSearchPlaceholder": "搜索备注 / 昵称 / 邮箱 / UID / 手机号 / 标签",
     "clearAccountSearch": "清空账号搜索",
     "accountSearchCount": "{{shown}} / {{total}} 个账号",
     "accountSearchEmpty": "没有匹配的账号，请更换关键词或清空搜索。",

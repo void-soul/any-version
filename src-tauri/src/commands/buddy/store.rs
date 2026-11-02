@@ -788,3 +788,6 @@ pub fn import_accounts(
 
 #[cfg(test)]
 mod tests;
+
+mod remarks;
+pub use remarks::{load_account_remarks, set_account_remark};

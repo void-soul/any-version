@@ -5744,8 +5744,12 @@
     "askAnswered": "Answered AI's question"
   },
   "buddy": {
+    "editAccountRemark": "Edit account remark",
+    "accountRemark": "Remark",
+    "accountRemarkPlaceholder": "Full phone number or a recognizable name",
+    "accountRemarkHint": "The remark replaces the displayed name. Clear and save to restore the original name.",
     "accountSearch": "Search accounts",
-    "accountSearchPlaceholder": "Search name / email / UID / phone / tags",
+    "accountSearchPlaceholder": "Search remark / name / email / UID / phone / tags",
     "clearAccountSearch": "Clear account search",
     "accountSearchCount": "{{shown}} / {{total}} accounts",
     "accountSearchEmpty": "No matching accounts. Try another keyword or clear the search.",

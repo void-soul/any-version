@@ -14,6 +14,7 @@ use super::*;
 pub struct AccountListItem {
     #[serde(flatten)]
     pub(super) account: BuddyAccount,
+    pub(super) remark: Option<String>,
     /// 令牌签发域（JWT `iss` 的 origin）；老 token / 非 JWT 解不出时为 None
     pub(super) auth_origin: Option<String>,
     /// 该平台客户端鉴权时使用的域
@@ -26,12 +27,14 @@ pub struct AccountListItem {
 pub fn buddy_list_accounts(platform: String) -> Result<Vec<AccountListItem>, String> {
     let platform = platform_from_str(&platform)?;
     let client_origin = api::client_auth_origin(platform);
+    let remarks = store::load_account_remarks(platform)?;
     Ok(store::list_accounts(platform)
         .into_iter()
         .map(|account| {
             let auth_origin = api::token_issuer_origin(&account.access_token);
             let auth_origin_matches = auth_origin.as_deref().map(|o| o == client_origin);
             AccountListItem {
+                remark: remarks.get(&account.id).cloned(),
                 account,
                 auth_origin,
                 platform_auth_origin: client_origin.to_string(),
@@ -236,4 +239,13 @@ pub fn buddy_sync_accounts(
     let to = platform_from_str(&to_platform)?;
     let synced = store::sync_accounts(from, to, &account_ids)?;
     Ok(synced as i32)
+}
+
+#[tauri::command]
+pub fn buddy_set_account_remark(
+    platform: String,
+    account_id: String,
+    remark: String,
+) -> Result<Option<String>, String> {
+    store::set_account_remark(platform_from_str(&platform)?, &account_id, &remark)
 }
