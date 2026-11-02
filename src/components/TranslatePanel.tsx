@@ -22,6 +22,7 @@ import type { AppSettings } from "../contracts/appSettings";
 import { loadAppSettings, patchAppSettings } from "../services/appSettings";
 import { ModelSelector } from "./shared/ai/ModelSelector";
 import { toast } from "./shared/Toast";
+import { btnPrimary, labelCls } from "./shared/Button";
 
 // ─── 类型 ───
 
@@ -86,10 +87,13 @@ function TranslateModuleSettings() {
   const { t } = useTranslation();
   const [cfg, setCfg] = useState<AppSettings | null>(null);
 
+  const [loadError, setLoadError] = useState("");
   useEffect(() => {
+    let disposed = false;
     loadAppSettings()
-      .then((c) => setCfg(c))
-      .catch((e) => console.error("读取启动器设置失败:", e));
+      .then((c) => { if (!disposed) setCfg(c); })
+      .catch((e) => { if (!disposed) setLoadError(String(e)); });
+    return () => { disposed = true; };
   }, []);
 
   const save = async (patch: Partial<AppSettings>) => {
@@ -97,11 +101,12 @@ function TranslateModuleSettings() {
     try {
       setCfg(await patchAppSettings(patch));
     } catch (e) {
-      console.error("保存启动器设置失败:", e);
+      console.error("保存翻译设置失败:", e);
       toast(t("settings.saveFailedTryAgain"), "err");
     }
   };
 
+  if (loadError) return <div role="alert" className="ui-note-error">{loadError}</div>;
   if (!cfg) {
     return <div className="text-caption text-slate-500">…</div>;
   }
@@ -144,6 +149,37 @@ export default function TranslatePanel() {
   const [modelInitialized, setModelInitialized] = useState(false);
 
   const textRef = useRef<HTMLTextAreaElement>(null);
+  const [actionError, setActionError] = useState("");
+  const alive = useRef(false);
+  const historyRequest = useRef(0);
+  const sending = useRef(false);
+  const preferenceQueue = useRef<Promise<void>>(Promise.resolve());
+  const preferenceVersion = useRef(0);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const entryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const refreshHistory = async () => {
+    if (!alive.current) return;
+    const request = ++historyRequest.current;
+    try {
+      const list = await invoke<HistoryEntry[]>("translate_history_list");
+      if (alive.current && request === historyRequest.current) setHistory(list);
+    } catch (e) {
+      if (alive.current && request === historyRequest.current) setActionError(String(e));
+    }
+  };
+  const persistConfig = (config: TranslateConfig) => {
+    const version = ++preferenceVersion.current;
+    preferenceQueue.current = preferenceQueue.current.then(async () => {
+      try {
+        await saveTranslateConfig(config);
+        if (alive.current && version === preferenceVersion.current) setActionError("");
+      } catch (e) {
+        if (alive.current && version === preferenceVersion.current) setActionError(String(e));
+      }
+    });
+  };
+
 
   // 全屏滚动：整个面板（含头部/输入/结果/历史）作为一个滚动区，
   // 不再只有历史列表内部滚动；滚动超过阈值时显示「返回顶部」按钮。
@@ -160,12 +196,15 @@ export default function TranslatePanel() {
 
   // 加载 AI 配置 + 划词翻译已保存的选择 + 翻译历史（含悬浮窗产生的记录）
   useEffect(() => {
+    let disposed = false;
+    alive.current = true;
     (async () => {
       try {
         const [aiCfg, tCfg] = await Promise.all([
           invoke<AiConfig>("get_ai_config"),
           getTranslateConfig(),
         ]);
+        if (disposed) return;
         setProviders(aiCfg.providers);
         // 计算默认 provider：保存的 > 第一个可用
         let defProvider = "";
@@ -193,64 +232,67 @@ export default function TranslatePanel() {
         }
         setModelInitialized(true);
       } catch (e) {
-        console.error("加载翻译配置失败:", e);
+        if (disposed) return;
+        setActionError(String(e));
         setModelInitialized(true);
       }
     })();
     // 翻译历史：载入持久化的历史（面板与划词悬浮窗共享），并监听后端变更实时刷新
-    invoke<HistoryEntry[]>("translate_history_list")
-      .then((list) => setHistory(list))
-      .catch(() => {});
-    const un = listen("translate-history-changed", () => {
-      invoke<HistoryEntry[]>("translate_history_list")
-        .then((list) => setHistory(list))
-        .catch(() => {});
-    });
+    void refreshHistory();
+    let unlisten: (() => void) | undefined;
+    listen("translate-history-changed", () => { if (!disposed) void refreshHistory(); })
+      .then((stop) => { if (disposed) stop(); else unlisten = stop; })
+      .catch((e) => { if (!disposed) setActionError(String(e)); });
     return () => {
-      un.then((f) => f());
+      disposed = true;
+      alive.current = false;
+      historyRequest.current++;
+      unlisten?.();
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+      if (entryTimer.current) clearTimeout(entryTimer.current);
     };
   }, []);
 
   // 目标语言：既用于本面板翻译，也作为划词翻译默认值持久化
   const changeTarget = (t: string) => {
     setTarget(t);
-    saveTranslateConfig({ providerId: providerId, modelId: modelId, targetLang: t });
+    persistConfig({ providerId, modelId, targetLang: t });
   };
 
   const selectedProvider = providers.find((p) => p.id === providerId);
 
   const translate = async () => {
     const text = source.trim();
-    if (!text) return;
+    if (!text || sending.current || !modelInitialized || !selectedProvider) return;
+    sending.current = true;
     setTranslating(true);
     setError("");
     setResult("");
     setCopied(false);
     try {
       const res = await doTranslate(text, providerId || null, modelId || null, target);
+      if (!alive.current) return;
       setResult(res);
       // 历史已由后端 translate_text 统一记录（含悬浮窗），这里刷新列表即可
-      invoke<HistoryEntry[]>("translate_history_list")
-        .then((list) => setHistory(list))
-        .catch(() => {});
+      void refreshHistory();
     } catch (e: any) {
-      setError(String(e));
+      if (alive.current) setError(String(e));
     } finally {
-      setTranslating(false);
+      sending.current = false;
+      if (alive.current) setTranslating(false);
     }
   };
 
   const copyResult = async () => {
     if (!result) return;
-    await navigator.clipboard.writeText(result);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    try {
+      await navigator.clipboard.writeText(result);
+      if (!alive.current) return;
+      setCopied(true);
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopied(false), 1500);
+    } catch (e) { if (alive.current) setActionError(String(e)); }
   };
-
-  const refreshHistory = () =>
-    invoke<HistoryEntry[]>("translate_history_list")
-      .then((list) => setHistory(list))
-      .catch(() => {});
 
   // 搜索按钮触发：把临时输入同步到 keyword，驱动下方 useMemo 过滤历史
   const handleSearch = () => setKeyword(searchInput);
@@ -269,26 +311,30 @@ export default function TranslatePanel() {
     // 置顶条目保留，清空后刷新列表显示剩余的置顶条目
     invoke("translate_history_clear")
       .then(refreshHistory)
-      .catch(() => {});
+      .catch((e) => { if (alive.current) setActionError(String(e)); });
   };
 
   // 复制历史条目的原文/译文
   const copyEntry = async (h: HistoryEntry, kind: "source" | "result") => {
-    await navigator.clipboard.writeText(kind === "source" ? h.source : h.result);
-    setCopiedEntry(h.id + ":" + kind);
-    setTimeout(() => setCopiedEntry(null), 1200);
+    try {
+      await navigator.clipboard.writeText(kind === "source" ? h.source : h.result);
+      if (!alive.current) return;
+      setCopiedEntry(h.id + ":" + kind);
+      if (entryTimer.current) clearTimeout(entryTimer.current);
+      entryTimer.current = setTimeout(() => setCopiedEntry(null), 1200);
+    } catch (e) { if (alive.current) setActionError(String(e)); }
   };
 
   // 删除 / 置顶一条历史
   const deleteEntry = (id: string) => {
     invoke("translate_history_delete", { id })
       .then(refreshHistory)
-      .catch((e) => console.error("删除翻译历史失败:", e));
+      .catch((e) => { if (alive.current) setActionError(String(e)); });
   };
   const togglePin = (id: string) => {
     invoke("translate_history_pin", { id })
       .then(refreshHistory)
-      .catch((e) => console.error("置顶翻译历史失败:", e));
+      .catch((e) => { if (alive.current) setActionError(String(e)); });
   };
 
   const isConfigured = providers.length > 0 && selectedProvider;
@@ -303,7 +349,7 @@ export default function TranslatePanel() {
             <Languages className="w-4 h-4 text-[var(--module-accent)]" />
           </div>
           <div>
-            <h2 className="text-sm font-bold text-white tracking-wide">{t("tranpanel.title")}</h2>
+            <h2 className="text-title font-bold text-white tracking-wide">{t("tranpanel.title")}</h2>
             <p className="text-tiny text-slate-500">
               {t("tranpanel.subtitle")}
             </p>
@@ -317,7 +363,7 @@ export default function TranslatePanel() {
 
       {/* 模型选择（供应商 + 模型合并为一个选择器） */}
       <div>
-        <label className="text-tiny text-slate-400 mb-1 block">{t("tranpanel.model")}</label>
+        <label className={labelCls}>{t("tranpanel.model")}</label>
         <ModelSelector
           providers={providers}
           providerId={providerId}
@@ -325,13 +371,14 @@ export default function TranslatePanel() {
           onSelect={(pid, mid) => {
             setProviderId(pid);
             setModelId(mid);
-            saveTranslateConfig({ providerId: pid, modelId: mid, targetLang: target });
+            persistConfig({ providerId: pid, modelId: mid, targetLang: target });
           }}
           disabled={!modelInitialized || providers.length === 0}
           emptyText={t("tranpanel.noProviderCfg")}
         />
       </div>
 
+      {actionError && <div role="alert" className="ui-note-error flex items-start justify-between gap-2"><span className="break-words min-w-0">{actionError}</span><button type="button" className="ui-icon-btn w-7 h-7 shrink-0" aria-label={t("common.dialogClose")} onClick={() => setActionError("")}><X className="w-3.5 h-3.5" /></button></div>}
       {/* 翻译输入 / 结果 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* 原文 */}
@@ -347,13 +394,14 @@ export default function TranslatePanel() {
             </button>
           </div>
           <textarea
+            aria-label={t("tranpanel.source")}
             ref={textRef}
             value={source}
             onChange={(e) => setSource(e.target.value)}
             placeholder={t("tranpanel.phInput")}
             className="w-full flex-1 min-h-[180px] bg-transparent text-body text-slate-100 placeholder:text-slate-600 focus:outline-none resize-none leading-relaxed"
             onKeyDown={(e) => {
-              if ((e.ctrlKey || e.metaKey) && e.key === "Enter") translate();
+              if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); void translate(); }
             }}
           />
         </div>
@@ -364,9 +412,11 @@ export default function TranslatePanel() {
             <span className="text-tiny font-semibold text-slate-400">{t("tranpanel.translated")}</span>
             <div className="flex items-center gap-1.5">
               <select
+                disabled={!modelInitialized}
+                aria-label={t("tranpanel.translated")}
                 value={target}
                 onChange={(e) => changeTarget(e.target.value)}
-                className="bg-white/5 border border-white/10 rounded-md px-2 py-0.5 text-tiny text-slate-300 focus:outline-none"
+                className="ui-input h-8 px-2 text-caption"
               >
                 {["中文", "English", "日本語", "한국어", "Français", "Deutsch", "Русский", "Español"].map((t) => (
                   <option key={t} value={t}>
@@ -377,7 +427,7 @@ export default function TranslatePanel() {
               {result && (
                 <button
                   onClick={copyResult}
-                  className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-white/10 cursor-pointer"
+                  className="ui-icon-btn w-7 h-7"
                   title={t("tranpanel.copyResult")}
                 >
                   {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -386,12 +436,12 @@ export default function TranslatePanel() {
             </div>
           </div>
           {translating ? (
-            <div className="flex-1 flex items-center justify-center gap-2 text-slate-400 text-body">
+            <div role="status" className="flex-1 flex items-center justify-center gap-2 text-slate-400 text-body">
               <Loader2 className="w-4 h-4 animate-spin text-[var(--module-accent)]" />
               {t("tranpanel.translating")}
             </div>
           ) : error ? (
-            <div className="flex-1 text-body text-red-400 leading-relaxed break-words">{error}</div>
+            <div role="alert" className="flex-1 text-body text-red-400 leading-relaxed break-words">{error}</div>
           ) : result ? (
             <div className="flex-1 text-body text-slate-100 leading-relaxed whitespace-pre-wrap break-words">{result}</div>
           ) : (
@@ -405,8 +455,9 @@ export default function TranslatePanel() {
         <span className="text-tiny text-slate-500">{t("tranpanel.quickKey")}</span>
         <button
           onClick={translate}
-          disabled={translating || !isConfigured || !source.trim()}
-          className="px-5 py-2 rounded-card text-body font-semibold bg-[var(--module-accent)] text-white shadow-lg shadow-[var(--module-accent-ring)] hover:opacity-85 transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+          disabled={!modelInitialized || translating || !isConfigured || !source.trim()}
+          aria-busy={translating}
+          className={btnPrimary}
         >
           <ArrowRightLeft className="w-3.5 h-3.5" />
           {translating ? t("tranpanel.translating") : t("tranpanel.translate")}
@@ -428,9 +479,10 @@ export default function TranslatePanel() {
           </div>
 
           {/* 历史搜索：输入不触发，点「搜索」或回车后才过滤 */}
-          <div className="flex items-center gap-1 bg-white/5 border border-white/10 rounded-ctl pl-2 pr-1 h-7">
+          <div className="flex items-center gap-1 bg-white/5 border border-white/10 rounded-ctl pl-2 pr-1 h-9">
             <Search className="w-3 h-3 text-slate-500 flex-shrink-0" />
             <input
+              aria-label={t("tranpanel.historyPh")}
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               onKeyDown={(e) => {
@@ -441,11 +493,11 @@ export default function TranslatePanel() {
                 }
               }}
               placeholder={t("tranpanel.historyPh")}
-              className="flex-1 bg-transparent outline-none text-[10.5px] text-slate-200 placeholder:text-slate-500"
+              className="flex-1 bg-transparent outline-none text-caption text-slate-200 placeholder:text-slate-500"
             />
             <button
               onClick={handleSearch}
-              className="px-2 py-0.5 rounded-md bg-[var(--module-accent)] text-white text-[9.5px] font-semibold hover:opacity-90 cursor-pointer"
+              className="px-2 py-0.5 rounded-md bg-[var(--module-accent)] text-white text-tiny font-semibold hover:opacity-90 cursor-pointer"
               title={t("tranpanel.search")}
             >
               {t("tranpanel.search")}
@@ -486,7 +538,7 @@ export default function TranslatePanel() {
                       ) : (
                         <Copy className="w-3 h-3" />
                       )}
-                      <span>原文</span>
+                      <span>{t("tranpanel.source")}</span>
                     </button>
                     <button
                       onClick={() => copyEntry(h, "result")}
@@ -498,7 +550,7 @@ export default function TranslatePanel() {
                       ) : (
                         <Copy className="w-3 h-3" />
                       )}
-                      <span>译文</span>
+                      <span>{t("tranpanel.translated")}</span>
                     </button>
                     <button
                       onClick={() => togglePin(h.id)}

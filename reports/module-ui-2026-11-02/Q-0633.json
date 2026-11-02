@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0633",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "翻译模块：配置保存缺少错误反馈，快捷键可重复发送，历史读取与复制提示缺少生命周期保护；统一入口控件。",
+  "root_cause": "**TranslatePanel**用状态而非同步闸控制发送；配置完整快照并行保存且未catch；列表、监听和复制反馈缺少代次/卸载清理，操作失败静默；入口控件字号与公共标准不一致。",
+  "solution": "",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/TranslatePanel.tsx** | 请求及配置/历史/复制生命周期、公共控件 |",
+  "created_at": "2026-11-02 17:14:15",
+  "updated_at": "2026-11-02 17:15:54",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}
