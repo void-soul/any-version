@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0652",
+  "date": "2026-11-02",
+  "category": "Performance",
+  "status": "已验证",
+  "phenomenon": "音乐插件管理安装日志无限增长，监听注册失败或卸载后返回未处理，安装与导入缺同步防重入；限制资源并补操作反馈。",
+  "root_cause": "**depsLog**每条日志无界追加，监听Promise未处理失败和延迟解绑；**installDeps/importSource**只用渲染忙态防重入。",
+  "solution": "1. 安装日志保留512条且每条最多2048字符。\n2. 监听失败可见，卸载后注册成功立即释放；安装和导入增加同步互斥。\n3. 文件选择异常提示，生产构建通过；未执行真实插件安装。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/music/PluginManager.tsx** | 安装日志预算、监听清理、互斥和选择异常 |",
+  "created_at": "2026-11-02 19:55:58",
+  "updated_at": "2026-11-02 19:56:50",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

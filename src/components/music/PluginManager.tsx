@@ -61,6 +61,8 @@ export default function PluginManager() {
   const [showLog, setShowLog] = useState(false);
   const [busyFile, setBusyFile] = useState<string | null>(null);
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
+  const installBusy = useRef(false);
+  const importBusy = useRef(false);
   const logEndRef = useRef<HTMLDivElement | null>(null);
 
   const apply = useCallback((result: PluginListResult) => {
@@ -82,14 +84,17 @@ export default function PluginManager() {
     void reload();
   }, [reload]);
 
-  // npm 输出逐行推送：先订阅再触发安装，避免漏掉前几行
+  // 日志限制为512条、每条最多2048字符，防止安装输出长期占用内存。
   useEffect(() => {
-    const unlisten = listen<string>(DEPS_LOG_EVENT, (event) => {
-      setDepsLog((prev) => [...prev, event.payload]);
-    });
-    return () => {
-      void unlisten.then((off) => off());
-    };
+    let disposed = false;
+    let off: (() => void) | undefined;
+    void listen<string>(DEPS_LOG_EVENT, (event) => {
+      if (!disposed) setDepsLog((prev) => [...prev.slice(-511), event.payload.slice(0, 2048)]);
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else off = unlisten;
+    }).catch((error) => { if (!disposed) toast(String(error), "err"); });
+    return () => { disposed = true; off?.(); };
   }, []);
 
   useEffect(() => {
@@ -97,6 +102,8 @@ export default function PluginManager() {
   }, [depsLog, showLog]);
 
   const installDeps = async () => {
+    if (installBusy.current || importBusy.current) return;
+    installBusy.current = true;
     setInstalling(true);
     setDepsLog([]);
     setShowLog(true);
@@ -106,6 +113,7 @@ export default function PluginManager() {
     } catch (e) {
       toast(String(e), "err");
     } finally {
+      installBusy.current = false;
       setInstalling(false);
     }
   };
@@ -118,7 +126,8 @@ export default function PluginManager() {
    */
   const importSource = async (value: string) => {
     const trimmed = value.trim();
-    if (!trimmed) return;
+    if (!trimmed || importBusy.current || installBusy.current) return;
+    importBusy.current = true;
     setImporting(true);
     // 三态里的「处理中」：先立起来，用户点完立刻有反馈（订阅导入可能几十秒）
     setImportStatus({ kind: "busy", text: t("music.pluginImportBusy") });
@@ -151,16 +160,16 @@ export default function PluginManager() {
     } catch (e) {
       setImportStatus({ kind: "err", text: t("music.pluginImportFail", { err: String(e) }) });
     } finally {
+      importBusy.current = false;
       setImporting(false);
     }
   };
 
   const pickFile = async () => {
-    const picked = await open({
-      multiple: false,
-      filters: [{ name: "MusicFree", extensions: ["js", "json"] }],
-    });
-    if (typeof picked === "string") await importSource(picked);
+    try {
+      const picked = await open({ multiple: false, filters: [{ name: "MusicFree", extensions: ["js", "json"] }] });
+      if (typeof picked === "string") await importSource(picked);
+    } catch (error) { toast(String(error), "err"); }
   };
 
   const toggleEnabled = async (entry: PluginEntry) => {
