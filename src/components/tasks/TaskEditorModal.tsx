@@ -5,7 +5,7 @@
 // 为什么：点开一个任务就想改内容，是最容易误改的路径（顺手把字删了、进度拖错了）。
 // 默认浏览把「看」和「改」分开，改动变得有明确意图。
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -48,6 +48,7 @@ export function TaskEditorModal({
   const [description, setDescription] = useState(task?.description ?? "");
   const [detail, setDetail] = useState(task?.detail ?? "");
   const [estimate, setEstimate] = useState(task?.estimateMinutes ?? 0);
+  const busyRef = useRef(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [editing, setEditing] = useState(!task);
@@ -65,11 +66,13 @@ export function TaskEditorModal({
   };
 
   const save = async () => {
+    if (busyRef.current) return;
     const trimmed = title.trim();
     if (!trimmed) {
       setErr(t("taskPlan.titleRequired"));
       return;
     }
+    busyRef.current = true;
     setBusy(true);
     setErr("");
     try {
@@ -95,12 +98,14 @@ export function TaskEditorModal({
     } catch (e) {
       setErr(String(e));
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
 
   const carryToToday = async () => {
-    if (!task) return;
+    if (!task || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setErr("");
     try {
@@ -109,13 +114,15 @@ export function TaskEditorModal({
     } catch (e) {
       setErr(String(e));
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
 
   /** 归档是软删除、可逆，所以不加确认弹窗；恢复入口在搜索（含已归档）找回的同一个弹窗里 */
   const toggleArchive = async () => {
-    if (!task) return;
+    if (!task || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setErr("");
     try {
@@ -123,6 +130,7 @@ export function TaskEditorModal({
       onSaved();
     } catch (e) {
       setErr(String(e));
+      busyRef.current = false;
       setBusy(false);
     }
   };
@@ -131,6 +139,7 @@ export function TaskEditorModal({
     <SharedModal
       open
       onClose={onClose}
+      closeDisabled={busy}
       width={520}
       title={task ? (ro ? t("taskPlan.viewTask") : t("taskPlan.editTask")) : t("taskPlan.newTask")}
       headerActions={task?.archived ? (
@@ -166,15 +175,15 @@ export function TaskEditorModal({
           <div className="ml-auto flex items-center gap-2">
             {ro ? (
               <>
-                <SharedButton variant="secondary" onClick={onClose}>{t("taskPlan.close")}</SharedButton>
-                <SharedButton variant="primary" onClick={() => setEditing(true)}>
+                <SharedButton variant="secondary" onClick={onClose} disabled={busy}>{t("taskPlan.close")}</SharedButton>
+                <SharedButton variant="primary" disabled={busy} onClick={() => setEditing(true)}>
                   <Pencil className="h-3 w-3" />
                   {t("taskPlan.edit")}
                 </SharedButton>
               </>
             ) : (
               <>
-                <SharedButton variant="secondary" onClick={onClose}>{t("taskPlan.cancel")}</SharedButton>
+                <SharedButton variant="secondary" onClick={onClose} disabled={busy}>{t("taskPlan.cancel")}</SharedButton>
                 <SharedButton variant="primary" disabled={busy} onClick={() => void save()}>{t("taskPlan.save")}</SharedButton>
               </>
             )}
@@ -189,6 +198,7 @@ export function TaskEditorModal({
         </div>
       )}
 
+      <fieldset disabled={busy} className="min-w-0 space-y-3">
       <div>
         <label className={labelCls}>{t("taskPlan.titleLabel")}</label>
         {ro ? (
@@ -347,6 +357,7 @@ export function TaskEditorModal({
           )}
         </div>
       )}
+      </fieldset>
     </SharedModal>
   );
 }

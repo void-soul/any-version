@@ -76,34 +76,40 @@ export default function TaskCalendarPanel() {
   const currentMonth = anchor.slice(0, 7);
   const searchActive = debounced.trim() !== "";
 
+  const loadEpoch = useRef(0);
+  const initPromise = useRef<Promise<unknown> | null>(null);
+  const mutationBusy = useRef(false);
   const load = useCallback(async () => {
+    const epoch = ++loadEpoch.current;
     setLoading(true);
     try {
+      if (!initPromise.current) initPromise.current = tasksApi.init().catch((error) => {
+        initPromise.current = null;
+        throw error;
+      });
+      await initPromise.current;
       const [inRange, inbox] = await Promise.all([
         tasksApi.listRange(range.start, range.end),
         tasksApi.listByDate(null),
       ]);
+      if (epoch !== loadEpoch.current) return;
       setItems(inRange);
       setUnscheduled(inbox);
       setErr("");
     } catch (e) {
-      setErr(String(e));
+      if (epoch === loadEpoch.current) setErr(String(e));
     } finally {
-      setLoading(false);
+      if (epoch === loadEpoch.current) setLoading(false);
     }
   }, [range.start, range.end]);
 
-  // 首次进入确保库已就绪（含从思维导图旧计划的一次性迁移），再拉数据。
-  // init 只跑一次：`load` 随可见区间变化，若把它当依赖每次切月都会重跑 init。
-  const inited = useRef(false);
   useEffect(() => {
-    if (inited.current) {
-      void load();
-      return;
-    }
-    inited.current = true;
-    void tasksApi.init().catch(() => {}).then(() => load());
+    void load();
+    return () => { loadEpoch.current += 1; };
   }, [load]);
+  useEffect(() => () => {
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+  }, []);
 
   // 搜索防抖：300ms 内连续输入不发请求
   useEffect(() => {
@@ -136,19 +142,21 @@ export default function TaskCalendarPanel() {
     setDragId(null);
     setDragOver(null);
     setChipDrop(null);
-    if (!id) return;
+    if (!id || mutationBusy.current) return;
     const task = items.find((x) => x.id === id) ?? unscheduled.find((x) => x.id === id);
     if (task?.scheduledDate === day) return;
+    mutationBusy.current = true;
     try {
       await tasksApi.move(id, { toDate: day, reason: t("taskPlan.dragReason") });
       await load();
     } catch (e) {
       setErr(String(e));
-    }
+    } finally { mutationBusy.current = false; }
   };
 
   /** 同一天内拖到某张卡片上/下沿：插入排序。乐观更新，失败回滚（重新加载） */
   const reorderSameDay = async (day: string, srcId: string, targetId: string, pos: "before" | "after") => {
+    if (mutationBusy.current) return;
     const dayList = byDay.get(day) ?? [];
     const ids = dayList.map((x) => x.id).filter((id) => id !== srcId);
     let idx = ids.indexOf(targetId);
@@ -160,13 +168,14 @@ export default function TaskCalendarPanel() {
     const reordered = ids
       .map((id) => dayList.find((x) => x.id === id))
       .filter((x): x is TaskItem => !!x);
+    mutationBusy.current = true;
     setItems((prev) => [...prev.filter((x) => x.scheduledDate !== day), ...reordered]);
     try {
       await tasksApi.reorder(ids);
     } catch (e) {
       setErr(String(e));
       void load();
-    }
+    } finally { mutationBusy.current = false; }
   };
 
   /**
@@ -187,6 +196,8 @@ export default function TaskCalendarPanel() {
   };
 
   const confirmCarryOver = async () => {
+    if (mutationBusy.current) return;
+    mutationBusy.current = true;
     setCarryCount(null);
     try {
       const n = await tasksApi.carryOver();
@@ -194,7 +205,7 @@ export default function TaskCalendarPanel() {
       await load();
     } catch (e) {
       setErr(String(e));
-    }
+    } finally { mutationBusy.current = false; }
   };
 
   const jumpTo = (delta: number) => {
@@ -328,7 +339,7 @@ export default function TaskCalendarPanel() {
   return (
     <div className="flex h-full min-h-0 flex-col gap-2 p-3 text-slate-200">
       {/* 表头 */}
-      <div className="flex flex-shrink-0 items-center gap-2">
+      <div className="flex flex-shrink-0 items-center gap-2 flex-wrap">
         <CalendarDays className="h-4 w-4 text-[var(--module-accent)]" />
         <h2 className="text-sm font-bold text-white">{t("taskPlan.title")}</h2>
         <span className="text-caption text-slate-400">{rangeLabel}</span>
@@ -367,7 +378,7 @@ export default function TaskCalendarPanel() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={t("taskPlan.searchPlaceholder")}
-              className="h-7 w-40 rounded-md border border-white/10 bg-white/[0.03] pl-6 pr-5 text-tiny text-slate-200 placeholder:text-slate-600 focus:border-[var(--module-accent)] focus:outline-none"
+              aria-label={t("taskPlan.searchPlaceholder")} className="ui-input h-8 w-40 pl-6 pr-5 text-caption"
             />
             {query && (
               <button type="button" onClick={() => setQuery("")}
@@ -494,8 +505,10 @@ export default function TaskCalendarPanel() {
         onConfirm={() => {
           const task = removing;
           setRemoving(null);
-          if (!task) return;
-          void tasksApi.remove(task.id).then(() => load()).catch((e) => setErr(String(e)));
+          if (!task || mutationBusy.current) return;
+          mutationBusy.current = true;
+          void tasksApi.remove(task.id).then(() => load()).catch((e) => setErr(String(e)))
+            .finally(() => { mutationBusy.current = false; });
         }}
       />
     </div>

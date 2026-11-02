@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0654",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "任务计划快速切月会被旧数据覆盖，初始化失败静默；编辑保存中仍可关窗和修改，结转/删除/拖动可能重复提交，提示定时器未卸载清理。",
+  "root_cause": "**load**不核对区间代次，**init**失败被吞且标记已初始化；编辑仅渲染busy、关闭未受限，变更动作无同步门闩，notice定时器无卸载清理。",
+  "solution": "1. 日历加载采用代次保护，并共享可失败重试的初始化Promise；卸载取消界面更新和提示定时器。\n2. 编辑、结转、删除、拖动增加同步互斥，保存期间禁用字段和关闭。\n3. 顶栏允许换行，搜索使用公共输入样式和名称；生产构建通过。TaskSearchPanel原有取消保护保留。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/tasks/TaskCalendarPanel.tsx** | 加载初始化、变更互斥、清理及顶栏 |\n| **src/components/tasks/TaskEditorModal.tsx** | 保存/归档/结转门闩及禁用关闭编辑 |",
+  "created_at": "2026-11-02 20:03:42",
+  "updated_at": "2026-11-02 20:04:53",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}
