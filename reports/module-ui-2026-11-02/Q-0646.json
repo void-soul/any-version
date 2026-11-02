@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0646",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "Markdown新建使用系统prompt且将名称拼接后直接覆盖写入，可能覆盖同名文档或越出当前目录；需要统一表单和仅新建文件的原生命令。",
+  "root_cause": "**createNewFile**将window.prompt内容直接拼入路径并调用覆盖式write_text_file，同名文档可被截断，名称可携带目录；原生prompt不符合统一弹窗规范。",
+  "solution": "",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/SystemTools/MarkdownCreateDialog.tsx** | Markdown安全新建/统一弹窗或回归 |\n| **src/components/SystemTools/MarkdownReader.tsx** | Markdown安全新建/统一弹窗或回归 |\n| **src-tauri/src/commands/file_io.rs** | Markdown安全新建/统一弹窗或回归 |\n| **src-tauri/src/commands/file_io/create_markdown.rs** | Markdown安全新建/统一弹窗或回归 |\n| **src-tauri/src/app_commands.rs** | Markdown安全新建/统一弹窗或回归 |\n| **src/i18n/locales/zh/translation.json** | Markdown安全新建/统一弹窗或回归 |\n| **src/i18n/locales/en/translation.json** | Markdown安全新建/统一弹窗或回归 |\n",
+  "created_at": "2026-11-02 18:13:13",
+  "updated_at": "2026-11-02 18:17:44",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

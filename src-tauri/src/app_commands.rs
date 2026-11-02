@@ -409,6 +409,7 @@ pub(crate) fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         commands::rtsp_server::get_all_local_ips,
         commands::file_io::read_text_file,
         commands::file_io::write_text_file,
+        commands::file_io::create_markdown_file,
         commands::file_io::file_io_save_text,
         commands::file_io::list_sibling_markdown,
         commands::file_io::resolve_markdown_link,

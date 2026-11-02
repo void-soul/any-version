@@ -2480,7 +2480,7 @@
     "selectDirTitle": "选择目录",
     "flashNoDir": "请先打开目录或文件",
     "promptFileName": "文件名（不含扩展名）:",
-    "createdOk": "已创建 {{name}}.md",
+    "createdOk": "已创建 {{name}}",
     "createFail": "创建失败: {{err}}",
     "openMdTitle": "打开 Markdown 文件",
     "dirtyCloseConfirm": "「{{name}}」有未保存修改，确定关闭并丢弃？",
@@ -2581,7 +2581,9 @@
     "expand": "展开",
     "collapse": "折叠",
     "maxTabs": "最多同时打开 12 个文档，请先关闭其他标签。",
-    "largePreviewPaused": "文档较大，已暂停富文本预览以避免卡顿；可切换到编辑模式查看或拆分文件。"
+    "largePreviewPaused": "文档较大，已暂停富文本预览以避免卡顿；可切换到编辑模式查看或拆分文件。",
+    "fileName": "文件名",
+    "newFileHint": "自动补全 .md 扩展名；同名文件不会被覆盖。"
   },
   "clip": {
     "yesterday": "昨天 {{hm}}",

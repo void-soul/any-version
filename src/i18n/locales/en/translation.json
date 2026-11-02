@@ -2474,7 +2474,7 @@
     "selectDirTitle": "Select Directory",
     "flashNoDir": "Open a directory or file first",
     "promptFileName": "File name (without extension):",
-    "createdOk": "Created {{name}}.md",
+    "createdOk": "Created {{name}}",
     "createFail": "Create failed: {{err}}",
     "openMdTitle": "Open Markdown File",
     "dirtyCloseConfirm": "「{{name}}」has unsaved changes — close and discard?",
@@ -2575,7 +2575,9 @@
     "expand": "Expand",
     "collapse": "Collapse",
     "maxTabs": "Up to 12 documents can be open. Close another tab first.",
-    "largePreviewPaused": "Rich preview is paused for this large document. Use edit mode or split the file into smaller sections."
+    "largePreviewPaused": "Rich preview is paused for this large document. Use edit mode or split the file into smaller sections.",
+    "fileName": "File name",
+    "newFileHint": "The .md extension is added automatically. Existing files are never overwritten."
   },
   "clip": {
     "yesterday": "Yesterday {{hm}}",

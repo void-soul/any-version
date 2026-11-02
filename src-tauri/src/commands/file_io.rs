@@ -1,3 +1,6 @@
+#[path = "file_io/create_markdown.rs"]
+mod create_markdown;
+
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -43,6 +46,13 @@ pub fn read_text_file(path: String) -> Result<String, String> {
 #[tauri::command]
 pub fn write_text_file(path: String, content: String) -> Result<(), String> {
     crate::commands::config::atomic_write_file(Path::new(&path), content.as_bytes())
+}
+
+/// New Markdown documents never overwrite existing files.
+#[tauri::command]
+pub fn create_markdown_file(directory: String, name: String) -> Result<String, String> {
+    if !crate::runtime_tasks::is_enabled("markdownReader") { return Err("Markdown模块已停用".into()); }
+    create_markdown::create(Path::new(&directory), &name).map(|path| strip_unc(&path))
 }
 
 /// 保存文本到下载目录（Buddy 导出账号用），返回实际保存路径。

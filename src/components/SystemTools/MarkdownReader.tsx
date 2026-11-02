@@ -1,3 +1,4 @@
+import { MarkdownCreateDialog } from "./MarkdownCreateDialog";
 import { MarkdownDocumentTabs } from "./MarkdownDocumentTabs";
 import { MarkdownAssociationBanner } from "./MarkdownAssociationBanner";
 import { useMarkdownExport } from "./useMarkdownExport";
@@ -40,6 +41,7 @@ export default function MarkdownReader() {
   const [scanning, setScanning] = useState(false);
   const [filter, setFilter] = useState("");
   const [showSidebar, setShowSidebar] = useState(true);
+  const [createDirectory, setCreateDirectory] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const { t } = useTranslation();
   const [mode, setMode] = useState<"view" | "edit">("view"); // 默认预览
@@ -177,18 +179,19 @@ export default function MarkdownReader() {
    */
   const openPath = useCallback(
     async (path: string, _rescan = false) => {
-      setActivePath(path);
-      setMode("view");
       // 并发打开同一路径时（恢复标签 + 系统打开同时到达），只允许一个读取流程
-      if (openingRef.current.has(path)) return;
+      if (openingRef.current.has(path)) { setActivePath(path); return; }
       openingRef.current.add(path);
 
-      if (tabsRef.current.some((tab) => tab.path === path)) {
-        openingRef.current.delete(path); void scanSiblings(path); return;
+      const existing = tabsRef.current.find((tab) => tab.path.replace(/\\/g, "/").toLowerCase() === path.replace(/\\/g, "/").toLowerCase());
+      if (existing) {
+        setActivePath(existing.path); setMode("view");
+        openingRef.current.delete(path); void scanSiblings(existing.path); return;
       }
       if (tabsRef.current.length >= 12) {
         openingRef.current.delete(path); flashNotice(t("mdreader.maxTabs")); return;
       }
+      setActivePath(path); setMode("view");
       const name = path.split(/[\\/]/).pop() || path;
       setTabs((previous) => [...previous, { path, name, content: "", error: null, loading: true, dirty: false, savedContent: "", undo: [], redo: [] }]);
       void scanSiblings(path);
@@ -279,24 +282,12 @@ export default function MarkdownReader() {
 
   /** 新建文件：在当前侧栏目录下创建空 .md 文件并打开 */
   const createNewFile = useCallback(async () => {
-    const baseDir = siblingRoot || active?.path;
-    if (!baseDir) {
-      flashNotice(t("mdreader.flashNoDir"));
-      return;
-    }
-    const dir = active?.path ? active.path.slice(0, active.path.lastIndexOf(active.path.includes("\\") ? "\\" : "/")) : baseDir;
-    const name = window.prompt(t("mdreader.promptFileName"));
-    if (!name?.trim()) return;
-    const sep = dir.includes("\\") ? "\\" : "/";
-    const filePath = `${dir}${sep}${name.trim()}.md`;
-    try {
-      await invoke("write_text_file", { path: filePath, content: `# ${name.trim()}\n\n` });
-      await openPath(filePath);
-      flashNotice(t("mdreader.createdOk", { name: name.trim() }));
-    } catch (e) {
-      flashNotice(t("mdreader.createFail", { err: String(e) }));
-    }
-  }, [siblingRoot, active, openPath, flashNotice]);
+    if (tabsRef.current.length >= 12) { flashNotice(t("mdreader.maxTabs")); return; }
+    const parent = active?.path.split(/[\\/]/).slice(0, -1).join(active.path.includes("\\") ? "\\" : "/");
+    const directory = siblingRoot || parent;
+    if (!directory) { flashNotice(t("mdreader.flashNoDir")); return; }
+    setCreateDirectory(directory);
+  }, [siblingRoot, active, flashNotice, t]);
 
   /** 文件选择对话框，支持一次选多个 */
   const pickFiles = useCallback(async () => {
@@ -701,8 +692,9 @@ export default function MarkdownReader() {
 
   return (
     <div className="h-full flex flex-col min-h-0 select-none">
+      {createDirectory && <MarkdownCreateDialog directory={createDirectory} onClose={() => setCreateDirectory(null)} onCreated={async (path) => { await openPath(path); flashNotice(t("mdreader.createdOk", { name: path.split(/[\\/]/).pop() })); }} />}
       {/* 顶部工具栏 */}
-      <div className="flex-shrink-0 flex items-center gap-2 px-4 py-2 border-b border-white/5">
+      <div className="flex-shrink-0 flex flex-wrap items-center gap-2 px-4 py-2 border-b border-white/5">
         <button onClick={pickFiles} className={btn}>
           <FolderOpen className="w-3.5 h-3.5" />
           {t("mdreader.openFile")}
