@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0640",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "环境变量：PATH加载失败仍可提交空列表，保存/编辑可重入且成功反馈被刷新清除；备份恢复确认与忙态/失败提示不统一。",
+  "root_cause": "**PathEnvManager**初始空数组与加载失败后未设置只读门控；保存只靠state防重且刷新先清消息。备份读取失败只console，原生confirm和独立大按钮不符合公共规范。",
+  "solution": "",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/EnvManager.tsx** | 导航及标题 |\n| **src/components/PathEnvManager.tsx** | 加载/提交保护和公共控件 |\n| **src/components/EnvBackupManager.tsx** | 备份列表/互斥/公共确认 |",
+  "created_at": "2026-11-02 17:43:47",
+  "updated_at": "2026-11-02 17:45:56",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

@@ -1,5 +1,6 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { btnPrimary, btnSecondary } from "./shared/Button";
 import { invoke } from "@tauri-apps/api/core";
 import { 
   ArrowUp, 
@@ -35,26 +36,36 @@ export default function PathEnvManager() {
   const [newPathSource, setNewPathSource] = useState<"HKCU" | "HKLM">("HKCU");
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
 
-  const fetchPaths = async () => {
+  const [loaded, setLoaded] = useState(false);
+  const generation = useRef(0);
+  const reading = useRef(false);
+  const writing = useRef(false);
+  const fetchPaths = async (preserveMessage = false) => {
+    if (reading.current) return false;
+    const request = ++generation.current;
+    reading.current = true;
     setLoading(true);
-    setMessage(null);
+    if (!preserveMessage) setMessage(null);
     try {
       const adminStatus = await invoke<boolean>("is_admin");
-      setIsAdmin(adminStatus);
       const data = await invoke<PathDirectoryInfo[]>("get_path_directories");
+      if (request !== generation.current) return false;
+      setIsAdmin(adminStatus);
       setPaths(data);
-      if (data.length > 0 && !selectedPath) {
-        setSelectedPath(data[0].path);
-      }
+      setLoaded(true);
+      setSelectedPath((previous) => data.some((item) => item.path === previous) ? previous : data[0]?.path ?? null);
+      return true;
     } catch (err: any) {
+      if (request !== generation.current) return false;
       setMessage({ text: t("pathenv.loadFail", { err: err.message || String(err) }), type: "error" });
     } finally {
-      setLoading(false);
+      if (request === generation.current) { reading.current = false; setLoading(false); }
     }
   };
 
   useEffect(() => {
-    fetchPaths();
+    void fetchPaths();
+    return () => { generation.current++; reading.current = false; };
   }, []);
 
   // Compute conflict map: exe_name (lowercase) -> list of path directories
@@ -83,6 +94,7 @@ export default function PathEnvManager() {
   };
 
   const handleMove = (index: number, direction: "up" | "down" | "top" | "bottom") => {
+    if (!loaded || reading.current || writing.current) return;
     const list = [...paths];
     const item = list[index];
     const source = item.source;
@@ -116,6 +128,7 @@ export default function PathEnvManager() {
   };
 
   const handleDelete = (index: number) => {
+    if (!loaded || reading.current || writing.current) return;
     const deletedPath = paths[index].path;
     const list = paths.filter((_, idx) => idx !== index);
     setPaths(list);
@@ -125,6 +138,7 @@ export default function PathEnvManager() {
   };
 
   const handleAddPath = () => {
+    if (!loaded || reading.current || writing.current) return;
     const trimmed = newPathInput.trim();
     if (!trimmed) return;
     
@@ -159,13 +173,15 @@ export default function PathEnvManager() {
   };
 
   const handleSave = async (saveAll: boolean) => {
+    if (!loaded || reading.current || writing.current) return;
+    writing.current = true;
     setSaving(true);
     setMessage(null);
     try {
       const userPaths = paths.filter((p) => p.source === "HKCU").map((p) => p.path);
       const systemPaths = paths.filter((p) => p.source === "HKLM").map((p) => p.path);
 
-      if (saveAll && systemPaths.length > 0 && !isAdmin) {
+      if (saveAll && !isAdmin) {
         throw new Error(t("pathenv.needAdmin"));
       }
 
@@ -181,10 +197,11 @@ export default function PathEnvManager() {
         type: "success" 
       });
       // Fetch again to refresh exists/executable states
-      await fetchPaths();
+      await fetchPaths(true);
     } catch (err: any) {
       setMessage({ text: t("pathenv.saveFail", { err: err.message || String(err) }), type: "error" });
     } finally {
+      writing.current = false;
       setSaving(false);
     }
   };
@@ -207,7 +224,7 @@ export default function PathEnvManager() {
       {/* 顶部工具栏 */}
       <div className="p-4 border-b border-white/5 bg-slate-900/40 backdrop-blur-md flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h2 className="text-sm font-bold text-slate-200 font-sans">{t("pathenv.title")}</h2>
+          <h2 className="text-title font-bold text-slate-200 font-sans">{t("pathenv.title")}</h2>
           <p className="text-tiny text-slate-400 mt-0.5">
             {t("pathenv.subtitle")}
           </p>
@@ -215,9 +232,9 @@ export default function PathEnvManager() {
 
         <div className="flex items-center gap-2">
           <button
-            onClick={fetchPaths}
+            onClick={() => void fetchPaths()}
             disabled={loading || saving}
-            className="px-2.5 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-tiny font-semibold text-slate-300 hover:text-white hover:bg-white/10 transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+            className={btnSecondary}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
             {t("pathenv.refresh")}
@@ -225,8 +242,8 @@ export default function PathEnvManager() {
           
           <button
             onClick={() => handleSave(false)}
-            disabled={loading || saving}
-            className="px-3 py-1.5 rounded-ctl bg-emerald-600 hover:bg-emerald-500 text-white text-tiny font-semibold flex items-center gap-1 transition-all shadow-lg shadow-emerald-500/10 cursor-pointer disabled:opacity-50"
+            disabled={loading || saving || !loaded}
+            className={btnPrimary}
             title={t("pathenv.saveUserTitle")}
           >
             <Save className="w-3.5 h-3.5" />
@@ -235,8 +252,8 @@ export default function PathEnvManager() {
 
           <button
             onClick={() => handleSave(true)}
-            disabled={loading || saving}
-            className="px-3 py-1.5 rounded-ctl bg-blue-600 hover:bg-blue-500 text-white text-tiny font-semibold flex items-center gap-1 transition-all shadow-lg shadow-blue-500/10 cursor-pointer disabled:opacity-50"
+            disabled={loading || saving || !loaded}
+            className={btnSecondary}
             title={t("pathenv.saveAllTitle")}
           >
             <Save className="w-3.5 h-3.5" />
@@ -255,7 +272,7 @@ export default function PathEnvManager() {
 
       {/* 提示信息 */}
       {message && (
-        <div className={`px-4 py-2 border-b text-tiny flex items-center gap-2 ${
+        <div role={message.type === "error" ? "alert" : "status"} className={`px-4 py-2 border-b text-caption flex items-center gap-2 ${
           message.type === "success" 
             ? "bg-green-500/10 border-green-500/20 text-green-400" 
             : message.type === "error" 
@@ -272,13 +289,14 @@ export default function PathEnvManager() {
       )}
 
       {/* 左右分栏面板 */}
-      <div className="flex-1 flex min-h-0 overflow-hidden">
+      <fieldset disabled={loading || saving || !loaded} className="flex-1 flex min-h-0 min-w-0 overflow-hidden">
         {/* 左栏：路径物理排序 */}
         <div className="flex-1 overflow-y-auto p-4 border-r border-white/5 min-w-[55%]">
           {/* 添加新路径栏 */}
           <div className="mb-4 p-3 bg-white/5 border border-white/5 rounded-card flex flex-wrap items-center gap-2">
             <input
               type="text"
+              aria-label={t("pathenv.addPh")}
               placeholder={t("pathenv.addPh")}
               value={newPathInput}
               onChange={(e) => setNewPathInput(e.target.value)}
@@ -579,7 +597,7 @@ export default function PathEnvManager() {
             </div>
           )}
         </div>
-      </div>
+      </fieldset>
     </div>
   );
 }

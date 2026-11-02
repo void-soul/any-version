@@ -13,6 +13,8 @@ export default function EnvManager() {
 
   const tabBtn = (key: TabKey, label: string, Icon: any) => (
     <button
+      type="button"
+      aria-pressed={tab === key}
       onClick={() => setTab(key)}
       className={`px-3 py-1.5 rounded-md text-tiny font-semibold flex items-center gap-1 transition-all cursor-pointer ${
         tab === key ? "text-white shadow-sm" : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
@@ -27,9 +29,9 @@ export default function EnvManager() {
   return (
     <div className="h-full w-full flex flex-col overflow-hidden select-none text-slate-200">
       {/* 模块头部 + 页签 */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5 flex-shrink-0">
+      <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-white/5 flex-shrink-0">
         <ShieldCheck className="w-4 h-4 text-[var(--module-accent)]" />
-        <span className="text-sm font-bold text-white">{t("envmgr.title")}</span>
+        <span className="text-title font-bold text-white">{t("envmgr.title")}</span>
         <span className="text-tiny text-slate-500">{t("envmgr.subtitle")}</span>
         <div className="flex-1" />
         <div className="flex items-center gap-0.5 bg-white/5 border border-white/5 rounded-ctl p-0.5">

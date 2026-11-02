@@ -1,6 +1,8 @@
-﻿import { useState, useEffect } from "react";
+﻿import { useState, useEffect, useRef } from "react";
 
 import { useTranslation } from "react-i18next";
+import { btnPrimary, btnSecondary } from "./shared/Button";
+import { ConfirmDialogHost, type ConfirmRequest } from "./shared/ConfirmDialog";
 import { alertError } from "./shared/ThemedAlert";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -44,28 +46,37 @@ export default function EnvBackupManager() {
   const [searchQuery, setSearchQuery] = useState("");
   const [restoreMessage, setRestoreMessage] = useState<{ text: string; isError: boolean } | null>(null);
 
+  const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
+  const [listError, setListError] = useState("");
+  const alive = useRef(false);
+  const generation = useRef(0);
+  const mutation = useRef(false);
   const fetchBackups = async () => {
+    if (!alive.current) return;
+    const request = ++generation.current;
     setLoading(true);
     try {
       const list = await invoke<EnvBackup[]>("list_env_backups");
-      setBackups(list);
+      if (!alive.current || request !== generation.current) return;
+      setBackups(list); setListError("");
 
-      // Auto select the latest backup if nothing selected
-      if (list.length > 0 && !selectedBackup) {
-        setSelectedBackup(list[0]);
-      }
+      setSelectedBackup((previous) => list.find((backup) => backup.id === previous?.id) ?? list[0] ?? null);
     } catch (e) {
-      console.error("加载备份失败:", e);
+      if (alive.current && request === generation.current) setListError(String(e));
     } finally {
-      setLoading(false);
+      if (alive.current && request === generation.current) setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchBackups();
+    alive.current = true;
+    void fetchBackups();
+    return () => { alive.current = false; generation.current++; };
   }, []);
 
   const handleCreateBackup = async () => {
+    if (mutation.current) return;
+    mutation.current = true;
     setCreating(true);
     setRestoreMessage(null);
     try {
@@ -78,13 +89,14 @@ export default function EnvBackupManager() {
     } catch (e: any) {
       alertError(t("envbackup.createFail", { err: String(e) }));
     } finally {
-      setCreating(false);
+      mutation.current = false;
+      if (alive.current) setCreating(false);
     }
   };
 
-  const handleDeleteBackup = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!confirm(t("envbackup.delConfirm"))) return;
+  const deleteBackup = async (id: string) => {
+    if (mutation.current) return;
+    mutation.current = true;
     setDeletingId(id);
     try {
       await invoke("delete_env_backup", { id });
@@ -95,12 +107,14 @@ export default function EnvBackupManager() {
     } catch (e: any) {
       alertError(t("envbackup.delFail", { err: String(e) }));
     } finally {
-      setDeletingId(null);
+      mutation.current = false;
+      if (alive.current) setDeletingId(null);
     }
   };
 
-  const handleRestoreBackup = async (id: string) => {
-    if (!confirm(t("envbackup.restoreConfirm"))) return;
+  const restoreBackup = async (id: string) => {
+    if (mutation.current) return;
+    mutation.current = true;
     setRestoring(true);
     setRestoreMessage(null);
     try {
@@ -116,7 +130,8 @@ export default function EnvBackupManager() {
         alertError(t("envbackup.restoreFail", { err: String(e) }));
       }
     } finally {
-      setRestoring(false);
+      mutation.current = false;
+      if (alive.current) setRestoring(false);
     }
   };
 
@@ -130,9 +145,11 @@ export default function EnvBackupManager() {
   };
 
   return (
-    <div className="glass-panel rounded-panel p-6 border border-white/5 space-y-5">
+    <div className="ui-card p-4 space-y-5">
+      <ConfirmDialogHost request={confirmRequest} onClose={() => setConfirmRequest(null)} />
+      {listError && <p role="alert" className="ui-note-error">{listError}</p>}
       {/* Section header */}
-      <div className="flex items-center justify-between pb-3 border-b border-white/5">
+      <div className="flex flex-wrap gap-3 items-center justify-between pb-3 border-b border-white/5">
         <div className="flex items-center gap-2">
           <ShieldCheck className="w-4 h-4 text-[var(--module-accent)]" />
           <div>
@@ -146,7 +163,7 @@ export default function EnvBackupManager() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowCreateForm(!showCreateForm)}
-            className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-card text-body font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98]"
+            className={btnPrimary}
           >
             <Plus className="w-4 h-4" />
             {t("envbackup.create")}
@@ -155,7 +172,7 @@ export default function EnvBackupManager() {
           <button
             onClick={fetchBackups}
             disabled={loading}
-            className="flex items-center gap-2 px-3.5 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-card text-body border border-white/5 cursor-pointer transition-all"
+            className={btnSecondary}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
             {t("envbackup.refresh")}
@@ -180,21 +197,23 @@ export default function EnvBackupManager() {
             <input
               type="text"
               placeholder={t("envbackup.descPh")}
+              disabled={creating}
+              aria-label={t("envbackup.descPh")}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className="w-full glass-input px-3.5 py-2 text-body"
+              className="ui-input h-9 w-full px-2.5"
             />
             <div className="flex justify-end gap-2 text-body">
               <button
                 onClick={() => setShowCreateForm(false)}
-                className="px-3.5 py-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-ctl cursor-pointer"
+                className={btnSecondary}
               >
                 {t("envbackup.cancel")}
               </button>
               <button
                 onClick={handleCreateBackup}
-                disabled={creating}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-ctl font-semibold cursor-pointer transition-all"
+                disabled={creating || restoring || deletingId !== null}
+                className={btnPrimary}
               >
                 {creating ? t("envbackup.backingUp") : t("envbackup.backupNow")}
               </button>
@@ -205,7 +224,7 @@ export default function EnvBackupManager() {
 
       {/* Restore Result Notification Alert */}
       {restoreMessage && (
-        <div className={`p-4 rounded-card border flex items-start gap-3 animate-fadeIn ${restoreMessage.isError
+        <div role={restoreMessage.isError ? "alert" : "status"} className={`p-4 rounded-card border flex items-start gap-3 animate-fadeIn ${restoreMessage.isError
             ? "bg-amber-500/10 border-amber-500/20 text-amber-300"
             : "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
           }`}>
@@ -292,8 +311,8 @@ export default function EnvBackupManager() {
                       </div>
 
                       <button
-                        onClick={(e) => handleDeleteBackup(b.id, e)}
-                        disabled={deletingId === b.id}
+                        onClick={(e) => { e.stopPropagation(); if (!mutation.current) setConfirmRequest({ desc: t("envbackup.delConfirm"), danger: true, onConfirm: () => { void deleteBackup(b.id); } }); }}
+                        disabled={creating || restoring || deletingId !== null}
                         className="p-1 hover:bg-red-500/10 hover:text-red-400 rounded text-slate-500 transition-all cursor-pointer"
                         title={t("envbackup.delTitle")}
                       >
@@ -328,8 +347,8 @@ export default function EnvBackupManager() {
                 </div>
 
                 <button
-                  onClick={() => handleRestoreBackup(selectedBackup.id)}
-                  disabled={restoring}
+                  onClick={() => { const id = selectedBackup.id; if (!mutation.current) setConfirmRequest({ desc: t("envbackup.restoreConfirm"), danger: true, onConfirm: () => { void restoreBackup(id); } }); }}
+                  disabled={creating || restoring || deletingId !== null}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-card text-body font-semibold flex items-center gap-1.5 shadow-lg shadow-emerald-500/10 cursor-pointer transition-all hover:scale-[1.02] active:scale-[0.98]"
                 >
                   <RotateCcw className={`w-3.5 h-3.5 ${restoring ? "animate-spin" : ""}`} />
