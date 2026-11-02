@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0626",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "按顺序检查服务模块，Docker配置未读完或读取失败仍能保存，端口被四舍五入且未校验u16上限；服务列表失败被当空列表，需要完善加载/保存保护、错误反馈和操作按钮样式。",
+  "root_cause": "**DockerConfigDialog**读取配置没有loaded门控和晚到清理，port经Math.round且未校验u16上限；**refreshAll**把拒绝转换成空数组，使原列表消失。服务ActionButton自定义微小尺寸与公共控件不同。",
+  "solution": "1. 读取成功前禁用配置保存，失败可刷新重试，晚到读取在关闭/切换后失效；保存同步闸防重复，进行中不关闭。\n2. **parseServicePort**严格限制1..65535整数，禁止舍入小数；第二端口留空仍按后端约定沿用默认；密码使用password输入。\n3. 服务列表刷新失败保留卡片并显示alert，列表代次阻止旧结果覆盖新刷新，卸载清理代次；服务操作按钮统一ui-btn高度与忙状态。\n4. 新增端口边界测试；构建、444前端测试、1130文件架构检查通过；未执行真实服务启停、容器重建或配置写入。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/node/NodeManagerPanel.tsx** | 服务配置交互与控件验收 |\n| **src/components/node/NodeManagerPanel.DockerConfigDialog.tsx** | 服务配置交互与控件验收 |\n| **src/components/node/NodeManagerPanel.ActionButton.tsx** | 服务配置交互与控件验收 |\n| **src/components/node/servicePort.ts** | 服务配置交互与控件验收 |\n| **src/components/node/servicePort.test.ts** | 服务配置交互与控件验收 |",
+  "created_at": "2026-11-02 16:29:46",
+  "updated_at": "2026-11-02 16:30:56",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

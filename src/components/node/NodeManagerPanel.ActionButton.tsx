@@ -18,10 +18,12 @@ export function ActionButton({
 }) {
   return (
     <button
+      type="button"
+      aria-busy={busy}
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className={`flex-1 justify-center px-2 py-1 rounded-ctl text-tiny font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed ${color} text-white`}
+      className={`ui-btn flex-1 h-8 px-2 font-medium ${color} text-white`}
     >
       {busy ? (
         <Loader2 className="w-3.5 h-3.5 animate-spin" />

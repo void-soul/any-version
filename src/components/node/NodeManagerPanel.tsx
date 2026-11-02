@@ -9,6 +9,8 @@ import { DockerConfigDialog } from "./NodeManagerPanel.DockerConfigDialog";
 export default function NodeManagerPanel() {
   const { t } = useTranslation();
   const [projects, setProjects] = useState<NodeProjectDef[]>([]);
+  const [loadError, setLoadError] = useState("");
+  const listRequest = useRef(0);
   const [loaded, setLoaded] = useState(false); // 首次列表是否已加载完成
   const [deps, setDeps] = useState<Record<string, DepCheckResult>>({});
   /// 本机 Docker 环境（含 docker 服务时才有值）
@@ -70,17 +72,19 @@ export default function NodeManagerPanel() {
   }, []);
 
   const refreshAll = useCallback(async () => {
-    const list = await invoke<NodeProjectDef[]>("npm_list_projects").catch(
-      () => [],
-    );
-    setProjects(list);
-    setLoaded(true);
-    for (const p of list) {
-      refreshDeps(p.id);
-      refreshStatus(p.id);
+    const request = ++listRequest.current;
+    setLoadError("");
+    try {
+      const list = await invoke<NodeProjectDef[]>("npm_list_projects");
+      if (listRequest.current !== request) return;
+      setProjects(list);
+      for (const project of list) { void refreshDeps(project.id); void refreshStatus(project.id); }
+      if (list.some((project) => project.runtime === "docker")) void refreshDockerEnv();
+    } catch (error) {
+      if (listRequest.current === request) setLoadError(String(error));
+    } finally {
+      if (listRequest.current === request) setLoaded(true);
     }
-    // 有 docker 服务才探测本机 Docker 环境（否则每次刷新都白跑几条 docker 命令）
-    if (list.some((p) => p.runtime === "docker")) void refreshDockerEnv();
   }, [refreshDeps, refreshStatus, refreshDockerEnv]);
 
   useEffect(() => {
@@ -91,7 +95,7 @@ export default function NodeManagerPanel() {
         return prev;
       });
     }, 4000);
-    return () => clearInterval(timer);
+    return () => { clearInterval(timer); listRequest.current++; };
   }, [refreshAll, refreshStatus]);
 
   // 监听安装/升级/启动进度；phase=done 时自动清除该项目的进度动画
@@ -421,6 +425,7 @@ export default function NodeManagerPanel() {
   // 服务管理页（固定标签页内容）：左侧竖向服务列表（带状态标签）+ 右侧详情卡片
   const managePage = (
     <div className="h-full flex flex-col">
+      {loadError && <p role="alert" className="ui-note ui-note-error text-body px-3 py-2 m-3 break-words">{loadError}</p>}
       <div className="flex items-center gap-2 px-5 py-3 border-b border-white/10 bg-white/[0.02]">
         <Settings2 className="w-4 h-4 text-[var(--module-accent)]" />
         <h2 className="text-sm font-bold text-white">{t("nodeproj.manageTitle")}</h2>
