@@ -8,6 +8,7 @@ pub mod headers;
 pub mod inline_think;
 pub mod optimizers;
 pub mod reasoning_fallback;
+pub mod reasoning_effort;
 pub mod responses;
 pub mod schema_fix;
 pub mod server;

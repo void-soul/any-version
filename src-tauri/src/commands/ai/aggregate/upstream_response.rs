@@ -158,6 +158,7 @@ pub(super) async fn try_candidate(
             }
             optimizers::apply_optimizers(&mut built, outbound, proxy_cfg);
             optimizers::apply_preventive_rectifiers(&mut built, outbound, proxy_cfg);
+            crate::proxy::reasoning_effort::apply(inbound, outbound, body, &mut built, model, &candidate.base_url);
             built
         }
     };

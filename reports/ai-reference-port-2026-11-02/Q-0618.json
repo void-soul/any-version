@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0618",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "Anthropic转OpenAI仅对白名单模型传递思考设置，DeepSeek及未知兼容上游可能丢失客户端档位，需要按供应商能力保守映射且跳过不支持模型。",
+  "root_cause": "参考 **cc-switch 2122f7da** 对非白名单模型按平台与厂商映射；我方 **anthropic_to_openai** 仅白名单写reasoning_effort，DeepSeek与未知兼容上游丢失客户端意图。",
+  "solution": "1. 新增共享 **reasoning_effort::apply**，仅Anthropic入站/OpenAI出站且非既有白名单模型生效；关思考和未知档位不发字段。\n2. 平台优先，DeepSeek映射low/high/max，未知上游收敛三档，不收字段的厂商跳过；保留既有白名单路径。\n3. 单代理、协议回退及聚合候选均在优化器后复用同一函数；不新增供应商管理界面或覆盖开关。\n4. 转换回归在无映射基线上失败，覆盖档位、预算、关闭、平台优先及不支持模型。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/proxy/reasoning_effort.rs** | 实现或回归验证 |\n| **src-tauri/src/proxy/mod.rs** | 实现或回归验证 |\n| **src-tauri/src/proxy/server/dispatch.rs** | 实现或回归验证 |\n| **src-tauri/src/commands/ai/aggregate/upstream_response.rs** | 实现或回归验证 |",
+  "created_at": "2026-11-02 15:44:39",
+  "updated_at": "2026-11-02 15:54:48",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}
