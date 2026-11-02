@@ -36,8 +36,9 @@ import {
   X,
 } from "lucide-react";
 
-import { SharedButton } from "../shared/Button";
+import { inputCls, SharedButton } from "../shared/Button";
 import { ConfirmDialogHost, type ConfirmRequest } from "../shared/ConfirmDialog";
+import { SharedModal } from "../shared/Modal";
 import { ModuleSettingsButton } from "../shared/ModuleSettings";
 import { toast } from "../shared/Toast";
 import VexEmptyState from "../VexEmptyState";
@@ -125,6 +126,13 @@ export default function MusicPanel() {
   /** path -> 曲库下标（后端自行切歌时用于同步选中行） */
   const pathIndexRef = useRef<Map<string, number>>(new Map());
   const saveTimerRef = useRef<number | null>(null);
+  const settingsRef = useRef<MusicSettings | null>(null);
+  const settingsQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const renameEpoch = useRef(0);
+  const renameEdited = useRef(false);
+  const renamingRef = useRef(false);
+  const libraryBusy = useRef(false);
+  const downloadBusy = useRef(false);
   /** 连续轮询失败计数（成功即清零，用于失败可感知提示） */
   const pollFailRef = useRef(0);
 
@@ -170,20 +178,23 @@ export default function MusicPanel() {
     }
   }, [library.folders, folderFilter]);
 
-  // —— 初始化：曲库 / 设置 / 预设 / 播放状态 ——
+  // 初始化返回仅属于本次挂载；关闭或语言切换后不再写入界面。
   useEffect(() => {
-    invoke<MusicLibrary>("music_get_library")
-      .then(setLibrary)
-      .catch((e) => toast(t("music.loadFail", { err: String(e) }), "err"));
-    invoke<MusicSettings>("music_get_settings")
-      .then(setSettings)
-      .catch(() => {});
-    invoke<EqPresetInfo[]>("music_list_presets")
-      .then(setPresets)
-      .catch(() => {});
-    invoke<PlayerState>("music_get_state")
-      .then(setPlayer)
-      .catch(() => {});
+    let disposed = false;
+    const fail = (error: unknown) => {
+      if (!disposed) toast(t("music.loadFail", { err: String(error) }), "err");
+    };
+    void invoke<MusicLibrary>("music_get_library")
+      .then((value) => { if (!disposed) setLibrary(value); }).catch(fail);
+    void invoke<MusicSettings>("music_get_settings")
+      .then((value) => {
+        if (!disposed) { settingsRef.current = value; setSettings(value); }
+      }).catch(fail);
+    void invoke<EqPresetInfo[]>("music_list_presets")
+      .then((value) => { if (!disposed) setPresets(value); }).catch(fail);
+    void invoke<PlayerState>("music_get_state")
+      .then((value) => { if (!disposed) setPlayer(value); }).catch(fail);
+    return () => { disposed = true; };
   }, [t]);
 
   // —— 队列同步：可见曲目顺序或播放模式变化时交给后端（后端据此自动续播）——
@@ -209,20 +220,26 @@ export default function MusicPanel() {
 
   // —— 播放状态轮询：只做 UI 同步，切歌由后端负责 ——
   useEffect(() => {
+    let disposed = false;
+    let inFlight = false;
     const refresh = () => {
+      if (disposed || inFlight || document.hidden) return;
+      inFlight = true;
       invoke<PlayerState>("music_get_state")
         .then((snapshot) => {
+          if (disposed) return;
           pollFailRef.current = 0;
           syncState(snapshot);
         })
         .catch((err) => {
+          if (disposed) return;
           // 静默失败会让界面停在旧状态，用户会以为是「没变化」而不是「取数失败」。
           // 但要连续失败几次才提示：单次失败常是切歌/启动瞬间的竞态，每次都弹会刷屏。
           pollFailRef.current += 1;
           if (pollFailRef.current === POLL_FAIL_ALERT_AFTER) {
             toast(t("music.statePollFailed", { err: String(err) }), "err");
           }
-        });
+        }).finally(() => { inFlight = false; });
     };
     const timer = window.setInterval(refresh, POLL_MS);
     // 从托盘/最小化返回时立即对齐一次（隐藏期间 WebView2 会节流定时器）
@@ -231,6 +248,7 @@ export default function MusicPanel() {
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
+      disposed = true;
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
@@ -267,67 +285,73 @@ export default function MusicPanel() {
   );
 
   // —— 设置持久化（防抖；音效改动即时预览）——
-  const persistSettings = useCallback((next: MusicSettings) => {
-    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = window.setTimeout(() => {
-      invoke<MusicSettings>("music_update_settings", { settings: next }).catch(() => {});
-    }, SAVE_DEBOUNCE_MS);
+  const queueSettings = useCallback((operation: () => Promise<unknown>) => {
+    settingsQueue.current = settingsQueue.current.then(operation, operation).catch((error) => {
+      toast(String(error), "err");
+    });
   }, []);
 
-  const applyEq = useCallback(
-    (eq: EqParams) => {
-      setSettings((prev) => {
-        if (!prev) return prev;
-        const next = { ...prev, eq };
-        invoke<EqParams>("music_preview_eq", { eq }).catch(() => {});
-        persistSettings(next);
-        return next;
-      });
-    },
-    [persistSettings]
-  );
+  const flushSettings = useCallback(() => {
+    saveTimerRef.current = null;
+    queueSettings(async () => {
+      const latest = settingsRef.current;
+      if (latest) await invoke("music_update_settings", { settings: latest });
+    });
+  }, [queueSettings]);
 
-  const changeMode = useCallback(
-    (mode: PlayMode) => {
-      setSettings((prev) => {
-        if (!prev) return prev;
-        const next = { ...prev, play_mode: mode };
-        // 队列会随 play_mode 变化重新同步给后端（见上方 set_queue effect），
-        // 随机模式由后端重新洗牌，无需前端干预。
-        persistSettings(next);
-        return next;
-      });
-    },
-    [persistSettings]
-  );
+  const persistSettings = useCallback((next: MusicSettings) => {
+    settingsRef.current = next;
+    setSettings(next);
+    if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(flushSettings, SAVE_DEBOUNCE_MS);
+  }, [flushSettings]);
 
-  const changeVolume = useCallback(
-    (volume: number) => {
-      setSettings((prev) => (prev ? { ...prev, volume } : prev));
-      invoke<PlayerState>("music_set_volume", { volume })
-        .then(setPlayer)
-        .catch(() => {});
-    },
-    []
-  );
+  useEffect(() => () => {
+    renameEpoch.current += 1;
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current);
+      flushSettings();
+    }
+  }, [flushSettings]);
+
+  const applyEq = useCallback((eq: EqParams) => {
+    if (!settingsRef.current) return;
+    persistSettings({ ...settingsRef.current, eq });
+    queueSettings(() => invoke("music_preview_eq", { eq }));
+  }, [persistSettings, queueSettings]);
+
+  const changeMode = useCallback((play_mode: PlayMode) => {
+    if (settingsRef.current) persistSettings({ ...settingsRef.current, play_mode });
+  }, [persistSettings]);
+
+  const changeVolume = useCallback((volume: number) => {
+    if (!settingsRef.current) return;
+    persistSettings({ ...settingsRef.current, volume });
+    queueSettings(() => invoke("music_set_volume", { volume }));
+  }, [persistSettings, queueSettings]);
 
   // —— 曲库操作 ——
   const importFolder = async () => {
-    const picked = await open({ directory: true, title: t("music.importFolder") });
-    if (typeof picked !== "string") return;
+    if (libraryBusy.current) return;
+    libraryBusy.current = true;
     setBusy(true);
     try {
+      const picked = await open({ directory: true, title: t("music.importFolder") });
+      if (typeof picked !== "string") return;
       const result = await invoke<AddFolderResult>("music_add_folder", { path: picked });
       setLibrary(result.library);
       toast(t("music.imported", { count: result.added }), "ok");
     } catch (e) {
       toast(t("music.importFail", { err: String(e) }), "err");
     } finally {
+      libraryBusy.current = false;
       setBusy(false);
     }
   };
 
   const rescan = async () => {
+    if (libraryBusy.current) return;
+    libraryBusy.current = true;
     setBusy(true);
     try {
       const result = await invoke<{ added: number; removed: number; library: MusicLibrary }>(
@@ -338,6 +362,7 @@ export default function MusicPanel() {
     } catch (e) {
       toast(t("music.importFail", { err: String(e) }), "err");
     } finally {
+      libraryBusy.current = false;
       setBusy(false);
     }
   };
@@ -364,6 +389,8 @@ export default function MusicPanel() {
 
   /// 打开重命名弹窗：先向后端要一个按音频标签生成的推荐名
   const openRename = async (track: MusicTrack) => {
+    const epoch = ++renameEpoch.current;
+    renameEdited.current = false;
     setRenameTrack(track);
     setRenameName(track.path.split(/[\\/]/).pop() ?? track.title);
     setRenameFromTags(false);
@@ -371,6 +398,7 @@ export default function MusicPanel() {
       const suggestion = await invoke<TrackNameSuggestion>("music_track_name_suggestion", {
         path: track.path,
       });
+      if (epoch !== renameEpoch.current || renameEdited.current) return;
       setRenameName(suggestion.suggested_name);
       setRenameFromTags(suggestion.from_tags);
     } catch {
@@ -379,9 +407,10 @@ export default function MusicPanel() {
   };
 
   const submitRename = async () => {
-    if (!renameTrack || renaming) return;
+    if (!renameTrack || renamingRef.current) return;
     const name = renameName.trim();
     if (!name) return;
+    renamingRef.current = true;
     setRenaming(true);
     try {
       const result = await invoke<RenameTrackResult>("music_rename_track", {
@@ -394,6 +423,7 @@ export default function MusicPanel() {
     } catch (e) {
       toast(t("music.renameFail", { err: String(e) }), "err");
     } finally {
+      renamingRef.current = false;
       setRenaming(false);
     }
   };
@@ -455,15 +485,16 @@ export default function MusicPanel() {
   const stop = async () => {
     try {
       syncState(await invoke<PlayerState>("music_stop"));
-    } catch {
-      /* 停止失败无副作用 */
+    } catch (error) {
+      toast(t("music.playFail", { err: String(error) }), "err");
     }
   };
 
   // 当前播的是在线音源时，把这首按选定音质存进下载目录。
   // 播放器记着它的来源（插件 + 原始曲目），所以搜索结果清掉之后也照样能下。
   const downloadCurrent = async () => {
-    if (!player?.online) return;
+    if (!player?.online || downloadBusy.current) return;
+    downloadBusy.current = true;
     setDlBusy(true);
     try {
       const outcome = await invoke<PluginDownloadOutcome>("music_plugin_download_current", {
@@ -475,6 +506,7 @@ export default function MusicPanel() {
     } catch (e) {
       toast(t("music.onlineDownloadFail", { err: String(e) }), "err");
     } finally {
+      downloadBusy.current = false;
       setDlBusy(false);
     }
   };
@@ -894,49 +926,24 @@ export default function MusicPanel() {
       </div>
 
       {/* 重命名弹窗：默认填后端按标签生成的推荐名，可手改；只改文件名与扩展名，不动标签 */}
-      {renameTrack && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          onClick={() => {
-            if (!renaming) setRenameTrack(null);
-          }}
-        >
-          <div
-            className="w-[440px] max-w-full rounded-panel border border-white/10 bg-slate-900 p-4 space-y-3"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="text-title font-bold text-white">{t("music.renameTitle")}</div>
-            <div className="text-caption text-slate-400 break-all">
-              {renameTrack.path.split(/[\\/]/).pop()}
-            </div>
-            <input
-              value={renameName}
-              onChange={(e) => setRenameName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void submitRename();
-                if (e.key === "Escape" && !renaming) setRenameTrack(null);
-              }}
-              autoFocus
-              spellCheck={false}
-              className="w-full bg-black/30 border border-white/10 rounded-ctl px-2.5 py-2 text-body text-slate-100 outline-none focus:border-[var(--module-accent)]"
-            />
-            <div className="text-tiny text-slate-500">
-              {renameFromTags ? t("music.renameFromTags") : t("music.renameNoTags")}
-            </div>
-            <div className="flex justify-end gap-2 pt-1">
-              <SharedButton variant="secondary" onClick={() => setRenameTrack(null)} disabled={renaming}>
-                {t("common.cancel")}
-              </SharedButton>
-              <SharedButton
-                onClick={() => void submitRename()}
-                disabled={renaming || !renameName.trim()}
-              >
-                {renaming ? t("music.renaming") : t("music.renameConfirm")}
-              </SharedButton>
-            </div>
+      <SharedModal open={renameTrack !== null} width={440} title={t("music.renameTitle")}
+        closeDisabled={renaming} onClose={() => { renameEpoch.current += 1; setRenameTrack(null); }}>
+        <div className="space-y-3">
+          <p className="text-caption text-slate-400 break-all">{renameTrack?.path.split(/[\\/]/).pop()}</p>
+          <input value={renameName} aria-label={t("music.renameTitle")}
+            onChange={(event) => { renameEdited.current = true; setRenameName(event.target.value); }}
+            onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void submitRename(); } }}
+            autoFocus spellCheck={false} disabled={renaming} className={inputCls} />
+          <p className="text-tiny text-slate-500">{renameFromTags ? t("music.renameFromTags") : t("music.renameNoTags")}</p>
+          <div className="flex justify-end gap-2">
+            <SharedButton variant="secondary" disabled={renaming}
+              onClick={() => { renameEpoch.current += 1; setRenameTrack(null); }}>{t("common.cancel")}</SharedButton>
+            <SharedButton variant="primary" onClick={() => void submitRename()} disabled={renaming || !renameName.trim()}>
+              {renaming ? t("music.renaming") : t("music.renameConfirm")}
+            </SharedButton>
           </div>
         </div>
-      )}
+      </SharedModal>
 
       <ConfirmDialogHost request={confirmRequest} onClose={() => setConfirmRequest(null)} />
     </div>

@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0651",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "音乐播放器设置防抖保存可能覆盖更新音量，重命名建议覆盖用户输入，弹窗不符合统一关闭规则，状态轮询可重叠；优化持久化与操作一致性。",
+  "root_cause": "**persistSettings**捕获旧整份设置，独立音量写入后又被防抖快照覆盖；建议名请求没有身份与手工编辑保护，旧弹窗还允许背景及Escape关闭；轮询无重叠/卸载保护。",
+  "solution": "1. 设置以同步引用维护最新快照，序列化音量/音效/持久化请求，退出前刷新待保存偏好，错误可见。\n2. 建议名检查请求代次及手工编辑标记，保存同步防重入，改用公共弹窗和输入控件。\n3. 轮询防重叠、隐藏窗口跳过、卸载忽略结果；导入/扫描及当前下载增加同步门闩，初始化错误不再静默。\n4. 生产构建、475项前端测试与1166文件架构检查通过；真实音频播放及UI待最终验收。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/music/MusicPanel.tsx** | 设置请求串行化、重命名、轮询及公共弹窗 |",
+  "created_at": "2026-11-02 19:52:13",
+  "updated_at": "2026-11-02 19:54:48",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}
