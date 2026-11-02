@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
+import { btnPrimary, btnSecondary, inputCls, labelCls } from "../shared/Button";
 import { useTranslation } from "react-i18next";
 import { X, Folder, Check, Eraser } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -30,6 +31,7 @@ export default function CategoryModal({
   currentParentId,
 }: CategoryModalProps) {
   const { t } = useTranslation();
+  const dialogTitleId = useId();
   const [name, setName] = useState(editingCategory ? editingCategory.name : "");
   const [parentId, setParentId] = useState<number | null>(
     editingCategory ? editingCategory.parentId : (currentParentId || null)
@@ -69,23 +71,11 @@ export default function CategoryModal({
     !!editingCategory?.globalShortcutKey
   );
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const saveInFlight = useRef(false);
 
   // State is already cleanly initialized from props in useState() upon modal mount (via key)
 
-  // 按 Escape 关闭弹窗（暂时注释以测试）
-  /*
-  useEffect(() => {
-    if (!isOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [isOpen, onClose]);
-  */
 
   if (!isOpen) return null;
 
@@ -104,14 +94,16 @@ export default function CategoryModal({
         }
       }
     } catch (e) {
-      console.error(e);
+      setSaveError(String(e));
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() || saveInFlight.current) return;
 
+    saveInFlight.current = true;
+    setSaveError("");
     setSaving(true);
     try {
       const data: ClassificationData = {
@@ -140,8 +132,9 @@ export default function CategoryModal({
       await onSave(category);
       onClose();
     } catch (e) {
-      console.error(e);
+      setSaveError(String(e));
     } finally {
+      saveInFlight.current = false;
       setSaving(false);
     }
   };
@@ -151,20 +144,26 @@ export default function CategoryModal({
       className="fixed inset-0 z-[100] modal-mask flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
     >
       <div
-        className="bg-surface-panel border border-white/10 rounded-panel w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-150 text-slate-100"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={dialogTitleId}
+        className="ui-modal w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-150 text-slate-100"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-white/[0.02]">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-white/[0.02]">
           <div className="flex items-center gap-2.5">
             <span className="text-xl">{icon}</span>
-            <h3 className="text-sm font-semibold text-white">
+            <h3 id={dialogTitleId} className="text-title font-semibold text-white">
               {editingCategory ? t("category.editTitle") : t("category.addTitle")}
             </h3>
           </div>
           <button
             type="button"
             onClick={onClose}
+            disabled={saving}
+            aria-label={t("common.dialogClose")}
+            title={t("common.dialogClose")}
             className="p-1 rounded-ctl text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
           >
             <X className="w-4 h-4" />
@@ -172,10 +171,10 @@ export default function CategoryModal({
         </div>
 
         {/* Content */}
-        <form onSubmit={handleSubmit} className="p-5 overflow-y-auto space-y-4 flex-1">
+        <form aria-busy={saving} onSubmit={handleSubmit} className="p-4 overflow-y-auto space-y-4 flex-1">
           {/* Classification Type Selector */}
           <div>
-            <label className="block text-body font-medium text-slate-400 mb-1.5">{t("category.typeLabel")}</label>
+            <label className={labelCls}>{t("category.typeLabel")}</label>
             <div className="grid grid-cols-3 gap-2">
               {[
                 { type: 0, label: t("category.typeNormal"), desc: t("category.typeNormalDesc") },
@@ -206,7 +205,7 @@ export default function CategoryModal({
           {/* Name & Parent */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-body font-medium text-slate-400 mb-1.5">{t("category.nameLabel")}</label>
+              <label className={labelCls}>{t("category.nameLabel")}</label>
               <input
                 autoFocus
                 type="text"
@@ -216,11 +215,11 @@ export default function CategoryModal({
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder={t("category.namePh")}
-                className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-[var(--module-accent)] transition select-text"
+                className={`${inputCls} select-text`}
               />
             </div>
             <div>
-              <label className="block text-body font-medium text-slate-400 mb-1.5">{t("category.parentLabel")}</label>
+              <label className={labelCls}>{t("category.parentLabel")}</label>
               <CategoryTreeSelect
                 classifications={parentCategories}
                 value={parentId || 0}
@@ -236,7 +235,7 @@ export default function CategoryModal({
 
           {/* Icon / Emoji Selection */}
           <div>
-            <label className="block text-body font-medium text-slate-400 mb-1.5">{t("category.iconLabel")}</label>
+            <label className={labelCls}>{t("category.iconLabel")}</label>
             <div className="flex items-center gap-2 mb-2">
               <div className="w-9 h-9 rounded-card bg-white/5 border border-white/10 flex items-center justify-center text-lg flex-shrink-0">
                 {icon || <span className="text-slate-600">∅</span>}
@@ -379,7 +378,7 @@ export default function CategoryModal({
 
           {/* Shortcut */}
           <div>
-            <label className="block text-body font-medium text-slate-400 mb-1.5">
+            <label className={labelCls}>
               {t("launcher.hotkeyLabel")}
             </label>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
@@ -434,19 +433,22 @@ export default function CategoryModal({
             </label>
           </div>
 
+          {saveError && <p role="alert" className="ui-note ui-note-error text-body px-3 py-2 break-words">{saveError}</p>}
+
           {/* Buttons */}
           <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-white/10">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-card text-body font-medium text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
+              className={btnSecondary}
+              disabled={saving}
             >
               {t("common.cancel")}
             </button>
             <button
               type="submit"
-              disabled={saving}
-              className="px-5 py-2 rounded-card text-body font-semibold ui-btn ui-btn-primary text-white shadow-lg shadow-[var(--module-accent-ring)] transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+              disabled={saving || !name.trim()}
+              className={btnPrimary}
             >
               <Check className="w-3.5 h-3.5" />
               {saving ? t("category.saving") : t("category.saveCategory")}

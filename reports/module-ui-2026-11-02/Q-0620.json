@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0620",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "按图片顺序逐模块优化的首项启动模块：新增启动项及分类保存失败缺少可见反馈，重复提交缺少同步闸，保存取消按钮与公共样式不一致，需要统一交互与样式且保留用户输入。",
+  "root_cause": "**AddItemModal.handleSubmit**只有finally而无catch，**CategoryModal.handleSubmit**失败只console.error；React异步state不能充当同步重复提交闸。两处表单自造按钮、输入框与标题尺寸，未统一使用公共令牌。",
+  "solution": "1. 保存错误以 **role=alert** 展示，失败保留用户输入；ref同步闸阻止同一表单并发提交，finally恢复可重试状态。\n2. 保存期间禁用关闭/取消，空白名称禁用保存，表单aria-busy并给对话框标题和关闭按钮补无障碍名称。\n3. 复用 **btnPrimary/btnSecondary/inputCls/labelCls/ui-modal**，统一按钮高度、标题层级、常用输入框与间距，移除过时的Escape注释。\n4. 生产构建、440前端测试、1126文件架构检查与diff空白检查通过。未做真实窗口操作回归，不宣称完成整个启动模块或其他29项深审。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/launcher/AddItemModal.tsx** | 保存错误、同步闸和公共样式 |\n| **src/components/launcher/CategoryModal.tsx** | 保存反馈、同步闸和公共样式 |\n| **reports/module-ui-2026-11-02/** | 首项验收及全模块待办顺序 |",
+  "created_at": "2026-11-02 16:04:58",
+  "updated_at": "2026-11-02 16:08:16",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
+import { btnPrimary, btnSecondary, inputCls, labelCls } from "../shared/Button";
 import { useTranslation } from "react-i18next";
 import { X, FileText, Folder, Globe, Settings as SettingsIcon, Layers, Shield, Search, Upload, Sparkles, RefreshCw, Plus, Trash2, Check, Package, AppWindow, Image as ImageIcon, RotateCcw, Link2, Download } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -17,6 +18,7 @@ export default function AddItemModal({
   classifications,
 }: AddItemModalProps) {
   const { t } = useTranslation();
+  const dialogTitleId = useId();
   const [activeTab, setActiveTab] = useState<number>(
     editingItem ? (editingItem.itemType === 5 ? 6 : editingItem.itemType) : 0
   );
@@ -48,6 +50,8 @@ export default function AddItemModal({
     !!editingItem?.globalShortcutKey
   );
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const saveInFlight = useRef(false);
 
   // 网页网址抓取
   const [urlFetching, setUrlFetching] = useState(false);
@@ -67,20 +71,6 @@ export default function AddItemModal({
 
   // State is already cleanly initialized from props in useState() upon modal mount (via key)
 
-  // 按 Escape 关闭弹窗（暂时注释以测试）
-  /*
-  useEffect(() => {
-    if (!isOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [isOpen, onClose]);
-  */
 
   if (!isOpen) return null;   // 选择文件 / 快捷方式
   const handleSelectFile = async () => {
@@ -251,8 +241,10 @@ export default function AddItemModal({
   // 提交保存
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() || saveInFlight.current) return;
 
+    saveInFlight.current = true;
+    setSaveError("");
     setSaving(true);
     try {
       let finalItemType = activeTab;
@@ -285,7 +277,10 @@ export default function AddItemModal({
 
       await onSave(itemToSave);
       onClose();
+    } catch (error) {
+      setSaveError(String(error));
     } finally {
+      saveInFlight.current = false;
       setSaving(false);
     }
   };
@@ -295,11 +290,14 @@ export default function AddItemModal({
       className="fixed inset-0 z-[100] modal-mask flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
     >
       <div
-        className="bg-surface-panel border border-white/10 rounded-panel w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-150 text-slate-100"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={dialogTitleId}
+        className="ui-modal w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-150 text-slate-100"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-white/[0.02]">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-white/[0.02]">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-card ui-note ui-note-info border-[var(--module-accent-ring)] flex items-center justify-center text-[var(--module-accent)]">
               {icon ? (
@@ -311,7 +309,7 @@ export default function AddItemModal({
               )}
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-white">
+              <h3 id={dialogTitleId} className="text-title font-semibold text-white">
                 {editingItem ? t("additem.editTitle") : t("additem.addTitle")}
               </h3>
               <p className="text-caption text-slate-400">
@@ -321,6 +319,9 @@ export default function AddItemModal({
           </div>
           <button
             onClick={onClose}
+            disabled={saving}
+            aria-label={t("common.dialogClose")}
+            title={t("common.dialogClose")}
             className="p-1.5 rounded-ctl text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
           >
             <X className="w-4 h-4" />
@@ -328,7 +329,7 @@ export default function AddItemModal({
         </div>
 
         {/* Tab navigation */}
-        <div className="flex items-center gap-1 px-5 py-2.5 border-b border-white/5 bg-white/[0.01] overflow-x-auto">
+        <div className="flex items-center gap-1 px-4 py-2.5 border-b border-white/5 bg-white/[0.01] overflow-x-auto">
           {[
             { id: 0, label: t("additem.tabFile"), icon: <FileText className="w-3.5 h-3.5" /> },
             { id: 1, label: t("additem.tabFolder"), icon: <Folder className="w-3.5 h-3.5" /> },
@@ -359,11 +360,11 @@ export default function AddItemModal({
         </div>
 
         {/* Content Form */}
-        <form onSubmit={handleSubmit} className="p-5 overflow-y-auto space-y-4 flex-1">
+        <form aria-busy={saving} onSubmit={handleSubmit} className="p-4 overflow-y-auto space-y-4 flex-1">
           {/* Classification Selection */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-body font-medium text-slate-400 mb-1.5">{t("additem.classification")}</label>
+              <label className={labelCls}>{t("additem.classification")}</label>
               <CategoryTreeSelect
                 classifications={classifications}
                 value={targetClassificationId}
@@ -372,7 +373,7 @@ export default function AddItemModal({
               />
             </div>
             <div>
-              <label className="block text-body font-medium text-slate-400 mb-1.5">{t("additem.itemName")}</label>
+              <label className={labelCls}>{t("additem.itemName")}</label>
               <input
                 autoFocus
                 type="text"
@@ -382,7 +383,7 @@ export default function AddItemModal({
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder={t("additem.nameExample")}
-                className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-[var(--module-accent)] select-text transition"
+                className={`${inputCls} select-text`}
               />
             </div>
           </div>
@@ -522,7 +523,7 @@ export default function AddItemModal({
           {activeTab === 0 && (
             <div className="space-y-3">
               <div>
-                <label className="block text-body font-medium text-slate-400 mb-1.5">{t("additem.fileTarget")}</label>
+                <label className={labelCls}>{t("additem.fileTarget")}</label>
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
@@ -547,7 +548,7 @@ export default function AddItemModal({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-body font-medium text-slate-400 mb-1.5">{t("additem.params")}</label>
+                  <label className={labelCls}>{t("additem.params")}</label>
                   <input
                     type="text"
                     autoComplete="off"
@@ -555,11 +556,11 @@ export default function AddItemModal({
                     value={params}
                     onChange={(e) => setParams(e.target.value)}
                     placeholder={t("additem.paramsExample")}
-                    className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-[var(--module-accent)] select-text"
+                    className={`${inputCls} select-text`}
                   />
                 </div>
                 <div>
-                  <label className="block text-body font-medium text-slate-400 mb-1.5">{t("additem.startDir")}</label>
+                  <label className={labelCls}>{t("additem.startDir")}</label>
                   <input
                     type="text"
                     autoComplete="off"
@@ -567,7 +568,7 @@ export default function AddItemModal({
                     value={startLocation}
                     onChange={(e) => setStartLocation(e.target.value)}
                     placeholder={t("additem.startDirPlaceholder")}
-                    className="w-full bg-white/5 border border-white/10 rounded-card px-3 py-2 text-body text-white focus:outline-none focus:border-[var(--module-accent)] select-text"
+                    className={`${inputCls} select-text`}
                   />
                 </div>
               </div>
@@ -577,7 +578,7 @@ export default function AddItemModal({
           {/* TAB 1: Folder */}
           {activeTab === 1 && (
             <div>
-              <label className="block text-body font-medium text-slate-400 mb-1.5">{t("additem.folderTarget")}</label>
+              <label className={labelCls}>{t("additem.folderTarget")}</label>
               <div className="flex items-center gap-2">
                 <input
                   type="text"
@@ -605,7 +606,7 @@ export default function AddItemModal({
           {activeTab === 2 && (
             <div className="space-y-3">
               <div>
-                <label className="block text-body font-medium text-slate-400 mb-1.5">{t("additem.urlLabel")}</label>
+                <label className={labelCls}>{t("additem.urlLabel")}</label>
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
@@ -634,7 +635,7 @@ export default function AddItemModal({
           {/* TAB 3: System Tools */}
           {activeTab === 3 && (
             <div>
-              <label className="block text-body font-medium text-slate-400 mb-1.5">{t("additem.pickSystemTool")}</label>
+              <label className={labelCls}>{t("additem.pickSystemTool")}</label>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto p-1 bg-white/[0.02] border border-white/5 rounded-card">
                 {PRESET_SYSTEM_TOOLS.map((sys) => (
                   <button
@@ -921,7 +922,7 @@ export default function AddItemModal({
           {/* 快捷键 */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
             <div>
-              <label className="block text-body font-medium text-slate-400 mb-1.5">
+              <label className={labelCls}>
                 {t("launcher.hotkeyLabel")}
               </label>
               <ShortcutRecorder value={shortcutKey} onChange={setShortcutKey} />
@@ -949,19 +950,22 @@ export default function AddItemModal({
             </div>
           </div>
 
+          {saveError && <p role="alert" className="ui-note ui-note-error text-body px-3 py-2 break-words">{saveError}</p>}
+
           {/* Actions */}
           <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-white/10">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-card text-body font-medium text-slate-400 hover:text-white hover:bg-white/5 transition cursor-pointer"
+              className={btnSecondary}
+              disabled={saving}
             >
               {t("additem.cancel")}
             </button>
             <button
               type="submit"
-              disabled={saving}
-              className="px-5 py-2 rounded-card text-body font-semibold ui-btn ui-btn-primary text-white shadow-lg shadow-[var(--module-accent-ring)] transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+              disabled={saving || !name.trim()}
+              className={btnPrimary}
             >
               <Check className="w-3.5 h-3.5" />
               {saving ? t("additem.saving") : t("additem.saveItem")}

@@ -1,0 +1,44 @@
+# 按图片顺序检查与优化模块
+
+开始：2026-11-02；当前：第1项启动模块；下一步：完成启动模块操作/样式验收，再进入Buddy，不跳项。
+定位沿用2026-10-30已确认结论：本地桌面主体；网络监听模块补查边界。范围src及对应src-tauri/src；排除依赖、构建产物、第三方代码和真实用户数据。原则：模块独立、公共层单向依赖、状态明确所有权，不改已明确的业务规则。
+用户本轮明确授权逐模块检查、优化操作与统一UI；既有qa-log检查/提交要求继续有效。图片只定义检查顺序，不要求改用户已保存的导航顺序。
+UI基准：现有App.css令牌、shared/Button、shared/Modal；保留当前主题与密度，不发明第二套组件体系。
+状态不把静态扫描当真机验收：每项分别记录源码检查、修改、自动验证、真实UI验证。业务深审与UI验证未做的保持PENDING。
+
+| 顺序 | 模块 | ID | 状态 |
+|---|---|---|---|
+| 1 | 启动 | launcher | IN_PROGRESS |
+| 2 | Buddy | buddy | PENDING |
+| 3 | SDK | sdk | PENDING |
+| 4 | AI | ai | PENDING |
+| 5 | 思维导图 | mindmap | PENDING |
+| 6 | API | api | PENDING |
+| 7 | 服务 | node | PENDING |
+| 8 | 资讯 | news | PENDING |
+| 9 | 代理 | mihomo | PENDING |
+| 10 | 证书 | cert | PENDING |
+| 11 | 剪贴板 | clipboard | PENDING |
+| 12 | OTP | otp | PENDING |
+| 13 | 翻译 | translate | PENDING |
+| 14 | Picky | picky | PENDING |
+| 15 | 本地网络 | network | PENDING |
+| 16 | HTTP服务 | httpServer | PENDING |
+| 17 | RTSP服务 | rtspServer | PENDING |
+| 18 | 图片Base64 | imageBase64 | PENDING |
+| 19 | 环境变量 | env | PENDING |
+| 20 | 日志查看 | logViewer | PENDING |
+| 21 | JSON浏览 | jsonBrowser | PENDING |
+| 22 | Markdown | markdownReader | PENDING |
+| 23 | 串口调试 | serial | PENDING |
+| 24 | 网络调试器 | wsDebugger | PENDING |
+| 25 | 音乐播放器 | music | PENDING |
+| 26 | 收藏 | favorites | PENDING |
+| 27 | 任务计划 | tasks | PENDING |
+| 28 | 设置 | settings | PENDING |
+| 29 | Suno下载 | suno | PENDING |
+| 30 | 数据库设计 | dbdesigner | PENDING |
+
+启动：已发现表单错误静默和保存按钮样式不统一；D1-D8继续定向核查。其他29项尚未检查，不能宣称已完成。
+
+2026-11-02 Q-0620：启动的新增/编辑启动项和分类表单首批修复验收通过（构建、440前端、1126架构），未做真实窗口验证。D1-D8仅定向核对上述表单：D1无新增命令/注入，D2同步提交闸，D3错误可见，D4不改持久化payload，D5沿用onSave与IPC，D6公共样式与文案，D7空名与重入，D8复用公共令牌。未把这些结论推广为整个模块全量D1-D8通过。当前首项仍IN_PROGRESS，下一步其余弹窗/搜索/布局真实UI核对；再到Buddy。
