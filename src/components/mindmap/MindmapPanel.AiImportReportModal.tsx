@@ -17,10 +17,10 @@ export function AiImportReportModal({ result, onClose, onOpenDoc }: {
   const [expOpen, setExpOpen] = useState(false);
   const allOk = result.reports.length > 0 && result.reports.every(r => r.diagnostics.length === 0) && result.failures.length === 0;
   return createPortal(
-    <div className="fixed inset-0 z-[410] modal-mask flex items-center justify-center bg-black/70 p-4 backdrop-blur-[3px]" onClick={onClose}>
-      <div className="w-[min(94vw,560px)] rounded-card border border-white/10 bg-surface-panel p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-[410] modal-mask flex items-center justify-center bg-black/70 p-4 backdrop-blur-[3px]">
+      <div role="dialog" aria-modal="true" aria-label={t("mindmap.aiReportTitle")} className="ui-modal w-[min(94vw,560px)] max-h-[88vh] overflow-y-auto p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="flex items-center gap-2 text-sm font-semibold text-white"><Sparkles className="h-4 w-4 text-cyan-400" />{t("mindmap.aiReportTitle")}</h3>
+          <h3 className="flex items-center gap-2 text-title font-semibold text-white"><Sparkles className="h-4 w-4 text-cyan-400" />{t("mindmap.aiReportTitle")}</h3>
           <button type="button" className="cursor-pointer rounded p-1 text-slate-400 hover:text-white" onClick={onClose} title={t("mindmap.close")}><X className="h-4 w-4" /></button>
         </div>
         {/* 本次运行总消耗（含路由/探索阶段，来自后端累计） */}

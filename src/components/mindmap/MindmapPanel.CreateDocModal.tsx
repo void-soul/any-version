@@ -1,30 +1,46 @@
-import { useEffect, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { createPortal } from "react-dom";
-import "@xyflow/react/dist/style.css";
-import { X } from "lucide-react";
-import { ACCENT } from "./MindmapPanel.model";
-// ════════════ 创建文档弹窗 ════════════
+import { SharedModal } from "../shared/Modal";
+import { SharedButton, inputCls, labelCls } from "../shared/Button";
 
-export function CreateDocModal({ onClose, onCreate, folderId }: { onClose: () => void; onCreate: (name: string, desc: string, folderId: string | null) => void; folderId: string | null }) {
+export function CreateDocModal({ onClose, onCreate, folderId }: {
+  onClose: () => void;
+  onCreate: (name: string, desc: string, folderId: string | null) => Promise<void>;
+  folderId: string | null;
+}) {
   const { t } = useTranslation();
-  const [name, setName] = useState(""); const [desc, setDesc] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-  useEffect(() => { inputRef.current?.focus(); }, []);
-
-  return createPortal(
-    <div className="fixed inset-0 z-[200] modal-mask flex items-center justify-center bg-black/70 p-6 backdrop-blur-[3px]">
-      <div className="w-[380px] rounded-card border border-white/10 bg-surface-panel p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-semibold text-white">{t("mindmap.newMapTitle")}</h3>
-          <button type="button" className="text-slate-500 hover:text-white" onClick={onClose}><X className="h-4 w-4" /></button>
-        </div>
-        <div className="space-y-3">
-          <div><label className="text-tiny text-slate-400 block mb-1">{t("mindmap.nameLabel")}</label><input ref={inputRef} className="w-full h-9 rounded-ctl ui-input px-3 text-body text-white outline-none" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("mindmap.mapNamePh")} onKeyDown={(e) => { if (e.key === "Enter" && name.trim()) onCreate(name.trim(), desc, folderId); }} /></div>
-          <div><label className="text-tiny text-slate-400 block mb-1">{t("mindmap.descLabel")}</label><textarea className="w-full h-16 rounded-ctl ui-input px-3 py-2 text-body text-white outline-none resize-none" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder={t("mindmap.descPh")} /></div>
-          <button type="button" className="w-full rounded-ctl py-2 text-caption font-semibold text-white disabled:opacity-40" style={{ backgroundColor: ACCENT }}
-            disabled={!name.trim()} onClick={() => { if (name.trim()) onCreate(name.trim(), desc, folderId); }}>{t("mindmap.create")}</button>
-        </div>
+  const id = useId();
+  const [name, setName] = useState("");
+  const [desc, setDesc] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const inFlight = useRef(false);
+  const submit = async () => {
+    if (!name.trim() || inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true);
+    setError("");
+    try { await onCreate(name.trim(), desc, folderId); }
+    catch (error) { setError(String(error)); }
+    finally { inFlight.current = false; setBusy(false); }
+  };
+  return <SharedModal open onClose={() => { if (!busy) onClose(); }} title={t("mindmap.newMapTitle")} width={420}>
+    <form aria-busy={busy} className="space-y-3" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+      <div>
+        <label className={labelCls} htmlFor={`${id}-name`}>{t("mindmap.nameLabel")}</label>
+        <input id={`${id}-name`} autoFocus required disabled={busy} className={inputCls} value={name}
+          onChange={(event) => setName(event.target.value)} placeholder={t("mindmap.mapNamePh")} />
       </div>
-    </div>, document.body);
+      <div>
+        <label className={labelCls} htmlFor={`${id}-description`}>{t("mindmap.descLabel")}</label>
+        <textarea id={`${id}-description`} disabled={busy} className="ui-input w-full min-h-20 px-2.5 py-2 resize-y"
+          value={desc} onChange={(event) => setDesc(event.target.value)} placeholder={t("mindmap.descPh")} />
+      </div>
+      {error && <p role="alert" className="ui-note ui-note-error text-body px-3 py-2 break-words">{error}</p>}
+      <div className="flex justify-end gap-2">
+        <SharedButton type="button" disabled={busy} onClick={onClose}>{t("mindmap.cancel")}</SharedButton>
+        <SharedButton type="submit" variant="primary" disabled={busy || !name.trim()}>{busy ? t("common.loading") : t("mindmap.create")}</SharedButton>
+      </div>
+    </form>
+  </SharedModal>;
 }

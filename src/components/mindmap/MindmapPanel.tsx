@@ -882,7 +882,7 @@ export default function MindmapPanel() {
           </aside>
         )}
       </div>
-      {showCreate && <CreateDocModal onClose={() => setShowCreate(false)} onCreate={(n,d,fid) => { void createDoc(n,d,fid); }} folderId={activeFolderId} />}
+      {showCreate && <CreateDocModal onClose={() => setShowCreate(false)} onCreate={createDoc} folderId={activeFolderId} />}
       {error && showAi && <div className="absolute bottom-8 left-1/2 z-40 -translate-x-1/2 max-w-md rounded-md border border-red-400/20 bg-slate-900 px-3 py-2 text-caption text-red-300 shadow-xl">{error}<button type="button" className="ml-2 text-slate-400 hover:text-white" onClick={() => setError("")}>✕</button></div>}
       {notice && <div className="absolute bottom-8 left-1/2 z-40 -translate-x-1/2 rounded-md border border-white/10 bg-slate-900 px-3 py-2 text-caption text-slate-200 shadow-xl">{notice}</div>}
       {/* AI 弹框关闭确认：任务进行中询问，确认后停止任务再关闭 */}

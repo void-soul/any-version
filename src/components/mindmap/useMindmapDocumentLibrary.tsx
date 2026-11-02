@@ -50,15 +50,16 @@ export function useMindmapDocumentLibrary({ setFull, flash }: {
   }, []);
 
   const createDoc = useCallback(async (name: string, desc: string, folderId: string | null) => {
+    // Required creation errors belong to the open form; optional loading must not invite duplicate creation.
+    const doc = await mmApi.create({ name, description: desc, sourceType: "manual", folderId });
+    setDocs(prev => [doc, ...prev]);
+    if (!folderId) setActiveFolderId(null);
+    setShowCreate(false);
     try {
-      const doc = await mmApi.create({ name, description: desc, sourceType: "manual", folderId });
-      setDocs(prev => [doc, ...prev]);
-      if (!folderId) setActiveFolderId(null);
-      setShowCreate(false);
-      const f = await mmApi.load(doc.id);
-      if (f) setFull(f);
-      void refreshFolders();
-    } catch (e) { flash(String(e)); }
+      const full = await mmApi.load(doc.id);
+      if (full) setFull(full);
+    } catch (error) { flash(String(error)); }
+    void refreshFolders();
   }, [flash, refreshFolders]);
 
   const removeDoc = useCallback((id: string, name: string) => {

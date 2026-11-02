@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0624",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "按顺序检查思维导图，创建文档弹窗不能等待异步创建且无忙状态，可重复创建，失败提示位于遮罩后；确认/报告弹窗样式漂移且报告点遮罩会关闭，需要统一公共弹窗与失败反馈。",
+  "root_cause": "**CreateDocModal** 的onCreate为void且父层丢弃Promise，无法等待创建及禁用重入；创建失败只flash在遮罩后。创建成功后的可选加载与创建错误混在同一catch；确认/报告弹窗自造样式，报告遮罩还绑定关闭，与应用显式关闭规则不一致。",
+  "solution": "1. 创建弹窗复用 **SharedModal/SharedButton/inputCls/labelCls**，改form提交并await创建；同步闸和忙状态防重复创建，失败保留内容并显示alert。\n2. 必需创建错误传回弹窗；成功后才更新文档和关闭，可选加载失败仍由页面提示，避免把已创建文档误报失败并诱导重建。\n3. 确认/报告弹窗使用公共ui-modal、标题及危险/取消按钮；报告仅显式关闭，并加高度上限和滚动。\n4. 构建、443前端测试及1128文件架构检查通过；未修改图数据和AI协议。真实窗口回归待补。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/mindmap/MindmapPanel.CreateDocModal.tsx** | 文档创建交互与弹窗统一 |\n| **src/components/mindmap/useMindmapDocumentLibrary.tsx** | 文档创建交互与弹窗统一 |\n| **src/components/mindmap/MindmapPanel.tsx** | 文档创建交互与弹窗统一 |\n| **src/components/mindmap/MindmapPanel.ConfirmModal.tsx** | 文档创建交互与弹窗统一 |\n| **src/components/mindmap/MindmapPanel.AiImportReportModal.tsx** | 文档创建交互与弹窗统一 |",
+  "created_at": "2026-11-02 16:22:38",
+  "updated_at": "2026-11-02 16:24:21",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}
