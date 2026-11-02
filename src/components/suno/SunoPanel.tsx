@@ -1,4 +1,5 @@
 // Suno 下载：粘贴用户主页 URL，解析该主页所有歌曲，勾选批量下载为 mp3（内置 ffmpeg 转码）。
+import { SharedButton } from "../shared/Button";
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -48,17 +49,19 @@ export default function SunoPanel() {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [profiles, setProfiles] = useState<string[]>([]);
+  const operationBusy = useRef(false);
+  const profileBusy = useRef(false);
   const unlistenRef = useRef<UnlistenFn | null>(null);
 
   // 监听下载进度
   useEffect(() => {
     let disposed = false;
     listen<Progress>("suno-download-progress", (e) => {
-      if (!disposed) setProgress(e.payload);
+      if (!disposed && operationBusy.current) setProgress(e.payload);
     }).then((un) => {
       if (disposed) un();
       else unlistenRef.current = un;
-    });
+    }).catch((error) => { if (!disposed) setMessage({ ok: false, text: String(error) }); });
     return () => {
       disposed = true;
       unlistenRef.current?.();
@@ -72,42 +75,46 @@ export default function SunoPanel() {
   const loadProfiles = async () => {
     try {
       setProfiles(await invoke<string[]>("suno_list_profiles"));
-    } catch {
-      /* 忽略 */
-    }
+    } catch (error) { showMsg(false, String(error)); }
   };
   useEffect(() => {
     void loadProfiles();
   }, []);
 
   const saveProfile = async () => {
+    if (profileBusy.current) return;
     const trimmed = url.trim();
     if (!trimmed) {
       showMsg(false, t("suno.emptyUrl"));
       return;
     }
+    profileBusy.current = true;
     try {
       setProfiles(await invoke<string[]>("suno_save_profile", { url: trimmed }));
       showMsg(true, t("suno.profileSaved"));
     } catch (e) {
       showMsg(false, String(e));
-    }
+    } finally { profileBusy.current = false; }
   };
 
   const removeProfile = async (u: string) => {
+    if (profileBusy.current) return;
+    profileBusy.current = true;
     try {
       setProfiles(await invoke<string[]>("suno_remove_profile", { url: u }));
     } catch (e) {
       showMsg(false, String(e));
-    }
+    } finally { profileBusy.current = false; }
   };
 
   const parse = async (target?: string) => {
+    if (operationBusy.current) return;
     const trimmed = (target ?? url).trim();
     if (!trimmed) {
       showMsg(false, t("suno.emptyUrl"));
       return;
     }
+    operationBusy.current = true;
     setParsing(true);
     setMessage(null);
     setSongs([]);
@@ -119,11 +126,13 @@ export default function SunoPanel() {
     } catch (e) {
       showMsg(false, String(e));
     } finally {
+      operationBusy.current = false;
       setParsing(false);
     }
   };
 
   const toggle = (id: string) => {
+    if (operationBusy.current) return;
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -134,6 +143,7 @@ export default function SunoPanel() {
 
   // 全选 = 只勾选「未下载过」的歌曲（已下载的跳过）；已全选未下载则清空。
   const toggleAll = () => {
+    if (operationBusy.current) return;
     setSelected((prev) => {
       const unDownloaded = songs.filter((s) => !s.downloaded);
       if (unDownloaded.length === 0) return new Set();
@@ -147,23 +157,18 @@ export default function SunoPanel() {
       showMsg(false, t("suno.noneSelected"));
       return;
     }
-    let dir: string | null = null;
-    try {
-      const picked = await openDialog({ directory: true, multiple: false, title: t("suno.pickDirTitle") });
-      dir = typeof picked === "string" ? picked : null;
-    } catch {
-      dir = null;
-    }
-    if (!dir) return;
-
-    const refs = songs
-      .filter((s) => selected.has(s.id))
-      .map((s) => ({ id: s.id, title: s.title, audioUrl: s.audioUrl, imageUrl: s.imageUrl }));
-
+    if (operationBusy.current) return;
+    operationBusy.current = true;
+    const refs = songs.filter((song) => selected.has(song.id))
+      .map((song) => ({ id: song.id, title: song.title, audioUrl: song.audioUrl, imageUrl: song.imageUrl }));
     setDownloading(true);
-    setProgress({ current: 0, total: refs.length, title: "", stage: "download" });
+    setProgress(null);
     setMessage(null);
     try {
+      const picked = await openDialog({ directory: true, multiple: false, title: t("suno.pickDirTitle") });
+      if (typeof picked !== "string") return;
+      const dir = picked;
+      setProgress({ current: 0, total: refs.length, title: "", stage: "download" });
       const report = await invoke<DownloadReport>("suno_download_songs", {
         songs: refs,
         dir,
@@ -171,6 +176,7 @@ export default function SunoPanel() {
       // 立即把成功下载的歌曲标记为「已下载」，无需刷新页面
       if (report.succeededIds.length > 0) {
         const okIds = new Set(report.succeededIds);
+        setSelected((prev) => new Set([...prev].filter((id) => !okIds.has(id))));
         setSongs((prev) =>
           prev.map((s) => (okIds.has(s.id) ? { ...s, downloaded: true } : s)),
         );
@@ -188,7 +194,9 @@ export default function SunoPanel() {
     } catch (e) {
       showMsg(false, String(e));
     } finally {
+      operationBusy.current = false;
       setDownloading(false);
+      setProgress(null);
     }
   };
 
@@ -197,10 +205,12 @@ export default function SunoPanel() {
   return (
     <div className="h-full w-full flex flex-col p-4 gap-3 overflow-hidden">
       {/* 输入行 */}
-      <div className="flex items-center gap-2 flex-shrink-0">
-        <div className="flex items-center gap-1.5 px-2 h-8 rounded-md border border-white/10 bg-black/30 flex-1">
+      <div className="flex items-center gap-2 flex-wrap flex-shrink-0">
+        <div className="ui-input flex items-center gap-1.5 px-2 h-9 flex-1 min-w-48">
           <Music2 className="w-3.5 h-3.5 text-[var(--module-accent)]" />
           <input
+            aria-label={t("suno.urlPlaceholder")}
+            disabled={parsing || downloading}
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && !parsing && void parse()}
@@ -208,22 +218,23 @@ export default function SunoPanel() {
             className="flex-1 bg-transparent text-body text-slate-100 outline-none placeholder:text-slate-600"
           />
         </div>
-        <button
+        <SharedButton
+          aria-label={t("suno.saveProfile")}
           onClick={() => void saveProfile()}
           disabled={!url.trim()}
           className="inline-flex items-center px-2 h-8 rounded-md border border-white/10 text-slate-400 hover:text-amber-300 hover:border-amber-300/40 disabled:opacity-40 cursor-pointer"
           title={t("suno.saveProfile")}
         >
           <Star className="w-3.5 h-3.5" />
-        </button>
-        <button
+        </SharedButton>
+        <SharedButton variant="primary"
           onClick={() => void parse()}
-          disabled={parsing}
+          disabled={parsing || downloading}
           className="inline-flex items-center gap-1 px-3 h-8 rounded-md bg-[var(--module-accent)] text-white text-caption font-medium hover:opacity-90 disabled:opacity-40 cursor-pointer"
         >
           {parsing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
           {t("suno.parse")}
-        </button>
+        </SharedButton>
       </div>
 
       {/* 收藏的主页 */}
@@ -247,6 +258,7 @@ export default function SunoPanel() {
               <button
                 onClick={() => void removeProfile(p)}
                 className="text-slate-500 hover:text-red-400 flex-shrink-0"
+                aria-label={t("suno.removeProfile")}
                 title={t("suno.removeProfile")}
               >
                 <X className="w-3 h-3" />
@@ -270,7 +282,7 @@ export default function SunoPanel() {
       {/* 列表头：全选 + 下载 */}
       {songs.length > 0 && (
         <div className="flex items-center gap-2 flex-shrink-0">
-          <button
+          <SharedButton disabled={parsing || downloading}
             onClick={toggleAll}
             className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-white/10 text-slate-400 hover:text-white hover:border-white/25 cursor-pointer text-tiny"
           >
@@ -281,19 +293,19 @@ export default function SunoPanel() {
               <Square className="w-3.5 h-3.5" />
             )}
             {t("suno.selectAllUnDownloaded")}
-          </button>
+          </SharedButton>
           <span className="text-tiny text-slate-500">
             {t("suno.selectedCount", { count: selectedCount, total: songs.filter((s) => !s.downloaded).length })}
           </span>
           <div className="flex-1" />
-          <button
+          <SharedButton variant="primary"
             onClick={() => void download()}
-            disabled={selectedCount === 0 || downloading}
+            disabled={selectedCount === 0 || downloading || parsing}
             className="inline-flex items-center gap-1 px-3 h-8 rounded-md bg-[var(--module-accent)] text-white text-caption font-medium hover:opacity-90 disabled:opacity-40 cursor-pointer"
           >
             {downloading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
             {t("suno.download")}
-          </button>
+          </SharedButton>
         </div>
       )}
 
@@ -336,6 +348,8 @@ export default function SunoPanel() {
               return (
                 <li
                   key={s.id}
+                  role="checkbox" aria-checked={checked} aria-label={s.title} tabIndex={0}
+                  onKeyDown={(event) => { if (event.key === " " || event.key === "Enter") { event.preventDefault(); toggle(s.id); } }}
                   onClick={() => toggle(s.id)}
                   className={`flex items-center gap-2 px-2 py-1.5 rounded-md border cursor-pointer transition ${
                     checked

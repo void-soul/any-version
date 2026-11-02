@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0656",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "Suno解析和下载可交叉执行，选择目录前未锁定下载与选中快照，成功后仍勾选已下载项；统一控件并补监听和选择错误反馈。",
+  "root_cause": "**download**在目录选择后才置忙并读取可变选择，**parse**仅按钮禁用无法约束其他入口；完成只标记歌曲不清选择，监听Promise错误未处理。",
+  "solution": "1. 解析和下载同步互斥，在目录选择前捕获下载快照并锁定操作，失败/取消均释放状态。\n2. 成功项取消选择、失败项保留重试；主页变更互斥，监听和选择错误可见。\n3. 主要动作采用公共按钮和输入容器，歌曲支持键盘选择及checkbox语义；生产构建通过。未连接Suno或下载用户文件。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/suno/SunoPanel.tsx** | 下载快照、互斥/错误、选择及公共控件 |",
+  "created_at": "2026-11-02 20:09:52",
+  "updated_at": "2026-11-02 20:10:43",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}
