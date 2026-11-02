@@ -1,390 +1,11 @@
 import { RtspEncodingOptions } from "./RtspEncodingOptions";
-import { useState, useEffect } from "react";
-import { alertError } from "../shared/ThemedAlert";
-import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
-import { useTranslation } from "react-i18next";
+import { useRtspServer } from "./useRtspServer";
+import { btnPrimary, btnDanger, btnSecondary } from "../shared/Button";
+import { ConfirmDialogHost } from "../shared/ConfirmDialog";
 import { Video, Play, Square, RefreshCw, FolderOpen, Copy, CheckCircle, AlertCircle, Terminal, ChevronDown, ChevronUp, ChevronRight, Plus, Trash2, Radio, Sliders, Network, Mic, MicOff } from "lucide-react";
-import { DEFAULT_CONFIG, STORAGE_KEY, type CameraDevices, type RtspConfig, type RtspInstanceItem, type RtspServerStatus } from "./RtspServer.model";
 
 export default function RtspServer() {
-  const { t } = useTranslation();
-  const [devices, setDevices] = useState<CameraDevices>({ videoDevices: [], audioDevices: [] });
-  const [loadingDevices, setLoadingDevices] = useState<boolean>(false);
-  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
-  const [allIps, setAllIps] = useState<{ name: string; ip: string }[]>([]);
-
-  // 加载本机所有网卡 IP
-  const loadAllIps = async () => {
-    try {
-      const list = await invoke<[string, string][]>("get_all_local_ips");
-      setAllIps(list.map(([name, ip]) => ({ name, ip })));
-    } catch {
-      setAllIps([]);
-    }
-  };
-
-  // 首次挂载时加载 IP 列表
-  useEffect(() => {
-    loadAllIps();
-  }, []);
-
-  // 多实例状态数组
-  const [instances, setInstances] = useState<RtspInstanceItem[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((item: any, idx: number) => ({
-            id: item.id || `inst_${Date.now()}_${idx}`,
-            title: item.title || t("rtsp.nodeTitle", { n: idx + 1 }),
-            config: { ...DEFAULT_CONFIG, ...item.config, id: item.id },
-            status: { id: item.id, running: false, logs: [], uptimeSeconds: 0 },
-            showLogs: false,
-            collapsed: item.collapsed ?? true, // 默认收起/折叠，保持页面简洁
-            actionLoading: false,
-            error: null,
-          }));
-        }
-      }
-    } catch (e) {
-      console.error("读取 RTSP 本地实例失败:", e);
-    }
-    const initId = "inst_default_8554";
-    return [
-      {
-        id: initId,
-        title: t("rtsp.nodeTitle", { n: 1 }),
-        config: { ...DEFAULT_CONFIG, id: initId, port: 8554, pathName: "live" },
-        status: { id: initId, running: false, logs: [], uptimeSeconds: 0 },
-        showLogs: false,
-        collapsed: false, // 默认首个节点展开供编辑
-        actionLoading: false,
-        error: null,
-      },
-    ];
-  });
-
-  // 持久化保存参数配置（不含运行态/日志/进程）
-  useEffect(() => {
-    try {
-      const toSave = instances.map((inst) => ({
-        id: inst.id,
-        title: inst.title,
-        config: inst.config,
-        collapsed: inst.collapsed,
-      }));
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
-    } catch (e) {
-      console.error("保存 RTSP 实例至 localStorage 失败:", e);
-    }
-  }, [instances]);
-
-  // 扫描音视频设备
-  const fetchDevices = async () => {
-    setLoadingDevices(true);
-    try {
-      const res = await invoke<CameraDevices>("get_rtsp_camera_devices");
-      setDevices(res);
-    } catch (e: any) {
-      console.warn("设备扫描提示:", e);
-    } finally {
-      setLoadingDevices(false);
-    }
-  };
-
-  // 轮询更新 RTSP 实例运行状态
-  const pollStatuses = async () => {
-    try {
-      const statuses = await invoke<RtspServerStatus[]>("get_all_rtsp_server_statuses");
-      const statusMap = new Map(statuses.map((s) => [s.id, s]));
-
-      setInstances((prev) =>
-        prev.map((inst) => {
-          const st = statusMap.get(inst.id);
-          if (st) {
-            return { ...inst, status: st };
-          } else {
-            return {
-              ...inst,
-              status: { ...inst.status, running: false, uptimeSeconds: 0 },
-            };
-          }
-        })
-      );
-    } catch (e) {
-      console.error("轮询 RTSP 服务器状态失败:", e);
-    }
-  };
-
-  useEffect(() => {
-    fetchDevices();
-    pollStatuses();
-    const interval = setInterval(pollStatuses, 2000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // 新增 RTSP 实例
-  const handleAddInstance = () => {
-    const newPort = 8554 + instances.length;
-    const newId = `inst_${Date.now()}_${newPort}`;
-    const newInst: RtspInstanceItem = {
-      id: newId,
-      title: t("rtsp.nodeTitle", { n: instances.length + 1 }),
-      config: {
-        ...DEFAULT_CONFIG,
-        id: newId,
-        port: newPort,
-        pathName: `live${instances.length + 1}`,
-      },
-      status: { id: newId, running: false, logs: [], uptimeSeconds: 0 },
-      showLogs: false,
-      collapsed: false, // 新建节点自动展开供配置
-      actionLoading: false,
-      error: null,
-    };
-    setInstances([...instances, newInst]);
-  };
-
-  // 删除实例
-  const handleDeleteInstance = async (id: string, e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    const inst = instances.find((i) => i.id === id);
-    if (inst?.status.running) {
-      try {
-        await invoke("stop_rtsp_server", { id });
-      } catch (err) {
-        console.error(err);
-      }
-    }
-    setInstances(instances.filter((i) => i.id !== id));
-  };
-
-  // 停止所有实例
-  const handleStopAll = async () => {
-    try {
-      await invoke("stop_all_rtsp_servers");
-      await pollStatuses();
-    } catch (e: any) {
-      alertError(t("rtsp.stopAllFail", { err: String(e) }));
-    }
-  };
-
-  // 启动所有实例
-  const handleStartAll = async () => {
-    const pending = instances.filter((i) => !i.status.running);
-    if (pending.length === 0) return;
-
-    // 先校验所有待启动实例
-    let hasError = false;
-    const validated = pending.map((inst) => {
-      if (inst.config.sourceType === "camera" && !inst.config.cameraName?.trim()) {
-        hasError = true;
-        return { ...inst, error: t("rtsp.needCamera"), collapsed: false };
-      }
-      if (inst.config.sourceType === "file" && !inst.config.filePath?.trim()) {
-        hasError = true;
-        return { ...inst, error: t("rtsp.needFilePath"), collapsed: false };
-      }
-      if (!inst.config.port || inst.config.port < 1024 || inst.config.port > 65535) {
-        hasError = true;
-        return { ...inst, error: t("rtsp.needPort"), collapsed: false };
-      }
-      return { ...inst, error: null, actionLoading: true };
-    });
-
-    // 有校验错误时更新状态并中止
-    if (hasError) {
-      setInstances((prev) => {
-        const errorMap = new Map(validated.filter((v) => v.error).map((v) => [v.id, v]));
-        return prev.map((inst) => errorMap.get(inst.id) || inst);
-      });
-      return;
-    }
-
-    // 全部校验通过，设置 loading 状态
-    const loadingIds = new Set(pending.map((i) => i.id));
-    setInstances((prev) => prev.map((i) => (loadingIds.has(i.id) ? { ...i, actionLoading: true, error: null } : i)));
-
-    // 并行启动所有实例
-    const results = await Promise.allSettled(
-      pending.map((inst) =>
-        invoke<RtspServerStatus>("start_rtsp_server", {
-          config: { ...inst.config, id: inst.id },
-        })
-      )
-    );
-
-    // 根据结果更新各实例状态
-    setInstances((prev) =>
-      prev.map((inst) => {
-        const pendingIdx = pending.findIndex((p) => p.id === inst.id);
-        if (pendingIdx === -1) return inst;
-        const result = results[pendingIdx];
-        if (result.status === "fulfilled") {
-          return { ...inst, status: result.value, actionLoading: false };
-        } else {
-          return {
-            ...inst,
-            error: String(result.reason),
-            showLogs: true,
-            collapsed: false,
-            actionLoading: false,
-          };
-        }
-      })
-    );
-  };
-
-  // 切换展开/折叠
-  const toggleCollapse = (id: string) => {
-    setInstances((prev) =>
-      prev.map((inst) => (inst.id === id ? { ...inst, collapsed: !inst.collapsed } : inst))
-    );
-  };
-
-  // 单个实例参数修改
-  const updateInstanceConfig = (id: string, updates: Partial<RtspConfig> | { title?: string }) => {
-    setInstances((prev) =>
-      prev.map((inst) => {
-        if (inst.id !== id) return inst;
-        if ("title" in updates && updates.title !== undefined) {
-          return { ...inst, title: updates.title };
-        }
-        return {
-          ...inst,
-          config: { ...inst.config, ...updates },
-        };
-      })
-    );
-  };
-
-  // 将一个实例的配置复制到所有其他实例（保留各实例的端口/路径，避免冲突）
-  const handleCopyConfigToAll = (source: RtspInstanceItem) => {
-    const others = instances.filter((i) => i.id !== source.id);
-    if (others.length === 0) return;
-    if (!confirm(t("rtsp.copyConfirm", { title: source.title, count: others.length }))) return;
-    setInstances((prev) =>
-      prev.map((inst) => {
-        if (inst.id === source.id) return inst;
-        return {
-          ...inst,
-          config: {
-            ...source.config,
-            id: inst.id,
-            port: inst.config.port,
-            pathName: inst.config.pathName,
-          },
-        };
-      })
-    );
-  };
-
-  // 启动单个实例
-  const handleStartInstance = async (inst: RtspInstanceItem, e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    if (inst.status.running) return;
-
-    if (inst.config.sourceType === "camera" && !inst.config.cameraName?.trim()) {
-      setInstances((prev) =>
-        prev.map((i) => (i.id === inst.id ? { ...i, error: t("rtsp.needCamera"), collapsed: false } : i))
-      );
-      return;
-    }
-    if (inst.config.sourceType === "file" && !inst.config.filePath?.trim()) {
-      setInstances((prev) =>
-        prev.map((i) => (i.id === inst.id ? { ...i, error: t("rtsp.needFilePath"), collapsed: false } : i))
-      );
-      return;
-    }
-    if (!inst.config.port || inst.config.port < 1024 || inst.config.port > 65535) {
-      setInstances((prev) =>
-        prev.map((i) => (i.id === inst.id ? { ...i, error: t("rtsp.needPort"), collapsed: false } : i))
-      );
-      return;
-    }
-
-    setInstances((prev) =>
-      prev.map((i) => (i.id === inst.id ? { ...i, actionLoading: true, error: null } : i))
-    );
-
-    try {
-      const res = await invoke<RtspServerStatus>("start_rtsp_server", {
-        config: { ...inst.config, id: inst.id },
-      });
-      setInstances((prev) =>
-        prev.map((i) => (i.id === inst.id ? { ...i, status: res, actionLoading: false } : i))
-      );
-    } catch (err: any) {
-      const errStr = String(err);
-      setInstances((prev) =>
-        prev.map((i) =>
-          i.id === inst.id ? { ...i, error: errStr, showLogs: true, collapsed: false, actionLoading: false } : i
-        )
-      );
-    }
-  };
-
-  // 停止单个实例
-  const handleStopInstance = async (id: string, e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    setInstances((prev) =>
-      prev.map((i) => (i.id === id ? { ...i, actionLoading: true, error: null } : i))
-    );
-
-    try {
-      await invoke("stop_rtsp_server", { id });
-      await pollStatuses();
-    } catch (err: any) {
-      setInstances((prev) =>
-        prev.map((i) => (i.id === id ? { ...i, error: String(err) } : i))
-      );
-    } finally {
-      setInstances((prev) =>
-        prev.map((i) => (i.id === id ? { ...i, actionLoading: false } : i))
-      );
-    }
-  };
-
-  // 选择视频文件
-  const handleSelectFile = async (instId: string) => {
-    try {
-      const selected = await open({
-        multiple: false,
-        title: t("rtsp.pickVideoTitle"),
-        filters: [
-          {
-            name: "Video Files",
-            extensions: ["mp4", "mkv", "avi", "mov", "flv", "webm", "ts", "m4v"],
-          },
-        ],
-      });
-      if (selected && typeof selected === "string") {
-        updateInstanceConfig(instId, { filePath: selected });
-      }
-    } catch (e) {
-      console.error(e);
-      alertError(t("rtsp.pickerFail"));
-    }
-  };
-
-  const handleCopy = (text: string, e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    navigator.clipboard.writeText(text);
-    setCopiedUrl(text);
-    setTimeout(() => setCopiedUrl(null), 2000);
-  };
-
-  const formatUptime = (seconds: number) => {
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    if (hrs > 0) return t("rtsp.uptimeHms", { h: hrs, m: mins, s: secs });
-    if (mins > 0) return t("rtsp.uptimeMs", { m: mins, s: secs });
-    return t("rtsp.uptimeS", { s: secs });
-  };
-
+  const { panelError, batchBusy, confirmRequest, setConfirmRequest, t, devices, loadingDevices, copiedUrl, allIps, loadAllIps, instances, setInstances, fetchDevices, handleAddInstance, handleDeleteInstance, handleStopAll, handleStartAll, toggleCollapse, updateInstanceConfig, handleCopyConfigToAll, handleStartInstance, handleStopInstance, handleSelectFile, handleCopy, formatUptime } = useRtspServer();
   const runningCount = instances.filter((i) => i.status.running).length;
 
   return (
@@ -396,7 +17,7 @@ export default function RtspServer() {
             <Video className="w-6 h-6" />
           </div>
           <div>
-            <h3 className="text-base font-bold text-white flex items-center gap-2">
+            <h3 className="text-title font-bold text-white flex items-center gap-2">
               {t("rtsp.title")}
               {runningCount > 0 && (
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-caption font-medium bg-[color-mix(in_srgb,var(--module-accent)_20%,transparent)] text-[var(--module-accent)] border border-[var(--module-accent-ring)]">
@@ -414,7 +35,7 @@ export default function RtspServer() {
         <div className="flex items-center gap-2 self-start md:self-auto">
           <button
             onClick={handleAddInstance}
-            className="px-3.5 py-2 rounded-card bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white text-body font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-[var(--module-accent-ring)] cursor-pointer"
+            className={btnPrimary}
           >
             <Plus className="w-4 h-4" />
             {t("rtsp.addInstance")}
@@ -422,8 +43,9 @@ export default function RtspServer() {
 
           {instances.length - runningCount > 0 && (
             <button
+              disabled={batchBusy || instances.some((item) => item.actionLoading)}
               onClick={handleStartAll}
-              className="px-3.5 py-2 rounded-card bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/30 text-body font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+              className={btnSecondary}
             >
               <Play className="w-3.5 h-3.5 fill-current" />
               {t("rtsp.startAll", { count: instances.length - runningCount })}
@@ -432,8 +54,9 @@ export default function RtspServer() {
 
           {runningCount > 0 && (
             <button
+              disabled={batchBusy || instances.some((item) => item.actionLoading)}
               onClick={handleStopAll}
-              className="px-3.5 py-2 rounded-card bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-body font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+              className={btnDanger}
             >
               <Square className="w-3.5 h-3.5 fill-current" />
               {t("rtsp.stopAll", { count: runningCount })}
@@ -442,11 +65,13 @@ export default function RtspServer() {
         </div>
       </div>
 
+      {panelError && <div role="alert" className="ui-note-error p-3">{panelError}</div>}
+      <ConfirmDialogHost request={confirmRequest} onClose={() => setConfirmRequest(null)} />
       {/* 实例卡片列表（支持全面折叠与精简视图） */}
       <div className="min-h-0 flex-1 overflow-y-auto space-y-3 pr-1">
         {instances.map((inst) => {
           const isRunning = inst.status.running;
-          const isLocked = isRunning || inst.actionLoading;
+          const isLocked = isRunning || inst.actionLoading || batchBusy;
 
           return (
             <div
@@ -481,7 +106,7 @@ export default function RtspServer() {
                   {/* 名称与关键摘要 */}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2.5">
-                      <span className="text-sm font-bold text-white truncate">{inst.title}</span>
+                      <span className="text-title font-bold text-white truncate">{inst.title}</span>
 
                       {/* 运行状态 Tag */}
                       {isRunning ? (
@@ -527,8 +152,8 @@ export default function RtspServer() {
                   {!isRunning ? (
                     <button
                       onClick={(e) => handleStartInstance(inst, e)}
-                      disabled={inst.actionLoading}
-                      className="px-4 py-1.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] disabled:opacity-50 text-white rounded-card text-body font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-[var(--module-accent-ring)] cursor-pointer"
+                      disabled={inst.actionLoading || batchBusy}
+                      className={btnPrimary}
                     >
                       <Play className="w-3.5 h-3.5 fill-current" />
                       {t("rtsp.startStream")}
@@ -536,8 +161,8 @@ export default function RtspServer() {
                   ) : (
                     <button
                       onClick={(e) => handleStopInstance(inst.id, e)}
-                      disabled={inst.actionLoading}
-                      className="px-4 py-1.5 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-card text-body font-semibold flex items-center gap-1.5 transition-all shadow-md shadow-rose-600/20 cursor-pointer"
+                      disabled={inst.actionLoading || batchBusy}
+                      className={btnDanger}
                     >
                       <Square className="w-3.5 h-3.5 fill-current" />
                       {t("rtsp.stopInstance")}
@@ -546,8 +171,9 @@ export default function RtspServer() {
 
                   {instances.length > 1 && !isRunning && (
                     <button
+                      disabled={inst.actionLoading || batchBusy}
                       onClick={(e) => handleDeleteInstance(inst.id, e)}
-                      className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-card transition-colors cursor-pointer border border-transparent hover:border-rose-500/20"
+                      className="ui-icon-btn w-8 h-8 text-rose-400"
                       title={t("rtsp.deleteInstance")}
                     >
                       <Trash2 className="w-4 h-4" />
@@ -571,7 +197,7 @@ export default function RtspServer() {
                     />
                     <button
                       onClick={(e) => { e.stopPropagation(); handleCopyConfigToAll(inst); }}
-                      disabled={instances.length < 2}
+                      disabled={instances.length < 2 || batchBusy || instances.some((item) => item.actionLoading)}
                       title={instances.length < 2 ? t("rtsp.copyTitle") : t("rtsp.copyTitleN", { count: instances.length - 1 })}
                       className="px-2.5 py-1 rounded-ctl ui-btn text-slate-300 hover:text-white text-caption font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
                     >
@@ -652,7 +278,7 @@ export default function RtspServer() {
 
                   {/* 异常报错提示 */}
                   {inst.error && (
-                    <div className="p-3.5 rounded-card bg-rose-500/10 border border-rose-500/20 text-body text-rose-300 flex items-start gap-2.5">
+                    <div role="alert" className="p-3.5 rounded-card bg-rose-500/10 border border-rose-500/20 text-body text-rose-300 flex items-start gap-2.5">
                       <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
                       <div className="min-w-0 whitespace-pre-wrap font-mono text-caption leading-relaxed">{inst.error}</div>
                     </div>
@@ -856,9 +482,9 @@ export default function RtspServer() {
                             <input
                               type="number"
                               disabled={isLocked}
-                              value={inst.config.port}
+                              value={inst.config.port || ""}
                               onChange={(e) =>
-                                updateInstanceConfig(inst.id, { port: parseInt(e.target.value) || 8554 })
+                                updateInstanceConfig(inst.id, { port: e.target.value === "" ? 0 : Number(e.target.value) })
                               }
                               className="w-full h-9 px-2.5 rounded-card bg-white/5 border border-white/10 text-body text-white focus:outline-none focus:border-[var(--module-accent)] font-mono"
                             />

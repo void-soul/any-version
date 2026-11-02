@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0638",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "RTSP服务：轮询每2秒重写相同实例配置，停止失败仍删除实例，新增端口可能重复，异步启动/复制和控件需完善。",
+  "root_cause": "**RtspServer**配置effect依赖含运行态的instances，轮询必触发写入；删除捕获stop失败仍filter且使用旧闭包；端口按列表长度分配；复制未await，原生confirm和过大控件风格不一，文件已988行。",
+  "solution": "",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/SystemTools/RtspServer.tsx** | RTSP状态及操作/控件/回归 |\n| **src/components/SystemTools/useRtspServer.ts** | RTSP状态及操作/控件/回归 |\n| **src/components/SystemTools/RtspServer.state.ts** | RTSP状态及操作/控件/回归 |\n| **src/components/SystemTools/RtspServer.state.test.ts** | RTSP状态及操作/控件/回归 |\n",
+  "created_at": "2026-11-02 17:28:19",
+  "updated_at": "2026-11-02 17:32:19",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}
