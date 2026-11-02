@@ -3,6 +3,8 @@
 //! 忽略 CloudOTP 的云备份 / 多端同步 / 生物识别等特性，仅保留本地单机能力。
 
 mod algo;
+mod generation;
+
 
 use std::sync::{Mutex, OnceLock};
 
@@ -888,21 +890,7 @@ pub fn otp_match_brand(issuer: String, token_type: String) -> Result<String, Str
 /// 生成指定令牌的当前验证码。
 #[tauri::command]
 pub fn otp_generate_code(token: OtpToken) -> Result<String, String> {
-    let tt = algo::TokenType::from_str(&token.token_type)
-        .ok_or_else(|| format!("未知令牌类型: {}", token.token_type))?;
-    let ha = algo::HashAlgo::from_str(&token.algorithm)
-        .ok_or_else(|| format!("未知算法: {}", token.algorithm))?;
-    let now = chrono::Utc::now().timestamp_millis();
-    Ok(algo::generate(
-        tt,
-        &token.secret,
-        &token.pin,
-        token.digits as usize,
-        token.period as u64,
-        token.counter as u64,
-        ha,
-        now,
-    ))
+    generation::generate_code(token)
 }
 
 /// 计算剩余秒数（倒计时用）。

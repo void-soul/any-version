@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0631",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "OTP前端MOTP使用WebCrypto MD5导致ERROR，Yandex与既有Rust实现结果形态不一致；需复用已注册生成接口并防止非法参数使原生生成崩溃。",
+  "root_cause": "前端 **generateCode** 的MOTP分支调用WebCrypto不支持的MD5，Yandex返回数字而既有Rust生成器返回字母。原生生成命令直接把周期/位数传给除法与10次幂，非法持久化参数可能panic。",
+  "solution": "1. MOTP/Yandex/YAOTP复用既有 **otp_generate_code**，移除重复前端实现；不新增命令或外部请求，保持TOTP/HOTP/Steam现有算法。\n2. 原生命令包装路径不变，生成逻辑抽入 **generation.rs** 并校验密钥、位数1..9、时间型正周期与HOTP非负计数器，避免除零和次幂溢出。\n3. 共享固定周期及generationStep，Steam/Yandex倒计时使用既有Rust的30秒规则，支持卡片只在周期变化时重新计算。\n4. 前端回归修复前2项失败、后3项通过；OTP Rust4项通过（包含2个新增边界/形态测试）。未用真实令牌，不宣称外部服务认证验证。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/OtpPanel.model.tsx** | OTP生成或界面操作验收 |\n| **src/components/otpGeneration.test.ts** | OTP生成或界面操作验收 |\n| **src-tauri/src/commands/otp/mod.rs** | OTP生成或界面操作验收 |\n| **src-tauri/src/commands/otp/generation.rs** | OTP生成或界面操作验收 |",
+  "created_at": "2026-11-02 16:55:43",
+  "updated_at": "2026-11-02 17:07:37",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

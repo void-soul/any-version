@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 
 export interface OtpToken {
   id: number;
@@ -99,38 +100,16 @@ export function padCode(code: number, digits: number): string {
 
 
 export async function generateCode(token: OtpToken, nowMs: number): Promise<string> {
-  const { tokenType, secret, algorithm, digits, period, pin } = token;
+  const { tokenType, secret, algorithm, digits, period } = token;
+  const kind = tokenType.toUpperCase();
   try {
-    if (tokenType === "MOTP") {
-      const counter = Math.floor(nowMs / 1000 / period);
-      const input = `${counter}${secret}${pin}`;
-      const digest = await crypto.subtle.digest("MD5", new TextEncoder().encode(input));
-      const hex = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
-      return hex.slice(0, digits);
+    if (!secret.trim() || !Number.isInteger(digits) || digits < 1 || digits > 9) return "ERROR";
+    if ((kind === "TOTP" || kind === "MOTP") && (!Number.isSafeInteger(period) || period <= 0)) return "ERROR";
+    if (kind === "HOTP" && (!Number.isSafeInteger(token.counter) || token.counter < 0)) return "ERROR";
+    if (kind === "MOTP" || kind === "YANDEX" || kind === "YAOTP") {
+      return await invoke<string>("otp_generate_code", { token });
     }
-    if (tokenType === "Yandex") {
-      const secretBytes = base32Decode(secret);
-      // Yandex 的 key = sha256(pin + secret_bytes)，字节级拼接（非字符串拼接）
-      const pinBytes = new TextEncoder().encode(pin);
-      const combined = new Uint8Array(pinBytes.length + secretBytes.length);
-      combined.set(pinBytes, 0);
-      combined.set(secretBytes, pinBytes.length);
-      const key = new Uint8Array(await crypto.subtle.digest("SHA-256", combined));
-      const counter = Math.floor(nowMs / 1000 / 30);
-      const msg = new Uint8Array(8);
-      let c = counter;
-      for (let i = 7; i >= 0; i--) { msg[i] = c & 0xff; c = Math.floor(c / 256); }
-      const digest = await hmacDigest("SHA256", key, msg);
-      const offset = digest[digest.length - 1] & 0x0f;
-      let otp = 0n;
-      for (let i = 0; i < 8; i++) otp = (otp << 8n) | BigInt(digest[offset + i]);
-      otp &= 0x7fffffffffffffffn;
-      let code = "";
-      let v = otp;
-      for (let i = 0; i < 8; i++) { code = String.fromCharCode(97 + Number(v % 26n)) + code; v /= 26n; }
-      return code;
-    }
-    if (tokenType === "Steam") {
+    if (kind === "STEAM") {
       const secretBytes = base32Decode(secret);
       const counter = Math.floor(nowMs / 1000 / 30);
       const msg = new Uint8Array(8);
@@ -148,7 +127,7 @@ export async function generateCode(token: OtpToken, nowMs: number): Promise<stri
     }
     // TOTP / HOTP
     const secretBytes = base32Decode(secret);
-    const counter = tokenType === "HOTP" ? token.counter : Math.floor(nowMs / 1000 / period);
+    const counter = kind === "HOTP" ? token.counter : Math.floor(nowMs / 1000 / period);
     const value = await hotpValue(secretBytes, counter, algorithm);
     return padCode(value, digits);
   } catch {
@@ -158,11 +137,18 @@ export async function generateCode(token: OtpToken, nowMs: number): Promise<stri
 
 
 export function remainingSeconds(token: OtpToken, nowMs: number): number {
-  if (token.tokenType === "HOTP") return 0;
-  const period = token.period || 30;
+  if (token.tokenType.toUpperCase() === "HOTP") return 0;
+  const period = otpDisplayPeriod(token);
   return period - (Math.floor(nowMs / 1000) % period);
 }
 
+
+export function otpDisplayPeriod(token: OtpToken): number {
+  return ["STEAM", "YANDEX", "YAOTP"].includes(token.tokenType.toUpperCase()) ? 30 : Math.max(1, token.period || 30);
+}
+export function otpGenerationStep(token: OtpToken, nowMs: number): number {
+  return token.tokenType.toUpperCase() === "HOTP" ? token.counter : Math.floor(nowMs / 1000 / otpDisplayPeriod(token));
+}
 
 // 分组显示验证码：如 "123456" -> "123 456"
 export function formatCode(code: string): string {
