@@ -132,30 +132,18 @@ pub fn save_path_directories(
     system_paths: Vec<String>,
     save_system: bool,
 ) -> Result<(), String> {
-    // 1. Create a backup first
-    let time_str = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    let _ = create_env_backup(format!("Reorder PATH - {}", time_str));
-
-    // 2. Set User PATH
-    let user_path_val = std::env::join_paths(user_paths.iter().map(Path::new))
-        .map_err(|e| e.to_string())?
-        .to_string_lossy()
-        .to_string();
+    // Validate both scopes before writing either; a failed backup must stop the save.
+    let user_path_val = std::env::join_paths(user_paths.iter().map(Path::new)).map_err(|e| e.to_string())?.to_string_lossy().to_string();
+    let system_path_val = if save_system {
+        if !is_admin() { return Err("保存系统PATH需要管理员权限".into()); }
+        Some(std::env::join_paths(system_paths.iter().map(Path::new)).map_err(|e| e.to_string())?.to_string_lossy().to_string())
+    } else { None };
+    create_env_backup(format!("Before PATH save - {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S")))?;
     set_registry_env("PATH", &user_path_val)?;
-
-    // 3. Set System PATH
-    if save_system && !system_paths.is_empty() {
-        let sys_path_val = std::env::join_paths(system_paths.iter().map(Path::new))
-            .map_err(|e| e.to_string())?
-            .to_string_lossy()
-            .to_string();
-
-        // Try setting system PATH, which may fail due to privilege restrictions
-        set_system_registry_env("PATH", &sys_path_val)?;
-    }
-
-    // 4. Sync process PATH
+    let result = match system_path_val {
+        Some(value) => set_system_registry_env("PATH", &value).map_err(|e| format!("用户PATH已保存，系统PATH保存失败: {e}")),
+        None => Ok(()),
+    };
     crate::sync_process_path();
-
-    Ok(())
+    result
 }

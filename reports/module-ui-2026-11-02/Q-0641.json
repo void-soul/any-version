@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0641",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "环境变量后端：备份读取/枚举错误会生成不完整快照且恢复删除未收录变量；PATH保存忽略备份失败，系统空列表不写回，备份ID/写入和恢复失败反馈需完善。",
+  "root_cause": "**create_env_backup**将注册表open/枚举/读值错误当成不存在并保存不完整数据，同秒ID覆盖、直接写文件；restore枚举/删除/系统写入错误被忽略；PATH忽略自动备份失败并跳过空系统列表。",
+  "solution": "",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/env/backups.rs** | 环境备份/写入失败与边界 |\n| **src-tauri/src/commands/env/directories.rs** | 环境备份/写入失败与边界 |\n| **src-tauri/src/commands/env/registry.rs** | 环境备份/写入失败与边界 |\n",
+  "created_at": "2026-11-02 17:45:57",
+  "updated_at": "2026-11-02 17:49:53",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

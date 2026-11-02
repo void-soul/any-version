@@ -139,7 +139,11 @@ pub fn set_registry_env(name: &str, value: &str) -> Result<(), String> {
         .create_subkey("Environment")
         .map_err(|e| e.to_string())?;
     if value.is_empty() {
-        let _ = env_key.delete_value(name);
+        match env_key.delete_value(name) {
+            Ok(()) => {},
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+            Err(error) => return Err(error.to_string()),
+        }
     } else {
         set_registry_value_smart(&env_key, name, value)?;
     }
@@ -153,7 +157,11 @@ pub fn set_system_registry_env(name: &str, value: &str) -> Result<(), String> {
         .create_subkey("SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment")
         .map_err(|e| e.to_string())?;
     if value.is_empty() {
-        let _ = env_key.delete_value(name);
+        match env_key.delete_value(name) {
+            Ok(()) => {},
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+            Err(error) => return Err(error.to_string()),
+        }
     } else {
         set_registry_value_smart(&env_key, name, value)?;
     }
