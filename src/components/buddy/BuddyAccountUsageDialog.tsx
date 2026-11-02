@@ -1,3 +1,4 @@
+import { btnSecondary, btnPrimary } from "../shared/Button";
 import type { QuotaItem } from "./BuddyPanel.model";
 import { useTranslation } from "react-i18next";
 import { formatQuotaNumber } from "./quota";
@@ -21,13 +22,13 @@ export function BuddyAccountUsageDialog({ displayName, usageAccount, planBadge, 
   const { t } = useTranslation();
   return (
     <div className="fixed inset-0 z-[130] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="w-[460px] max-w-[95vw] max-h-[85vh] overflow-y-auto rounded-panel border border-white/10 bg-slate-900/95 shadow-2xl p-5">
+      <div role="dialog" aria-modal="true" aria-label={displayName(usageAccount)} className="w-[460px] max-w-[95vw] max-h-[85vh] overflow-y-auto ui-modal shadow-2xl p-5">
         <div className="flex items-center gap-2.5 mb-4">
           <div className="w-9 h-9 rounded-card bg-[var(--module-accent)]/15 border border-[var(--module-accent)]/30 flex items-center justify-center">
             <Gauge className="w-4 h-4 text-[var(--module-accent)]" />
           </div>
           <div className="flex-1 min-w-0">
-            <h3 className="text-sm font-bold text-white truncate">{displayName(usageAccount)}</h3>
+            <h3 className="text-title font-semibold text-white truncate">{displayName(usageAccount)}</h3>
             <p className="text-tiny text-slate-500 truncate">{usageAccount.email}</p>
           </div>
           {planBadge !== "UNKNOWN" && (
@@ -37,7 +38,7 @@ export function BuddyAccountUsageDialog({ displayName, usageAccount, planBadge, 
           )}
           <button
             onClick={() => setUsageAccountId(null)}
-            className="p-1.5 rounded-ctl hover:bg-white/10 text-slate-400 cursor-pointer flex-shrink-0"
+            aria-label={t("common.dialogClose")} className="ui-icon-btn w-7 h-7 flex-shrink-0"
           >
             <X className="w-4 h-4" />
           </button>
@@ -114,14 +115,14 @@ export function BuddyAccountUsageDialog({ displayName, usageAccount, planBadge, 
           <button
             onClick={() => refreshAccount(usageAccount.id)}
             disabled={busy}
-            className="px-3 py-1.5 rounded-ctl text-caption bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
+            className={btnSecondary}
           >
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
             {t("buddy.refresh")}
           </button>
           <button
             onClick={() => setUsageAccountId(null)}
-            className="px-4 py-1.5 rounded-ctl text-caption ui-btn-primary text-white font-semibold cursor-pointer"
+            className={btnPrimary}
           >
             {t("buddy.close")}
           </button>

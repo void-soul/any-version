@@ -1,3 +1,4 @@
+import { btnSecondary, btnPrimary, btnDanger } from "../shared/Button";
 import { LABEL_FIELDS, REMAINING_FIELDS, TOTAL_FIELDS, USED_FIELDS, mergeCreditSegments, pickNumber, pickText, segmentsFromQuotaItems, summarizeCreditSegments } from "./quota";
 import { formatCountdown } from "./timeLabel";
 export interface BuddyAccount {
@@ -726,14 +727,9 @@ export const ACC_BTN = "ui-btn px-1.5 py-1 disabled:opacity-40";
 
 // 账号 tab 工具栏行按钮（与「加列」按钮同尺寸）：刷新/导出/导入/删除/全选都在这一行。
 // 这些是给 code/work 账号库用的专用操作，不是通用按钮，所以收进 tab 内而不是面板顶栏。
-export const TOOL_BTN =
-  "inline-flex items-center gap-0.5 px-1.5 py-1 rounded-md border border-white/10 text-slate-400 hover:text-white hover:border-white/25 cursor-pointer transition disabled:opacity-40 disabled:cursor-not-allowed";
-
-export const TOOL_BTN_DANGER =
-  "inline-flex items-center gap-0.5 px-1.5 py-1 rounded-md border border-rose-500/20 text-rose-300 hover:text-rose-200 hover:border-rose-500/40 cursor-pointer transition disabled:opacity-40 disabled:cursor-not-allowed";
-
-export const TOOL_BTN_PRIMARY =
-  "inline-flex items-center gap-0.5 px-1.5 py-1 rounded-md border border-transparent bg-[var(--module-accent)]/20 text-[var(--module-accent)] hover:bg-[var(--module-accent)]/30 font-semibold cursor-pointer transition disabled:opacity-40 disabled:cursor-not-allowed";
+export const TOOL_BTN = btnSecondary;
+export const TOOL_BTN_DANGER = btnDanger;
+export const TOOL_BTN_PRIMARY = btnPrimary;
 
 // 账号表格各列固定宽度（px），表头与行按同一宽度对齐
 export const COL_INFO = 240;

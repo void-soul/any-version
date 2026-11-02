@@ -448,6 +448,7 @@ export default function BuddyPanel() {
       {/* 状态提示 */}
       {message && (
         <div
+          role={message.ok ? "status" : "alert"}
           className={`flex items-center gap-2 px-4 py-2 text-caption border-b ${
             message.ok
               ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
@@ -460,7 +461,7 @@ export default function BuddyPanel() {
             <AlertTriangle className="w-3 h-3 flex-shrink-0" />
           )}
           <span className="break-all">{message.text}</span>
-          <button onClick={() => setMessage(null)} className="ml-auto text-slate-500 hover:text-white cursor-pointer">✕</button>
+          <button type="button" aria-label={t("common.dialogClose")} onClick={() => setMessage(null)} className="ml-auto text-slate-500 hover:text-white cursor-pointer">✕</button>
         </div>
       )}
 

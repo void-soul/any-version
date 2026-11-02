@@ -1,3 +1,4 @@
+import { btnSecondary, btnDanger } from "../shared/Button";
 import { useTranslation } from "react-i18next";
 import { Trash2 } from "lucide-react";
 import { type BuddyAccount } from "./BuddyPanel.model";
@@ -17,16 +18,16 @@ export function BuddyDeleteAccountsDialog({ setDeleteIds, deleteIds, accounts, d
   const { t } = useTranslation();
   return (
     <div className="fixed inset-0 z-[130] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="w-[360px] max-w-[95vw] rounded-panel border border-white/10 bg-slate-900/95 shadow-2xl p-5">
+      <div role="dialog" aria-modal="true" aria-label={t("buddy.delTitle")} className="w-[360px] max-w-[95vw] ui-modal shadow-2xl p-5">
         <div className="flex items-center gap-2.5 mb-4">
           <div className="w-9 h-9 rounded-card bg-rose-500/15 border border-rose-500/30 flex items-center justify-center">
             <Trash2 className="w-4 h-4 text-rose-400" />
           </div>
           <div className="flex-1">
-            <h3 className="text-sm font-bold text-white">{t("buddy.delTitle")}</h3>
+            <h3 className="text-title font-semibold text-white">{t("buddy.delTitle")}</h3>
             <p className="text-tiny text-slate-500">{t("buddy.delHint")}</p>
           </div>
-          <button onClick={() => setDeleteIds(null)} className="p-1.5 rounded-ctl hover:bg-white/10 text-slate-400 cursor-pointer">
+          <button type="button" disabled={busy} aria-label={t("common.dialogClose")} onClick={() => setDeleteIds(null)} className="ui-icon-btn w-7 h-7">
             ✕
           </button>
         </div>
@@ -51,13 +52,13 @@ export function BuddyDeleteAccountsDialog({ setDeleteIds, deleteIds, accounts, d
               })()}
         </p>
         <div className="flex justify-end gap-2">
-          <button onClick={() => setDeleteIds(null)} className="px-3 py-1.5 rounded-ctl text-caption text-slate-400 hover:bg-white/5 cursor-pointer">
+          <button onClick={() => setDeleteIds(null)} className={btnSecondary}>
             {t("buddy.cancel")}
           </button>
           <button
             onClick={() => void deleteAccounts(deleteIds)}
             disabled={busy}
-            className="px-4 py-1.5 rounded-ctl text-caption bg-rose-600 hover:bg-rose-500 text-white font-semibold cursor-pointer disabled:opacity-50"
+            className={btnDanger}
           >
             {t("buddy.deleteConfirm")}
           </button>

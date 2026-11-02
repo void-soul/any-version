@@ -36,14 +36,14 @@ export function BuddyAccountSearch({ query, onChange, shown, total }: {
       <input type="search" value={query} onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => { if (event.key === "Escape") onChange(""); }}
         aria-label={t("buddy.accountSearch")} placeholder={t("buddy.accountSearchPlaceholder")}
-        className="w-full bg-black/30 border border-white/10 rounded-ctl pl-8 pr-8 py-1.5 text-tiny text-slate-200 placeholder:text-slate-500 outline-none focus:border-[var(--module-accent)]" />
+        className="ui-input w-full h-9 pl-8 pr-8" />
       {query && <button type="button" aria-label={t("buddy.clearAccountSearch")}
         onClick={() => onChange("")}
-        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer">
+        className="ui-icon-btn w-6 h-6 absolute right-1 top-1/2 -translate-y-1/2">
         <X className="w-3.5 h-3.5" />
       </button>}
     </div>
-    <span aria-live="polite" className="text-tiny text-slate-500 tabular-nums">
+    <span aria-live="polite" className="text-caption text-slate-400 tabular-nums shrink-0">
       {t("buddy.accountSearchCount", { shown, total })}
     </span>
   </div>;

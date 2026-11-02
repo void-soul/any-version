@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0621",
+  "date": "2026-11-02",
+  "category": "Style",
+  "status": "已验证",
+  "phenomenon": "按图片顺序检查第二项Buddy，平台/页签切换和账号工具栏自造按钮样式，搜索输入字号和公共控件不一致，消息及弹窗缺少可访问状态语义，需要统一外观与操作反馈而不改变账号机制。",
+  "root_cause": "Buddy **TOOL_BTN** 三套自造样式未接公共按钮；搜索输入用text-tiny而公共ui-input使用text-body；两弹窗硬编码bg-slate-900，平台选择及消息缺可访问状态语义。",
+  "solution": "1. 账号工具栏复用 **btnSecondary/btnPrimary/btnDanger**；平台及页签按钮统一32px高度，补aria-pressed与窄屏横向滚动。\n2. 搜索输入复用 **ui-input**，清除按钮统一图标尺寸，结果计数不挤压；原过滤与选择逻辑不变。\n3. 删除/用量弹窗改 **ui-modal** 与公共底部按钮，统一标题字号、关闭名称和对话框语义；消息区按成功/失败提供status/alert。\n4. 构建、440前端测试和1126文件架构检查通过；不修改认证、切号、接口或凭据，未做真实窗口视觉验证。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/buddy/BuddyPanel.model.tsx** | 公共控件及状态语义 |\n| **src/components/buddy/BuddyPlatformHeader.tsx** | 公共控件及状态语义 |\n| **src/components/buddy/BuddyAccountSearch.tsx** | 公共控件及状态语义 |\n| **src/components/buddy/BuddyPanel.tsx** | 公共控件及状态语义 |\n| **src/components/buddy/BuddyDeleteAccountsDialog.tsx** | 公共控件及状态语义 |\n| **src/components/buddy/BuddyAccountUsageDialog.tsx** | 公共控件及状态语义 |",
+  "created_at": "2026-11-02 16:13:03",
+  "updated_at": "2026-11-02 16:14:50",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

@@ -18,15 +18,17 @@ export function BuddyPlatformHeader({ setPlatform, platform, platformLoading, ta
     <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5 flex-shrink-0 flex-wrap">
       <Users className="w-4 h-4 text-[var(--module-accent)]" />
       {/* 平台切换 */}
-      <div className="flex items-center gap-1 ml-3 bg-black/30 rounded-ctl border border-white/10 p-0.5 shrink-0">
+      <div className="flex items-center gap-1 ml-3 bg-surface-inset/50 rounded-ctl border border-white/10 p-0.5 min-w-0 max-w-full overflow-x-auto">
         {PLATFORMS.map((p) => (
           <button
+            type="button"
+            aria-pressed={platform === p.id}
             key={p.id}
             onClick={() => setPlatform(p.id)}
             aria-busy={platform === p.id && platformLoading}
-            className={`px-2.5 py-1 rounded-md text-caption whitespace-nowrap shrink-0 transition cursor-pointer ${
+            className={`ui-btn h-8 px-2.5 whitespace-nowrap shrink-0 ${
               platform === p.id
-                ? "bg-[var(--module-accent)]/25 text-white font-semibold"
+                ? "ui-btn-primary"
                 : "text-slate-400 hover:text-white"
             }`}
           >
@@ -39,14 +41,16 @@ export function BuddyPlatformHeader({ setPlatform, platform, platformLoading, ta
         ))}
       </div>
       {/* Tab 切换 */}
-      <div className="flex items-center gap-1 ml-3 bg-black/30 rounded-ctl border border-white/10 p-0.5 shrink-0">
+      <div className="flex items-center gap-1 ml-3 bg-surface-inset/50 rounded-ctl border border-white/10 p-0.5 min-w-0 max-w-full overflow-x-auto">
         {tabs.map((tabItem) => (
           <button
+            type="button"
+            aria-pressed={tab === tabItem.id}
             key={tabItem.id}
             onClick={() => setTab(tabItem.id)}
-            className={`px-2.5 py-1 rounded-md text-caption whitespace-nowrap shrink-0 transition cursor-pointer flex items-center gap-1 ${
+            className={`ui-btn h-8 px-2.5 whitespace-nowrap shrink-0 flex items-center gap-1 ${
               tab === tabItem.id
-                ? "bg-[var(--module-accent)]/25 text-white font-semibold"
+                ? "ui-btn-primary"
                 : "text-slate-400 hover:text-white"
             }`}
           >
