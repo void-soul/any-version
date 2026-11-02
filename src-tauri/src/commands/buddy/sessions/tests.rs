@@ -621,3 +621,70 @@ fn delete_codebuddy_sessions_cleans_every_account_copy() {
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn session_readers_distinguish_missing_empty_and_invalid_databases() {
+    let root = temp_dir("read-errors");
+    let db = root.join("sessions.db");
+    for reader in [read_sessions_from_workbuddy_db, read_sessions_from_db] {
+        assert!(reader(&db).unwrap().is_empty());
+        assert!(!db.exists());
+    }
+    std::fs::write(&db, b"not sqlite").unwrap();
+    for reader in [read_sessions_from_workbuddy_db, read_sessions_from_db] {
+        assert!(reader(&db).is_err());
+        assert!(reader(&root).is_err());
+    }
+    std::fs::remove_file(&db).unwrap();
+    let conn = Connection::open(&db).unwrap();
+    // A real database with a missing table is an error, not an empty list.
+    conn.execute_batch("CREATE TABLE other (id TEXT);").unwrap();
+    assert!(read_sessions_from_workbuddy_db(&db).is_err());
+    assert!(read_sessions_from_db(&db).is_err());
+    conn.execute_batch("CREATE TABLE ItemTable (key TEXT, value TEXT);")
+        .unwrap();
+    assert!(read_sessions_from_db(&db).unwrap().is_empty());
+    conn.execute(
+        "INSERT INTO ItemTable VALUES ('session:good', ?1)",
+        [r#"{"conversationId":"good"}"#],
+    )
+    .unwrap();
+    assert_eq!(read_sessions_from_db(&db).unwrap().len(), 1);
+    conn.execute(
+        "INSERT INTO ItemTable VALUES ('session:bad', 'broken json')",
+        [],
+    )
+    .unwrap();
+    assert!(read_sessions_from_db(&db).is_err());
+    conn.execute("DELETE FROM ItemTable WHERE key = 'session:bad'", [])
+        .unwrap();
+    conn.execute(
+        "INSERT INTO ItemTable VALUES ('session:bad-type', x'FF')",
+        [],
+    )
+    .unwrap();
+    assert!(read_sessions_from_db(&db).is_err());
+    drop(conn);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn workbuddy_session_reader_supports_old_schema_and_rejects_bad_rows() {
+    let root = temp_dir("read-old-schema");
+    make_workbuddy_db(&root, "good", "title");
+    let db = root.join("workbuddy.db");
+    let conn = Connection::open(&db).unwrap();
+    conn.execute_batch("ALTER TABLE sessions DROP COLUMN last_activity_at;")
+        .unwrap();
+    let sessions = read_sessions_from_workbuddy_db(&db).unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].conversation_id, "good");
+    assert_eq!(sessions[0].last_activity_at, None);
+    conn.execute("UPDATE sessions SET updated_at = 'invalid timestamp'", [])
+        .unwrap();
+    assert!(read_sessions_from_workbuddy_db(&db).is_err());
+    conn.execute_batch("DELETE FROM sessions;").unwrap();
+    assert!(read_sessions_from_workbuddy_db(&db).unwrap().is_empty());
+    drop(conn);
+    std::fs::remove_dir_all(root).unwrap();
+}

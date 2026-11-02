@@ -99,7 +99,7 @@ pub fn list_sessions(
         "workbuddy" => {
             let db_path = workbuddy_sessions_db_path()?;
             let mut records = aggregate_sessions(
-                read_sessions_from_workbuddy_db(&db_path),
+                read_sessions_from_workbuddy_db(&db_path)?,
                 filter,
                 "workbuddy",
                 "WorkBuddy",
@@ -120,7 +120,7 @@ pub fn list_sessions(
         "codebuddy-cn" | "codebuddy_cn" => {
             let db_path = codebuddy_cn_sessions_db_path()?;
             let mut records = aggregate_sessions(
-                read_sessions_from_db(&db_path),
+                read_sessions_from_db(&db_path)?,
                 filter,
                 "default",
                 "CodeBuddy CN",

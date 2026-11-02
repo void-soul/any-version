@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0616",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "Buddy 两平台会话列表读取数据库失败时被显示为空列表，读取坏行时静默返回部分结果；需要明确上报错误并保留旧版字段兼容。",
+  "root_cause": "参考A **session-db.js::all** 抛出SQLite查询错误，**daemon.js /api/sessions** 返回失败；我方 **readers.rs** 将打开和prepare错误转为空数组，并用 **rows.flatten()** 丢弃坏行。两平台通用，造成空列表或部分列表假成功。",
+  "solution": "1. 两平台读取返回 **Result**，传播打开、SQL、逐行解码及无效会话JSON错误，PRAGMA失败不再当作旧版缺列。\n2. 仅文件NotFound与合法空表返回空列表；保持只读打开及旧版last_activity_at缺列兼容。\n3. listing使用 **?** 交由现有前端catch提示并保留旧列表；新增损坏库、缺表、无效行、旧版结构回归测试。\n4. 会话测试21项、TypeScript和1124文件模块边界检查通过；本轮未触及真实账号、客户端文件或正文探测。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/buddy/sessions/readers.rs** | 只读错误分类与传播 |\n| **src-tauri/src/commands/buddy/sessions/listing.rs** | 传递读取失败 |\n| **src-tauri/src/commands/buddy/sessions/tests.rs** | 数据库及旧版结构回归 |\n| **reports/buddy-session-read-2026-11-02/** | QA快照、验收及参考记录 |",
+  "created_at": "2026-11-02 15:26:16",
+  "updated_at": "2026-11-02 15:30:26",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

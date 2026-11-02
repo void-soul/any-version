@@ -13,24 +13,19 @@ pub(super) fn activity_at(raw: &RawSession) -> Option<i64> {
 }
 
 /// 表是否含某列（老版本 `workbuddy.db` 没有 `last_activity_at`，直接写进 SQL 会报错）。
-pub(super) fn table_has_column(conn: &Connection, table: &str, column: &str) -> bool {
-    let sql = format!("PRAGMA table_info({})", table);
-    let Ok(mut stmt) = conn.prepare(&sql) else {
-        return false;
-    };
-    let Ok(mut rows) = stmt.query([]) else {
-        return false;
-    };
-    while let Ok(Some(row)) = rows.next() {
-        if row
-            .get::<_, String>(1)
-            .map(|name| name == column)
-            .unwrap_or(false)
-        {
-            return true;
+pub(super) fn table_has_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+) -> rusqlite::Result<bool> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        if row.get::<_, String>(1)? == column {
+            return Ok(true);
         }
     }
-    false
+    Ok(false)
 }
 
 /// WorkBuddy 会话库路径：`~/.workbuddy/workbuddy.db`
@@ -46,27 +41,30 @@ pub(super) fn codebuddy_cn_sessions_db_path() -> Result<PathBuf, String> {
     Ok(data_dir.join("codebuddy-sessions.vscdb"))
 }
 
-/// 读取 WorkBuddy `workbuddy.db` 的 sessions 表
-pub(super) fn read_sessions_from_workbuddy_db(db_path: &Path) -> Vec<RawSession> {
-    if !db_path.exists() {
-        return Vec::new();
-    }
+fn session_read_error(path: &Path, error: impl std::fmt::Display) -> String {
+    format!("读取会话数据库失败 {}: {}", path.display(), error)
+}
 
-    let conn =
-        match Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!(
-                    "[BuddySession] 打开 WorkBuddy db 失败 {}: {}",
-                    db_path.display(),
-                    e
-                );
-                return Vec::new();
-            }
-        };
+fn open_session_db(path: &Path) -> Result<Option<Connection>, String> {
+    match std::fs::metadata(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(session_read_error(path, e)),
+        Ok(_) => {}
+    }
+    Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map(Some)
+        .map_err(|e| session_read_error(path, e))
+}
+
+/// 读取 WorkBuddy `workbuddy.db` 的 sessions 表
+pub(super) fn read_sessions_from_workbuddy_db(db_path: &Path) -> Result<Vec<RawSession>, String> {
+    let Some(conn) = open_session_db(db_path)? else {
+        return Ok(Vec::new());
+    };
 
     // 老版本库没有 last_activity_at（5.x 才有），缺列时用 NULL 占位，排序退化为 updated_at/created_at
-    let has_last_activity = table_has_column(&conn, "sessions", "last_activity_at");
+    let has_last_activity = table_has_column(&conn, "sessions", "last_activity_at")
+        .map_err(|e| session_read_error(db_path, e))?;
     let activity_column = if has_last_activity {
         "last_activity_at"
     } else {
@@ -78,17 +76,9 @@ pub(super) fn read_sessions_from_workbuddy_db(db_path: &Path) -> Vec<RawSession>
         activity_column
     );
 
-    let mut stmt = match conn.prepare(&sql) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!(
-                "[BuddySession] 准备 WorkBuddy 查询失败 {}: {}",
-                db_path.display(),
-                e
-            );
-            return Vec::new();
-        }
-    };
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| session_read_error(db_path, e))?;
 
     let rows = stmt.query_map([], |row| {
         Ok((
@@ -100,14 +90,16 @@ pub(super) fn read_sessions_from_workbuddy_db(db_path: &Path) -> Vec<RawSession>
             row.get::<_, Option<i64>>(5)?,
             row.get::<_, Option<i64>>(6)?,
             row.get::<_, Option<i64>>(7)?,
-            row.get::<_, i64>(8).unwrap_or(0),
+            row.get::<_, i64>(8)?,
             row.get::<_, Option<i64>>(9)?,
         ))
     });
 
     let mut sessions = Vec::new();
-    if let Ok(rows) = rows {
-        for row in rows.flatten() {
+    {
+        let rows = rows.map_err(|e| session_read_error(db_path, e))?;
+        for row in rows {
+            let row = row.map_err(|e| session_read_error(db_path, e))?;
             let (
                 id,
                 cwd,
@@ -135,7 +127,7 @@ pub(super) fn read_sessions_from_workbuddy_db(db_path: &Path) -> Vec<RawSession>
         }
     }
 
-    sessions
+    Ok(sessions)
 }
 
 /// 收集扩展数据目录中「本机仍有正文」的会话 id。
@@ -219,27 +211,13 @@ pub(super) fn apply_content_probe(
 }
 
 /// 读取 vscdb 中的会话 JSON（ItemTable key 以 `session:` 开头）
-pub(super) fn read_sessions_from_db(db_path: &Path) -> Vec<RawSession> {
-    if !db_path.exists() {
-        return Vec::new();
-    }
-
-    let conn =
-        match Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("[BuddySession] 打开 {} 失败: {}", db_path.display(), e);
-                return Vec::new();
-            }
-        };
-
-    let mut stmt = match conn.prepare("SELECT value FROM ItemTable WHERE key LIKE 'session:%'") {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("[BuddySession] 准备查询失败 {}: {}", db_path.display(), e);
-            return Vec::new();
-        }
+pub(super) fn read_sessions_from_db(db_path: &Path) -> Result<Vec<RawSession>, String> {
+    let Some(conn) = open_session_db(db_path)? else {
+        return Ok(Vec::new());
     };
+    let mut stmt = conn
+        .prepare("SELECT value FROM ItemTable WHERE key LIKE 'session:%'")
+        .map_err(|e| session_read_error(db_path, e))?;
 
     let rows = stmt.query_map([], |row| {
         let value: String = row.get(0)?;
@@ -247,15 +225,18 @@ pub(super) fn read_sessions_from_db(db_path: &Path) -> Vec<RawSession> {
     });
 
     let mut sessions = Vec::new();
-    if let Ok(rows) = rows {
-        for row in rows.flatten() {
-            if let Some(s) = parse_raw_session(&row) {
-                sessions.push(s);
-            }
+    {
+        let rows = rows.map_err(|e| session_read_error(db_path, e))?;
+        for row in rows {
+            let row = row.map_err(|e| session_read_error(db_path, e))?;
+            let session = parse_raw_session(&row).ok_or_else(|| {
+                format!("读取会话数据库失败 {}: 会话记录格式无效", db_path.display())
+            })?;
+            sessions.push(session);
         }
     }
 
-    sessions
+    Ok(sessions)
 }
 
 pub(super) fn parse_raw_session(json_str: &str) -> Option<RawSession> {

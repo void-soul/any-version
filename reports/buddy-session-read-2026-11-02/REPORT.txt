@@ -1,0 +1,9 @@
+Q-0616 Buddy会话列表读取错误修复（2026-11-02）
+
+范围：WorkBuddy与CodeBuddy CN；不新增功能，不改客户端数据。
+数据库打开、prepare、query、行解码或会话JSON无效时明确失败，前端保留旧列表并提示。仅NotFound与合法空表为空；旧库last_activity_at缺列兼容。
+验证：会话测试21通过；tsc通过；架构1124文件通过。未做真机故障注入。
+参考：WorkDaddy 2fd29e4802981d81424276dbc1bcda6cbac6bb06，1.2.68 / release-1.2.68-login-page-persona-switch；session-db.js:411、daemon.js:11672；全量历史10f29b9。只审会话读取错误，不宣称其他增量已同步。
+技能对照表第9行记录“查询错误传播已对齐、其余列表机制待审”，pitfalls及定向同步记录已回写（技能目录被忽略，不纳入git）。
+回滚：回退本次提交。其他版本号与Launcher改动保持原状。
+cargo check --no-default-features通过（既有72条警告）；QA格式检查仍为历史19项，本条无格式问题。
