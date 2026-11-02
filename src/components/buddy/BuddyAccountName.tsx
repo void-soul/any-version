@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Pencil, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { SharedModal } from "../shared/Modal";
+import { SharedButton, inputCls, labelCls } from "../shared/Button";
 import { buddyAccountDisplayName } from "./accountDisplayName";
 import type { BuddyAccount } from "./BuddyPanel.model";
 import type { BuddyPlatformScope } from "./platformScope";
@@ -43,19 +44,19 @@ export function BuddyAccountName({ account, platform, scope, onSaved }: {
       title={t("buddy.editAccountRemark")} width={420}>
       <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void save(); }}>
         <p className="text-tiny text-slate-500 break-all">{account.nickname?.trim() || account.email || account.uid}</p>
-        <label className="block text-body text-slate-300">
+        <label className={labelCls}>
           {t("buddy.accountRemark")}
           <input autoFocus value={draft} onChange={(event) => setDraft(event.target.value)}
             disabled={saving} maxLength={200} placeholder={t("buddy.accountRemarkPlaceholder")}
-            className="mt-1 w-full rounded-ctl border border-white/10 bg-black/30 px-3 py-2 text-white outline-none focus:border-[var(--module-accent)]" />
+            className={`${inputCls} mt-1`} />
         </label>
         <p className="text-tiny text-slate-500">{t("buddy.accountRemarkHint")}</p>
         {error && <p role="alert" className="text-tiny text-red-400 break-all">{error}</p>}
         <div className="flex justify-end gap-2">
-          <button type="button" disabled={saving} onClick={() => setOpen(false)} className="px-3 py-1.5 text-slate-400 cursor-pointer">{t("common.cancel")}</button>
-          <button type="submit" disabled={saving} className="inline-flex items-center gap-1 rounded-ctl px-3 py-1.5 bg-[var(--module-accent)] text-white cursor-pointer disabled:opacity-50">
+          <SharedButton type="button" disabled={saving} onClick={() => setOpen(false)}>{t("common.cancel")}</SharedButton>
+          <SharedButton variant="primary" type="submit" disabled={saving}>
             {saving && <Loader2 className="w-3 h-3 animate-spin" />}{t("common.save")}
-          </button>
+          </SharedButton>
         </div>
       </form>
     </SharedModal>

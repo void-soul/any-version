@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0615",
+  "date": "2026-11-02",
+  "category": "Style",
+  "status": "已验证",
+  "phenomenon": "Buddy编辑账号备注弹窗的保存/取消文字及输入框外观未与其他界面匹配，需要复用统一按钮与输入样式，统一字号、字重、尺寸及主题色，不改变备注保存逻辑。",
+  "root_cause": "备注弹窗使用原生 **button/input** 的自定义class，未接入公共 **ui-btn** 的 **--text-caption** 字号及主按钮字重/尺寸；保存和取消文字因此与其他界面不一致。",
+  "solution": "1. 保存和取消改用 **SharedButton**，保存使用primary变体，复用统一字号、字重、主题色、禁用态和32px高度。\n2. 输入框和标签改用 **inputCls/labelCls**，统一输入高度和文字层级；备注保存、清空及错误反馈逻辑不变。\n3. 对照共享Button与App.css样式检查，TypeScript及Vite生产构建通过，差异空白检查通过；纯样式变更未新增镜像实现测试。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/buddy/BuddyAccountName.tsx** | 统一按钮、输入框及标签样式 |\n| **reports/buddy-remark-style-2026-11-02/Q-0615.json** | QA验证快照 |",
+  "created_at": "2026-11-02 11:52:56",
+  "updated_at": "2026-11-02 11:53:44",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}
