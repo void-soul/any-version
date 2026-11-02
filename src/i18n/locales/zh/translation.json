@@ -3071,7 +3071,9 @@
     "sysNoHit": "未命中任何规则（无应答）",
     "sysSendFail": "发送失败: {{err}}",
     "sysImported": "已导入 {{file}}（{{lines}} 行）",
-    "sysImportFail": "导入失败: {{err}}"
+    "sysImportFail": "导入失败: {{err}}",
+    "rulesUpdateFail": "规则更新失败，设备继续使用原规则：{{err}}",
+    "rulesTooLarge": "规则最多 128 条，导入内容不能超过 1 MiB。"
   },
   "envbackup": {
     "title": "环境变量备份与还原",

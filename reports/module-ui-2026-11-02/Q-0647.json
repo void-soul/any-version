@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0647",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "串口调试：连接完成晚于页面退出可泄漏句柄，关闭失败仍显示断开，定时/批量发送缺互斥与取消；监听失败、日志内存预算及公共控件需完善。",
+  "root_cause": "**SerialMonitor**连接/清理按端口而无会话所有权、连接参数运行中仍可改；关闭错误被吞仍改状态；批量循环不取消，setInterval可并发写，帧数限制未约束字节；模拟应答为无限线程且仅检查可重新变true的active标志。",
+  "solution": "",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/devtools/SerialMonitor.tsx** | 串口会话/发送生命周期/预算或控件/回归 |\n| **src/components/devtools/useSerialMonitor.ts** | 串口会话/发送生命周期/预算或控件/回归 |\n| **src/components/devtools/SerialMonitor.model.tsx** | 串口会话/发送生命周期/预算或控件/回归 |\n| **src/components/devtools/serialLogBudget.ts** | 串口会话/发送生命周期/预算或控件/回归 |\n| **src/components/devtools/serialLogBudget.test.ts** | 串口会话/发送生命周期/预算或控件/回归 |\n| **src-tauri/src/commands/serialtool.rs** | 串口会话/发送生命周期/预算或控件/回归 |\n| **src/i18n/locales/zh/translation.json** | 串口会话/发送生命周期/预算或控件/回归 |\n| **src/i18n/locales/en/translation.json** | 串口会话/发送生命周期/预算或控件/回归 |\n",
+  "created_at": "2026-11-02 18:18:54",
+  "updated_at": "2026-11-02 18:32:17",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

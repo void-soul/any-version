@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serialport::{DataBits, FlowControl, Parity, StopBits};
 use std::collections::HashMap;
 use std::io::Read;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
@@ -70,6 +70,7 @@ struct SerialConnection {
     /// 写句柄（读线程持有 clone）
     writer: Mutex<Box<dyn serialport::SerialPort>>,
     should_close: Arc<AtomicBool>,
+    session_id: Option<String>,
 }
 
 #[derive(Default)]
@@ -79,7 +80,7 @@ pub struct SerialState {
 }
 
 pub fn close_all(state: &SerialState, simulation: &SimState) {
-    simulation.active.store(false,Ordering::Relaxed);
+    stop_sim_inner(simulation, None);
     let connections=std::mem::take(&mut *state.connections.lock().unwrap_or_else(|e|e.into_inner()));
     for (_,connection) in connections {connection.should_close.store(true,Ordering::Relaxed);}
 }
@@ -154,6 +155,7 @@ pub fn serial_open(
     parity: String,
     stop_bits: u8,
     flow_control: String,
+    session_id: Option<String>,
 ) -> Result<(), String> {
     crate::runtime_tasks::require_enabled("serial")?;
     if baud_rate == 0 {
@@ -180,12 +182,14 @@ pub fn serial_open(
     let conn = SerialConnection {
         writer: Mutex::new(port),
         should_close: close_flag.clone(),
+        session_id: session_id.clone(),
     };
-    state
-        .connections
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(port_name.clone(), conn);
+    {
+        let mut map = state.connections.lock().unwrap_or_else(|e| e.into_inner());
+        // Serialize publication against module shutdown; never publish a late disabled handle.
+        crate::runtime_tasks::require_enabled("serial")?;
+        map.insert(port_name.clone(), conn);
+    }
 
     let connections = state.connections.clone();
     let app_for_thread = app.clone();
@@ -203,7 +207,7 @@ pub fn serial_open(
                 Ok(0) => continue,
                 Ok(n) => {
                     let bytes = &buf[..n];
-                    emit_serial_data(&app_for_thread, &port_for_thread, bytes);
+                    emit_serial_data(&app_for_thread, &port_for_thread, bytes, session_id.as_deref());
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
@@ -236,6 +240,7 @@ pub fn serial_open(
                 &app_for_thread,
                 &port_for_thread,
                 read_error.as_deref(),
+                session_id.as_deref(),
             );
         }
     });
@@ -244,12 +249,13 @@ pub fn serial_open(
     Ok(())
 }
 
-fn emit_serial_data(app: &AppHandle, port: &str, bytes: &[u8]) {
+fn emit_serial_data(app: &AppHandle, port: &str, bytes: &[u8], session_id: Option<&str>) {
     let hex: String = bytes.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
     let _ = app.emit(
         "serial://data",
         serde_json::json!({
             "port": port,
+            "sessionId": session_id,
             "hex": hex,
             // 原始字节（base64）：前端按所选编码解码，GBK 中文才不会乱码
             "data": B64.encode(bytes),
@@ -259,10 +265,10 @@ fn emit_serial_data(app: &AppHandle, port: &str, bytes: &[u8]) {
     );
 }
 
-fn emit_closed(app: &AppHandle, port: &str, reason: Option<&str>) {
+fn emit_closed(app: &AppHandle, port: &str, reason: Option<&str>, session_id: Option<&str>) {
     let _ = app.emit(
         "serial://closed",
-        serde_json::json!({ "port": port, "reason": reason }),
+        serde_json::json!({ "port": port, "reason": reason, "sessionId": session_id }),
     );
 }
 
@@ -279,8 +285,11 @@ fn serial_close_inner(state: &SerialState, port_name: &str) -> bool {
 
 /// 关闭串口。
 #[tauri::command]
-pub fn serial_close(state: tauri::State<'_, SerialState>, port_name: String) -> Result<(), String> {
-    serial_close_inner(&state, &port_name);
+pub fn serial_close(state: tauri::State<'_, SerialState>, port_name: String, session_id: Option<String>) -> Result<(), String> {
+    let mut map = state.connections.lock().unwrap_or_else(|e| e.into_inner());
+    if map.get(&port_name).is_some_and(|connection| owns_session(connection.session_id.as_deref(), session_id.as_deref())) {
+        if let Some(connection) = map.remove(&port_name) { connection.should_close.store(true, Ordering::Relaxed); }
+    }
     Ok(())
 }
 
@@ -293,6 +302,7 @@ pub fn serial_write(
     hex_mode: bool,
     encoding: String,
     line_ending: String,
+    session_id: Option<String>,
 ) -> Result<usize, String> {
     let bytes = build_payload(&data, hex_mode, &encoding, &line_ending)?;
 
@@ -300,6 +310,7 @@ pub fn serial_write(
     let conn = map
         .get(&port_name)
         .ok_or_else(|| format!("{} 未打开", port_name))?;
+    if !owns_session(conn.session_id.as_deref(), session_id.as_deref()) { return Err("串口会话已变更".into()); }
     let mut writer = conn.writer.lock().unwrap_or_else(|e| e.into_inner());
     writer
         .write_all(&bytes)
@@ -315,11 +326,13 @@ pub fn serial_set_signals(
     port_name: String,
     dtr: Option<bool>,
     rts: Option<bool>,
+    session_id: Option<String>,
 ) -> Result<(), String> {
     let map = state.connections.lock().unwrap_or_else(|e| e.into_inner());
     let conn = map
         .get(&port_name)
         .ok_or_else(|| format!("{} 未打开", port_name))?;
+    if !owns_session(conn.session_id.as_deref(), session_id.as_deref()) { return Err("串口会话已变更".into()); }
     let mut writer = conn.writer.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(level) = dtr {
         writer
@@ -370,6 +383,9 @@ pub struct SimStartResult {
 pub struct SimState {
     active: Arc<AtomicBool>,
     rules: Mutex<Vec<SimRule>>,
+    session_id: Mutex<Option<String>>,
+    generation: Arc<AtomicU64>,
+    pending: Mutex<Vec<tokio::task::AbortHandle>>,
 }
 
 impl Default for SimState {
@@ -377,8 +393,30 @@ impl Default for SimState {
         Self {
             active: Arc::new(AtomicBool::new(false)),
             rules: Mutex::new(Vec::new()),
+            session_id: Mutex::new(None),
+            generation: Arc::new(AtomicU64::new(0)),
+            pending: Mutex::new(Vec::new()),
         }
     }
+}
+
+fn owns_session(current: Option<&str>, requested: Option<&str>) -> bool {
+    requested.is_none() || current == requested
+}
+fn stop_sim_resources(state: &SimState) {
+    state.active.store(false, Ordering::Release);
+    state.generation.fetch_add(1, Ordering::AcqRel);
+    for task in state.pending.lock().unwrap_or_else(|e| e.into_inner()).drain(..) { task.abort(); }
+}
+fn stop_sim_inner(state: &SimState, requested: Option<&str>) -> bool {
+    let mut session = state.session_id.lock().unwrap_or_else(|e| e.into_inner());
+    if !owns_session(session.as_deref(), requested) { return false; }
+    stop_sim_resources(state);
+    *session = None;
+    true
+}
+fn sim_reply_current(active: &AtomicBool, generation: &AtomicU64, expected: u64) -> bool {
+    active.load(Ordering::Acquire) && generation.load(Ordering::Acquire) == expected
 }
 
 fn hex_to_bytes(data: &str) -> Result<Vec<u8>, String> {
@@ -406,6 +444,7 @@ fn build_payload(
     encoding: &str,
     line_ending: &str,
 ) -> Result<Vec<u8>, String> {
+    if data.len() > 256 * 1024 { return Err("单次发送不能超过256 KiB".into()); }
     if hex_mode {
         hex_to_bytes(data)
     } else {
@@ -439,6 +478,9 @@ fn rule_matches(
 }
 
 fn validate_rules(rules: &[SimRule]) -> Result<(), String> {
+    if rules.len() > 128 || rules.iter().map(|rule| rule.pattern.len() + rule.response.len()).sum::<usize>() > 1024 * 1024 {
+        return Err("模拟规则最多128条且内容总计不能超过1 MiB".into());
+    }
     for (i, r) in rules.iter().enumerate() {
         // 提前校验，避免运行期才报错
         build_payload(&r.pattern, r.pattern_hex, "utf-8", "none")
@@ -452,12 +494,13 @@ fn validate_rules(rules: &[SimRule]) -> Result<(), String> {
     Ok(())
 }
 
-fn emit_sim(app: &AppHandle, port_label: &str, dir: &str, bytes: &[u8]) {
+fn emit_sim(app: &AppHandle, port_label: &str, dir: &str, bytes: &[u8], session_id: Option<&str>) {
     let hex: String = bytes.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
     let _ = app.emit(
         "serial://sim-data",
         serde_json::json!({
             "port": port_label,
+            "sessionId": session_id,
             "dir": dir,
             "hex": hex,
             "data": B64.encode(bytes),
@@ -472,8 +515,13 @@ fn emit_sim(app: &AppHandle, port_label: &str, dir: &str, bytes: &[u8]) {
 pub fn serial_sim_start(
     state: tauri::State<'_, SimState>,
     rules: Vec<SimRule>,
+    session_id: Option<String>,
 ) -> Result<SimStartResult, String> {
     validate_rules(&rules)?;
+    let mut session = state.session_id.lock().unwrap_or_else(|e| e.into_inner());
+    crate::runtime_tasks::require_enabled("serial")?;
+    stop_sim_resources(&state);
+    *session = session_id;
     *state.rules.lock().unwrap_or_else(|e| e.into_inner()) = rules.clone();
     state.active.store(true, Ordering::Relaxed);
     info!("[serial-sim] 模拟设备已启动，规则数={}", rules.len());
@@ -487,7 +535,11 @@ pub fn serial_sim_start(
 pub fn serial_sim_update_rules(
     state: tauri::State<'_, SimState>,
     rules: Vec<SimRule>,
+    session_id: Option<String>,
 ) -> Result<(), String> {
+    let session = state.session_id.lock().unwrap_or_else(|e| e.into_inner());
+    crate::runtime_tasks::require_enabled("serial")?;
+    if !owns_session(session.as_deref(), session_id.as_deref()) { return Err("模拟会话已变更".into()); }
     validate_rules(&rules)?;
     *state.rules.lock().unwrap_or_else(|e| e.into_inner()) = rules;
     Ok(())
@@ -495,8 +547,8 @@ pub fn serial_sim_update_rules(
 
 /// 停止模拟设备。
 #[tauri::command]
-pub fn serial_sim_stop(state: tauri::State<'_, SimState>) -> Result<(), String> {
-    state.active.store(false, Ordering::Relaxed);
+pub fn serial_sim_stop(state: tauri::State<'_, SimState>, session_id: Option<String>) -> Result<(), String> {
+    stop_sim_inner(&state, session_id.as_deref());
     info!("[serial-sim] 模拟设备已停止");
     Ok(())
 }
@@ -511,12 +563,16 @@ pub fn serial_sim_write(
     hex_mode: bool,
     encoding: String,
     line_ending: String,
+    session_id: Option<String>,
 ) -> Result<i64, String> {
+    let session = state.session_id.lock().unwrap_or_else(|e| e.into_inner());
+    crate::runtime_tasks::require_enabled("serial")?;
+    if !owns_session(session.as_deref(), session_id.as_deref()) { return Err("模拟会话已变更".into()); }
     if !state.active.load(Ordering::Relaxed) {
         return Err("模拟设备未启动".into());
     }
     let bytes = build_payload(&data, hex_mode, &encoding, &line_ending)?;
-    emit_sim(&app, "SIM", "rx", &bytes);
+    emit_sim(&app, "SIM", "rx", &bytes, session.as_deref());
 
     let text = decode_text(&bytes, &encoding);
     let rules = state
@@ -535,16 +591,22 @@ pub fn serial_sim_write(
             .map_err(|e| format!("规则 {} 应答内容错误: {}", i + 1, e))?;
             let app2 = app.clone();
             let delay = r.delay_ms.min(10_000);
-            // 停止设备后不再发出排队中的应答
+            let mut pending = state.pending.lock().unwrap_or_else(|e| e.into_inner());
+            pending.retain(|handle| !handle.is_finished());
+            if pending.len() >= 128 { return Err("等待中的模拟应答过多，请降低发送频率".into()); }
             let active = state.active.clone();
-            std::thread::spawn(move || {
-                if delay > 0 {
-                    std::thread::sleep(Duration::from_millis(delay));
+            let generation = state.generation.clone();
+            let expected = generation.load(Ordering::Acquire);
+            let owner = session.clone();
+            static NEXT_REPLY: AtomicU64 = AtomicU64::new(0);
+            let name = format!("sim-reply-{}", NEXT_REPLY.fetch_add(1, Ordering::Relaxed));
+            let task = crate::runtime_tasks::spawn_owned("serial", &name, async move {
+                if delay > 0 { tokio::time::sleep(Duration::from_millis(delay)).await; }
+                if sim_reply_current(&active, &generation, expected) {
+                    emit_sim(&app2, "SIM", "tx", &payload, owner.as_deref());
                 }
-                if active.load(Ordering::Relaxed) {
-                    emit_sim(&app2, "SIM", "tx", &payload);
-                }
-            });
+            }).ok_or_else(|| "串口模块已停用".to_string())?;
+            pending.push(task);
             return Ok(i as i64);
         }
     }
@@ -625,4 +687,34 @@ mod tests {
     fn empty_pattern_never_matches_contains() {
         assert!(!bytes_contain(b"abc", b""));
     }
+    #[test]
+    fn stale_owners_cannot_stop_new_sessions_and_old_replies_do_not_revive() {
+        assert!(owns_session(Some("new"), None));
+        assert!(owns_session(Some("new"), Some("new")));
+        assert!(!owns_session(Some("new"), Some("old")));
+        let state = SimState::default();
+        *state.session_id.lock().unwrap() = Some("new".into());
+        state.active.store(true, Ordering::Release);
+        let before = state.generation.load(Ordering::Acquire);
+        assert!(!stop_sim_inner(&state, Some("old")));
+        assert!(state.active.load(Ordering::Acquire));
+        assert!(stop_sim_inner(&state, Some("new")));
+        state.active.store(true, Ordering::Release);
+        assert!(!sim_reply_current(&state.active, &state.generation, before));
+    }
+    #[tokio::test]
+    async fn stop_aborts_queued_simulation_payloads() {
+        let state = SimState::default();
+        let task = tokio::spawn(std::future::pending::<()>());
+        state.pending.lock().unwrap().push(task.abort_handle());
+        stop_sim_inner(&state, None);
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(state.pending.lock().unwrap().is_empty());
+    }
+    #[test]
+    fn oversized_send_and_rule_sets_are_rejected() {
+        assert!(build_payload(&"x".repeat(256 * 1024 + 1), false, "utf-8", "none").is_err());
+        assert!(validate_rules(&vec![rule("AT", false, "exact"); 129]).is_err());
+    }
+
 }

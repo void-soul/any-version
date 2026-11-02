@@ -3065,7 +3065,9 @@
     "sysNoHit": "No rule matched (no reply)",
     "sysSendFail": "Send failed: {{err}}",
     "sysImported": "Imported {{file}} ({{lines}} lines)",
-    "sysImportFail": "Import failed: {{err}}"
+    "sysImportFail": "Import failed: {{err}}",
+    "rulesUpdateFail": "Could not update rules; the previous rules remain active: {{err}}",
+    "rulesTooLarge": "Use no more than 128 rules and 1 MiB of imported content."
   },
   "envbackup": {
     "title": "Environment Variable Backup & Restore",

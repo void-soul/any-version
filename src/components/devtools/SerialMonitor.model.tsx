@@ -6,6 +6,7 @@ export const MAX_PENDING = 5000;
 
 export interface SerialPayload {
   port: string;
+  sessionId?: string | null;
   hex: string;
   data?: string;
   text: string;
