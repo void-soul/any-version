@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
@@ -21,18 +22,27 @@ pub fn decode_text_bytes(bytes: &[u8]) -> String {
     cow.into_owned()
 }
 
+const MAX_TEXT_FILE_BYTES: u64 = 64 * 1024 * 1024;
+fn read_bounded(mut reader: impl Read, limit: u64) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    reader.by_ref().take(limit + 1).read_to_end(&mut bytes).map_err(|e| format!("读取文件失败: {e}"))?;
+    if bytes.len() as u64 > limit { return Err(format!("文件超过 {} MiB，请分段打开", limit / 1024 / 1024)); }
+    Ok(bytes)
+}
+
 /// 读取文本文件内容（JSON 浏览等辅助工具使用）
 /// 兼容 UTF-8 BOM / UTF-16 / GBK 编码，避免「文件有效但读出来乱码/报错」。
 #[tauri::command]
 pub fn read_text_file(path: String) -> Result<String, String> {
-    let bytes = fs::read(&path).map_err(|e| format!("读取文件失败: {}", e))?;
+    let file = fs::File::open(&path).map_err(|e| format!("读取文件失败: {e}"))?;
+    let bytes = read_bounded(file, MAX_TEXT_FILE_BYTES)?;
     Ok(decode_text_bytes(&bytes))
 }
 
 /// 写入文本文件内容
 #[tauri::command]
 pub fn write_text_file(path: String, content: String) -> Result<(), String> {
-    fs::write(&path, content).map_err(|e| e.to_string())
+    crate::commands::config::atomic_write_file(Path::new(&path), content.as_bytes())
 }
 
 /// 保存文本到下载目录（Buddy 导出账号用），返回实际保存路径。
@@ -367,7 +377,8 @@ pub fn read_local_image(from: String, src: String) -> Result<Option<String>, Str
         return Err(format!("图片超过 {} MB，已跳过预览", MAX_IMAGE_BYTES / 1024 / 1024));
     }
     let mime = image_mime(&path).unwrap_or("application/octet-stream");
-    let bytes = fs::read(&path).map_err(|e| format!("读取图片失败: {}", e))?;
+    let file = fs::File::open(&path).map_err(|e| format!("读取图片失败: {e}"))?;
+    let bytes = read_bounded(file, MAX_IMAGE_BYTES)?;
     Ok(Some(format!("data:{};base64,{}", mime, STANDARD.encode(bytes))))
 }
 
@@ -444,4 +455,26 @@ fn percent_decode(s: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).to_string()
+}
+
+#[cfg(test)]
+mod bounded_text_tests {
+    use super::*;
+    #[test]
+    fn reads_exact_budget_and_preserves_bom_decoding() {
+        assert_eq!(read_bounded(std::io::Cursor::new(b"abc"), 3).unwrap(), b"abc");
+        let utf16 = read_bounded(std::io::Cursor::new([0xff, 0xfe, b'A', 0]), 4).unwrap();
+        assert_eq!(decode_text_bytes(&utf16), "A");
+    }
+    #[test]
+    fn reads_at_most_one_byte_over_budget_and_returns_io_errors() {
+        let mut reader = std::io::Cursor::new(vec![b'x'; 1024]);
+        assert!(read_bounded(&mut reader, 3).is_err());
+        assert_eq!(reader.position(), 4);
+        struct Failed;
+        impl std::io::Read for Failed {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> { Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied)) }
+        }
+        assert!(read_bounded(Failed, 3).is_err());
+    }
 }

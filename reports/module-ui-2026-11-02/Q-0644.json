@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0644",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "JSON/Markdown使用的公共文本读写整文件无上限读取，直接write失败可能截断已有文件；需有界读取和原子保存。",
+  "root_cause": "**read_text_file**直接fs::read无资源预算，write_text_file直接覆盖写入；Markdown本地图片虽检查metadata但随后无界read，文件增长存在边界窗口。",
+  "solution": "",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/file_io.rs** | 有界文本/图片读取、原子文本保存及2项回归 |",
+  "created_at": "2026-11-02 18:03:27",
+  "updated_at": "2026-11-02 18:06:25",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}
