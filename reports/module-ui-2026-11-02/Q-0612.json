@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0612",
+  "date": "2026-11-02",
+  "category": "Refactor",
+  "status": "已验证",
+  "phenomenon": "启动模块顶部同时显示搜索和全盘搜索两个入口，需要合并为统一搜索入口，同时保留启动项与全盘文件查询以及原有文件筛选和索引管理功能。",
+  "root_cause": "**LauncherPanel** 将已支持启动项和全盘文件的统一搜索与独立文件搜索窗并列展示，形成重复入口。",
+  "solution": "1. 顶部统一搜索入口，文件筛选与索引管理移入搜索面板，保留启动项/全盘文件/网址查询。\n2. 文件查询增加加载和错误反馈，失败不再假报无结果；打开文件失败保留面板并显示原因，成功才关闭。\n3. 关闭、改词和卸载清理时递增请求代次，忽略旧响应；搜索焦点改用有清理的requestAnimationFrame。\n4. 搜索输入使用公共ui-input，补aria-busy/status，保留中英文入口文案。\n5. 构建、440前端测试、TypeScript与diff检查通过，真实窗口UI验证仍待完成。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/launcher/LauncherPanel.tsx** | 统一搜索入口与状态传递 |\n| **src/components/launcher/LauncherSearchOverlay.tsx** | 输入样式与查询/打开失败反馈 |\n| **src/components/launcher/useLauncherSearch.tsx** | 请求代次、清理、文件打开结果 |\n| **src/i18n/locales/zh/translation.json** | 中文入口文案 |\n| **src/i18n/locales/en/translation.json** | 英文入口文案 |",
+  "created_at": "2026-11-02 10:20:31",
+  "updated_at": "2026-11-02 16:11:35",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

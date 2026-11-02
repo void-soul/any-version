@@ -27,6 +27,8 @@ export function useLauncherSearch({ classificationMap, searchQuery, webSources, 
 
   // 这批结果对应的关键词：与当前输入不一致时视为过期，避免回车打开错文件
   const [fileHitsQuery, setFileHitsQuery] = useState("");
+  const [fileQueryError, setFileQueryError] = useState("");
+  const [fileSearchBusy, setFileSearchBusy] = useState(false);
 
   const fileSearchReqRef = useRef(0);
 
@@ -101,39 +103,57 @@ export function useLauncherSearch({ classificationMap, searchQuery, webSources, 
   // 全盘文件索引搜索（与启动项统一展示）：200ms 防抖 + 请求代次校验。
   // 未建立索引时后端直接返回空数组，不影响原有快捷方式搜索体验。
   useEffect(() => {
-    if (!isSearchOpen) return;
+    if (!isSearchOpen) {
+      setFileSearchBusy(false);
+      return;
+    }
+    setFileQueryError("");
     const q = searchQuery.trim();
     if (!q) {
       fileSearchReqRef.current++;
       setFileHits([]);
       setFileHitsQuery("");
+      setFileSearchBusy(false);
       return;
     }
     const req = ++fileSearchReqRef.current;
+    setFileSearchBusy(true);
     const timer = window.setTimeout(() => {
       invoke<FileHit[]>("file_search_query", { query: q, limit: 30 })
         .then((list) => {
           if (fileSearchReqRef.current !== req) return;
           setFileHits(list);
           setFileHitsQuery(q);
+          setFileSearchBusy(false);
         })
-        .catch(() => {
+        .catch((error) => {
           if (fileSearchReqRef.current !== req) return;
+          setFileQueryError(String(error));
           setFileHits([]);
           setFileHitsQuery(q);
+          setFileSearchBusy(false);
         });
     }, 200);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      fileSearchReqRef.current++;
+    };
   }, [searchQuery, isSearchOpen]);
 
 
-  const openFileHit = (hit: FileHit) => {
-    invoke("launcher_execute_raw", {
-      file: hit.path,
-      params: null,
-      runAsAdmin: false,
-      startLocation: null,
-    }).catch(() => {});
+  const openFileHit = async (hit: FileHit): Promise<boolean> => {
+    try {
+      await invoke("launcher_execute_raw", {
+        file: hit.path,
+        params: null,
+        runAsAdmin: false,
+        startLocation: null,
+      });
+      return true;
+    } catch (error) {
+      setFileQueryError(String(error));
+      return false;
+    }
   };
 
 
@@ -145,13 +165,17 @@ export function useLauncherSearch({ classificationMap, searchQuery, webSources, 
 
 
   // Open / Close Search
+  useEffect(() => {
+    if (!isSearchOpen) return;
+    const frame = window.requestAnimationFrame(() => searchInputRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [isSearchOpen, searchInputRef]);
+
   const openSearch = () => {
     setIsSearchOpen(true);
     setSearchQuery("");
     setSearchSelectedIndex(0);
-    setTimeout(() => {
-      searchInputRef.current?.focus();
-    }, 50);
+
   };
 
 
@@ -160,6 +184,8 @@ export function useLauncherSearch({ classificationMap, searchQuery, webSources, 
     setSearchQuery("");
   };
   return {
+    fileQueryError,
+    fileSearchBusy,
     searchQuickActions,
     searchResults,
     openFileHit,

@@ -27,10 +27,9 @@ import { LauncherCategorySidebar } from "./LauncherCategorySidebar";
 import { LauncherViewSettings } from "./LauncherViewSettings";
 import { useState, useMemo, useRef } from "react";
 import { patchAppSettings } from "../../services/appSettings";
-import { Search, Plus, Check, ChevronRight, BarChart3, RefreshCw, Download, Upload, Database } from "lucide-react";
+import { Search, Plus, Check, ChevronRight, BarChart3, RefreshCw, Download, Upload } from "lucide-react";
 import { DndContext, DragOverlay } from "@dnd-kit/core";
 import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortable";
-import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
 import { Classification, Item, LauncherSetting } from "./types";
 import { sortLauncherItemsByUsage } from "./usageStats";
@@ -306,6 +305,8 @@ export default function LauncherPanel() {
     searchResults,
     openFileHit,
     effectiveFileHits,
+    fileQueryError,
+    fileSearchBusy,
     searchTotal,
     openSearch,
     closeSearch,
@@ -529,18 +530,6 @@ export default function LauncherPanel() {
           >
             <Search className="w-3 h-3" />
             <span className="text-caption">{t("launcher.search")}</span>
-          </button>
-
-          {/* 全盘文件搜索悬浮窗（Everything 式，索引管理入口） */}
-          <button
-            onClick={() => {
-              invoke("open_file_search_popup").catch(() => {});
-            }}
-            className="ui-btn px-2.5 py-1 rounded-ctl text-body flex items-center gap-1.5 border transition cursor-pointer"
-            title={t("launcher.fileSearchTitle")}
-          >
-            <Database className="w-3 h-3" />
-            <span className="text-caption">{t("launcher.fileSearch")}</span>
           </button>
 
           {/* 浏览器收藏夹导入已删除：该能力现在归收藏模块（favorites） */}
@@ -867,6 +856,8 @@ export default function LauncherPanel() {
             closeSearch={closeSearch}
             searchResults={searchResults}
             handleExecuteItem={handleExecuteItem}
+            fileQueryError={fileQueryError}
+            fileSearchBusy={fileSearchBusy}
             effectiveFileHits={effectiveFileHits}
             openFileHit={openFileHit}
             webSources={webSources}

@@ -1,6 +1,8 @@
 import type { WebSearchSource } from "./types";
 import type { SearchQuickAction } from "./LauncherPanel.model";
-import { Search, Folder, Globe, Shield, FileText, X, Link2, ArrowUpRight } from "lucide-react";
+import { Search, Folder, Globe, Shield, FileText, X, Link2, ArrowUpRight, Database } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Classification, FileHit, Item } from "./types";
 import VexEmptyState from "../VexEmptyState";
@@ -19,15 +21,18 @@ interface LauncherSearchOverlayProps {
   searchResults: Item[];
   handleExecuteItem: (item: Item) => Promise<void>;
   effectiveFileHits: FileHit[];
-  openFileHit: (hit: FileHit) => void;
+  openFileHit: (hit: FileHit) => Promise<boolean>;
+  fileQueryError: string;
+  fileSearchBusy: boolean;
   webSources: WebSearchSource[];
   classificationMap: Map<number, Classification>;
 }
 
 
 /** Pure LauncherSearchOverlay view; its owning panel retains side effects and state. */
-export function LauncherSearchOverlay({ searchInputRef, searchQuery, setSearchQuery, setSearchSelectedIndex, searchTotal, searchSelectedIndex, searchQuickActions, launchVirtual, closeSearch, searchResults, handleExecuteItem, effectiveFileHits, openFileHit, webSources, classificationMap }: LauncherSearchOverlayProps) {
+export function LauncherSearchOverlay({ searchInputRef, searchQuery, setSearchQuery, setSearchSelectedIndex, searchTotal, searchSelectedIndex, searchQuickActions, launchVirtual, closeSearch, searchResults, handleExecuteItem, effectiveFileHits, openFileHit, fileQueryError, fileSearchBusy, webSources, classificationMap }: LauncherSearchOverlayProps) {
   const { t } = useTranslation();
+  const [fileSearchError, setFileSearchError] = useState("");
   return (
 <div className="absolute inset-0 z-40 bg-surface-splash/80 backdrop-blur-md flex flex-col items-center p-6 animate-in fade-in zoom-in-95 duration-100">
             <div className="w-full max-w-[600px] h-full flex flex-col">
@@ -70,8 +75,7 @@ export function LauncherSearchOverlay({ searchInputRef, searchQuery, setSearchQu
                         } else {
                           const hit = effectiveFileHits[selected - searchQuickActions.length - searchResults.length];
                           if (hit) {
-                            openFileHit(hit);
-                            closeSearch();
+                            void openFileHit(hit).then((opened) => { if (opened) closeSearch(); });
                           }
                         }
                       }
@@ -81,7 +85,8 @@ export function LauncherSearchOverlay({ searchInputRef, searchQuery, setSearchQu
                     }
                   }}
                   placeholder={t("launcher.searchPlaceholder")}
-                  className="w-full bg-white/5 border border-[var(--module-accent-ring)] rounded-card pl-10 pr-10 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[var(--module-accent)] transition shadow-lg shadow-[var(--module-accent-ring)]"
+                  className="ui-input w-full h-10 pl-10 pr-10 placeholder-slate-500"
+                  aria-label={t("launcher.search")}
                 />
                 <button
                   onClick={closeSearch}
@@ -94,6 +99,18 @@ export function LauncherSearchOverlay({ searchInputRef, searchQuery, setSearchQu
 
               {/* 搜索引擎快捷入口（输入「关键词 + 空格 + 词」直接搜索） */}
               <div className="flex flex-wrap items-center gap-1.5 mb-2 px-0.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFileSearchError("");
+                    invoke("open_file_search_popup").catch((error) => setFileSearchError(String(error)));
+                  }}
+                  title={t("launcher.fileSearchTitle")}
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-ctl text-tiny border border-white/10 bg-white/[0.03] text-slate-400 hover:text-white hover:border-[var(--module-accent-ring)] transition cursor-pointer"
+                >
+                  <Database className="w-3 h-3" />
+                  {t("launcher.searchFileTools")}
+                </button>
                 {webSources.map((src) => (
                   <button
                     key={src.id}
@@ -112,9 +129,14 @@ export function LauncherSearchOverlay({ searchInputRef, searchQuery, setSearchQu
                   </button>
                 ))}
               </div>
+              {fileSearchError && <p role="alert" className="mb-2 text-caption text-red-400">{fileSearchError}</p>}
+
+              {fileQueryError && <p role="alert" className="ui-note ui-note-error text-body px-3 py-2 mb-2 break-words">{fileQueryError}</p>}
+
+              {fileSearchBusy && <p role="status" className="text-caption text-slate-400 mb-2">{t("common.loading")}</p>}
 
               {/* Search Results List */}
-              <div className="flex-1 overflow-y-auto space-y-1 pr-1">
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-1 pr-1" aria-busy={fileSearchBusy}>
               {searchQuickActions.map((action, idx) => {
                 const isSelected = idx === searchSelectedIndex;
                 return (
@@ -218,8 +240,7 @@ export function LauncherSearchOverlay({ searchInputRef, searchQuery, setSearchQu
                       <div
                         key={hit.path}
                         onClick={() => {
-                          openFileHit(hit);
-                          closeSearch();
+                          void openFileHit(hit).then((opened) => { if (opened) closeSearch(); });
                         }}
                         className={`flex items-center gap-3 px-3.5 py-2 rounded-card text-body transition cursor-pointer ${
                           isSelected
@@ -249,7 +270,7 @@ export function LauncherSearchOverlay({ searchInputRef, searchQuery, setSearchQu
                 </>
               )}
                 </>
-              ) : searchQuery.trim() && searchTotal === 0 ? (
+              ) : searchQuery.trim() && searchTotal === 0 && !fileSearchBusy && !fileQueryError ? (
                 <VexEmptyState
                   title={t("launcher.searchNoResult", { query: searchQuery })}
                   desc={t("launcher.searchNoResultHint")}
