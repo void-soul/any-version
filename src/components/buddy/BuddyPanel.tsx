@@ -1,3 +1,4 @@
+import { BuddyAccountSearch, useBuddyAccountSearch } from "./BuddyAccountSearch";
 import { runBuddyAccountSwitch, formatBuddySwitchResult } from "./runBuddyAccountSwitch";
 import { loadBuddyPlatform } from "./loadBuddyPlatform";
 import { useBuddyPlatformScope } from "./useBuddyPlatformScope";
@@ -100,7 +101,6 @@ export default function BuddyPanel() {
     deleteAccounts,
     exportSelected,
     toggleSelect,
-    toggleSelectAll,
     selectedCount,
   } = useBuddyAccountMaintenance({
     platformScope,
@@ -112,6 +112,7 @@ export default function BuddyPanel() {
     load: () => load(),
     platform,
   });
+  const accountSearch = useBuddyAccountSearch(sortedAccounts, platform, selectedIds, setSelectedIds);
   // 排序模式（额度 / 时间1/2/3 / 默认 last_used 倒序）
   // 过期时间列（CodeBuddy CN 专用）：列 schema + 单元格编辑 + 列增删改 + 用量弹窗 + 倒计时刷新
   const {
@@ -512,6 +513,7 @@ export default function BuddyPanel() {
       {/* ─── 账号 Tab ─── */}
       {tab === "accounts" && (
         <>
+          <BuddyAccountSearch query={accountSearch.query} onChange={accountSearch.changeQuery} shown={accountSearch.visibleAccounts.length} total={accounts.length} />
           <div className="flex items-center gap-2 px-4 py-1.5 border-b border-white/5 flex-shrink-0 text-tiny">
             <span className="text-slate-500">
               {platformLoading
@@ -551,12 +553,12 @@ export default function BuddyPanel() {
                 原先摆在面板顶栏与每行操作列，顶栏按钮是全局位置但操作只对这个账号库有意义；
                 行内按钮则每行重复一整套 —— 统一收进这一行，按勾选批量执行。 */}
             <button
-              onClick={toggleSelectAll}
-              disabled={accounts.length === 0}
+              onClick={accountSearch.toggleAll}
+              disabled={accountSearch.visibleAccounts.length === 0}
               className={TOOL_BTN}
               title={t("buddy.selectAll")}
             >
-              {selectedCount > 0 && selectedCount === accounts.length
+              {accountSearch.allSelected
                 ? t("buddy.selectAllClear")
                 : t("buddy.selectAll")}
             </button>
@@ -677,6 +679,7 @@ export default function BuddyPanel() {
                 </div>
               </div>
             )}
+            {accounts.length > 0 && accountSearch.visibleAccounts.length === 0 && !platformLoading && <div role="status" className="p-8 text-center text-slate-500 text-body">{t("buddy.accountSearchEmpty")}</div>}
             {accounts.length === 0 ? (
               platformLoading ? null : (
                 <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-3 p-6">
@@ -707,7 +710,7 @@ export default function BuddyPanel() {
                 {/* 表头 */}
                 {renderExpiryHeader()}
 
-                {sortedAccounts.map((acc) => {
+                {accountSearch.visibleAccounts.map((acc) => {
                   const isCurrent = acc.id === currentId;
                   const isSelected = selectedIds.has(acc.id);
                   const isPrimary = accountView.primaryAccountId === acc.id;

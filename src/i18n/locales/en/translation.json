@@ -5744,6 +5744,11 @@
     "askAnswered": "Answered AI's question"
   },
   "buddy": {
+    "accountSearch": "Search accounts",
+    "accountSearchPlaceholder": "Search name / email / UID / phone / tags",
+    "clearAccountSearch": "Clear account search",
+    "accountSearchCount": "{{shown}} / {{total}} accounts",
+    "accountSearchEmpty": "No matching accounts. Try another keyword or clear the search.",
     "title": "Account Switcher",
     "refresh": "Refresh",
     "importLocal": "Import from local",

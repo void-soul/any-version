@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0611",
+  "date": "2026-11-02",
+  "category": "Feature",
+  "status": "已验证",
+  "phenomenon": "Buddy账号列表增加本地搜索，按昵称、邮箱、UID、标签及已保存的手机号内容查找账号；保持排序，清晰展示无匹配，搜索后全选和批量操作只作用于当前可见账号，切换平台清理搜索状态。",
+  "root_cause": "Buddy账号库只有排序与批量操作，没有搜索状态、展示字段匹配和筛选结果选择范围，账号增多后无法快速定位。",
+  "solution": "1. 增加账号搜索输入、清空按钮、Escape清空、匹配数及无结果反馈；按昵称、邮箱、UID、账号ID、企业名和标签做大小写不敏感子串匹配，多关键词按AND组合，沿用原排序。\n2. 搜索只读取账号展示/身份字段，不匹配token或原始响应；手机号只匹配现有脱敏文本。切平台重置搜索，更换关键词清勾选，刷新导致账号不再匹配时清理隐藏勾选，全选仅当前结果。\n3. 搜索组件/hook与纯匹配函数独立文件，中英文文案配套；新增5项匹配/凭据排除/结果全选回归。\n4. TypeScript、生产构建、前端55文件436项和1120源码架构检查通过；仅前端改动，无后端/网络请求。并行启动器与版本改动保留，翻译文件按Buddy独立内容暂存。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/buddy/BuddyPanel.tsx** | 账号库接入搜索、过滤行和结果全选 |\n| **src/components/buddy/BuddyAccountSearch.tsx** | 搜索控件、平台重置、勾选范围清理 |\n| **src/components/buddy/accountSearch.ts** | 展示字段匹配和结果选择纯函数 |\n| **src/components/buddy/__tests__/accountSearch.test.ts** | 5项搜索与批量选择回归 |\n| **src/i18n/locales/zh/translation.json** / **src/i18n/locales/en/translation.json** | Buddy搜索中英文文案 |",
+  "created_at": "2026-11-02 10:20:29",
+  "updated_at": "2026-11-02 10:23:57",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}
