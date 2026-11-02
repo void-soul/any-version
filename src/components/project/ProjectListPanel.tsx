@@ -58,7 +58,8 @@ export default function ProjectListPanel({
               placeholder={t("projlist.searchPh")}
               value={search}
               onChange={(e) => onSearchChange(e.target.value)}
-              className="w-full glass-input pl-7 pr-2 py-1 text-caption"
+              aria-label={t("projlist.searchPh")}
+              className="ui-input w-full h-9 pl-7 pr-2"
             />
           </div>
           <button
@@ -74,7 +75,8 @@ export default function ProjectListPanel({
           </button>
           {onRefresh && (
             <button onClick={onRefresh} disabled={loading}
-              className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-slate-200 cursor-pointer flex-shrink-0"
+              aria-label={t("common.refresh")}
+              className="ui-icon-btn w-8 h-8 flex-shrink-0"
               title={t("common.refresh")}>
               <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
             </button>

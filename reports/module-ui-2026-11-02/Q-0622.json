@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0622",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "按顺序检查SDK入口，项目列表刷新失败静默、快速与完整请求乱序覆盖，事件监听晚注册可能泄漏，初始已选项目可能未补全详情；需要明确反馈、代次隔离及统一搜索刷新样式。",
+  "root_cause": "**ProjectManager**列表与详情异步读没有共同代次，晚到快速列表能覆盖完整刷新，卸载后监听promise成功时仍保留监听；读取错误只console.error。懒加载effect只依赖selectedId，已有选择在快速列表返回后可能不再补全。",
+  "solution": "1. 新增SDK本地 **projectRequestScope**，列表代次隔离与每项目详情代次隔离，清理使旧lease永久失效。\n2. 列表和单项读取失败显示alert且保留已有数据；旧请求不覆盖新数据或loading。\n3. 异步listen晚注册立即取消，订阅失败显示错误，回调检查disposed；列表变化后补全选中详情。\n4. SDK搜索改公共 **ui-input**，刷新改公共图标按钮，补标签与加载语义。\n5. 新增3个乱序/跨项目/StrictMode代次测试；构建、443前端测试、架构1128源文件检查通过。未变更安装或服务后端，未做真实窗口验收。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/ProjectManager.tsx** | SDK入口刷新与UI验收 |\n| **src/components/project/ProjectListPanel.tsx** | SDK入口刷新与UI验收 |\n| **src/components/project/projectRequestScope.ts** | SDK入口刷新与UI验收 |\n| **src/components/project/projectRequestScope.test.ts** | SDK入口刷新与UI验收 |",
+  "created_at": "2026-11-02 16:17:13",
+  "updated_at": "2026-11-02 16:18:46",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

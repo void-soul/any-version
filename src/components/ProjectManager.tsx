@@ -1,3 +1,4 @@
+import { createProjectRequestScope } from "./project/projectRequestScope";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -13,6 +14,9 @@ interface ProjectManagerProps {
 export default function ProjectManager({ selectedId, onSelectId }: ProjectManagerProps) {
   const [projects, setProjects] = useState<ProjectStatus[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [requestScope] = useState(createProjectRequestScope);
+  useEffect(() => () => requestScope.reset(), [requestScope]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ProjectCategory | "all">("all");
 
@@ -54,10 +58,13 @@ export default function ProjectManager({ selectedId, onSelectId }: ProjectManage
   }, [dragging]);
 
   const fetchProjects = useCallback(async (silent = false, fast = false) => {
-    if (!silent) setLoading(true);
+    const lease = requestScope.beginList();
+    setLoading(!silent);
+    setLoadError("");
     try {
       const cmd = fast ? "project_list_fast" : "project_list";
       const list = await invoke<ProjectStatus[]>(cmd);
+      if (!lease.current()) return;
       setProjects(list);
       isFastLoaded.current = fast;
       if (!fast) {
@@ -67,19 +74,23 @@ export default function ProjectManager({ selectedId, onSelectId }: ProjectManage
         enrichedIds.current = new Set();
       }
     } catch (e) {
-      console.error("Failed to load projects:", e);
+      if (lease.current()) setLoadError(String(e));
     } finally {
-      if (!silent) setLoading(false);
+      if (lease.current()) setLoading(false);
     }
   }, []);
 
   // 增量更新单个项目（不重新加载整个列表，包含缓存大小等完整信息）
   const updateProject = useCallback(async (id: string) => {
+    const lease = requestScope.beginProject(id);
     try {
       const updated = await invoke<ProjectStatus>("project_status", { id });
-      setProjects(prev => prev.map(p => p.id === id ? updated : p));
+      if (lease.current()) setProjects(prev => prev.map(p => p.id === id ? updated : p));
     } catch (e) {
-      console.error("Failed to update project:", e);
+      if (lease.current()) {
+        enrichedIds.current.delete(id);
+        setLoadError(String(e));
+      }
     }
   }, []);
 
@@ -90,10 +101,12 @@ export default function ProjectManager({ selectedId, onSelectId }: ProjectManage
   // 前端即时单项目刷新（不重排整列），保证 redis/mysql 等所有服务状态实时更新。
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let disposed = false;
     listen<string>("service-status-changed", (e) => {
-      updateProject(e.payload);
-    }).then((u) => { unlisten = u; });
-    return () => unlisten?.();
+      if (!disposed) void updateProject(e.payload);
+    }).then((u) => { if (disposed) u(); else unlisten = u; })
+      .catch((error) => { if (!disposed) setLoadError(String(error)); });
+    return () => { disposed = true; unlisten?.(); };
   }, [updateProject]);
 
   // 选中项目时懒加载完整状态（包括缓存大小），仅快速加载模式下触发
@@ -102,7 +115,7 @@ export default function ProjectManager({ selectedId, onSelectId }: ProjectManage
     if (enrichedIds.current.has(selectedId)) return;
     enrichedIds.current.add(selectedId);
     updateProject(selectedId);
-  }, [selectedId, updateProject]);
+  }, [selectedId, updateProject, projects]);
 
   // 自动选中第一个项目
   useEffect(() => {
@@ -114,7 +127,8 @@ export default function ProjectManager({ selectedId, onSelectId }: ProjectManage
   const selectedProject = projects.find((p) => p.id === selectedId) ?? null;
 
   return (
-    <div className="h-full select-none px-3 py-2 flex flex-col">
+    <div className="h-full min-w-0 select-none px-3 py-2 flex flex-col" aria-busy={loading}>
+      {loadError && <p role="alert" className="ui-note ui-note-error text-body px-3 py-2 mb-2 shrink-0 break-words">{loadError}</p>}
       <div
         ref={containerRef}
         className={`flex-1 min-h-0 flex gap-0 ${dragging ? "cursor-col-resize" : ""}`}
