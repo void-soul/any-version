@@ -117,20 +117,28 @@ export default function NetworkOverview({ active = true }: { active?: boolean })
     all: true,
   });
 
+  const listEpoch = useRef(0);
+  const pendingList = useRef<number | null>(null);
   const load = useCallback(async () => {
+    const epoch = listEpoch.current;
+    if (pendingList.current === epoch) return;
+    pendingList.current = epoch;
     setLoading(true);
     setError(null);
     try {
-      setAdapters(await invoke<NetAdapter[]>("net_adapters"));
+      const list = await invoke<NetAdapter[]>("net_adapters");
+      if (epoch === listEpoch.current) setAdapters(list);
     } catch (e: any) {
-      setError(String(e));
+      if (epoch === listEpoch.current) setError(String(e));
     } finally {
-      setLoading(false);
+      if (pendingList.current === epoch) pendingList.current = null;
+      if (epoch === listEpoch.current) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     void load();
+    return () => { listEpoch.current++; };
   }, [load]);
 
   useEffect(() => {
@@ -209,7 +217,7 @@ export default function NetworkOverview({ active = true }: { active?: boolean })
       alive = false;
       if (timer) window.clearTimeout(timer);
     };
-  }, [live]);
+  }, [live, active]);
 
   const rateFor = (a: NetAdapter): Rate =>
     rates[a.name] ?? rates[macKey(a.mac)] ?? { rx: 0, tx: 0 };
@@ -229,7 +237,7 @@ export default function NetworkOverview({ active = true }: { active?: boolean })
           <h3 className="text-title font-semibold text-white">{t("netpan.overviewTitle")}</h3>
           <span className="text-micro text-slate-500">{t("netpan.overviewHint")}</span>
           <div className="flex-1" />
-          <SharedButton onClick={() => setLive((v) => !v)}>
+          <SharedButton aria-pressed={live} onClick={() => setLive((v) => !v)}>
             {live ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
             {live ? t("netpan.liveOn") : t("netpan.liveOff")}
           </SharedButton>
@@ -240,7 +248,7 @@ export default function NetworkOverview({ active = true }: { active?: boolean })
         </div>
 
         {error && (
-          <div className="ui-note ui-note-error">
+          <div role="alert" className="ui-note ui-note-error">
             <span>{t("netpan.adapterLoadFail", { err: error })}</span>
           </div>
         )}

@@ -22,15 +22,17 @@ export default function LocalNetworkPanel() {
   return (
     <div className="flex h-full w-full select-none flex-col overflow-hidden text-slate-200">
       {/* 模块头部 + 页签 */}
-      <div className="flex shrink-0 items-center gap-2 border-b border-white/5 px-4 py-3">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-white/5 px-4 py-3">
         <Activity className="h-4 w-4 text-[var(--module-accent)]" />
-        <span className="text-sm font-bold text-white">{t("netpan.title")}</span>
+        <span className="text-title font-bold text-white">{t("netpan.title")}</span>
         <span className="hidden text-tiny text-slate-500 sm:inline">{t("netpan.subtitle")}</span>
         <div className="flex-1" />
         <div className="flex items-center gap-0.5 rounded-ctl border border-white/5 bg-white/5 p-0.5">
           {tabs.map(({ key, label, Icon }) => (
             <button
               key={key}
+              type="button"
+              aria-pressed={tab === key}
               onClick={() => setTab(key)}
               className={`flex cursor-pointer items-center gap-1 rounded-md px-3 py-1.5 text-tiny font-semibold transition-all ${
                 tab === key

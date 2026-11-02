@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0636",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "本地网络：概览active未列入effect依赖，离开页签仍采样；诊断快捷键及端口管理可重复触发，需统一状态和控件。",
+  "root_cause": "**NetworkOverview**采样effect只依赖live，active变化未触发cleanup；诊断Enter绕过按钮disabled；端口变更缺同步互斥，列表/枚举缺少生命周期所有权。",
+  "solution": "",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/LocalNetworkPanel.tsx** | 本地网络生命周期或公共控件 |\n| **src/components/network/NetworkOverview.tsx** | 本地网络生命周期或公共控件 |\n| **src/components/network/NetworkConnections.tsx** | 本地网络生命周期或公共控件 |\n| **src/components/network/NetworkDiagnostics.tsx** | 本地网络生命周期或公共控件 |\n| **src/components/PortScanner.tsx** | 本地网络生命周期或公共控件 |\n",
+  "created_at": "2026-11-02 17:22:37",
+  "updated_at": "2026-11-02 17:25:03",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

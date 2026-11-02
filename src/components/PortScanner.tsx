@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -64,8 +64,12 @@ export default function PortScanner() {
   // 二次确认统一走 app 规范里的 ConfirmDialogHost（原生 window.confirm 样式跟系统、还会阻塞事件循环）
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
 
+  const mutationInFlight = useRef(false);
+  const queryInFlight = useRef(false);
   /** 确认通过后真正执行；成功后顺手刷新保留段列表与当前查询结果 */
   const runProtect = async (port: number) => {
+    if (mutationInFlight.current) return;
+    mutationInFlight.current = true;
     setProtecting(true);
     setProtectMsg(null);
     setProtectDetail(null);
@@ -92,6 +96,7 @@ export default function PortScanner() {
     } catch (e: any) {
       setProtectMsg({ ok: false, text: String(e) });
     } finally {
+      mutationInFlight.current = false;
       setProtecting(false);
     }
   };
@@ -121,6 +126,8 @@ export default function PortScanner() {
       setErrorMsg(t("portscan.rangeInvalid"));
       return;
     }
+    if (mutationInFlight.current) return;
+    mutationInFlight.current = true;
     setRangeBusy(true);
     setErrorMsg(null);
     setSuccessMsg(null);
@@ -140,12 +147,15 @@ export default function PortScanner() {
     } catch (e: any) {
       setErrorMsg(String(e));
     } finally {
+      mutationInFlight.current = false;
       setRangeBusy(false);
     }
   };
 
   const deleteRow = async (r: ReservedRange) => {
     if (r.managed) return;
+    if (mutationInFlight.current) return;
+    mutationInFlight.current = true;
     setRangeBusy(true);
     setErrorMsg(null);
     setSuccessMsg(null);
@@ -160,12 +170,14 @@ export default function PortScanner() {
     } catch (e: any) {
       setErrorMsg(String(e));
     } finally {
+      mutationInFlight.current = false;
       setRangeBusy(false);
     }
   };
 
   const handleCheck = async () => {
-    if (!portInput.trim()) return;
+    if (!portInput.trim() || queryInFlight.current) return;
+    queryInFlight.current = true;
     setChecking(true);
     setErrorMsg(null);
     setSuccessMsg(null);
@@ -173,15 +185,18 @@ export default function PortScanner() {
       const res = await invoke<PortStatus>("check_port_status", { portStr: portInput.trim() });
       setStatus(res);
     } catch (e: any) {
-      setErrorMsg(e);
+      setErrorMsg(String(e));
       setStatus(null);
     } finally {
+      queryInFlight.current = false;
       setChecking(false);
     }
   };
 
   const runRelease = async () => {
     if (!status || !status.occupied) return;
+    if (mutationInFlight.current) return;
+    mutationInFlight.current = true;
     setReleasing(true);
     setErrorMsg(null);
     setSuccessMsg(null);
@@ -191,8 +206,9 @@ export default function PortScanner() {
       const res = await invoke<PortStatus>("check_port_status", { portStr: status.port.toString() });
       setStatus(res);
     } catch (e: any) {
-      setErrorMsg(e);
+      setErrorMsg(String(e));
     } finally {
+      mutationInFlight.current = false;
       setReleasing(false);
     }
   };
@@ -220,14 +236,14 @@ export default function PortScanner() {
       const ranges = await invoke<ReservedRange[]>("get_reserved_ports");
       setReservedRanges(ranges);
     } catch (e: any) {
-      setErrorMsg(e);
+      setErrorMsg(String(e));
     } finally {
       setLoadingReserved(false);
     }
   };
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-2 gap-4">
+    <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-2 gap-4 overflow-y-auto">
       {/* 端口查询 */}
       <div className="glass-panel flex min-h-0 flex-col rounded-panel border border-white/5 p-5">
         <div className="flex shrink-0 items-center gap-2 border-b border-white/5 pb-2">
@@ -241,11 +257,12 @@ export default function PortScanner() {
             value={portInput}
             onChange={(e) => setPortInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleCheck()}
-            className="flex-1 glass-input px-3 py-2 text-body"
+            aria-label={t("portscan.portPh")}
+            className="ui-input h-9 flex-1 min-w-0 px-3"
             placeholder={t("portscan.portPh")}
           />
           <button onClick={handleCheck} disabled={checking || !portInput}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-ctl text-body font-semibold cursor-pointer transition-all">
+            className="ui-btn ui-btn-primary h-8 px-3">
             {checking ? t("portscan.checking") : t("portscan.check")}
           </button>
         </div>

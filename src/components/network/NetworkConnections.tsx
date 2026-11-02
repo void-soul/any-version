@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { AlertTriangle, Loader2, Network, RefreshCw } from "lucide-react";
@@ -20,21 +20,29 @@ export default function NetworkConnections() {
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  const listEpoch = useRef(0);
+  const pendingList = useRef<number | null>(null);
   const load = useCallback(async () => {
+    const epoch = listEpoch.current;
+    if (pendingList.current === epoch) return;
+    pendingList.current = epoch;
     setLoading(true);
     setError(null);
     try {
-      setConns(await invoke<NetConnection[]>("net_connections"));
+      const list = await invoke<NetConnection[]>("net_connections");
+      if (epoch === listEpoch.current) setConns(list);
     } catch (e: any) {
-      setError(String(e));
+      if (epoch === listEpoch.current) setError(String(e));
     } finally {
-      setLoading(false);
+      if (pendingList.current === epoch) pendingList.current = null;
+      if (epoch === listEpoch.current) setLoading(false);
     }
   }, []);
 
   // 切到「连接」页签即加载，不再要求先点一次刷新
   useEffect(() => {
     void load();
+    return () => { listEpoch.current++; };
   }, [load]);
 
   const filtered = useMemo(() => {
@@ -78,7 +86,7 @@ export default function NetworkConnections() {
         </div>
 
         {error && (
-          <div className="ui-note ui-note-error mt-3">
+          <div role="alert" className="ui-note ui-note-error mt-3">
             <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
             <span>{error}</span>
           </div>
@@ -87,9 +95,10 @@ export default function NetworkConnections() {
         {conns && (
           <div className="mt-3 flex min-h-0 flex-1 flex-col gap-2">
             <input
+              aria-label={t("netpan.filterPh")}
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              className="ui-input w-full shrink-0 h-8 px-3"
+              className="ui-input w-full shrink-0 h-9 px-3"
               placeholder={t("netpan.filterPh")}
             />
             <div className="min-h-0 flex-1 overflow-y-auto">

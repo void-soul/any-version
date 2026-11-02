@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -48,6 +48,9 @@ interface TracertResult {
 export default function NetworkDiagnostics() {
   const { t } = useTranslation();
 
+  const alive = useRef(false);
+  const running = useRef(new Set<string>());
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   // —— Ping ——
   const [pingHost, setPingHost] = useState("");
   const [pingCount, setPingCount] = useState(4);
@@ -56,18 +59,22 @@ export default function NetworkDiagnostics() {
   const [pingError, setPingError] = useState<string | null>(null);
 
   const runPing = async () => {
+    if (running.current.has("Ping")) return;
     if (!pingHost.trim()) return;
+    running.current.add("Ping");
     setPinging(true);
     setPingError(null);
     setPingResult(null);
     try {
-      setPingResult(
-        await invoke<PingResult>("ping_host", { host: pingHost.trim(), count: pingCount }),
+      const value = (
+        await invoke<PingResult>("ping_host", { host: pingHost.trim(), count: pingCount })
       );
+      if (alive.current) setPingResult(value);
     } catch (e: any) {
-      setPingError(String(e));
+      if (alive.current) setPingError(String(e));
     } finally {
-      setPinging(false);
+      running.current.delete("Ping");
+      if (alive.current) setPinging(false);
     }
   };
 
@@ -78,16 +85,20 @@ export default function NetworkDiagnostics() {
   const [dnsError, setDnsError] = useState<string | null>(null);
 
   const runDns = async () => {
+    if (running.current.has("Dns")) return;
     if (!dnsHost.trim()) return;
+    running.current.add("Dns");
     setDnsLoading(true);
     setDnsError(null);
     setDnsResult(null);
     try {
-      setDnsResult(await invoke<DnsLookupResult>("dns_lookup", { host: dnsHost.trim() }));
+      const value = (await invoke<DnsLookupResult>("dns_lookup", { host: dnsHost.trim() }));
+      if (alive.current) setDnsResult(value);
     } catch (e: any) {
-      setDnsError(String(e));
+      if (alive.current) setDnsError(String(e));
     } finally {
-      setDnsLoading(false);
+      running.current.delete("Dns");
+      if (alive.current) setDnsLoading(false);
     }
   };
 
@@ -100,26 +111,30 @@ export default function NetworkDiagnostics() {
   const [tcpError, setTcpError] = useState<string | null>(null);
 
   const runTcp = async () => {
+    if (running.current.has("Tcp")) return;
     const port = Number(tcpPort.trim());
     if (!tcpHost.trim() || !Number.isInteger(port) || port < 1 || port > 65535) {
       setTcpError(t("netpan.invalidPort"));
       return;
     }
+    running.current.add("Tcp");
     setTcpLoading(true);
     setTcpError(null);
     setTcpResult(null);
     try {
-      setTcpResult(
+      const value = (
         await invoke<TcpTestResult>("tcp_port_test", {
           host: tcpHost.trim(),
           port,
           timeoutMs: tcpTimeout,
-        }),
+        })
       );
+      if (alive.current) setTcpResult(value);
     } catch (e: any) {
-      setTcpError(String(e));
+      if (alive.current) setTcpError(String(e));
     } finally {
-      setTcpLoading(false);
+      running.current.delete("Tcp");
+      if (alive.current) setTcpLoading(false);
     }
   };
 
@@ -132,22 +147,26 @@ export default function NetworkDiagnostics() {
   const [showRaw, setShowRaw] = useState(false);
 
   const runTrace = async () => {
+    if (running.current.has("Trace")) return;
     if (!traceHost.trim()) return;
+    running.current.add("Trace");
     setTraceLoading(true);
     setTraceError(null);
     setTraceResult(null);
     setShowRaw(false);
     try {
-      setTraceResult(
+      const value = (
         await invoke<TracertResult>("tracert_host", {
           host: traceHost.trim(),
           maxHops: traceHops,
-        }),
+        })
       );
+      if (alive.current) setTraceResult(value);
     } catch (e: any) {
-      setTraceError(String(e));
+      if (alive.current) setTraceError(String(e));
     } finally {
-      setTraceLoading(false);
+      running.current.delete("Trace");
+      if (alive.current) setTraceLoading(false);
     }
   };
 
@@ -158,6 +177,7 @@ export default function NetworkDiagnostics() {
         <DiagCard icon={<Signal className="h-4 w-4 text-[var(--module-accent)]" />} title="Ping">
           <div className="flex shrink-0 gap-2">
             <input
+              aria-label={t("netpan.pingPh")}
               value={pingHost}
               onChange={(e) => setPingHost(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void runPing()}
@@ -233,6 +253,7 @@ export default function NetworkDiagnostics() {
         <DiagCard icon={<Globe className="h-4 w-4 text-emerald-400" />} title={t("netpan.dnsTitle")}>
           <div className="flex shrink-0 gap-2">
             <input
+              aria-label={t("netpan.dnsPh")}
               value={dnsHost}
               onChange={(e) => setDnsHost(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void runDns()}
@@ -278,6 +299,7 @@ export default function NetworkDiagnostics() {
         <DiagCard icon={<Plug className="h-4 w-4 text-sky-400" />} title={t("netpan.tcpTitle")}>
           <div className="flex shrink-0 flex-wrap gap-2">
             <input
+              aria-label={t("netpan.tcpHostPh")}
               value={tcpHost}
               onChange={(e) => setTcpHost(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void runTcp()}
@@ -353,6 +375,7 @@ export default function NetworkDiagnostics() {
         <DiagCard icon={<Route className="h-4 w-4 text-violet-400" />} title={t("netpan.traceTitle")}>
           <div className="flex shrink-0 gap-2">
             <input
+              aria-label={t("netpan.tracePh")}
               value={traceHost}
               onChange={(e) => setTraceHost(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void runTrace()}
@@ -461,7 +484,7 @@ function DiagCard({
 
 function ErrorNote({ text }: { text: string }) {
   return (
-    <div className="ui-note ui-note-error">
+    <div role="alert" className="ui-note ui-note-error">
       <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
       <span className="break-all">{text}</span>
     </div>
