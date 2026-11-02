@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -23,6 +23,7 @@ export function useDbDesignExport({ doc, path, setResult }: {
   /** 导出弹框：只在打开时挂载（这样每次打开都是默认选项，不记忆上次选择） */
   const [exportOpen, setExportOpen] = useState(false);
 
+  const exportGate = useRef(false);
   const [exportBusy, setExportBusy] = useState(false);
 
   /** 保存 / 导出前的校验闸门：返回 false 表示「有阻断级问题，别往下走」。
@@ -50,6 +51,8 @@ export function useDbDesignExport({ doc, path, setResult }: {
 
   const exportSql = async (choice: ExportChoice) => {
     if (!doc) return;
+    if (exportGate.current) return;
+    exportGate.current = true;
     setExportBusy(true);
     try {
       // options 的键名必须是 camelCase（后端 ExportOptions 是 rename_all=camelCase）：
@@ -84,6 +87,7 @@ export function useDbDesignExport({ doc, path, setResult }: {
     } catch (e) {
       setResult({ ok: false, msg: String(e) });
     } finally {
+      exportGate.current = false;
       setExportBusy(false);
     }
   };
@@ -91,24 +95,26 @@ export function useDbDesignExport({ doc, path, setResult }: {
   /** 打开导出弹框前先过校验闸门：不让后端那份几十行的错误清单落进内联块 */
   const openExportDialog = async () => {
     if (!doc) return;
-    if (!(await ensureValid())) return;
-    setExportOpen(true);
+    try {
+      if (!(await ensureValid())) return;
+      setExportOpen(true);
+    } catch (error) { setResult({ ok: false, msg: String(error) }); }
   };
 
   const exportOutline = async () => {
-    if (!doc) return;
-    if (!path) {
-      const md = await invoke<string>("dbd_export_outline", { doc });
-      await navigator.clipboard.writeText(md);
-      toast(t("dbd.outlineCopied"), "ok");
-      return;
-    }
+    if (!doc || exportGate.current) return;
+    exportGate.current = true;
     try {
-      const out = await invoke<string>("dbd_export_outline_file", { path });
-      setResult({ ok: true, msg: t("dbd.outlineExported", { path: out }) });
-    } catch (e) {
-      setResult({ ok: false, msg: String(e) });
-    }
+      if (!path) {
+        const md = await invoke<string>("dbd_export_outline", { doc });
+        await navigator.clipboard.writeText(md);
+        toast(t("dbd.outlineCopied"), "ok");
+      } else {
+        const out = await invoke<string>("dbd_export_outline_file", { path, doc });
+        setResult({ ok: true, msg: t("dbd.outlineExported", { path: out }) });
+      }
+    } catch (error) { setResult({ ok: false, msg: String(error) }); }
+    finally { exportGate.current = false; }
   };
 
   // 文档一变就问后端要校验结果（后端是唯一真源，前端不复制校验规则）
@@ -118,11 +124,12 @@ export function useDbDesignExport({ doc, path, setResult }: {
       return;
     }
     let alive = true;
-    void invoke<ValidationReport>("dbd_validate", { doc }).then((r) => {
+    const timer = window.setTimeout(() => { void invoke<ValidationReport>("dbd_validate", { doc }).then((r) => {
       if (alive) setReport(r);
-    });
+    }).catch((error) => { if (alive) setResult({ ok: false, msg: String(error) }); }); }, 250);
     return () => {
       alive = false;
+      window.clearTimeout(timer);
     };
   }, [doc]);
   return {

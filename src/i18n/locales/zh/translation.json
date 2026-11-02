@@ -43,6 +43,8 @@
     "dbdesigner": "数据库设计"
   },
   "dbd": {
+    "name": "设计名称",
+    "dialect": "数据库类型",
     "new": "新建",
     "open": "打开",
     "openTitle": "选择设计文件（.dbdesign.json）",

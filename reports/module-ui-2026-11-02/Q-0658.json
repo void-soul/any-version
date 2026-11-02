@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0658",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "数据库设计新建/打开缺未保存保护，保存旧快照清除新编辑脏标记；文件操作异常和导出校验Promise未处理，统一文档工具栏和导出弹窗。",
+  "root_cause": "文件操作缺互斥和脏文档确认，**onSavedDocument**无条件清dirty；**export_outline_file**重新读磁盘，文件写入直接覆盖且读取无界；校验异步异常未接住。",
+  "solution": "1. 文件动作统一互斥与异常处理，替换前确认未保存内容并保护确认期间新编辑，等待旧对话保存。\n2. 保存回传实际快照，仅同一设计更新路径且新编辑保留dirty；导出校验防抖/失败可见，公共工具栏及导出弹窗禁用关闭。\n3. 设计/DDL读取64MiB上限，设计/SQL/说明原子写入；结构说明采用内存文档，旧调用仍可选读盘。\n4. 6项Rust文件回归、475前端测试、构建/1167架构和Rust全目标检查通过；未打开真实用户设计或数据库。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/dbdesigner/useDbDocumentFiles.tsx** | 文档保护、导出一致性或公共控件/回归 |\n| **src/components/dbdesigner/DbDesignerPanel.tsx** | 文档保护、导出一致性或公共控件/回归 |\n| **src/components/dbdesigner/DbDocumentToolbar.tsx** | 文档保护、导出一致性或公共控件/回归 |\n| **src/components/dbdesigner/useDbDesignExport.tsx** | 文档保护、导出一致性或公共控件/回归 |\n| **src/components/dbdesigner/ExportDialog.tsx** | 文档保护、导出一致性或公共控件/回归 |\n| **src-tauri/src/commands/db_designer/file.rs** | 文档保护、导出一致性或公共控件/回归 |\n| **src-tauri/src/commands/db_designer/commands.rs** | 文档保护、导出一致性或公共控件/回归 |\n| **src/i18n/locales/zh/translation.json** | 文档保护、导出一致性或公共控件/回归 |\n| **src/i18n/locales/en/translation.json** | 文档保护、导出一致性或公共控件/回归 |\n",
+  "created_at": "2026-11-02 20:17:37",
+  "updated_at": "2026-11-02 20:23:57",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

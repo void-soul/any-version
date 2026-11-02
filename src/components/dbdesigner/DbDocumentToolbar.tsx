@@ -20,16 +20,18 @@ interface DbDocumentToolbarProps {
 export function DbDocumentToolbar({ doc, patchDoc, edgeStyle, setEdgeStyle, fieldRows, setFieldRows, dirty, path }: DbDocumentToolbarProps) {
   const { t } = useTranslation();
   return (
-    <div className="ml-auto flex items-center gap-2">
+    <div className="ml-auto flex items-center gap-2 flex-wrap">
       <input
+        aria-label={t("dbd.name")}
         value={doc.name}
         onChange={(e) => patchDoc({ ...doc, name: e.target.value })}
-        className="w-40 rounded-ctl bg-white/5 px-2 py-1 text-caption text-slate-100 outline-none focus:border-[var(--module-accent-ring)]"
+        className="ui-input h-8 w-40 px-2 text-caption"
       />
       <select
+        aria-label={t("dbd.dialect")}
         value={doc.dialect}
         onChange={(e) => patchDoc({ ...doc, dialect: e.target.value as Dialect })}
-        className="rounded-ctl bg-white/5 px-2 py-1 text-caption text-slate-200 outline-none"
+        className="ui-input h-8 px-2 text-caption"
       >
         {DIALECTS.map((d) => (
           <option key={d} value={d}>{d}</option>
@@ -39,7 +41,7 @@ export function DbDocumentToolbar({ doc, patchDoc, edgeStyle, setEdgeStyle, fiel
       <EdgeStyleSelect
         value={edgeStyle}
         onChange={setEdgeStyle}
-        className="rounded-ctl bg-white/5 px-2 py-1 text-caption text-slate-200 outline-none"
+        className="ui-input h-8 px-2 text-caption"
       />
       {/* 节点卡片里显示哪些字段行：主键+外键（精简）/ 全部字段（展开，视图同时展开 SQL） */}
       <select
@@ -50,7 +52,7 @@ export function DbDocumentToolbar({ doc, patchDoc, edgeStyle, setEdgeStyle, fiel
           localStorage.setItem(FIELD_ROWS_KEY, next);
         }}
         title={t("dbd.fieldRows")}
-        className="rounded-ctl bg-white/5 px-2 py-1 text-caption text-slate-200 outline-none"
+        className="ui-input h-8 px-2 text-caption"
       >
         {FIELD_ROW_MODES.map((mode) => (
           <option key={mode} value={mode}>

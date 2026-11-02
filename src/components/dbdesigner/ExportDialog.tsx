@@ -13,6 +13,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FileDown, ClipboardCopy, Save } from "lucide-react";
 
+import { SharedButton } from "../shared/Button";
 import { SharedModal } from "../shared/Modal";
 import { predictSqlPath, defaultExportChoice, type ExportChoice, type ExportTarget } from "./exportOptions";
 
@@ -65,21 +66,22 @@ export default function ExportDialog({
     <SharedModal
       open={open}
       onClose={onClose}
+      closeDisabled={busy}
       title={t("dbd.exportDialogTitle")}
       width={520}
       footer={
         <div className="flex items-center justify-end gap-2">
-          <button onClick={onClose} className="rounded-ctl px-3 py-1.5 text-body text-slate-300 cursor-pointer">
+          <SharedButton variant="secondary" disabled={busy} onClick={onClose}>
             {t("dbd.exportCancel")}
-          </button>
-          <button
+          </SharedButton>
+          <SharedButton variant="primary"
             onClick={() => onExport(choice)}
             disabled={busy || (choice.target === "file" && !designPath)}
             className="flex items-center gap-1.5 rounded-ctl bg-[var(--module-accent)] px-3 py-1.5 text-body font-semibold text-white disabled:opacity-50 cursor-pointer"
           >
             <FileDown className="h-3.5 w-3.5" />
             {t("dbd.exportConfirm")}
-          </button>
+          </SharedButton>
         </div>
       }
     >

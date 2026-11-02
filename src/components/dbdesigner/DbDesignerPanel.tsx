@@ -39,6 +39,8 @@ export default function DbDesignerPanel() {
   const [doc, setDoc] = useState<DbDesignDocument | null>(null);
   const [path, setPath] = useState<string>("");
   const [dirty, setDirty] = useState(false);
+  const currentDocument = useRef(doc);
+  currentDocument.current = doc;
   /**
    * 两个「选中」必须分开，否则没法实现「点表头只高亮、点字段才开面板」：
    *
@@ -302,8 +304,9 @@ export default function DbDesignerPanel() {
     saveFile,
     reverseSqlite,
     reverseDdl,
+    fileBusy,
   } = useDbDocumentFiles({
-    doc, path, ensureValid, saveChatNow, loadChatForDoc, setResult,
+    doc, path, dirty, ensureValid, saveChatNow, loadChatForDoc, setResult,
     onAdoptDocument: (next, options) => {
       setDoc(next); setPath(options.path); setDirty(options.dirty);
       setSelectedId(null); setHighlightId(null); setPositions({});
@@ -313,7 +316,11 @@ export default function DbDesignerPanel() {
         setAiNewDecisions([]); setDocSnapshot(null);
       }
     },
-    onSavedDocument: target => { setPath(target); setDirty(false); void touchSession(sessionId, target); },
+    onSavedDocument: (target, snapshot) => {
+      if (currentDocument.current?.id !== snapshot.id) return;
+      setPath(target); setDirty(currentDocument.current !== snapshot);
+      void touchSession(sessionId, target);
+    },
   });
   // ── 节点 ──
   const {
@@ -448,6 +455,8 @@ export default function DbDesignerPanel() {
             早先「打开」「保存」是直连按钮、另两个在菜单里 —— 同一类动作分裂在两处，
             顶栏还多占两格；用户明确要求合并。 */}
         <Menu
+          disabled={fileBusy}
+          busy={fileBusy}
           label={t("dbd.menuFile")}
           className="ui-btn px-2 py-1 text-caption"
           items={[
@@ -506,6 +515,7 @@ export default function DbDesignerPanel() {
         <div className="mx-1 h-4 w-px bg-white/10" />
         {/* 逆向：最少用的一组，正好收进菜单 */}
         <Menu
+          disabled={fileBusy}
           label={t("dbd.menuReverse")}
           className="ui-btn px-2 py-1 text-caption"
           items={[

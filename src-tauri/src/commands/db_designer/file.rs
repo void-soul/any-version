@@ -6,18 +6,31 @@
 //   3. 应用只是「一个编辑器」，不持有数据，卸载/换机器不丢设计。
 // 因此这里只做「路径 → 文档」「文档 → 路径」，没有文档表、没有文件夹。
 use std::fs;
+use std::io::Read;
+use crate::commands::foundation::atomic_write_file;
 use std::path::{Path, PathBuf};
 
 use super::export::{export_outline, export_sql_with, ExportOptions};
 use super::models::*;
 use super::store::validate;
 
+/// 设计和DDL文本都限制实际读取大小，避免文件增长突破metadata预检。
+pub(super) fn read_design_bytes(path: &str) -> Result<Vec<u8>, String> {
+    const LIMIT: u64 = 64 * 1024 * 1024;
+    let file = fs::File::open(path).map_err(|e| format!("读取文件失败：{e}"))?;
+    let mut bytes = Vec::new();
+    file.take(LIMIT + 1).read_to_end(&mut bytes).map_err(|e| format!("读取文件失败：{e}"))?;
+    if bytes.len() as u64 > LIMIT { return Err("文件超过64 MiB限制".to_string()); }
+    Ok(bytes)
+}
+
 /// 设计文件后缀：`订单库.dbdesign.json`
 pub const FILE_SUFFIX: &str = ".dbdesign.json";
 
 /// 读设计文件。JSON 非法才报错；内容校验交给 `validate`（允许带着 warning 打开）。
 pub fn load_file(path: &str) -> Result<DbDesignDocument, String> {
-    let raw = fs::read_to_string(path).map_err(|e| format!("读取设计文件失败 {}: {}", path, e))?;
+    let bytes = read_design_bytes(path)?;
+    let raw = String::from_utf8(bytes).map_err(|e| format!("设计文件不是UTF-8：{e}"))?;
     // 容忍 UTF-8 BOM：Windows 上的编辑器 / Agent 脚本写出的文件常带 BOM，
     // 而 serde_json 不认，会直接报「expected value at line 1 column 1」。
     let raw = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
@@ -44,7 +57,7 @@ pub fn write_json(path: &str, doc: &DbDesignDocument) -> Result<(), String> {
         }
     }
     let json = serde_json::to_string_pretty(doc).map_err(|e| format!("序列化失败: {}", e))?;
-    fs::write(path, json).map_err(|e| format!("写入失败 {}: {}", path, e))?;
+    atomic_write_file(Path::new(path), json.as_bytes())?;
     Ok(())
 }
 
@@ -56,7 +69,7 @@ pub fn write_json(path: &str, doc: &DbDesignDocument) -> Result<(), String> {
 pub fn export_sql_file(path: &str, doc: &DbDesignDocument, opts: ExportOptions) -> Result<String, String> {
     let sql = export_sql_with(doc, opts)?;
     let out = sibling_path(path, "sql");
-    fs::write(&out, &sql).map_err(|e| format!("写入 SQL 失败 {}: {}", out.display(), e))?;
+    atomic_write_file(&out, sql.as_bytes())?;
     Ok(out.to_string_lossy().to_string())
 }
 
@@ -73,16 +86,14 @@ pub fn export_sql_to(
                 .map_err(|e| format!("创建目录失败 {}: {}", parent.display(), e))?;
         }
     }
-    fs::write(target, &sql).map_err(|e| format!("写入 SQL 失败 {}: {}", target, e))?;
+    atomic_write_file(Path::new(target), sql.as_bytes())?;
     Ok(target.to_string())
 }
 
 /// 导出结构说明到同目录的 `<主名>.md`。
-pub fn export_outline_file(path: &str) -> Result<String, String> {
-    let doc = load_file(path)?;
+pub fn export_outline_file(path: &str, doc: &DbDesignDocument) -> Result<String, String> {
     let out = sibling_path(path, "md");
-    fs::write(&out, export_outline(&doc))
-        .map_err(|e| format!("写入结构说明失败 {}: {}", out.display(), e))?;
+    atomic_write_file(&out, export_outline(doc).as_bytes())?;
     Ok(out.to_string_lossy().to_string())
 }
 
@@ -247,10 +258,11 @@ mod tests {
         assert_eq!(got, custom);
         assert!(fs::read_to_string(&custom).unwrap().contains("CREATE TABLE"));
 
-        let md_path = export_outline_file(&p).unwrap();
+        let md_path = export_outline_file(&p, &edited).unwrap();
         assert!(md_path.ends_with("订单库.md"), "{}", md_path);
         let md = fs::read_to_string(&md_path).unwrap();
         assert!(md.contains("orders"), "{}", md);
+        assert!(md.contains("改过的名字"), "必须导出内存设计：{}", md);
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -93,8 +93,9 @@ pub fn dbd_export_outline(doc: DbDesignDocument) -> String {
 
 /// 结构说明写到同目录的 `<主名>.md`
 #[tauri::command]
-pub fn dbd_export_outline_file(path: String) -> Result<String, String> {
-    export_outline_file(&path)
+pub fn dbd_export_outline_file(path: String, doc: Option<DbDesignDocument>) -> Result<String, String> {
+    let current = match doc { Some(doc) => doc, None => load_file(&path)? };
+    export_outline_file(&path, &current)
 }
 
 /// 改字段名（**唯一**入口）：级联更新关联与索引，返回新文档
@@ -133,7 +134,7 @@ pub fn dbd_reverse_ddl_file(path: String, dialect: String) -> Result<DbDesignDoc
     // 中文 Windows 的 Navicat / mysqldump 默认导出 GBK，read_to_string 会直接抛
     // "stream did not contain valid UTF-8" —— 用户看不懂。改成先按字节读，
     // 非 UTF-8 时给一句能照做的提示（另存为 UTF-8）。
-    let bytes = std::fs::read(&path).map_err(|e| format!("读取失败 {}: {}", path, e))?;
+    let bytes = super::file::read_design_bytes(&path)?;
     let text = String::from_utf8(bytes).map_err(|_| {
         format!(
             "{} 不是 UTF-8 编码（中文 Windows 的 Navicat / mysqldump 常默认导出 GBK）。\n\

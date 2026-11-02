@@ -43,6 +43,8 @@
     "dbdesigner": "DB Designer"
   },
   "dbd": {
+    "name": "Design name",
+    "dialect": "Database dialect",
     "new": "New",
     "open": "Open",
     "openTitle": "Pick a design file (.dbdesign.json)",
