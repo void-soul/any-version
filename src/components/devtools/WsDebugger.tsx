@@ -1,8 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { btnPrimary, btnDanger } from "../shared/Button";
+import { useWsDebugger } from "./useWsDebugger";
 import {
   Activity,
   Cable,
@@ -17,42 +14,8 @@ import {
   Trash2,
   Unplug,
 } from "lucide-react";
-import { formatBytes, nowStamp, type LineEnding } from "./serialUtils";
-import {
-  MAX_LOGS,
-  MAX_PENDING,
-  MAX_SEND_HISTORY,
-  buildExportText,
-  filterLogs,
-  formatDuration,
-  loadPrefs,
-  loadSendHistory,
-  loadTargets,
-  normalizeHex,
-  parseHeadersText,
-  parseSseBlock,
-  pushTarget,
-  savePrefs,
-  saveSendHistory,
-  saveTargets,
-  withLineEnding,
-  type Dir,
-  type LogEntry,
-  type Proto,
-  type SseMeta,
-  type TargetMap,
-} from "./wsDebugUtils";
-
-interface MessagePayload {
-  id: string;
-  kind?: "text" | "binary";
-  data?: string;
-  text?: string;
-  hex?: string;
-  len?: number;
-  from?: string;
-  proto?: string;
-}
+import { formatBytes, type LineEnding } from "./serialUtils";
+import type { Dir, Proto } from "./wsDebugUtils";
 
 const PROTO_TABS: Array<{ key: Proto; label: string }> = [
   { key: "ws", label: "WebSocket" },
@@ -61,536 +24,65 @@ const PROTO_TABS: Array<{ key: Proto; label: string }> = [
   { key: "udp", label: "UDP" },
 ];
 
-const MAX_RECONNECT = 5;
-const RECONNECT_DELAY = 1000;
-const PING_TIMEOUT = 10_000;
-
 /** WebSocket / SSE / TCP / UDP 调试器。 */
 export default function WsDebugger() {
-  const { t } = useTranslation();
-  const [initialPrefs] = useState(loadPrefs);
-
-  // 连接
-  const [proto, setProto] = useState<Proto>("ws");
-  const [connId, setConnId] = useState("conn-1");
-  const [url, setUrl] = useState("ws://");
-  const [host, setHost] = useState("127.0.0.1");
-  const [port, setPort] = useState("8080");
-  const [headersText, setHeadersText] = useState("");
-  const [connected, setConnected] = useState(false);
-  const [connecting, setConnecting] = useState(false);
-  const [connectedAt, setConnectedAt] = useState<number | null>(null);
-  const [duration, setDuration] = useState("00:00:00");
-  const [latency, setLatency] = useState<number | null>(null);
-  const [pingPending, setPingPending] = useState(false);
-  const [targets, setTargets] = useState<TargetMap>(loadTargets);
-  const [recentValue, setRecentValue] = useState("");
-
-  // 日志与偏好
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [paused, setPaused] = useState(false);
-  const [pendingCount, setPendingCount] = useState(0);
-  const [filter, setFilter] = useState("");
-  const [showTime, setShowTime] = useState(initialPrefs.showTime);
-  const [autoScroll, setAutoScroll] = useState(initialPrefs.autoScroll);
-  const [hexView, setHexView] = useState(initialPrefs.hexView);
-  const [autoReconnect, setAutoReconnect] = useState(initialPrefs.autoReconnect);
-  const [lineEnding, setLineEnding] = useState<LineEnding>(initialPrefs.lineEnding);
-  const [stats, setStats] = useState({ rxFrames: 0, rxBytes: 0, txFrames: 0, txBytes: 0 });
-
-  // 发送
-  const [sendData, setSendData] = useState("");
-  const [sendHex, setSendHex] = useState(false);
-  const [sendHistory, setSendHistory] = useState(loadSendHistory);
-  const [historyIdx, setHistoryIdx] = useState(-1);
-
-  const logRef = useRef<HTMLDivElement>(null);
-  const seqRef = useRef(0);
-  // 事件监听只挂载一次，闭包锁不住后续 state —— 所有「当前值」都从 ref 读。
-  const tRef = useRef(t);
-  const protoRef = useRef(proto);
-  const connIdRef = useRef(connId);
-  const urlRef = useRef(url);
-  const hostRef = useRef(host);
-  const portRef = useRef(port);
-  const headersRef = useRef(headersText);
-  const pausedRef = useRef(false);
-  const pendingRef = useRef<LogEntry[]>([]);
-  const activeIdRef = useRef("");
-  const connectingRef = useRef(false);
-  const connectEpochRef = useRef(0);
-  const manualRef = useRef(false);
-  const autoReconnectRef = useRef(autoReconnect);
-  const reconnectTimerRef = useRef<number | null>(null);
-  const reconnectAttemptsRef = useRef(0);
-  const connectRef = useRef<() => Promise<void>>(async () => {});
-  const pingSentRef = useRef<Map<string, number>>(new Map());
-  const pingTimerRef = useRef<number | null>(null);
-
-  tRef.current = t;
-  protoRef.current = proto;
-  connIdRef.current = connId;
-  urlRef.current = url;
-  hostRef.current = host;
-  portRef.current = port;
-  headersRef.current = headersText;
-  autoReconnectRef.current = autoReconnect;
-
-  const recordLog = useCallback(
-    (dir: Dir, text: string, hex?: string, bytes = 0, meta?: SseMeta) => {
-      const entry: LogEntry = {
-        id: ++seqRef.current,
-        dir,
-        text,
-        hex,
-        bytes,
-        time: nowStamp(),
-        meta,
-      };
-      if (pausedRef.current) {
-        pendingRef.current.push(entry);
-        if (pendingRef.current.length > MAX_PENDING) {
-          pendingRef.current.splice(0, pendingRef.current.length - MAX_PENDING);
-        }
-        setPendingCount(pendingRef.current.length);
-      } else {
-        setLogs((prev) => {
-          const next = [...prev, entry];
-          return next.length > MAX_LOGS ? next.slice(-MAX_LOGS) : next;
-        });
-      }
-      if (bytes > 0 && (dir === "rx" || dir === "event" || dir === "tx")) {
-        const isRx = dir !== "tx";
-        setStats((s) => ({
-          rxFrames: s.rxFrames + (isRx ? 1 : 0),
-          rxBytes: s.rxBytes + (isRx ? bytes : 0),
-          txFrames: s.txFrames + (isRx ? 0 : 1),
-          txBytes: s.txBytes + (isRx ? 0 : bytes),
-        }));
-      }
-    },
-    []
-  );
-
-  const clearReconnectTimer = useCallback(() => {
-    if (reconnectTimerRef.current !== null) {
-      window.clearTimeout(reconnectTimerRef.current);
-      reconnectTimerRef.current = null;
-    }
-    reconnectAttemptsRef.current = 0;
-  }, []);
-
-  const scheduleReconnect = useCallback(() => {
-    if (!autoReconnectRef.current || manualRef.current) return;
-    if (reconnectAttemptsRef.current >= MAX_RECONNECT) {
-      recordLog("sys", tRef.current("wsdebug.reconnectGaveUp"));
-      return;
-    }
-    reconnectAttemptsRef.current += 1;
-    const attempt = reconnectAttemptsRef.current;
-    recordLog("sys", tRef.current("wsdebug.reconnecting", { attempt }));
-    if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current);
-    reconnectTimerRef.current = window.setTimeout(() => {
-      reconnectTimerRef.current = null;
-      void connectRef.current();
-    }, RECONNECT_DELAY);
-  }, [recordLog]);
-
-  const rememberTarget = useCallback(() => {
-    const p = protoRef.current;
-    const value =
-      p === "ws" || p === "sse"
-        ? urlRef.current.trim()
-        : `${hostRef.current.trim()}:${portRef.current.trim()}`;
-    if (!value || value === ":") return;
-    setTargets((prev) => {
-      const next = pushTarget(prev, p, value);
-      saveTargets(next);
-      return next;
-    });
-  }, []);
-
-  // 事件监听（挂载一次）
-  useEffect(() => {
-    let cancelled = false;
-    const un: Array<() => void> = [];
-    const add = (fn: () => void) => {
-      if (cancelled) fn();
-      else un.push(fn);
-    };
-
-    (async () => {
-      add(
-        await listen<MessagePayload>("wstool://message", (e) => {
-          const p = e.payload;
-          if (p.id !== activeIdRef.current) return;
-          const text = p.data ?? p.text ?? "";
-          const bytes =
-            p.len ??
-            (p.hex
-              ? p.hex.split(/\s+/).filter(Boolean).length
-              : new TextEncoder().encode(text).length);
-          const prefix = p.from ? `[${p.from}] ` : "";
-          recordLog("rx", prefix + text, p.hex, bytes);
-        })
-      );
-
-      add(
-        await listen<{ id: string; url?: string }>("wstool://open", (e) => {
-          if (e.payload.id !== activeIdRef.current) return;
-          clearReconnectTimer();
-          connectingRef.current = false;
-          setConnecting(false);
-          setConnected(true);
-          setConnectedAt(Date.now());
-          recordLog(
-            "open",
-            tRef.current("wsdebug.connected", { url: e.payload.url ?? e.payload.id })
-          );
-          rememberTarget();
-        })
-      );
-
-      add(
-        await listen<{ id: string }>("wstool://closed", (e) => {
-          if (e.payload.id !== activeIdRef.current) return;
-          activeIdRef.current = "";
-          connectingRef.current = false;
-          setConnecting(false);
-          setConnected(false);
-          setConnectedAt(null);
-          setPingPending(false);
-          setLatency(null);
-          recordLog("close", tRef.current("wsdebug.closed", { id: e.payload.id }));
-          scheduleReconnect();
-        })
-      );
-
-      add(
-        await listen<{ id: string; raw: string }>("sstool://event", (e) => {
-          if (e.payload.id !== activeIdRef.current) return;
-          const meta = parseSseBlock(e.payload.raw);
-          const text = meta.data ?? e.payload.raw;
-          recordLog("event", text, undefined, e.payload.raw.length, meta);
-        })
-      );
-
-      add(
-        await listen<{ id: string }>("sstool://open", (e) => {
-          if (e.payload.id !== activeIdRef.current) return;
-          clearReconnectTimer();
-          connectingRef.current = false;
-          setConnecting(false);
-          setConnected(true);
-          setConnectedAt(Date.now());
-          recordLog("open", tRef.current("wsdebug.sseSubscribed", { id: e.payload.id }));
-          rememberTarget();
-        })
-      );
-
-      add(
-        await listen<{ id: string }>("sstool://closed", (e) => {
-          if (e.payload.id !== activeIdRef.current) return;
-          activeIdRef.current = "";
-          connectingRef.current = false;
-          setConnecting(false);
-          setConnected(false);
-          setConnectedAt(null);
-          recordLog("close", tRef.current("wsdebug.sseDisconnected", { id: e.payload.id }));
-          scheduleReconnect();
-        })
-      );
-
-      add(
-        await listen<{ id: string; token: string }>("wstool://pong", (e) => {
-          if (e.payload.id !== activeIdRef.current) return;
-          const sentAt = pingSentRef.current.get(e.payload.token);
-          if (sentAt === undefined) return;
-          pingSentRef.current.delete(e.payload.token);
-          if (pingTimerRef.current !== null) {
-            window.clearTimeout(pingTimerRef.current);
-            pingTimerRef.current = null;
-          }
-          setPingPending(false);
-          setLatency(Math.max(0, Math.round(performance.now() - sentAt)));
-        })
-      );
-    })();
-
-    return () => {
-      cancelled = true;
-      un.forEach((u) => u());
-      if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current);
-      if (pingTimerRef.current !== null) window.clearTimeout(pingTimerRef.current);
-      // 只注销事件会把后端会话留成孤儿：按「真实连接 ID」主动断开。
-      const id = activeIdRef.current;
-      activeIdRef.current = "";
-      if (id) {
-        void invoke("wstool_disconnect", { id }).catch(() => {
-          /* 卸载路径，失败无可上报 */
-        });
-      }
-    };
-  }, [clearReconnectTimer, recordLog, rememberTarget, scheduleReconnect]);
-
-  // 时长
-  useEffect(() => {
-    if (!connected || connectedAt === null) {
-      setDuration("00:00:00");
-      return;
-    }
-    const tick = () => setDuration(formatDuration(Date.now() - connectedAt));
-    tick();
-    const timer = window.setInterval(tick, 1000);
-    return () => window.clearInterval(timer);
-  }, [connected, connectedAt]);
-
-  // 偏好持久化
-  useEffect(() => {
-    savePrefs({ showTime, autoScroll, hexView, autoReconnect, lineEnding });
-  }, [showTime, autoScroll, hexView, autoReconnect, lineEnding]);
-
-  // 自动滚动
-  useEffect(() => {
-    if (!autoScroll || paused) return;
-    const el = logRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [logs, autoScroll, paused, hexView, filter]);
-
-  const doDisconnect = useCallback(
-    async (manual = true) => {
-      manualRef.current = true;
-      clearReconnectTimer();
-      connectEpochRef.current += 1;
-      connectingRef.current = false;
-      const id = activeIdRef.current;
-      activeIdRef.current = "";
-      setConnected(false);
-      setConnecting(false);
-      setConnectedAt(null);
-      setLatency(null);
-      setPingPending(false);
-      if (id) {
-        try {
-          await invoke("wstool_disconnect", { id });
-        } catch {
-          /* 已断开 / 会话不存在 */
-        }
-      }
-      if (manual) recordLog("close", tRef.current("wsdebug.disconnectedByUser"));
-    },
-    [clearReconnectTimer, recordLog]
-  );
-
-  const doConnect = async (auto = false) => {
-    if (connectingRef.current || connected) return;
-    // 手动连接重置重连计数；自动重连必须保留计数，否则永远停不下来
-    if (!auto) clearReconnectTimer();
-    const id = connId.trim();
-    if (!id) {
-      recordLog("sys", t("wsdebug.connIdRequired"));
-      return;
-    }
-    const p = proto;
-    const portNum = Number(port);
-    if ((p === "tcp" || p === "udp") && (!host.trim() || !Number.isInteger(portNum) || portNum <= 0 || portNum > 65535)) {
-      recordLog("sys", t("wsdebug.invalidTarget"));
-      return;
-    }
-    if ((p === "ws" || p === "sse") && !url.trim()) {
-      recordLog("sys", t("wsdebug.invalidTarget"));
-      return;
-    }
-
-    manualRef.current = false;
-    connectingRef.current = true;
-    setConnecting(true);
-    const epoch = ++connectEpochRef.current;
-    activeIdRef.current = id;
-
-    try {
-      if (p === "ws") {
-        await invoke("ws_connect", { id, url: url.trim(), headers: parseHeadersText(headersText) });
-      } else if (p === "sse") {
-        await invoke("sse_connect", { id, url: url.trim(), headers: parseHeadersText(headersText) });
-      } else {
-        await invoke("net_connect", { id, protocol: p, host: host.trim(), port: portNum });
-      }
-      // 连接过程中用户切了协议 / 点了断开：后端会话可能刚好建成，补一次清理
-      if (connectEpochRef.current !== epoch) {
-        await invoke("wstool_disconnect", { id }).catch(() => {});
-        return;
-      }
-    } catch (e) {
-      if (connectEpochRef.current === epoch) {
-        activeIdRef.current = "";
-        connectingRef.current = false;
-        setConnecting(false);
-        setConnected(false);
-        recordLog("sys", String(e));
-        scheduleReconnect();
-      }
-    } finally {
-      if (connectEpochRef.current === epoch) {
-        connectingRef.current = false;
-        setConnecting(false);
-      }
-    }
-  };
-  connectRef.current = () => doConnect(true);
-
-  const switchProto = async (next: Proto) => {
-    if (next === proto) return;
-    manualRef.current = true;
-    clearReconnectTimer();
-    if (activeIdRef.current) {
-      recordLog("sys", t("wsdebug.switchWillDisconnect"));
-      await doDisconnect(false);
-    }
-    setProto(next);
-    setRecentValue("");
-    setLatency(null);
-    if (next === "ws") setUrl((u) => (u.startsWith("http") ? "ws://" : u || "ws://"));
-    if (next === "sse") setUrl((u) => (u.startsWith("ws") ? "https://" : u));
-  };
-
-  const selectTarget = async (value: string) => {
-    setRecentValue("");
-    if (!value) return;
-    manualRef.current = true;
-    clearReconnectTimer();
-    if (connected || connecting) await doDisconnect(false);
-    if (proto === "ws" || proto === "sse") {
-      setUrl(value);
-    } else {
-      const idx = value.lastIndexOf(":");
-      if (idx > 0) {
-        setHost(value.slice(0, idx));
-        setPort(value.slice(idx + 1));
-      }
-    }
-  };
-
-  const doPing = async () => {
-    if (!connected || proto !== "ws" || pingPending) return;
-    const id = activeIdRef.current;
-    const token = `${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`;
-    pingSentRef.current.set(token, performance.now());
-    setPingPending(true);
-    try {
-      await invoke("ws_ping", { id, token });
-    } catch (e) {
-      pingSentRef.current.delete(token);
-      setPingPending(false);
-      recordLog("sys", String(e));
-      return;
-    }
-    if (pingTimerRef.current !== null) window.clearTimeout(pingTimerRef.current);
-    pingTimerRef.current = window.setTimeout(() => {
-      pingTimerRef.current = null;
-      pingSentRef.current.delete(token);
-      setPingPending(false);
-      setLatency(null);
-      recordLog("sys", tRef.current("wsdebug.pingTimeout"));
-    }, PING_TIMEOUT);
-  };
-
-  const canSend = connected && (proto === "ws" || proto === "tcp" || proto === "udp");
-
-  const writeOne = async (raw: string): Promise<boolean> => {
-    if (!connected || !raw) return false;
-    let payload = raw;
-    if (sendHex) {
-      const hex = normalizeHex(raw);
-      if (!hex) {
-        recordLog("sys", t("wsdebug.hexInvalid"));
-        return false;
-      }
-      payload = hex;
-    } else if (proto === "tcp" || proto === "udp") {
-      payload = withLineEnding(raw, lineEnding);
-    }
-    try {
-      if (proto === "ws") {
-        await invoke("ws_send", { id: activeIdRef.current, data: payload, hexMode: sendHex });
-      } else {
-        await invoke("net_send", { id: activeIdRef.current, data: payload, hexMode: sendHex });
-      }
-      const bytes = sendHex
-        ? payload.split(/\s+/).filter(Boolean).length
-        : new TextEncoder().encode(payload).length;
-      recordLog("tx", sendHex ? payload : raw, sendHex ? payload : undefined, bytes);
-      return true;
-    } catch (e) {
-      recordLog("sys", String(e));
-      return false;
-    }
-  };
-
-  const doSend = async () => {
-    if (!canSend || !sendData) return;
-    const ok = await writeOne(sendData);
-    if (!ok) return;
-    const value = sendData.trim();
-    if (value) {
-      setSendHistory((h) => {
-        const next = [value, ...h.filter((x) => x !== value)].slice(0, MAX_SEND_HISTORY);
-        saveSendHistory(next);
-        return next;
-      });
-    }
-    setHistoryIdx(-1);
-  };
-
-  const togglePause = () => {
-    if (!paused) {
-      pausedRef.current = true;
-      setPaused(true);
-      return;
-    }
-    pausedRef.current = false;
-    setPaused(false);
-    const pending = pendingRef.current;
-    pendingRef.current = [];
-    setPendingCount(0);
-    if (pending.length > 0) {
-      setLogs((prev) => {
-        const next = [...prev, ...pending];
-        return next.length > MAX_LOGS ? next.slice(-MAX_LOGS) : next;
-      });
-    }
-  };
-
-  const clearLogs = () => {
-    pendingRef.current = [];
-    setPendingCount(0);
-    setLogs([]);
-    setStats({ rxFrames: 0, rxBytes: 0, txFrames: 0, txBytes: 0 });
-  };
-
-  const exportLog = async () => {
-    if (logs.length === 0) {
-      recordLog("sys", t("wsdebug.exportEmpty"));
-      return;
-    }
-    try {
-      const target = await saveDialog({
-        defaultPath: `net-debug-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.txt`,
-        filters: [{ name: "Text", extensions: ["txt", "log"] }],
-      });
-      if (!target) return;
-      await invoke("write_text_file", {
-        path: target,
-        content: buildExportText(logs, hexView, showTime),
-      });
-      recordLog("sys", t("wsdebug.exportOk", { path: target }));
-    } catch (e) {
-      recordLog("sys", t("wsdebug.exportFail", { err: String(e) }));
-    }
-  };
-
-  const visibleLogs = useMemo(() => filterLogs(logs, filter), [logs, filter]);
-
+  const {
+    connectionError, sending,
+    t,
+    proto,
+    connId,
+    setConnId,
+    url,
+    setUrl,
+    host,
+    setHost,
+    port,
+    setPort,
+    headersText,
+    setHeadersText,
+    connected,
+    connecting,
+    duration,
+    latency,
+    pingPending,
+    targets,
+    recentValue,
+    logs,
+    paused,
+    pendingCount,
+    filter,
+    setFilter,
+    showTime,
+    setShowTime,
+    autoScroll,
+    setAutoScroll,
+    hexView,
+    setHexView,
+    autoReconnect,
+    setAutoReconnect,
+    lineEnding,
+    setLineEnding,
+    stats,
+    sendData,
+    setSendData,
+    sendHex,
+    setSendHex,
+    sendHistory,
+    historyIdx,
+    setHistoryIdx,
+    logRef,
+    doDisconnect,
+    doConnect,
+    switchProto,
+    selectTarget,
+    doPing,
+    canSend,
+    doSend,
+    togglePause,
+    clearLogs,
+    exportLog,
+    visibleLogs,
+  } = useWsDebugger();
   const dirLabel = (dir: Dir) =>
     dir === "rx"
       ? t("wsdebug.dirRx")
@@ -621,10 +113,11 @@ export default function WsDebugger() {
 
   return (
     <div className="h-full flex flex-col overflow-hidden p-3 gap-2.5 text-body">
+      {connectionError && <p role="alert" className="ui-note-error p-3">{connectionError}</p>}
       {/* 标题 + 状态 + 协议切换 */}
-      <div className="flex items-center gap-3 shrink-0">
+      <div className="flex flex-wrap items-center gap-3 shrink-0">
         <Cable className="w-4 h-4 text-indigo-400" />
-        <h1 className="text-base font-semibold">{t("wsdebug.title")}</h1>
+        <h1 className="text-title font-semibold">{t("wsdebug.title")}</h1>
         <span
           className={`text-body px-2 py-0.5 rounded-full ${
             connecting
@@ -662,8 +155,8 @@ export default function WsDebugger() {
           {PROTO_TABS.map(({ key, label }) => (
             <button
               key={key}
+              type="button" aria-pressed={proto === key}
               onClick={() => void switchProto(key)}
-              disabled={locked}
               className={`rounded px-2.5 py-1 text-caption transition-colors disabled:opacity-40 ${
                 proto === key ? "bg-white/10 text-white" : "text-slate-400 hover:text-slate-200"
               }`}
@@ -675,12 +168,12 @@ export default function WsDebugger() {
       </div>
 
       {/* 连接配置 */}
-      <div className="shrink-0 flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-ctl p-3">
+      <div className="shrink-0 flex flex-wrap items-center gap-2 bg-white/[0.03] border border-white/10 rounded-ctl p-3">
         <select
           value={recentValue}
           onChange={(e) => void selectTarget(e.target.value)}
           disabled={locked}
-          className="max-w-36 bg-black/30 border border-white/10 rounded px-2 py-2 text-body text-slate-300 focus:outline-none focus:border-indigo-500 disabled:opacity-40"
+          className="ui-input max-w-36 px-2 h-9 text-body text-slate-300 "
           title={t("wsdebug.recent")}
         >
           <option value="">
@@ -696,7 +189,7 @@ export default function WsDebugger() {
           value={connId}
           onChange={(e) => setConnId(e.target.value)}
           disabled={locked}
-          className="w-24 bg-black/30 border border-white/10 rounded px-2 py-1.5 font-mono text-body focus:outline-none focus:border-indigo-500 disabled:opacity-40"
+          className="ui-input w-24 px-2 h-8 font-mono text-body "
           title={t("wsdebug.connIdTitle")}
         />
         {(proto === "ws" || proto === "sse") && (
@@ -705,7 +198,7 @@ export default function WsDebugger() {
             onChange={(e) => setUrl(e.target.value)}
             disabled={locked}
             placeholder={proto === "ws" ? t("wsdebug.wsPlaceholder") : t("wsdebug.ssePlaceholder")}
-            className="flex-1 bg-black/30 border border-white/10 rounded px-3 py-2 font-mono text-body focus:outline-none focus:border-indigo-500 disabled:opacity-40"
+            className="ui-input flex-1 px-3 h-9 font-mono text-body "
           />
         )}
         {(proto === "tcp" || proto === "udp") && (
@@ -716,30 +209,30 @@ export default function WsDebugger() {
               onChange={(e) => setHost(e.target.value)}
               disabled={locked}
               placeholder={t("wsdebug.hostPlaceholder")}
-              className="flex-1 min-w-32 bg-black/30 border border-white/10 rounded px-3 py-2 font-mono text-body focus:outline-none focus:border-indigo-500 disabled:opacity-40"
+              className="ui-input flex-1 min-w-32 px-3 h-9 font-mono text-body "
             />
             <span className="text-slate-500 text-sm">:</span>
             <input
               value={port}
-              onChange={(e) => setPort(e.target.value.replace(/\D/g, ""))}
+              inputMode="numeric" onChange={(e) => setPort(e.target.value)}
               disabled={locked}
               placeholder={t("wsdebug.portPlaceholder")}
-              className="w-24 bg-black/30 border border-white/10 rounded px-3 py-2 font-mono text-body focus:outline-none focus:border-indigo-500 disabled:opacity-40"
+              className="ui-input w-24 px-3 h-9 font-mono text-body "
             />
           </>
         )}
-        {connected ? (
+        {connected || connecting ? (
           <button
             onClick={() => void doDisconnect(true)}
-            className="px-3 py-2 rounded-md bg-red-600 hover:bg-red-500 text-body flex items-center gap-1"
+            className={btnDanger}
           >
-            <Unplug className="w-3.5 h-3.5" /> {t("wsdebug.disconnect")}
+            <Unplug className="w-3.5 h-3.5" /> {connecting ? t("common.cancel") : t("wsdebug.disconnect")}
           </button>
         ) : (
           <button
             onClick={() => void doConnect()}
             disabled={connecting || (proto === "ws" || proto === "sse" ? !url : !host || !port)}
-            className="px-3 py-2 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-body flex items-center gap-1"
+            className={btnPrimary}
           >
             {connecting ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -752,12 +245,12 @@ export default function WsDebugger() {
       </div>
 
       {(proto === "ws" || proto === "sse") && (
-        <input
+        <textarea rows={2} maxLength={65536} aria-label={t("wsdebug.headersPlaceholder")}
           value={headersText}
           onChange={(e) => setHeadersText(e.target.value)}
           disabled={locked}
           placeholder={t("wsdebug.headersPlaceholder")}
-          className="shrink-0 bg-black/30 border border-white/10 rounded px-3 py-1.5 font-mono text-body focus:outline-none focus:border-indigo-500 disabled:opacity-40"
+          className="ui-input shrink-0 px-3 py-2 min-h-16 max-h-48 font-mono text-body resize-y"
         />
       )}
 
@@ -823,7 +316,7 @@ export default function WsDebugger() {
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder={t("wsdebug.filterPlaceholder")}
-            className="w-40 bg-black/30 border border-white/10 rounded px-2 py-0.5 text-tiny focus:outline-none focus:border-indigo-500"
+            className="ui-input w-40 px-2 py-0.5 text-tiny "
           />
           <button
             onClick={() => void exportLog()}
@@ -926,7 +419,7 @@ export default function WsDebugger() {
             rows={2}
             placeholder={sendHex ? t("wsdebug.sendHexPlaceholder") : t("wsdebug.sendTextPlaceholder")}
             title={t("wsdebug.sendHistory")}
-            className="flex-1 bg-black/30 border border-white/10 rounded-md p-2 font-mono text-body resize-none focus:outline-none focus:border-indigo-500"
+            className="ui-input flex-1 p-2 font-mono text-body resize-none "
           />
           <label className="flex items-center gap-1 text-body cursor-pointer text-slate-300">
             <input
@@ -942,7 +435,7 @@ export default function WsDebugger() {
             onChange={(e) => setLineEnding(e.target.value as LineEnding)}
             disabled={sendHex || proto === "ws"}
             title={t("wsdebug.lineEnding")}
-            className="bg-black/30 border border-white/10 rounded px-2 py-1.5 text-body text-slate-300 focus:outline-none focus:border-indigo-500 disabled:opacity-40"
+            className="ui-input px-2 h-8 text-body text-slate-300 "
           >
             <option value="none">{t("wsdebug.leNone")}</option>
             <option value="lf">{t("wsdebug.leLf")}</option>
@@ -951,8 +444,8 @@ export default function WsDebugger() {
           </select>
           <button
             onClick={() => void doSend()}
-            disabled={!connected || !sendData}
-            className="px-3 py-2 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-body flex items-center gap-1"
+            disabled={!connected || !sendData || sending}
+            className={btnPrimary}
           >
             <Send className="w-3.5 h-3.5" /> {t("wsdebug.send")}
           </button>

@@ -1916,7 +1916,9 @@
     "sseIdTag": "id: {{id}}",
     "sendHistory": "Ctrl+↑ / Ctrl+↓ 调取发送历史",
     "switchWillDisconnect": "切换协议，已断开当前连接",
-    "sseNote": "SSE 为单向订阅，服务端事件以原始格式展示在上方日志区。"
+    "sseNote": "SSE 为单向订阅，服务端事件以原始格式展示在上方日志区。",
+    "truncatedMessage": "…（内容过长，显示已截断）",
+    "disconnectFailed": "断开失败，请重试；连接状态尚未确认：{{err}}"
   },
   "datasync": {
     "exportTitle": "导出 Kira 数据快照",

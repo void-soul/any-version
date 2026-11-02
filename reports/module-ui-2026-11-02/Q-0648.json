@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0648",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "网络调试器前端：连接ID复用使迟到清理误伤新连接，卸载未失效连接代次；关闭自动重连后仍可能重连，Ping竞态、日志预算及公共控件需完善。",
+  "root_cause": "**WsDebugger**所有连接复用用户ID，cleanup不递增connectEpoch；重连回调不复查开关，pong先于invoke完成会再建超时timer；暂停/显示日志只限帧数，头部多行配置使用单行input。",
+  "solution": "",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/devtools/WsDebugger.tsx** | 网络调试器会话/预算或公共控件/回归 |\n| **src/components/devtools/useWsDebugger.ts** | 网络调试器会话/预算或公共控件/回归 |\n| **src/components/devtools/debugLogBudget.ts** | 网络调试器会话/预算或公共控件/回归 |\n| **src/components/devtools/debugLogBudget.test.ts** | 网络调试器会话/预算或公共控件/回归 |\n| **src/components/devtools/serialLogBudget.ts** | 网络调试器会话/预算或公共控件/回归 |\n| **src/i18n/locales/zh/translation.json** | 网络调试器会话/预算或公共控件/回归 |\n| **src/i18n/locales/en/translation.json** | 网络调试器会话/预算或公共控件/回归 |\n",
+  "created_at": "2026-11-02 18:37:41",
+  "updated_at": "2026-11-02 18:45:56",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

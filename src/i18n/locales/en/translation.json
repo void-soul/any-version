@@ -1910,7 +1910,9 @@
     "sseIdTag": "id: {{id}}",
     "sendHistory": "Ctrl+↑ / Ctrl+↓ for send history",
     "switchWillDisconnect": "Protocol switched, current connection closed",
-    "sseNote": "SSE is a one-way subscription; server events are shown raw in the log area above."
+    "sseNote": "SSE is a one-way subscription; server events are shown raw in the log area above.",
+    "truncatedMessage": "… (display truncated)",
+    "disconnectFailed": "Disconnect failed. Retry to confirm the connection has closed: {{err}}"
   },
   "datasync": {
     "exportTitle": "Export Kira Data Snapshot",
