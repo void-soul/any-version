@@ -18,20 +18,22 @@ interface FavoriteItemFiltersProps {
 export function FavoriteItemFilters({ keyword, setKeyword, source, setSource, stats, since, setSince }: FavoriteItemFiltersProps) {
   const { t } = useTranslation();
   return (
-    <div className="ml-auto flex items-center gap-2">
-      <div className="flex items-center gap-1 glass-input px-2 h-7">
+    <div className="ml-auto flex items-center gap-2 flex-wrap min-w-0">
+      <div className="flex items-center gap-1 ui-input px-2 h-8">
         <Search className="w-3 h-3 text-slate-500" />
         <input
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
+          aria-label={t("favorites.searchPlaceholder")}
           placeholder={t("favorites.searchPlaceholder")}
           className="bg-transparent outline-none text-caption w-36"
         />
       </div>
       <select
+        aria-label={t("favorites.allSources")}
         value={source ?? ""}
         onChange={(e) => setSource(e.target.value || null)}
-        className="glass-input px-2 h-7 text-caption cursor-pointer"
+        className="ui-input px-2 h-8 text-caption cursor-pointer"
       >
         <option value="">{t("favorites.allSources")}</option>
         {(stats?.bySource || []).map(([key]) => (
@@ -44,7 +46,7 @@ export function FavoriteItemFilters({ keyword, setKeyword, source, setSource, st
       <select
         value={since}
         onChange={(e) => setSince(e.target.value as SincePreset)}
-        className="glass-input px-2 h-7 text-caption cursor-pointer"
+        className="ui-input px-2 h-8 text-caption cursor-pointer"
         title={t("favorites.sinceTip")}
       >
         <option value="all">{t("favorites.sinceAll")}</option>

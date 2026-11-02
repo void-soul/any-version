@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0653",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "收藏筛选异步结果乱序、星标连点回滚、正文缓存无界及拖拽监听卸载未清理；统一筛选栏和恢复弹窗。",
+  "root_cause": "**refresh**不校验请求代次，**toggleStar**只靠渲染值，正文缓存按ID无限保存；宽度拖动监听只有mouseup清理，恢复弹窗独立样式且重复点击无保护。",
+  "solution": "1. 筛选请求200ms防抖并失效旧结果，星标按ID互斥，界面设置顺序写入且错误可见。\n2. 正文仅保留最近展开内容，失败允许重试；卸载失效正文请求并释放拖动监听。\n3. 筛选栏公共输入样式与名称，恢复弹窗使用SharedModal/SharedButton并互斥恢复动作。\n4. 构建、475项前端测试与1166文件架构检查通过；未读取真实收藏凭证或调用平台导入。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/favorites/FavoritesPanel.tsx** | 列表/星标/正文/设置/监听保护 |\n| **src/components/favorites/FavoriteItemFilters.tsx** | 公共筛选样式及名称 |\n| **src/components/favorites/FavoriteDeletedDialog.tsx** | 公共弹窗和恢复互斥 |",
+  "created_at": "2026-11-02 20:00:11",
+  "updated_at": "2026-11-02 20:01:30",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

@@ -30,18 +30,18 @@ import { Divider } from "./FavoritesPanel.Divider";
 export default function FavoritesPanel() {
   const { t } = useTranslation();
 
+  const listEpoch = useRef(0);
+  const pendingStars = useRef(new Set<number>());
+  const contentEpoch = useRef(0);
+  const resizeCleanup = useRef<(() => void) | null>(null);
+  useEffect(() => () => { listEpoch.current += 1; contentEpoch.current += 1; resizeCleanup.current?.(); }, []);
   const [items, setItems] = useState<FavoriteRow[]>([]);
   const [stats, setStats] = useState<FavoriteStats | null>(null);
-  // 分类筛选：走分类 id（树），名字只用于回显
 
   const [source, setSource] = useState<string | null>(null);
   const [keyword, setKeyword] = useState("");
-  // 收藏时间过滤（全部 / 近 7 天 / 近 30 天 / 近一年）
   const [since, setSince] = useState<SincePreset>("all");
-  // 正在跑的长任务（替换原先单个 busy 字段）：三个导入可以同时在列，
-  // 归类 / 失效检测与导入互斥，所以加工类任务在列时导入按钮全灰。
 
-  // AI 归类的模型选择：直接复用 AI 模块的配置，不另设一套
   const [providers, setProviders] = useState<AiProvider[]>([]);
   const [providerId, setProviderId] = useState<string>("");
   const [modelId, setModelId] = useState<string>("");
@@ -75,12 +75,8 @@ export default function FavoritesPanel() {
     modelId,
   });
 
-  // 左侧分类栏宽度：可拖动，宽度与模型选择一起存进 favorites_settings.json
   const [leftWidth, setLeftWidth] = useState(DEFAULT_LEFT_WIDTH);
-  // AI 检索右栏（常驻，不再是弹窗）：宽度可拖动，显隐与宽度一起持久化
   const [aiWidth, setAiWidth] = useState(DEFAULT_AI_WIDTH);
-  // 设置的内存副本：拖动/切模型都是「读-改-写」，先攒在这里再整份落盘
-  // 检索 Agent 的轮数上限：每轮一次模型调用，调大更会找但更费 token（后端再钳一次 1..20）
   const [agentRounds, setAgentRounds] = useState(DEFAULT_AGENT_ROUNDS);
   const settingsRef = useRef<FavoriteSettings>({
     leftWidth: DEFAULT_LEFT_WIDTH,
@@ -91,19 +87,17 @@ export default function FavoritesPanel() {
     aiOpen: true,
   });
 
-  /** 保存界面设置（整份覆盖，未传的字段沿用内存里的现值）。失败只记日志：设置丢了不影响功能。 */
+  const settingsQueue = useRef<Promise<unknown>>(Promise.resolve());
   const persistSettings = useCallback(async (patch: Partial<FavoriteSettings>) => {
     settingsRef.current = { ...settingsRef.current, ...patch };
-    try {
-      await invoke("fav_save_settings", { settings: settingsRef.current });
-    } catch (e) {
-      console.error("保存收藏设置失败:", e);
-    }
+    const snapshot = settingsRef.current;
+    settingsQueue.current = settingsQueue.current.then(() => invoke("fav_save_settings", { settings: snapshot }))
+      .catch((error) => toast(String(error), "err"));
+    await settingsQueue.current;
   }, []);
 
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
 
-  // ── AI 检索助手（用户说需求 → agent 在本地库里找 → 整理成清单）──
   const [aiOpen, setAiOpen] = useState(false);
   const {
     setAiResult,
@@ -122,15 +116,12 @@ export default function FavoritesPanel() {
   const vlist = useVirtualList({
     items,
     getKey: (item) => String(item.id),
-    // 未测量前的估计值：标题 + 描述两行 + 标签行 ≈ 76px
     estimateHeight: 76,
   });
 
-  // 凭证健康状态：Cookie 快过期/已失效时主动提醒
   const [credStatus, setCredStatus] = useState<CredentialStatus[]>([]);
   const [credWarned, setCredWarned] = useState(false);
 
-  // 展开看正文：知乎收藏内容 / GitHub README（懒抓，抓过就缓存在库里）
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [content, setContent] = useState<Record<number, CachedContent | null>>({});
   const [contentBusy, setContentBusy] = useState<number | null>(null);
@@ -161,15 +152,14 @@ export default function FavoritesPanel() {
   });
 
   const refresh = useCallback(async () => {
+    const epoch = ++listEpoch.current;
     const [list, overview, creds, deleted] = await Promise.all([
       invoke<FavoriteRow[]>("fav_list", {
         source,
-        // 分类改成树之后按 id 筛（后端会把子分类一起算进来）
         categoryId: categoryId ?? undefined,
         status: null,
         keyword: keyword.trim() || null,
         sort: "favorited",
-        // 时区换算放在前端：后端只拿到一个「不早于」的本地时间串，不需要猜时区
         favoritedSince: sinceToLocalString(since),
         starredOnly: starredOnly || null,
         limit: 0,
@@ -178,17 +168,19 @@ export default function FavoritesPanel() {
       invoke<CredentialStatus[]>("fav_credential_status"),
       invoke<FavoriteDeletedRow[]>("fav_list_deleted"),
     ]);
+    if (epoch !== listEpoch.current) return;
     setItems(list);
     setStats(overview);
     setCredStatus(creds);
     setDeletedRows(deleted ?? []);
   }, [source, categoryId, keyword, since, starredOnly]);
 
-  // 星标数量：当前列表里的（分类/关键词筛选会收窄它，与列表所见保持一致）
 
   /** 星标开关：乐观更新（先改 UI 再发请求），失败时回滚并提示。
    *  星标是纯本地标记，不涉及任何平台同步，所以不该有等待感。 */
   const toggleStar = async (item: FavoriteRow) => {
+    if (pendingStars.current.has(item.id)) return;
+    pendingStars.current.add(item.id);
     const next = !item.isStarred;
     setItems((cur) => cur.map((x) => (x.id === item.id ? { ...x, isStarred: next } : x)));
     try {
@@ -196,11 +188,12 @@ export default function FavoritesPanel() {
     } catch (e) {
       setItems((cur) => cur.map((x) => (x.id === item.id ? { ...x, isStarred: item.isStarred } : x)));
       toast(String(e), "err");
-    }
+    } finally { pendingStars.current.delete(item.id); }
   };
 
   useEffect(() => {
-    void refresh().catch((e) => toast(String(e), "err"));
+    const timer = window.setTimeout(() => { void refresh().catch((e) => toast(String(e), "err")); }, 200);
+    return () => { window.clearTimeout(timer); listEpoch.current += 1; };
   }, [refresh]);
 
   useEffect(() => {
@@ -227,7 +220,6 @@ export default function FavoritesPanel() {
     [credStatus],
   );
 
-  // 失效/快过期只主动提醒一次，别每次重渲染都弹
   useEffect(() => {
     if (credWarned || credStatus.length === 0) return;
     const expired = credStatus.filter((c) => c.configured && c.status === "expired");
@@ -255,11 +247,6 @@ export default function FavoritesPanel() {
     }
   }, [credStatus, credWarned, t]);
 
-  // 供应商/模型：**只**恢复收藏模块自己上次选的，不做任何兜底。
-  //
-  // 以前会依次回落「全局默认（翻译模块选的）→ 首个可用供应商 → 该供应商的激活模型」，
-  // 结果是界面看着像没选、实际却跑在别的账号/模型上。现在宁可为空（按钮禁用 + 提示先选），
-  // 也不替用户做决定。
   useEffect(() => {
     let alive = true;
     void Promise.all([
@@ -269,11 +256,9 @@ export default function FavoritesPanel() {
       .then(([cfg, saved]) => {
         if (!alive) return;
         const all = cfg.providers || [];
-        // 列表里只放「能用于归类」的：有 OpenAI 兼容端点 + Key
         const usable = all.filter((p) => p.openai_url && p.api_key);
         setProviders(usable);
 
-        // 分类栏宽度：坏值回默认，越界收敛（后端也会再钳一次）
         const savedWidth = saved?.leftWidth;
         const width =
           typeof savedWidth === "number" && Number.isFinite(savedWidth) && savedWidth > 0
@@ -281,7 +266,6 @@ export default function FavoritesPanel() {
             : DEFAULT_LEFT_WIDTH;
         setLeftWidth(width);
 
-        // AI 检索右栏：宽度同样钳制，显隐按上次的来（默认展开）
         const savedAiWidth = saved?.aiWidth;
         const aiW =
           typeof savedAiWidth === "number" && Number.isFinite(savedAiWidth) && savedAiWidth > 0
@@ -303,12 +287,10 @@ export default function FavoritesPanel() {
           aiOpen: saved?.aiOpen ?? true,
         };
 
-        // 上次选的供应商还在可用列表里 → 恢复；否则留空等用户选
         const savedProvider =
           saved?.providerId && usable.find((p) => p.id === saved.providerId);
         if (!savedProvider) return;
         setProviderId(savedProvider.id);
-        // 模型同样只在「仍属于该供应商」时恢复
         const savedModel =
           saved?.modelId &&
           savedProvider.models.some((m) => m.id === saved.modelId)
@@ -326,6 +308,7 @@ export default function FavoritesPanel() {
   const startLeftResize = (e: ReactMouseEvent) => {
     if (e.button !== 0) return;
     e.preventDefault();
+    resizeCleanup.current?.();
     const startX = e.clientX;
     const startWidth = leftWidth;
     let next = startWidth;
@@ -338,6 +321,7 @@ export default function FavoritesPanel() {
       window.removeEventListener("mouseup", onUp);
       if (next !== startWidth) void persistSettings({ leftWidth: next });
     };
+    resizeCleanup.current = () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   };
@@ -346,6 +330,7 @@ export default function FavoritesPanel() {
   const startAiResize = (e: ReactMouseEvent) => {
     if (e.button !== 0) return;
     e.preventDefault();
+    resizeCleanup.current?.();
     const startX = e.clientX;
     const startWidth = aiWidth;
     let next = startWidth;
@@ -358,17 +343,16 @@ export default function FavoritesPanel() {
       window.removeEventListener("mouseup", onUp);
       if (next !== startWidth) void persistSettings({ aiWidth: next });
     };
+    resizeCleanup.current = () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   };
 
   /** 开关 AI 检索右栏（显隐持久化） */
   const toggleAiPanel = () => {
-    setAiOpen((prev) => {
-      const next = !prev;
-      void persistSettings({ aiOpen: next });
-      return next;
-    });
+    const next = !settingsRef.current.aiOpen;
+    setAiOpen(next);
+    void persistSettings({ aiOpen: next });
   };
 
   /**
@@ -377,19 +361,22 @@ export default function FavoritesPanel() {
    * `refresh` 为 true 时强制重新抓（GitHub 用），否则命中缓存直接显示。
    */
   const openContent = async (item: FavoriteRow, force = false) => {
+    const epoch = ++contentEpoch.current;
     setContentBusy(item.id);
     try {
       const data =
         item.source === "github"
           ? await invoke<CachedContent>("fav_github_readme", { id: item.id, refresh: force })
           : await invoke<CachedContent | null>("fav_get_content", { id: item.id });
-      setContent((prev) => ({ ...prev, [item.id]: data }));
+      if (epoch !== contentEpoch.current) return;
+      setContent({ [item.id]: data });
     } catch (e) {
+      if (epoch !== contentEpoch.current) return;
       toast(t("favorites.contentFail", { err: String(e) }), "err");
       // 失败也记一笔，避免每次收起再展开都重试一遍
-      setContent((prev) => ({ ...prev, [item.id]: null }));
+      setContent({});
     } finally {
-      setContentBusy(null);
+      if (epoch === contentEpoch.current) setContentBusy(null);
     }
   };
 
