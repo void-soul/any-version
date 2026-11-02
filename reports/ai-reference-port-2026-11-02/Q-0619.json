@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0619",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "Windows工具安装检测缺少卸载命令父目录兜底和声明运行时子路径优先，安装目录为空或图标非exe时可能漏检，需要检测启动共用可靠路径。",
+  "root_cause": "参考 **EchoBird 7e6f86e7** 从卸载命令目录兜底并优先声明运行时；我方卸载索引仅图标exe及InstallLocation第一层，空安装目录/非exe图标会漏检，且可能选中外层启动器。",
+  "solution": "1. 新增 **install_roots** 纯路径解析，从InstallLocation、DisplayIcon及UninstallString提取存在的绝对安装根，不执行命令。\n2. 先查声明的父目录/运行时exe，再查声明exe文件名和旧索引；不递归猜测、不返回卸载器，检测与启动共享find_fallback_exe。\n3. 保留用户路径、默认路径及npm优先级、60秒缓存和落盘复查。\n4. 临时目录回归在缺失实现基线上失败，分别覆盖三种根来源、内层运行时优先、外层回退和无关路径拒绝。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/ai/tool_paths.rs** | 实现或回归验证 |\n| **src-tauri/src/commands/ai/tool_paths/install_roots.rs** | 实现或回归验证 |",
+  "created_at": "2026-11-02 15:44:39",
+  "updated_at": "2026-11-02 15:54:48",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

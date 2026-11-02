@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+mod install_roots;
 
 /// 加载用户自定义路径覆盖
 ///
@@ -466,7 +467,7 @@ const UNINSTALL_INDEX_TTL: std::time::Duration = std::time::Duration::from_secs(
 
 /// 索引缓存：`None` = 还没建过；`Some((建表时刻, 索引))`。
 #[cfg(windows)]
-type UninstallIndex = Option<(std::time::Instant, HashMap<String, PathBuf>)>;
+type UninstallIndex = Option<(std::time::Instant, HashMap<String, PathBuf>, Vec<PathBuf>)>;
 
 #[cfg(windows)]
 fn uninstall_index_cache() -> &'static std::sync::Mutex<UninstallIndex> {
@@ -476,11 +477,12 @@ fn uninstall_index_cache() -> &'static std::sync::Mutex<UninstallIndex> {
 
 /// 扫一遍三个卸载项分支，建「exe 小写名 → 路径」索引。
 #[cfg(windows)]
-fn build_uninstall_index() -> HashMap<String, PathBuf> {
+fn build_uninstall_index() -> (HashMap<String, PathBuf>, Vec<PathBuf>) {
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ};
     use winreg::RegKey;
 
     let mut map: HashMap<String, PathBuf> = HashMap::new();
+    let mut install_dirs = Vec::new();
     let roots = [
         (HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
         (HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
@@ -495,6 +497,10 @@ fn build_uninstall_index() -> HashMap<String, PathBuf> {
             let Ok(entry) = key.open_subkey_with_flags(&entry_name, KEY_READ) else {
                 continue;
             };
+            let value = |name: &str| entry.get_value::<String, _>(name).unwrap_or_default();
+            for dir in install_roots::roots(&value("InstallLocation"), &value("DisplayIcon"), &value("UninstallString")) {
+                if !install_dirs.contains(&dir) { install_dirs.push(dir); }
+            }
             if let Ok(icon) = entry.get_value::<String, _>("DisplayIcon") {
                 // 形如 `"C:\path\App.exe",0`
                 let cleaned = icon.split(',').next().unwrap_or("").trim().trim_matches('"');
@@ -512,7 +518,7 @@ fn build_uninstall_index() -> HashMap<String, PathBuf> {
             }
         }
     }
-    map
+    (map, install_dirs)
 }
 
 /// 按 exe 文件名（小写）反查注册表卸载项里的真实安装路径。
@@ -521,14 +527,17 @@ fn build_uninstall_index() -> HashMap<String, PathBuf> {
 /// [`UNINSTALL_INDEX_TTL`] 的说明）。拿一条死路径去 `CreateProcess` 只会得到
 /// 「系统找不到指定的路径」，用户看到的就是「点启动没反应 / 报 os error 3」。
 #[cfg(windows)]
-fn lookup_uninstall_exe(name: &str) -> Option<PathBuf> {
+fn lookup_uninstall_exe(names: &[String], declared: &[String]) -> Option<PathBuf> {
     let cached = {
         let mut guard = uninstall_index_cache().lock().ok()?;
-        let fresh = matches!(*guard, Some((at, _)) if at.elapsed() < UNINSTALL_INDEX_TTL);
+        let fresh = matches!(*guard, Some((at, _, _)) if at.elapsed() < UNINSTALL_INDEX_TTL);
         if !fresh {
-            *guard = Some((std::time::Instant::now(), build_uninstall_index()));
+            let (index, roots) = build_uninstall_index();
+            *guard = Some((std::time::Instant::now(), index, roots));
         }
-        guard.as_ref()?.1.get(name).cloned()
+        let (_, index, roots) = guard.as_ref()?;
+        install_roots::resolve(roots, declared)
+            .or_else(|| names.iter().find_map(|name| index.get(name).filter(|p| p.is_file()).cloned()))
     }?;
     // 缓存里可能有已删除的路径（应用刚被卸/重装）——不落到磁盘上就不算数
     cached.is_file().then_some(cached)
@@ -593,10 +602,9 @@ pub fn find_fallback_exe(
     // 2) 注册表卸载项（Windows）
     #[cfg(windows)]
     {
-        for name in declared_exe_names(tool_id, declared) {
-            if let Some(found) = lookup_uninstall_exe(&name) {
-                return Some(found);
-            }
+        let paths: Vec<String> = effective_tool_paths(tool_id, declared).iter().map(|p| expand_tool_path(p)).collect();
+        if let Some(found) = lookup_uninstall_exe(&declared_exe_names(tool_id, declared), &paths) {
+            return Some(found);
         }
     }
     #[cfg(not(windows))]
