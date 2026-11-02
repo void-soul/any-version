@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0649",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "网络调试后端：WS取消joined任务会detach读写子任务，发送通道与SSE不完整事件无界，异步连接缺模块停用取消；需要明确任务所有权和资源边界。",
+  "root_cause": "**ws_connect**仅保存等待join的任务，abort会drop并detach两个读写JoinHandle；出站unbounded_channel和SSE待完成字符串可无限积累；连接只在开始检查启用状态，disconnect尚未建立时无对象可取消。",
+  "solution": "",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/wstool.rs** | 网络任务所有权/资源预算或回归 |\n| **src-tauri/src/commands/wstool/task_pair.rs** | 网络任务所有权/资源预算或回归 |\n| **src-tauri/src/commands/wstool/sse_buffer.rs** | 网络任务所有权/资源预算或回归 |\n| **src/components/devtools/useWsDebugger.ts** | 网络任务所有权/资源预算或回归 |\n",
+  "created_at": "2026-11-02 18:45:56",
+  "updated_at": "2026-11-02 19:37:03",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

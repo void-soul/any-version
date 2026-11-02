@@ -1,3 +1,10 @@
+#[path = "wstool/task_pair.rs"]
+mod task_pair;
+#[path = "wstool/sse_buffer.rs"]
+mod sse_buffer;
+const SEND_QUEUE_CAPACITY: usize = 32;
+const MAX_SEND_BYTES: usize = 1024 * 1024;
+
 // ─── WebSocket / SSE 调试器模块 ───
 // WS 基于 tokio-tungstenite；SSE 基于既有 reqwest 的流式响应。
 // 收到的数据通过 `wstool://message` / `sstool://event` 等事件推给前端。
@@ -28,27 +35,52 @@ pub struct WsState {
     sessions: Mutex<HashMap<String, Session>>,
     /// 原始 TCP/UDP 连接
     raw: Mutex<HashMap<String, RawConn>>,
+    pending: Mutex<HashMap<String, PendingConnect>>,
 }
 
 pub fn close_all(state: &WsState) {
+    for (_, pending) in state.pending.lock().unwrap_or_else(|e| e.into_inner()).drain() { let _ = pending.cancel.send(()); }
     let sessions=std::mem::take(&mut *state.sessions.lock().unwrap_or_else(|e|e.into_inner()));
     let raw=std::mem::take(&mut *state.raw.lock().unwrap_or_else(|e|e.into_inner()));
     for (_,session) in sessions {for handle in session.handles {handle.abort();}}
     for (_,connection) in raw {for handle in connection.handles {handle.abort();}}
 }
 
+struct PendingConnect { token: u64, cancel: tokio::sync::oneshot::Sender<()> }
+struct PendingGuard<'a> { state: &'a WsState, id: String, token: u64 }
+impl Drop for PendingGuard<'_> {
+    fn drop(&mut self) {
+        let mut pending = self.state.pending.lock().unwrap_or_else(|e| e.into_inner());
+        if pending.get(&self.id).is_some_and(|entry| entry.token == self.token) { pending.remove(&self.id); }
+    }
+}
+async fn owned_connect<T>(state: &WsState, id: String, future: impl std::future::Future<Output = Result<T, String>>) -> Result<T, String> {
+    // Disconnecting while a handshake is pending must cancel that handshake, not merely an empty session map.
+    wstool_disconnect_core(state, id.clone())?;
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let token = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let (cancel, cancelled) = tokio::sync::oneshot::channel();
+    state.pending.lock().unwrap_or_else(|e| e.into_inner()).insert(id.clone(), PendingConnect { token, cancel });
+    let _guard = PendingGuard { state, id, token };
+    tokio::select! {
+        biased;
+        _ = cancelled => Err("连接已取消".into()),
+        result = tokio::time::timeout(Duration::from_secs(15), future) => result.map_err(|_| "连接超时（15秒）".to_string())?,
+    }
+}
+
 /// 原始 TCP/UDP 会话。
 struct RawConn {
     #[allow(dead_code)] // 保留对端地址供后续扩展（如 UDP 重定向目标）
     udp_target: Option<SocketAddr>,
-    tx: mpsc::UnboundedSender<Vec<u8>>,
-    handles: Vec<tokio::task::JoinHandle<()>>,
+    tx: mpsc::Sender<Vec<u8>>,
+    handles: Vec<tokio::task::AbortHandle>,
 }
 
 struct Session {
     target: String,
-    tx: Option<mpsc::UnboundedSender<WsOut>>,
-    handles: Vec<tokio::task::JoinHandle<()>>,
+    tx: Option<mpsc::Sender<WsOut>>,
+    handles: Vec<tokio::task::AbortHandle>,
 }
 
 enum WsOut {
@@ -58,19 +90,25 @@ enum WsOut {
     Close,
 }
 
-fn insert_session(state: &WsState, id: &str, target: String, tx: Option<mpsc::UnboundedSender<WsOut>>, handle: tokio::task::JoinHandle<()>) {
+fn insert_session(state: &WsState, id: &str, target: String, tx: Option<mpsc::Sender<WsOut>>, handles: Vec<tokio::task::AbortHandle>) -> Result<(), String> {
     let mut map = state.sessions.lock().unwrap_or_else(|e| e.into_inner());
-    if !crate::runtime_tasks::is_enabled("wsDebugger") {handle.abort();return;}
-    // **同 id 重连必须先 abort 旧会话**：直接 insert 只是把旧 Session 从表里挤掉，
-    // 而 `JoinHandle` 的 Drop 只 detach 不 abort —— 旧的读写任务会继续跑，
-    // 旧连接活着，旧 tx 被 drop 后它的写任务还会推一条 `wstool://closed`，
-    // 把刚建好的新连接在前端显示成「已断开」。
-    if let Some(old) = map.remove(id) {
-        for h in old.handles {
-            h.abort();
-        }
+    if !crate::runtime_tasks::is_enabled("wsDebugger") {
+        for handle in handles { handle.abort(); }
+        return Err("网络调试模块已停用".into());
     }
-    map.insert(id.to_string(), Session { target, tx, handles: vec![handle] });
+    if let Some(old) = map.insert(id.to_string(), Session { target, tx, handles }) {
+        for handle in old.handles { handle.abort(); }
+    }
+    Ok(())
+}
+fn insert_raw(state: &WsState, id: String, connection: RawConn) -> Result<(), String> {
+    let mut map = state.raw.lock().unwrap_or_else(|e| e.into_inner());
+    if !crate::runtime_tasks::is_enabled("wsDebugger") {
+        for handle in connection.handles { handle.abort(); }
+        return Err("网络调试模块已停用".into());
+    }
+    if let Some(old) = map.insert(id, connection) { for handle in old.handles { handle.abort(); } }
+    Ok(())
 }
 
 /// 列出当前活跃连接。
@@ -85,6 +123,13 @@ pub fn wstool_list(state: tauri::State<'_, WsState>) -> Vec<ConnInfo> {
         .collect()
 }
 
+fn websocket_config() -> tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
+    let mut config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default();
+    config.max_message_size = Some(4 * 1024 * 1024);
+    config.max_frame_size = Some(4 * 1024 * 1024);
+    config
+}
+
 /// 建立 WebSocket 连接（支持 ws:// 与 wss://）。
 /// 连接成功后返回；后续消息经 `wstool://message` 推送，关闭经 `wstool://closed`。
 #[tauri::command]
@@ -95,6 +140,9 @@ pub async fn ws_connect(
     url: String,
     headers: Option<Vec<Vec<String>>>,
 ) -> Result<(), String> {
+    let core_state = state.inner();
+    let connect_id = id.clone();
+    crate::runtime_tasks::run_if_enabled("wsDebugger", owned_connect(core_state, connect_id, async move {
     crate::runtime_tasks::require_enabled("wsDebugger")?;
     let mut request = url
         .as_str()
@@ -113,19 +161,19 @@ pub async fn ws_connect(
         }
     }
 
-    let (ws_stream, _resp) = tokio_tungstenite::connect_async(request)
+    let (ws_stream, _resp) = tokio_tungstenite::connect_async_with_config(request, Some(websocket_config()), false)
         .await
         .map_err(|e| format!("WebSocket 连接失败: {}", e))?;
     info!("[wstool] {} 已连接 {}", id, url);
     let _ = app.emit("wstool://open", serde_json::json!({ "id": id, "url": url }));
 
     let (mut sink, mut stream) = ws_stream.split();
-    let (tx, mut rx) = mpsc::unbounded_channel::<WsOut>();
+    let (tx, mut rx) = mpsc::channel::<WsOut>(SEND_QUEUE_CAPACITY);
 
     // 写任务
     let app_writer = app.clone();
     let id_writer = id.clone();
-    let writer_task = tauri::async_runtime::spawn(async move {
+    let writer_task = tokio::spawn(async move {
         while let Some(out) = rx.recv().await {
             let (msg, is_close) = match out {
                 WsOut::Text(t) => (Message::Text(t), false),
@@ -146,7 +194,7 @@ pub async fn ws_connect(
     // 读任务：收到消息即推送事件
     let app_reader = app;
     let id_reader = id.clone();
-    let reader_task = tauri::async_runtime::spawn(async move {
+    let reader_task = tokio::spawn(async move {
         while let Some(item) = stream.next().await {
             match item {
                 Ok(Message::Text(text)) => {
@@ -177,17 +225,15 @@ pub async fn ws_connect(
         let _ = app_reader.emit("wstool://closed", serde_json::json!({ "id": id_reader }));
     });
 
-    // 合并两个任务的句柄：断开时一并 abort
-    let joined = tokio::spawn(async move {
-        let _ = tokio::join!(writer_task, reader_task);
-    });
-    insert_session(&state, &id, url, Some(tx), joined);
+    insert_session(core_state, &id, url, Some(tx), task_pair::own_pair(writer_task, reader_task))?;
     Ok(())
+    })).await
 }
 
 /// 通过 WebSocket 发送数据。
 #[tauri::command]
 pub fn ws_send(state: tauri::State<'_, WsState>, id: String, data: String, hex_mode: bool) -> Result<(), String> {
+    if data.len() > MAX_SEND_BYTES { return Err("单次发送不能超过1 MiB".into()); }
     let map = state.sessions.lock().unwrap_or_else(|e| e.into_inner());
     let session = map.get(&id).ok_or_else(|| format!("{} 未连接", id))?;
     let out = if hex_mode {
@@ -196,7 +242,7 @@ pub fn ws_send(state: tauri::State<'_, WsState>, id: String, data: String, hex_m
     } else {
         WsOut::Text(data)
     };
-    session.tx.as_ref().ok_or("通道已关闭")?.send(out).map_err(|_| "发送失败：连接已关闭".to_string())
+    session.tx.as_ref().ok_or("通道已关闭")?.try_send(out).map_err(|e| format!("发送失败，队列已满或连接已关闭: {e}"))
 }
 
 /// 发送 WebSocket Ping，服务端自动回 Pong 后由读任务推送 `wstool://pong`。
@@ -212,16 +258,17 @@ pub fn ws_ping(state: tauri::State<'_, WsState>, id: String, token: String) -> R
         .tx
         .as_ref()
         .ok_or("该连接不支持 Ping")?
-        .send(WsOut::Ping(token.into_bytes()))
+        .try_send(WsOut::Ping(token.into_bytes()))
         .map_err(|_| "发送失败：连接已关闭".to_string())
 }
 
 /// 断开指定连接（WS / SSE / TCP / UDP 共用注册表）。
 /// 核心逻辑与运行时无关，命令包装与测试共用。
 pub fn wstool_disconnect_core(state: &WsState, id: String) -> Result<(), String> {
+    if let Some(pending) = state.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&id) { let _ = pending.cancel.send(()); }
     if let Some(session) = state.sessions.lock().unwrap_or_else(|e| e.into_inner()).remove(&id) {
         if let Some(tx) = &session.tx {
-            let _ = tx.send(WsOut::Close);
+            let _ = tx.try_send(WsOut::Close);
         }
         for h in session.handles {
             h.abort();
@@ -288,6 +335,9 @@ pub async fn net_connect_core(
     host: String,
     port: u16,
 ) -> Result<(), String> {
+    let core_state = state;
+    let connect_id = id.clone();
+    crate::runtime_tasks::run_if_enabled("wsDebugger", owned_connect(core_state, connect_id, async move {
     crate::runtime_tasks::require_enabled("wsDebugger")?;
     match protocol.as_str() {
         "tcp" => {
@@ -301,7 +351,7 @@ pub async fn net_connect_core(
             info!("[nettool] {} 已连接 tcp://{}:{}", id, host, port);
             emit("wstool://open", serde_json::json!({ "id": id, "url": format!("tcp://{}:{}", host, port), "proto": "tcp" }));
             let (mut rd, mut wr) = stream.into_split();
-            let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
+            let (tx, mut rx) = mpsc::channel::<Vec<u8>>(SEND_QUEUE_CAPACITY);
 
             let emit_w = emit.clone();
             let id_w = id.clone();
@@ -336,10 +386,7 @@ pub async fn net_connect_core(
                 emit_r("wstool://closed", serde_json::json!({ "id": id_r }));
             });
 
-            state.raw.lock().unwrap_or_else(|e| e.into_inner()).insert(
-                id.clone(),
-                RawConn { udp_target: None, tx, handles: vec![writer, reader] },
-            );
+            insert_raw(state, id.clone(), RawConn { udp_target: None, tx, handles: task_pair::own_pair(writer, reader) })?;
             Ok(())
         }
         "udp" => {
@@ -353,7 +400,7 @@ pub async fn net_connect_core(
             info!("[nettool] {} 已绑定 udp → {}", id, peer);
             emit("wstool://open", serde_json::json!({ "id": id, "url": format!("udp://{}:{}", host, port), "proto": "udp" }));
             let sock = Arc::new(sock);
-            let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
+            let (tx, mut rx) = mpsc::channel::<Vec<u8>>(SEND_QUEUE_CAPACITY);
 
             let sock_w = sock.clone();
             let emit_w = emit.clone();
@@ -388,19 +435,18 @@ pub async fn net_connect_core(
                 emit_r("wstool://closed", serde_json::json!({ "id": id_r }));
             });
 
-            state.raw.lock().unwrap_or_else(|e| e.into_inner()).insert(
-                id,
-                RawConn { udp_target: Some(peer), tx, handles: vec![writer, reader] },
-            );
+            insert_raw(state, id.clone(), RawConn { udp_target: Some(peer), tx, handles: task_pair::own_pair(writer, reader) })?;
             Ok(())
         }
         other => Err(format!("不支持的协议: {}", other)),
     }
+    })).await
 }
 
 /// 通过 TCP/UDP 发送数据（hex_mode=true 时按十六进制解析）。
 /// 核心逻辑与运行时无关，测试与命令包装共用。
 pub fn net_send_core(state: &WsState, id: String, data: String, hex_mode: bool) -> Result<(), String> {
+    if data.len() > MAX_SEND_BYTES { return Err("单次发送不能超过1 MiB".into()); }
     let map = state.raw.lock().unwrap_or_else(|e| e.into_inner());
     let conn = map.get(&id).ok_or_else(|| format!("{} 未连接", id))?;
     let bytes = if hex_mode {
@@ -408,7 +454,8 @@ pub fn net_send_core(state: &WsState, id: String, data: String, hex_mode: bool) 
     } else {
         data.into_bytes()
     };
-    conn.tx.send(bytes).map_err(|_| "发送失败：连接已关闭".to_string())
+    if conn.udp_target.is_some() && bytes.len() > 65_507 { return Err("UDP数据报不能超过65507字节".into()); }
+    conn.tx.try_send(bytes).map_err(|e| format!("发送失败，队列已满或连接已关闭: {e}"))
 }
 
 /// 建立 TCP/UDP 连接（命令入口）。
@@ -444,6 +491,9 @@ pub async fn sse_connect(
     url: String,
     headers: Option<Vec<Vec<String>>>,
 ) -> Result<(), String> {
+    let core_state = state.inner();
+    let connect_id = id.clone();
+    crate::runtime_tasks::run_if_enabled("wsDebugger", owned_connect(core_state, connect_id, async move {
     // SSE 需要禁用整体超时，仅限制连接超时
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(15))
@@ -471,62 +521,25 @@ pub async fn sse_connect(
     let app_task = app;
     let id_task = id.clone();
     let task = tokio::spawn(async move {
-        let mut buffer = String::new();
-        let mut decoder_buf: Vec<u8> = Vec::new();
+        let mut parser = sse_buffer::SseBuffer::new(1024 * 1024);
+        let mut reason: Option<String> = None;
         while let Some(chunk) = byte_stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    decoder_buf.extend_from_slice(&bytes);
-                    // 按 \n 分割处理完整行
-                    while let Some(pos) = decoder_buf.iter().position(|&b| b == b'\n') {
-                        let line_bytes: Vec<u8> = decoder_buf.drain(..=pos).collect();
-                        let mut line = String::from_utf8_lossy(&line_bytes[..line_bytes.len().saturating_sub(1)]).to_string();
-                        if line.ends_with('\r') {
-                            line.pop();
-                        }
-                        buffer.push_str(&line);
-                        buffer.push('\n');
-                    }
-                    // 事件以空行结束
-                    while let Some(end) = find_event_end(&buffer) {
-                        let event_block = buffer[..end].to_string();
-                        buffer.drain(..end);
-                        if event_block.trim().is_empty() {
-                            continue;
-                        }
-                        let _ = app_task.emit("sstool://event", serde_json::json!({ "id": id_task, "raw": event_block }));
-                    }
+                    if let Err(error) = parser.feed(&bytes, |raw| {
+                        let _ = app_task.emit("sstool://event", serde_json::json!({ "id": id_task, "raw": raw }));
+                    }) { reason = Some(error); break; }
                 }
-                Err(e) => {
-                    warn!("[sstool] {} 流错误: {}", id_task, e);
-                    break;
-                }
+                Err(error) => { reason = Some(format!("SSE读取失败: {error}")); break; }
             }
         }
-        let _ = app_task.emit("sstool://closed", serde_json::json!({ "id": id_task }));
+        let _ = app_task.emit("sstool://closed", serde_json::json!({ "id": id_task, "reason": reason }));
     });
 
     // SSE 无发送通道，tx 传 None（顺带走 insert_session：同 id 重订阅时同样要先 abort 旧任务）
-    insert_session(&state, &id, url, None, task);
+    insert_session(core_state, &id, url, None, vec![task.abort_handle()])?;
     Ok(())
-}
-
-fn find_event_end(buffer: &str) -> Option<usize> {
-    // 找到 "\n\n"（含行尾空行）位置，返回其结束索引
-    let bytes = buffer.as_bytes();
-    let mut i = 0;
-    while i + 1 < bytes.len() {
-        if bytes[i] == b'\n' && bytes[i + 1] == b'\n' {
-            // 跳过连续空行
-            let mut j = i + 1;
-            while j < bytes.len() && bytes[j] == b'\n' {
-                j += 1;
-            }
-            return Some(j);
-        }
-        i += 1;
-    }
-    None
+    })).await
 }
 
 #[cfg(test)]
@@ -664,4 +677,31 @@ mod net_echo_tests {
         // 非十六进制的 ASCII 也走同一条路
         assert!(parse_hex_bytes("ZZ").is_err());
     }
+    #[tokio::test]
+    async fn bounded_send_queue_reports_backpressure_without_allocating_an_unbounded_backlog() {
+        let state = WsState::default();
+        let (tx, _rx) = mpsc::channel(1);
+        insert_raw(&state, "bounded".into(), RawConn { udp_target: None, tx, handles: vec![] }).unwrap();
+        assert!(net_send_core(&state, "bounded".into(), "first".into(), false).is_ok());
+        assert!(net_send_core(&state, "bounded".into(), "second".into(), false).is_err());
+        assert!(net_send_core(&state, "bounded".into(), "x".repeat(MAX_SEND_BYTES + 1), false).is_err());
+        wstool_disconnect_core(&state, "bounded".into()).unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_pending_handshake_drops_its_resources_and_slot() {
+        let state = Arc::new(WsState::default());
+        let owner = state.clone();
+        let task = tokio::spawn(async move {
+            owned_connect(&owner, "pending".into(), std::future::pending::<Result<(), String>>()).await
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !state.pending.lock().unwrap().contains_key("pending") { tokio::task::yield_now().await; }
+        }).await.unwrap();
+        wstool_disconnect_core(&state, "pending".into()).unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(1), task).await.unwrap().unwrap();
+        assert!(result.unwrap_err().contains("取消"));
+        assert!(state.pending.lock().unwrap().is_empty());
+    }
+
 }

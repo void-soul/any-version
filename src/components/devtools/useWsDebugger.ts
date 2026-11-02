@@ -284,7 +284,7 @@ export function useWsDebugger() {
       );
 
       add(
-        await listen<{ id: string }>("sstool://closed", (e) => {
+        await listen<{ id: string; reason?: string | null }>("sstool://closed", (e) => {
           if (cancelled || e.payload.id !== activeIdRef.current) return;
           const closedId = activeIdRef.current;
           activeIdRef.current = "";
@@ -296,6 +296,7 @@ export function useWsDebugger() {
           connectedRef.current = false;
           setConnected(false);
           setConnectedAt(null);
+          if (e.payload.reason) recordLog("sys", e.payload.reason);
           recordLog("close", tRef.current("wsdebug.sseDisconnected", { id: connIdRef.current.trim() }));
           scheduleReconnect();
         })
