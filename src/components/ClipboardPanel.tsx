@@ -1,3 +1,4 @@
+import { ClipboardImageCache } from "./clipboardImageCache";
 // 剪贴板历史面板（全宽紧凑列表 + 单行截断 + 固定行高虚拟滚动 + 触底加载）
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
@@ -57,7 +58,7 @@ const ROW_H = 52;
 const OVERSCAN = 8;
 
 // 缩略图 data-url 缓存（虚拟滚动频繁进出视口时避免重复请求）
-const imageCache = new Map<number, string>();
+const imageCache = new ClipboardImageCache();
 
 function fmtTime(ts: number, t: (key: string, opts?: Record<string, unknown>) => string): string {
   const d = new Date(ts * 1000);
@@ -79,6 +80,7 @@ function ImageThumb({ item }: { item: ClipboardItem }) {
     let alive = true;
     invoke<string>("clipboard_get_image", { id: item.id, thumb: true })
       .then((d) => {
+        if (!alive) return;
         imageCache.set(item.id, d);
         if (alive) setSrc(d);
       })
@@ -399,6 +401,20 @@ export default function ClipboardPanel() {
   const [ignoredApps, setIgnoredApps] = useState<string[]>([]);
   const [newApp, setNewApp] = useState("");
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const loadGeneration = useRef(0);
+  const pendingLoad = useRef(0);
+  const copyTimer = useRef<number | null>(null);
+  const lifetime = useRef(0);
+  const queryKey = JSON.stringify([keyword, kind, pinnedOnly]);
+  const queryRef = useRef(queryKey);
+  queryRef.current = queryKey;
+  useEffect(() => () => {
+    lifetime.current++;
+    loadGeneration.current++;
+    imageCache.clear();
+    if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+  }, []);
   const [_busy, setBusy] = useState("");
   // 复制/粘贴结果提示（管理员模式下 alert 可能被 UAC 遮挡，用应用内 toast 确保可见）
   const showToast = useCallback((kind: "ok" | "err", msg: string) => toast(msg, kind), []);
@@ -412,6 +428,10 @@ export default function ClipboardPanel() {
 
   const load = useCallback(
     async (reset: boolean) => {
+      if (queryRef.current !== queryKey || (!reset && pendingLoad.current !== 0)) return;
+      const generation = ++loadGeneration.current;
+      pendingLoad.current = generation;
+      setLoadError("");
       const offset = reset ? 0 : itemsRef.current.length;
       setLoading(true);
       try {
@@ -422,23 +442,25 @@ export default function ClipboardPanel() {
           limit: PAGE_SIZE,
           offset,
         });
+        if (loadGeneration.current !== generation || queryRef.current !== queryKey) return;
         setItems(reset ? res.items : [...itemsRef.current, ...res.items]);
         setTotal(res.total);
         setLoadedAll(offset + res.items.length >= res.total);
       } catch (e) {
-        console.error("加载剪贴板历史失败", e);
+        if (loadGeneration.current === generation && queryRef.current === queryKey) setLoadError(String(e));
       } finally {
-        setLoading(false);
+        if (loadGeneration.current === generation) { pendingLoad.current = 0; setLoading(false); }
       }
     },
-    [keyword, kind, pinnedOnly]
+    [keyword, kind, pinnedOnly, queryKey]
   );
 
   // 首屏 + 条件变化（reset 并回滚到顶部）
   useEffect(() => {
     listRef.current?.scrollTo({ top: 0 });
     setScrollTop(0);
-    load(true);
+    void load(true);
+    return () => { loadGeneration.current++; pendingLoad.current = 0; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [keyword, kind, pinnedOnly]);
 
@@ -451,10 +473,11 @@ export default function ClipboardPanel() {
   // 监听后端「剪贴板有新内容」事件
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    listen("clipboard-updated", () => load(true)).then((fn) => (unlisten = fn));
-    return () => {
-      if (unlisten) unlisten();
-    };
+    let disposed = false;
+    listen("clipboard-updated", () => { if (!disposed) void load(true); })
+      .then((fn) => { if (disposed) fn(); else unlisten = fn; })
+      .catch((error) => { if (!disposed) setLoadError(String(error)); });
+    return () => { disposed = true; unlisten?.(); };
   }, [load]);
 
   // 输入框值变化：只更新临时输入，不触发搜索（避免每次按键/停顿都查询导致卡顿）。
@@ -500,10 +523,13 @@ export default function ClipboardPanel() {
   }, [refreshSettings]);
 
   const copyItem = async (id: number) => {
+    const owner = lifetime.current;
     try {
       await invoke("clipboard_copy_item", { id });
+      if (lifetime.current !== owner) return;
       setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 1200);
+      if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+      copyTimer.current = window.setTimeout(() => setCopiedId(null), 1200);
       showToast("ok", t("clip.copiedToast"));
     } catch (e) {
       const msg = t("clip.copyFail", { err: String(e) });
@@ -540,6 +566,7 @@ export default function ClipboardPanel() {
   const deleteItem = async (id: number) => {
     try {
       await invoke("clipboard_delete_item", { id });
+      imageCache.delete(id);
       setItems((prev) => prev.filter((i) => i.id !== id));
       setTotal((t) => Math.max(0, t - 1));
     } catch (e) {
@@ -551,6 +578,7 @@ export default function ClipboardPanel() {
     if (!(await theamedConfirm(t("clip.clearConfirm"), { danger: true }))) return;
     try {
       await invoke("clipboard_clear_history", { keepPinned: true });
+      imageCache.clear();
       load(true);
     } catch (e) {
       theamedAlert(String(e));
@@ -654,11 +682,11 @@ export default function ClipboardPanel() {
               }
             }}
             placeholder={t("clip.searchPh")}
-            className="flex-1 bg-transparent outline-none text-[11.5px] text-slate-200 placeholder:text-slate-500"
+            aria-label={t("clip.searchPh")} className="flex-1 min-w-0 bg-transparent outline-none text-body text-slate-200 placeholder:text-slate-500"
           />
           <button
             onClick={handleSearch}
-            className="px-2 py-1 rounded-md bg-[var(--module-accent)] text-white text-[10.5px] font-semibold hover:opacity-90 cursor-pointer"              title={t("common.search")}
+            className="px-2 py-1 rounded-md bg-[var(--module-accent)] text-white text-caption font-semibold hover:opacity-90 cursor-pointer"              title={t("common.search")}
             >
             {t("common.search")}
           </button>
@@ -684,7 +712,7 @@ export default function ClipboardPanel() {
             <button
               key={f.k || "all"}
               onClick={() => setKind(f.k)}
-              className={`px-2.5 py-1 rounded-md text-[10.5px] font-medium transition-all cursor-pointer ${
+              className={`px-2.5 py-1 rounded-md text-caption font-medium transition-all cursor-pointer ${
                 kind === f.k ? "bg-[var(--module-accent)] text-white shadow-sm" : "text-slate-400 hover:text-slate-200"
               }`}
             >
@@ -694,7 +722,7 @@ export default function ClipboardPanel() {
         </div>
         <button
           onClick={() => setPinnedOnly((v) => !v)}
-          className={`px-2.5 py-1.5 rounded-ctl border text-[10.5px] font-medium flex items-center gap-1.5 transition-all cursor-pointer ${
+          className={`px-2.5 py-1.5 rounded-ctl border text-caption font-medium flex items-center gap-1.5 transition-all cursor-pointer ${
             pinnedOnly
               ? "bg-amber-500/15 border-amber-500/30 text-amber-300"
               : "bg-white/5 border-white/10 text-slate-400 hover:text-slate-200"
@@ -704,8 +732,9 @@ export default function ClipboardPanel() {
         </button>
       </div>
 
+      {loadError && <p role="alert" className="ui-note ui-note-error text-body px-3 py-2 break-words">{loadError}</p>}
       {/* 虚拟滚动列表 */}
-      <div className="flex-grow min-h-0 overflow-y-auto" ref={listRef} onScroll={onListScroll}>
+      <div className="flex-grow min-h-0 overflow-y-auto" aria-busy={loading} ref={listRef} onScroll={onListScroll}>
         {items.length === 0 && !loading && (
           <VexEmptyState
             title={t("clip.emptyTitle")}
@@ -731,7 +760,7 @@ export default function ClipboardPanel() {
                     onDelete={() => deleteItem(items[idx].id)}
                   />
                 ) : hasMore ? (
-                  <div className="h-full flex items-center justify-center gap-2 text-[10.5px] text-slate-500">
+                  <div className="h-full flex items-center justify-center gap-2 text-caption text-slate-500">
                     {loading ? (
                       <>
                         <Loader2 className="w-3 h-3 animate-spin" /> {t("clip.loading")}
@@ -781,7 +810,7 @@ export default function ClipboardPanel() {
             <div className="flex items-center justify-between rounded-card bg-white/[0.03] border border-white/10 p-3">
               <div>
                 <p className="text-body text-slate-200 font-medium">{t("clip.monitorOn")}</p>
-                <p className="text-[10.5px] text-slate-500 mt-0.5">{t("clip.monitorHint")}</p>
+                <p className="text-caption text-slate-500 mt-0.5">{t("clip.monitorHint")}</p>
               </div>
               <button
                 onClick={() => setSettings({ ...settings, enabled: !settings.enabled })}
@@ -822,7 +851,7 @@ export default function ClipboardPanel() {
               <div key={opt.k} className="flex items-center justify-between rounded-card bg-white/[0.03] border border-white/10 p-3">
                 <div>
                   <p className="text-body text-slate-200 font-medium">{opt.t}</p>
-                  <p className="text-[10.5px] text-slate-500 mt-0.5">{opt.d}</p>
+                  <p className="text-caption text-slate-500 mt-0.5">{opt.d}</p>
                 </div>
                 <button
                   onClick={() => setSettings({ ...settings, [opt.k]: !settings[opt.k] })}
@@ -839,13 +868,13 @@ export default function ClipboardPanel() {
             {/* 忽略规则（按来源程序） */}
             <div>
               <p className="text-body text-slate-200 font-medium mb-2">忽略规则（按来源程序）</p>
-              <p className="text-[10.5px] text-slate-500 mb-2">
+              <p className="text-caption text-slate-500 mb-2">
                 来自这些程序（如 password.exe、winscp.exe）的复制内容将不会被记录。
               </p>
               <div className="flex flex-wrap gap-1.5 mb-2">
                 {ignoredApps.length === 0 && <span className="text-caption text-slate-600">暂无忽略规则</span>}
                 {ignoredApps.map((a) => (
-                  <span key={a} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-[10.5px] text-slate-300">
+                  <span key={a} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-caption text-slate-300">
                     {a}
                     <button onClick={() => removeIgnoredApp(a)} className="text-slate-500 hover:text-red-400 cursor-pointer">
                       <X className="w-3 h-3" />

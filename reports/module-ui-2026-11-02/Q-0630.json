@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0630",
+  "date": "2026-11-02",
+  "category": "Performance",
+  "status": "已验证",
+  "phenomenon": "按顺序检查剪贴板，缩略图Map无容量上限且卸载后可被晚响应回填，查询/分页缺代次和同步闸，事件晚注册与复制提示计时器未清理；需降低内存并完善错误和公共样式。",
+  "root_cause": "模块级 **imageCache Map** 不受容量/字节约束且晚响应先写缓存再判断alive；load无代次、分页仅靠异步loading，事件晚注册和复制setTimeout未清理，错误只写控制台。",
+  "solution": "1. **ClipboardImageCache**实现LRU，128条/8MiB保守UTF-16字节上限，拒收超大项；删除/清空/卸载释放，晚缩略图不回填。\n2. 查询代次及当前筛选键阻断旧结果和旧闭包，分页同步闸避免重复；订阅晚注册立即取消，失败显示alert。\n3. 复制提示重置旧计时器，卸载清理，晚复制完成不创建新计时器；统一散落字号为公共令牌并补搜索/加载语义。\n4. 新增4项LRU/字节/清理/容量边界测试；构建、453前端测试、1135文件架构检查通过，未读取或复制真实历史内容。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/ClipboardPanel.tsx** | 缓存资源与列表交互验收 |\n| **src/components/clipboardImageCache.ts** | 缓存资源与列表交互验收 |\n| **src/components/clipboardImageCache.test.ts** | 缓存资源与列表交互验收 |",
+  "created_at": "2026-11-02 16:47:17",
+  "updated_at": "2026-11-02 16:48:59",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}
