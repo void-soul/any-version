@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0655",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "设置页迁移进度监听失败会卡住保存，配置加载失败仍可保存，托盘配置失败只打印日志；模块管理行名称截断及开关缺语义，补充操作一致性。",
+  "root_cause": "**handleSave**在try外等待监听Promise，失败无法finally释放busy；**fetchConfig**失败静默且允许保存；托盘设置乐观写入无序、失败不回读；名称宽度固定过窄、开关缺语义。",
+  "solution": "1. 迁移监听注册移入try/finally，保存同步互斥且配置加载成功才允许保存；提示定时器卸载清理。\n2. 托盘设置顺序提交，失败提示并回读实际状态；自启动增加同步防重入。\n3. 模块名称加宽并提供完整提示；启用开关提供switch语义，拖动属性移至独立手柄。\n4. 构建和1166文件架构检查通过；未执行真实迁移、自启动变更或模块停用。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/GlobalSettings.tsx** | 保存生命周期、托盘写入及自启动互斥 |\n| **src/components/GlobalSettings.ModuleConfigRow.tsx** | 名称、开关、手柄和操作名称 |",
+  "created_at": "2026-11-02 20:06:51",
+  "updated_at": "2026-11-02 20:07:58",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

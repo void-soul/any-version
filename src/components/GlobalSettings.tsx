@@ -34,6 +34,11 @@ import { ModuleConfigRow } from "./GlobalSettings.ModuleConfigRow";
 
 export default function GlobalSettings() {
   const { t } = useTranslation();
+  const saveBusy = useRef(false);
+  const autostartGate = useRef(false);
+  const launcherTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [configLoaded, setConfigLoaded] = useState(false);
+  useEffect(() => () => { if (launcherTimer.current) clearTimeout(launcherTimer.current); }, []);
   const [dataDir, setDataDir] = useState("");
   const [oldDataDir, setOldDataDir] = useState("");
   const [loading, setLoading] = useState(false);
@@ -71,18 +76,26 @@ export default function GlobalSettings() {
     show_mihomo: true,
   });
 
+  const trayRef = useRef(trayCfg);
+  const trayQueue = useRef<Promise<unknown>>(Promise.resolve());
   const saveTrayCfg = async (patch: Partial<TrayMenuConfig>) => {
-    const next = { ...trayCfg, ...patch };
+    trayRef.current = { ...trayRef.current, ...patch };
+    const next = trayRef.current;
     setTrayCfg(next);
-    try {
-      await invoke("set_tray_menu_config", { value: next });
-    } catch (e) {
-      console.error(e);
-    }
+    trayQueue.current = trayQueue.current.then(async () => {
+      try { await invoke("set_tray_menu_config", { value: next }); }
+      catch (error) {
+        void alertError(String(error));
+        const actual = await invoke<TrayMenuConfig>("get_tray_menu_config");
+        if (trayRef.current === next) { trayRef.current = actual; setTrayCfg(actual); }
+      }
+    }).catch((error) => { void alertError(String(error)); });
+    await trayQueue.current;
   };
 
   const fetchConfig = async () => {
     setLoading(true);
+    setConfigLoaded(false);
     setSuccess(false);
     try {
       const config = await invoke<Config>("get_config");
@@ -91,12 +104,13 @@ export default function GlobalSettings() {
         setDataDir(config.data_dir);
         setOldDataDir(config.data_dir);
       } else {
-        const dir = await invoke<string>("get_data_dir_cmd").catch(() => "");
+        const dir = await invoke<string>("get_data_dir_cmd");
         setDataDir(dir);
         setOldDataDir(dir);
       }
+      setConfigLoaded(true);
     } catch (e) {
-      console.error(e);
+      void alertError(String(e));
     } finally {
       setLoading(false);
     }
@@ -120,7 +134,8 @@ export default function GlobalSettings() {
   };
 
   const handleToggleAutostart = async () => {
-    if (autostartBusy) return;
+    if (autostartGate.current) return;
+    autostartGate.current = true;
     setAutostartBusy(true);
     try {
       if (autostartOn) {
@@ -135,6 +150,7 @@ export default function GlobalSettings() {
       // 失败后以系统真实状态为准
       await fetchAutostart();
     } finally {
+      autostartGate.current = false;
       setAutostartBusy(false);
     }
   };
@@ -215,7 +231,8 @@ export default function GlobalSettings() {
       setLauncherCfg(saved);
       launcherCfgRef.current = saved;
       setLauncherSaved(true);
-      setTimeout(() => setLauncherSaved(false), 2500);
+      if (launcherTimer.current) clearTimeout(launcherTimer.current);
+      launcherTimer.current = setTimeout(() => setLauncherSaved(false), 2500);
     } catch (e: any) {
       alertError(t("settings.launcherSaveFail", { err: String(e) }));
     } finally {
@@ -325,7 +342,7 @@ export default function GlobalSettings() {
     fetchAppearance();
     fetchSystemFonts();
     invoke<TrayMenuConfig>("get_tray_menu_config")
-      .then(setTrayCfg)
+      .then((value) => { trayRef.current = value; setTrayCfg(value); })
       .catch((e) => console.error("加载托盘菜单配置失败:", e));
   }, []);
 
@@ -335,7 +352,7 @@ export default function GlobalSettings() {
   };
 
   const handleSaveClick = () => {
-    if (!dataDir) return;
+    if (!dataDir || !configLoaded || saveBusy.current) return;
     if (pathsChanged()) {
       setShowMigrateConfirm(true);
     } else {
@@ -344,7 +361,8 @@ export default function GlobalSettings() {
   };
 
   const handleSave = async () => {
-    if (!dataDir) return;
+    if (!dataDir || !configLoaded || saveBusy.current) return;
+    saveBusy.current = true;
     setSaving(true);
     setSuccess(false);
     setMigrateResult(null);
@@ -352,16 +370,10 @@ export default function GlobalSettings() {
     setDeletedOldDirs(null);
     setProgress(null);
 
-    // 监听进度事件
-    const unlisten = await listen<MigrateProgress>(
-      "migrate-progress",
-      (event) => {
-        setProgress(event.payload);
-      },
-    );
-
+    let unlisten: (() => void) | undefined;
     const migrated = pathsChanged();
     try {
+      unlisten = await listen<MigrateProgress>("migrate-progress", (event) => setProgress(event.payload));
       const result = await invoke<MigrateResult>("update_config", {
         dataDir: dataDir || oldDataDir,
       });
@@ -377,8 +389,9 @@ export default function GlobalSettings() {
     } catch (e: any) {
       alertError(t("settings.configSaveFail", { err: String(e) }));
     } finally {
-      unlisten();
+      unlisten?.();
       setProgress(null);
+      saveBusy.current = false;
       setSaving(false);
     }
   };

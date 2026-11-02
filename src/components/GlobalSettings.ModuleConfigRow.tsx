@@ -42,12 +42,14 @@ export function ModuleConfigRow({
       className={`flex items-center gap-2 px-2.5 py-2 rounded-card bg-white/[0.03] border border-white/5 ${
         isDragging ? "opacity-60 ring-1 ring-[var(--module-accent-ring)] z-10" : ""
       } ${disabled ? "opacity-50" : ""}`}
-      {...attributes}
     >
       {/* 拖拽手柄 */}
       <button
         ref={setActivatorNodeRef}
+        type="button"
+        {...attributes}
         {...listeners}
+        aria-label={`${t("settings.dragSort")}：${label}`}
         className="cursor-grab active:cursor-grabbing text-slate-500 hover:text-slate-300 p-0.5 touch-none flex-shrink-0"
         title={t("settings.dragSort")}
       >
@@ -56,13 +58,14 @@ export function ModuleConfigRow({
 
       {/* 图标 + 标签 */}
       <Icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color }} />
-      <span className="text-caption text-slate-300 w-14 truncate flex-shrink-0">{label}</span>
+      <span className="text-caption text-slate-300 w-28 truncate flex-shrink-0" title={label}>{label}</span>
 
       {/* 位置：顶栏/更多 */}
       {pinned ? (
         <span className="text-micro text-slate-600 w-9 text-center flex-shrink-0">{t("settings.pinned")}</span>
       ) : (
         <button
+          aria-pressed={inToolbar}
           onClick={onToggleToolbar}
           disabled={disabled}
           className={`px-1.5 py-0.5 rounded-md text-micro font-medium border transition cursor-pointer disabled:opacity-40 w-9 flex-shrink-0 ${
@@ -81,6 +84,10 @@ export function ModuleConfigRow({
         <span className="w-8 flex-shrink-0" />
       ) : (
         <button
+          type="button"
+          role="switch"
+          aria-checked={!disabled}
+          aria-label={label}
           onClick={onToggleEnabled}
           className={`relative w-8 rounded-full transition cursor-pointer flex-shrink-0 ${
             disabled ? "bg-white/10" : "bg-emerald-500/60"
@@ -114,6 +121,7 @@ export function ModuleConfigRow({
           <button
             onClick={onClearHotkey}
             className="text-slate-500 hover:text-rose-300 p-0.5 cursor-pointer"
+            aria-label={`${t("settings.clearShortcut")}：${label}`}
             title={t("settings.clearShortcut")}
           >
             <X className="w-3 h-3" />
