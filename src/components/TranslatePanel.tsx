@@ -239,15 +239,19 @@ export default function TranslatePanel() {
     })();
     // 翻译历史：载入持久化的历史（面板与划词悬浮窗共享），并监听后端变更实时刷新
     void refreshHistory();
-    let unlisten: (() => void) | undefined;
+    const stops: (() => void)[] = [];
+    const register = (stop: () => void) => { if (disposed) stop(); else stops.push(stop); };
     listen("translate-history-changed", () => { if (!disposed) void refreshHistory(); })
-      .then((stop) => { if (disposed) stop(); else unlisten = stop; })
+      .then(register)
+      .catch((e) => { if (!disposed) setActionError(String(e)); });
+    listen<string>("translate-history-error", (event) => { if (!disposed) setActionError(event.payload); })
+      .then(register)
       .catch((e) => { if (!disposed) setActionError(String(e)); });
     return () => {
       disposed = true;
       alive.current = false;
       historyRequest.current++;
-      unlisten?.();
+      stops.forEach((stop) => stop());
       if (copyTimer.current) clearTimeout(copyTimer.current);
       if (entryTimer.current) clearTimeout(entryTimer.current);
     };

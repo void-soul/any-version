@@ -114,33 +114,15 @@ fn new_entry_id(ts: u64) -> String {
     format!("{}-{}", ts, n)
 }
 
-fn persist_history(list: &[TranslateHistoryEntry]) {
-    if let Ok(data) = serde_json::to_string_pretty(list) {
-        let _ = crate::commands::config::atomic_write_file(&history_path(), data.as_bytes());
-    }
+#[path = "translate_history.rs"]
+mod history_io;
+
+fn persist_history(list: &[TranslateHistoryEntry]) -> Result<(), String> {
+    history_io::persist(&history_path(), list)
 }
 
-fn load_history() -> Vec<TranslateHistoryEntry> {
-    let path = history_path();
-    if path.exists() {
-        if let Ok(data) = std::fs::read_to_string(&path) {
-            if let Ok(mut list) = serde_json::from_str::<Vec<TranslateHistoryEntry>>(&data) {
-                // 兼容旧数据（无 id 字段）：补齐唯一 id 并回写
-                let mut changed = false;
-                for e in list.iter_mut() {
-                    if e.id.is_empty() {
-                        e.id = new_entry_id(e.ts);
-                        changed = true;
-                    }
-                }
-                if changed {
-                    persist_history(&list);
-                }
-                return list;
-            }
-        }
-    }
-    Vec::new()
+fn load_history() -> Result<Vec<TranslateHistoryEntry>, String> {
+    history_io::load(&history_path())
 }
 
 fn sort_history(list: &mut [TranslateHistoryEntry]) {
@@ -150,43 +132,42 @@ fn sort_history(list: &mut [TranslateHistoryEntry]) {
 
 const HISTORY_CAP: usize = 100;
 
-fn add_history_entry(entry: TranslateHistoryEntry) {
+fn add_history_entry(entry: TranslateHistoryEntry) -> Result<(), String> {
     let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut list = load_history();
+    let mut list = load_history()?;
     list.insert(0, entry);
     sort_history(&mut list);
     list.truncate(HISTORY_CAP);
-    persist_history(&list);
+    persist_history(&list)
 }
 
 /// 读取翻译历史（面板与悬浮窗共用），置顶优先、按时间倒序。
 #[tauri::command]
-pub fn translate_history_list() -> Vec<TranslateHistoryEntry> {
+pub fn translate_history_list() -> Result<Vec<TranslateHistoryEntry>, String> {
     let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut list = load_history();
+    let mut list = load_history()?;
     sort_history(&mut list);
-    list
+    Ok(list)
 }
 
 /// 删除一条翻译历史。
 #[tauri::command]
 pub fn translate_history_delete(id: String) -> Result<(), String> {
     let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut list = load_history();
+    let mut list = load_history()?;
     let before = list.len();
     list.retain(|e| e.id != id);
     if list.len() == before {
         return Err(format!("未找到历史记录: {}", id));
     }
-    persist_history(&list);
-    Ok(())
+    persist_history(&list)
 }
 
 /// 置顶/取消置顶一条翻译历史（置顶条目始终排在最前）。
 #[tauri::command]
 pub fn translate_history_pin(id: String) -> Result<(), String> {
     let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut list = load_history();
+    let mut list = load_history()?;
     let mut found = false;
     for e in list.iter_mut() {
         if e.id == id {
@@ -199,21 +180,16 @@ pub fn translate_history_pin(id: String) -> Result<(), String> {
         return Err(format!("未找到历史记录: {}", id));
     }
     sort_history(&mut list);
-    persist_history(&list);
-    Ok(())
+    persist_history(&list)
 }
 
 /// 清空翻译历史（置顶条目保留，与剪贴板模块行为一致）。
 #[tauri::command]
-pub fn translate_history_clear() {
+pub fn translate_history_clear() -> Result<(), String> {
     let _guard = HISTORY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut list = load_history();
+    let mut list = load_history()?;
     list.retain(|e| e.pinned);
-    if list.is_empty() {
-        let _ = std::fs::remove_file(history_path());
-    } else {
-        persist_history(&list);
-    }
+    persist_history(&list)
 }
 
 // ─── 读写划词翻译配置 ───
@@ -415,7 +391,7 @@ pub async fn translate_text(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
-    add_history_entry(TranslateHistoryEntry {
+    let history_result = add_history_entry(TranslateHistoryEntry {
         id: new_entry_id(ts),
         source: text.clone(),
         result: content.clone(),
@@ -425,7 +401,13 @@ pub async fn translate_text(
         ts,
         pinned: false,
     });
-    let _ = app.emit("translate-history-changed", ());
+    match history_result {
+        Ok(()) => { let _ = app.emit("translate-history-changed", ()); }
+        Err(error) => {
+            // Preserve the completed translation even when its optional history cannot be saved.
+            let _ = app.emit("translate-history-error", error);
+        }
+    }
 
     // 保存最近结果快照（含版本号），供悬浮窗轮询同步；
     // 与 trigger_selection_translate 的 ok_payload 结构保持一致。
