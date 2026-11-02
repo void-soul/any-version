@@ -25,6 +25,7 @@ type SearchResponse = {
 const MAX_COUNT = 2_000_000;
 const MAX_SEARCH_MATCHES = 20_000;
 let parsedValue: JsonValue | null = null;
+let hasParsedValue = false;
 
 function isContainer(value: JsonValue): boolean {
   return Array.isArray(value) || (typeof value === "object" && value !== null);
@@ -106,25 +107,25 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
   if (request.type === "parse") {
     try {
       if (!request.text.trim()) {
-        parsedValue = null;
+        parsedValue = null; hasParsedValue = false;
         const response: ParseResponse = { id: request.id, type: "parse", value: null, error: null, nodeCount: 0, nodeCountCapped: false };
         self.postMessage(response);
         return;
       }
       const value = JSON.parse(request.text) as JsonValue;
-      parsedValue = value;
+      parsedValue = value; hasParsedValue = true;
       const stats = countNodes(value);
       const response: ParseResponse = { id: request.id, type: "parse", value, error: null, nodeCount: stats.count, nodeCountCapped: stats.capped };
       self.postMessage(response);
     } catch (error) {
-      parsedValue = null;
+      parsedValue = null; hasParsedValue = false;
       const response: ParseResponse = { id: request.id, type: "parse", value: null, error: error instanceof Error ? error.message : String(error), nodeCount: 0, nodeCountCapped: false };
       self.postMessage(response);
     }
     return;
   }
 
-  const result = parsedValue === null ? { paths: [], directPaths: [], truncated: false } : searchValue(parsedValue, request.query);
+  const result = !hasParsedValue ? { paths: [], directPaths: [], truncated: false } : searchValue(parsedValue, request.query);
   const response: SearchResponse = { id: request.id, type: "search", query: request.query, ...result };
   self.postMessage(response);
 };

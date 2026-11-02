@@ -1,5 +1,7 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { btnSecondary } from "../shared/Button";
+import { jsonTabDirty, recordJsonSave, type JsonTab } from "./JsonBrowser.tabs";
 import { JsonFlowCanvas } from "../CanvasFlow";
 import MonacoEditor from "../shared/MonacoEditor";
 import { theamedConfirm } from "../shared/ThemedAlert";
@@ -35,14 +37,6 @@ import {
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 type ViewMode = "tree" | "graph";
 
-
-type JsonTab = {
-  id: string;
-  path: string | null;
-  name: string;
-  text: string;
-  savedText: string | null;
-};
 
 type ParsedJson = {
   value: JsonValue | null;
@@ -354,7 +348,19 @@ function VirtualJsonTree({ value, searchMatches, collapsed, largeDocument, expan
 
 export default function JsonBrowser() {
   const { t } = useTranslation();
-  const [tabs, setTabs] = useState<JsonTab[]>([]);
+  const [tabs, setRawTabs] = useState<JsonTab[]>([]);
+  const tabsRef = useRef<JsonTab[]>([]);
+  const setTabs = useCallback((update: JsonTab[] | ((previous: JsonTab[]) => JsonTab[])) => {
+    const next = typeof update === "function" ? update(tabsRef.current) : update;
+    tabsRef.current = next; setRawTabs(next);
+  }, []);
+  const alive = useRef(false);
+  const [restored, setRestored] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const saveGate = useRef(false);
+  const openGate = useRef(new Set<string>());
+  const copyTimer = useRef<number | null>(null);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; if (copyTimer.current !== null) window.clearTimeout(copyTimer.current); }; }, []);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("tree");
   const [selectedPath, setSelectedPath] = useState("root");
@@ -379,15 +385,24 @@ export default function JsonBrowser() {
   const [searchMatches, setSearchMatches] = useState<SearchMatches>(EMPTY_SEARCH_MATCHES);
   const [oversizedDocument, setOversizedDocument] = useState(false);
   const workerRef = useRef<Worker | null>(null);
+  const restoredOnce = useRef(false);
   const workerReady = useRef(false);
   const parseRequestId = useRef(0);
   const searchRequestId = useRef(0);
   const largeDocument = oversizedDocument || parsed.nodeCount > 10_000 || parsed.nodeCountCapped;
+  const hasParsed = !parsePending && !oversizedDocument && parsed.error === null && parsed.nodeCount > 0;
 
   useEffect(() => {
-    const worker = new Worker(new URL("./jsonWorker.ts", import.meta.url), { type: "module" });
+    let worker: Worker;
+    try { worker = new Worker(new URL("./jsonWorker.ts", import.meta.url), { type: "module" }); }
+    catch (error) { workerReady.current = false; setNotice(String(error)); return; }
     workerRef.current = worker;
     workerReady.current = true;
+    worker.onerror = (event) => {
+      workerReady.current = false; workerRef.current = null; worker.terminate();
+      setParsed({ value: null, error: event.message || t("jsonb.invalidJson"), nodeCount: 0, nodeCountCapped: false });
+      setParsePending(false);
+    };
     worker.onmessage = (event: MessageEvent<{ id: number; type: string; value?: JsonValue | null; error?: string | null; nodeCount?: number; nodeCountCapped?: boolean; query?: string; paths?: string[]; directPaths?: string[]; truncated?: boolean }>) => {
       const response = event.data;
       if (response.type === "parse" && response.id === parseRequestId.current) {
@@ -409,6 +424,7 @@ export default function JsonBrowser() {
 
   useEffect(() => {
     const requestId = ++parseRequestId.current;
+    searchRequestId.current++;
     const text = active?.text ?? "";
     setParsePending(true);
     setSearchMatches(EMPTY_SEARCH_MATCHES);
@@ -423,28 +439,31 @@ export default function JsonBrowser() {
     }
     const timer = window.setTimeout(() => {
       if (!workerReady.current || !workerRef.current) {
+        if (byteLength > 1024 * 1024) { setParsed({ value: null, error: t("jsonb.workerUnavailable"), nodeCount: 0, nodeCountCapped: false }); setParsePending(false); return; }
         const fallback = parseJson(text);
         setParsed(fallback);
         setParsePending(false);
         return;
       }
-      workerRef.current.postMessage({ id: requestId, type: "parse", text });
+      try { workerRef.current.postMessage({ id: requestId, type: "parse", text }); }
+      catch (error) { setParsed({ value: null, error: String(error), nodeCount: 0, nodeCountCapped: false }); setParsePending(false); }
     }, 120);
     return () => window.clearTimeout(timer);
   }, [active?.text]);
 
   useEffect(() => {
+    const requestId = ++searchRequestId.current;
     const queryValue = deferredQuery.trim();
-    if (!queryValue || !parsed.value || !workerReady.current || !workerRef.current) {
+    if (!queryValue || !hasParsed || !workerReady.current || !workerRef.current) {
       setSearchMatches(queryValue ? EMPTY_SEARCH_MATCHES : { ...EMPTY_SEARCH_MATCHES, query: "" });
       return;
     }
-    const requestId = ++searchRequestId.current;
     workerRef.current.postMessage({ id: requestId, type: "search", query: queryValue });
-  }, [deferredQuery, parsed.value]);
-  const dirty = Boolean(active && active.savedText !== null && active.text !== active.savedText);
+  }, [deferredQuery, parsed.value, hasParsed]);
+  const dirty = Boolean(active && jsonTabDirty(active));
 
   const flash = useCallback((message: string) => {
+    if (!alive.current) return;
     setNotice(message);
     if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
     noticeTimer.current = window.setTimeout(() => setNotice(""), 2400);
@@ -455,7 +474,7 @@ export default function JsonBrowser() {
   }, []);
 
   const createTab = useCallback((name = t("jsonb.untitled"), text = "") => {
-    if (tabs.length >= MAX_TABS) {
+    if (tabsRef.current.length >= MAX_TABS) {
       flash(t("jsonb.maxTabs", { max: MAX_TABS }));
       return null;
     }
@@ -465,16 +484,17 @@ export default function JsonBrowser() {
     setActiveId(id);
     setCollapsed(new Set());
     return id;
-  }, [flash, tabs.length]);
+  }, [flash, tabs.length, setTabs, t]);
 
   // 挂载时恢复上次打开的 JSON 文件（模块卸载重挂载不丢已打开文档）。
   useEffect(() => {
+    if (restoredOnce.current) { setRestored(true); return; }
     let alive = true;
     restoringRef.current = true;
     let paths: string[] = [];
     try {
       const saved = JSON.parse(localStorage.getItem(JSON_RECENT_KEY) || "[]");
-      paths = Array.isArray(saved) ? saved.filter((p): p is string => typeof p === "string" && !!p) : [];
+      paths = Array.isArray(saved) ? [...new Set(saved.filter((p): p is string => typeof p === "string" && !!p))].slice(0, MAX_TABS) : [];
     } catch {
       // 忽略
     }
@@ -485,7 +505,7 @@ export default function JsonBrowser() {
           await openPath(p);
         }
       } finally {
-        if (alive) restoringRef.current = false;
+        if (alive) { restoredOnce.current = true; restoringRef.current = false; setRestored(true); }
       }
     })();
     return () => {
@@ -495,18 +515,19 @@ export default function JsonBrowser() {
   }, []);
 
   // 打开/关闭标签后同步持久化文件路径列表（存本地，供挂载恢复）。
+  const recentPaths = JSON.stringify(tabs.map((tab) => tab.path).filter((path): path is string => !!path));
   useEffect(() => {
-    const paths = tabs.map((t) => t.path).filter((p): p is string => !!p);
+    if (!restored) return;
     try {
-      localStorage.setItem(JSON_RECENT_KEY, JSON.stringify(paths));
+      localStorage.setItem(JSON_RECENT_KEY, recentPaths);
     } catch {
       // 忽略写入失败
     }
-  }, [tabs]);
+  }, [recentPaths, restored]);
 
   useEffect(() => {
-    if (tabs.length === 0 && !restoringRef.current) createTab();
-  }, [createTab, tabs.length]);
+    if (restored && tabs.length === 0 && !restoringRef.current) createTab();
+  }, [createTab, tabs.length, restored]);
 
   useEffect(() => {
     if (!active) return;
@@ -521,29 +542,29 @@ export default function JsonBrowser() {
   }, [activeId]);
 
   const openPath = useCallback(async (path: string) => {
+    const key = path.replace(/\\/g, "/").toLowerCase();
+    if (openGate.current.has(key) || !alive.current) return;
+    openGate.current.add(key);
     try {
-      const text = await invoke<string>("read_text_file", { path });
-      const existing = tabs.find((tab) => tab.path?.toLowerCase() === path.toLowerCase());
+      const existing = tabsRef.current.find((tab) => tab.path?.replace(/\\/g, "/").toLowerCase() === key);
       if (existing) {
+        // Opening an already open document focuses it and preserves unsaved edits.
         setActiveId(existing.id);
-        updateActive({ text });
-        flash(t("jsonb.reloaded", { name: existing.name }));
         return;
       }
-      if (tabs.length >= MAX_TABS) {
-        flash(t("jsonb.maxTabs", { max: MAX_TABS }));
-        return;
-      }
-      const separator = path.includes("\\") ? "\\" : "/";
-      const name = path.slice(path.lastIndexOf(separator) + 1) || "document.json";
-      const id = `json-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      if (tabsRef.current.length >= MAX_TABS) { flash(t("jsonb.maxTabs", { max: MAX_TABS })); return; }
+      const text = await invoke<string>("read_text_file", { path });
+      if (!alive.current) return;
+      if (tabsRef.current.length >= MAX_TABS) { flash(t("jsonb.maxTabs", { max: MAX_TABS })); return; }
+      const name = path.split(/[\\/]/).pop() || "document.json";
+      const id = `json-${crypto.randomUUID()}`;
       setTabs((previous) => [...previous, { id, path, name, text, savedText: text }]);
       setActiveId(id);
       flash(t("jsonb.opened", { name }));
     } catch (error) {
       flash(t("jsonb.openFailed", { err: error instanceof Error ? error.message : String(error) }));
-    }
-  }, [flash, tabs, updateActive]);
+    } finally { openGate.current.delete(key); }
+  }, [flash, setTabs, t]);
 
   const openFile = useCallback(async () => {
     try {
@@ -559,7 +580,8 @@ export default function JsonBrowser() {
   }, [flash, openPath]);
 
   const saveActive = useCallback(async (saveAs = false) => {
-    if (!active) return;
+    if (!active || saveGate.current) return;
+    saveGate.current = true; setSaving(true);
     try {
       let path = active.path;
       if (!path || saveAs) {
@@ -573,20 +595,23 @@ export default function JsonBrowser() {
       }
       await invoke("write_text_file", { path, content: active.text });
       const separator = path.includes("\\") ? "\\" : "/";
-      updateActive({ path, name: path.slice(path.lastIndexOf(separator) + 1) || active.name, savedText: active.text });
+      if (alive.current) setTabs((previous) => recordJsonSave(previous, active.id, path!, active.text));
       flash(t("jsonb.saved", { name: path.slice(path.lastIndexOf(separator) + 1) }));
     } catch (error) {
       flash(t("jsonb.saveFailed", { err: error instanceof Error ? error.message : String(error) }));
-    }
+    } finally { saveGate.current = false; if (alive.current) setSaving(false); }
   }, [active, flash, updateActive]);
 
   const closeTab = useCallback(async (id: string) => {
-    const target = tabs.find((tab) => tab.id === id);
+    if (saveGate.current) return;
+    const target = tabsRef.current.find((tab) => tab.id === id);
     if (!target) return;
-    if (target.savedText !== null && target.savedText !== target.text
+    if (jsonTabDirty(target)
       && !(await theamedConfirm(t("jsonb.unsavedClose", { name: target.name })))) return;
-    const index = tabs.findIndex((tab) => tab.id === id);
-    const next = tabs.filter((tab) => tab.id !== id);
+    if (!alive.current) return;
+    const current = tabsRef.current;
+    const index = current.findIndex((tab) => tab.id === id);
+    const next = current.filter((tab) => tab.id !== id);
     if (next.length === 0) {
       const newId = `json-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       setTabs([{ id: newId, path: null, name: t("jsonb.untitled"), text: "", savedText: null }]);
@@ -599,12 +624,13 @@ export default function JsonBrowser() {
   }, [activeId, tabs]);
 
   const applyParsed = useCallback((transform: (value: JsonValue) => JsonValue, pretty = true) => {
-    if (parsed.value === null) {
+    if (!hasParsed) {
       flash(t("jsonb.invalidJson"));
       return;
     }
-    updateActive({ text: JSON.stringify(transform(parsed.value), null, pretty ? 2 : 0) });
-  }, [flash, parsed.value, updateActive]);
+    try { updateActive({ text: JSON.stringify(transform(parsed.value), null, pretty ? 2 : 0) }); }
+    catch (error) { flash(String(error)); }
+  }, [flash, parsed.value, hasParsed, updateActive]);
 
   const format = () => applyParsed((value) => value, true);
   const minify = () => applyParsed((value) => value, false);
@@ -631,8 +657,10 @@ export default function JsonBrowser() {
     if (!active) return;
     try {
       await navigator.clipboard.writeText(active.text);
+      if (!alive.current) return;
       setCopyState(true);
-      window.setTimeout(() => setCopyState(false), 1200);
+      if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+      copyTimer.current = window.setTimeout(() => setCopyState(false), 1200);
     } catch {
       flash(t("jsonb.copyFailed"));
     }
@@ -652,7 +680,9 @@ export default function JsonBrowser() {
     const file = event.dataTransfer.files[0];
     if (!file) return;
     try {
+      if (file.size > 64 * 1024 * 1024) { flash(t("jsonb.fileTooLarge")); return; }
       const text = await file.text();
+      if (!alive.current) return;
       const id = createTab(file.name, text);
       if (id) setTabs((previous) => previous.map((tab) => tab.id === id ? { ...tab, savedText: text } : tab));
     } catch (error) {
@@ -711,25 +741,25 @@ export default function JsonBrowser() {
   const topCount = parsed.value !== null && isContainer(parsed.value) ? containerSize(parsed.value) : 0;
   const nodes = parsed.nodeCount;
   const language = "json";
-  const buttonClass = "inline-flex h-7 items-center gap-1 rounded-md border border-white/10 bg-white/[0.05] px-2 text-caption font-medium text-slate-300 transition-colors hover:bg-white/[0.11] hover:text-white disabled:cursor-not-allowed disabled:opacity-40";
-  const iconButtonClass = "inline-flex h-7 w-7 items-center justify-center rounded-md border border-white/10 bg-white/[0.05] text-slate-400 transition-colors hover:bg-white/[0.11] hover:text-white disabled:cursor-not-allowed disabled:opacity-40";
+  const buttonClass = btnSecondary;
+  const iconButtonClass = "ui-icon-btn h-8 w-8";
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-slate-950/30 text-slate-200" onDrop={handleDrop} onDragOver={(event) => event.preventDefault()}>
       <div className="flex min-h-11 flex-wrap items-center gap-1.5 border-b border-white/10 bg-slate-950/55 px-2.5 py-1.5">
         <button type="button" className={iconButtonClass} onClick={() => createTab()} title={t("jsonb.newDoc")} aria-label={t("jsonb.newDoc")}><FilePlus2 className="h-3.5 w-3.5" /></button>
         <button type="button" className={buttonClass} onClick={openFile}><FolderOpen className="h-3.5 w-3.5" />{t("jsonb.open")}</button>
-        <button type="button" className={buttonClass} onClick={() => void saveActive()} disabled={!active}><Save className="h-3.5 w-3.5" />{t("jsonb.save")}</button>
-        <button type="button" className={iconButtonClass} onClick={() => void saveActive(true)} disabled={!active} title={t("jsonb.saveAs")} aria-label={t("jsonb.saveAs")}><Download className="h-3.5 w-3.5" /></button>
+        <button type="button" className={buttonClass} onClick={() => void saveActive()} disabled={!active || saving} aria-busy={saving}><Save className="h-3.5 w-3.5" />{t("jsonb.save")}</button>
+        <button type="button" className={iconButtonClass} onClick={() => void saveActive(true)} disabled={!active || saving} title={t("jsonb.saveAs")} aria-label={t("jsonb.saveAs")}><Download className="h-3.5 w-3.5" /></button>
         <span className="mx-1 h-4 w-px bg-white/10" />
-        <button type="button" className={buttonClass} onClick={format} disabled={!parsed.value}><Indent className="h-3.5 w-3.5" />{t("jsonb.format")}</button>
-        <button type="button" className={buttonClass} onClick={minify} disabled={!parsed.value}><Minimize2 className="h-3.5 w-3.5" />{t("jsonb.minify")}</button>
-        <button type="button" className={iconButtonClass} onClick={sort} disabled={!parsed.value} title={t("jsonb.sortKeys")} aria-label={t("jsonb.sortKeys")}><Sparkles className="h-3.5 w-3.5" /></button>
+        <button type="button" className={buttonClass} onClick={format} disabled={!hasParsed}><Indent className="h-3.5 w-3.5" />{t("jsonb.format")}</button>
+        <button type="button" className={buttonClass} onClick={minify} disabled={!hasParsed}><Minimize2 className="h-3.5 w-3.5" />{t("jsonb.minify")}</button>
+        <button type="button" className={iconButtonClass} onClick={sort} disabled={!hasParsed} title={t("jsonb.sortKeys")} aria-label={t("jsonb.sortKeys")}><Sparkles className="h-3.5 w-3.5" /></button>
         <button type="button" className={iconButtonClass} onClick={escape} disabled={!active?.text} title={t("jsonb.escape")} aria-label={t("jsonb.escape")}><Braces className="h-3.5 w-3.5" /></button>
         <button type="button" className={iconButtonClass} onClick={unescape} disabled={!active?.text} title={t("jsonb.unescape")} aria-label={t("jsonb.unescape")}><RefreshCw className="h-3.5 w-3.5" /></button>
         <span className="mx-1 h-4 w-px bg-white/10" />
-        <button type="button" className={iconButtonClass} onClick={expandAll} disabled={!parsed.value} title={t("jsonb.expandAll")} aria-label={t("jsonb.expandAll")}><ChevronDown className="h-3.5 w-3.5" /></button>
-        <button type="button" className={iconButtonClass} onClick={collapseAll} disabled={!parsed.value} title={t("jsonb.collapseAll")} aria-label={t("jsonb.collapseAll")}><ChevronRight className="h-3.5 w-3.5" /></button>
+        <button type="button" className={iconButtonClass} onClick={expandAll} disabled={!hasParsed} title={t("jsonb.expandAll")} aria-label={t("jsonb.expandAll")}><ChevronDown className="h-3.5 w-3.5" /></button>
+        <button type="button" className={iconButtonClass} onClick={collapseAll} disabled={!hasParsed} title={t("jsonb.collapseAll")} aria-label={t("jsonb.collapseAll")}><ChevronRight className="h-3.5 w-3.5" /></button>
         <button type="button" className={iconButtonClass} onClick={() => void copySource()} disabled={!active} title={t("jsonb.copySource")} aria-label={t("jsonb.copySource")}>{copyState ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Clipboard className="h-3.5 w-3.5" />}</button>
         <div className="ml-auto flex min-w-[180px] max-w-[260px] flex-1 items-center gap-1 rounded-md border border-white/10 bg-white/[0.04] px-2">
           <Search className="h-3.5 w-3.5 shrink-0 text-slate-500" />
@@ -741,7 +771,7 @@ export default function JsonBrowser() {
         {tabs.map((tab) => (
           <div key={tab.id} className={`group flex max-w-[220px] shrink-0 items-center gap-1 rounded-t-md border border-b-0 px-2 py-1 text-caption ${tab.id === activeId ? "border-white/10 bg-white/[0.08] text-white" : "border-transparent text-slate-500 hover:bg-white/[0.04] hover:text-slate-300"}`}>
             <button type="button" onClick={() => setActiveId(tab.id)} className="min-w-0 truncate" title={tab.path ?? tab.name}>{tab.name}{tab.savedText !== null && tab.savedText !== tab.text ? " •" : ""}</button>
-            <button type="button" onClick={() => closeTab(tab.id)} className="shrink-0 text-slate-600 opacity-0 transition-opacity hover:text-red-300 group-hover:opacity-100" title={t("jsonb.closeTab")} aria-label={t("jsonb.closeTabAria", { name: tab.name })}><X className="h-3 w-3" /></button>
+            <button type="button" disabled={saving} onClick={() => void closeTab(tab.id)} className="shrink-0 text-slate-600 opacity-0 transition-opacity hover:text-red-300 group-hover:opacity-100" title={t("jsonb.closeTab")} aria-label={t("jsonb.closeTabAria", { name: tab.name })}><X className="h-3 w-3" /></button>
           </div>
         ))}
         {tabs.length < MAX_TABS && <button type="button" className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-500 hover:bg-white/[0.08] hover:text-white" onClick={() => createTab()} title={t("jsonb.newTab")} aria-label={t("jsonb.newTab")}><FilePlus2 className="h-3 w-3" /></button>}
@@ -788,7 +818,7 @@ export default function JsonBrowser() {
               <button type="button" onClick={() => setViewMode("tree")} className={`flex h-6 items-center gap-1 rounded px-2 ${viewMode === "tree" ? "bg-cyan-500/15 text-cyan-300" : "hover:bg-white/[0.06]"}`}><ListTree className="h-3 w-3" />{t("jsonb.tree")}</button>
               <button type="button" onClick={() => setViewMode("graph")} className={`flex h-6 items-center gap-1 rounded px-2 ${viewMode === "graph" ? "bg-cyan-500/15 text-cyan-300" : "hover:bg-white/[0.06]"}`}><MapIcon className="h-3 w-3" />{t("jsonb.graph")}</button>
               <span className="ml-auto flex items-center gap-2">
-                {oversizedDocument ? <span className="text-amber-300">{t("jsonb.oversizedPaused")}</span> : parsed.value !== null && <span>{parsePending ? t("jsonb.parsing") : t("jsonb.itemsNodes", { top: topCount, nodes, plus: parsed.nodeCountCapped ? "+" : "" })}</span>}
+                {oversizedDocument ? <span className="text-amber-300">{t("jsonb.oversizedPaused")}</span> : (hasParsed || parsePending) && <span>{parsePending ? t("jsonb.parsing") : t("jsonb.itemsNodes", { top: topCount, nodes, plus: parsed.nodeCountCapped ? "+" : "" })}</span>}
                 <button type="button" onClick={() => setSyncScroll((value) => !value)} className={syncScroll ? "text-cyan-300" : "text-slate-600"} title={syncScroll ? t("jsonb.syncScrollOn") : t("jsonb.syncScrollOff")} aria-label={t("jsonb.syncScrollAria")}><Split className="h-3.5 w-3.5" /></button>
                 <button type="button" onClick={() => setShowLeft((value) => !value)} className="hover:text-slate-200" title={t("jsonb.toggleLeft")} aria-label={t("jsonb.toggleLeft")}><PanelLeft className="h-3.5 w-3.5" /></button>
               </span>
@@ -796,12 +826,12 @@ export default function JsonBrowser() {
 
             {viewMode === "tree" && (
               <div className="min-h-0 flex-1 overflow-hidden p-2 font-mono">
-                {oversizedDocument ? <div className="py-10 text-center text-caption leading-5 text-amber-200">{t("jsonb.oversizedTree")}</div> : parsed.value === null ? <div className="py-10 text-center text-caption text-slate-600">{t("jsonb.treeEmpty")}</div> : <VirtualJsonTree value={parsed.value} searchMatches={searchMatches} collapsed={collapsed} largeDocument={largeDocument} expandedPaths={expandedPaths} onToggle={(path) => { if (largeDocument && path !== "root") { setExpandedPaths((previous) => { const next = new Set(previous); if (next.has(path)) next.delete(path); else next.add(path); return next; }); } else { setCollapsed((previous) => { const next = new Set(previous); if (next.has(path)) next.delete(path); else next.add(path); return next; }); } }} onCopy={(value) => void copyValue(value)} />}
+                {oversizedDocument ? <div className="py-10 text-center text-caption leading-5 text-amber-200">{t("jsonb.oversizedTree")}</div> : !hasParsed ? <div className="py-10 text-center text-caption text-slate-600">{t("jsonb.treeEmpty")}</div> : <VirtualJsonTree value={parsed.value} searchMatches={searchMatches} collapsed={collapsed} largeDocument={largeDocument} expandedPaths={expandedPaths} onToggle={(path) => { if (largeDocument && path !== "root") { setExpandedPaths((previous) => { const next = new Set(previous); if (next.has(path)) next.delete(path); else next.add(path); return next; }); } else { setCollapsed((previous) => { const next = new Set(previous); if (next.has(path)) next.delete(path); else next.add(path); return next; }); } }} onCopy={(value) => void copyValue(value)} />}
               </div>
             )}
             {viewMode === "graph" && (
               <div className="min-h-0 flex-1">
-                {oversizedDocument ? <div className="flex h-full items-center justify-center px-6 text-center text-caption leading-5 text-amber-200">{t("jsonb.oversizedGraph")}</div> : parsed.value === null ? <div className="flex h-full items-center justify-center text-caption text-slate-600">{t("jsonb.graphEmpty")}</div> : <JsonFlowCanvas value={parsed.value} selectedPath={selectedPath} searchMatches={searchMatches} onSelectPath={revealPathInEditor} onCopy={(value) => void copyValue(value)} collapseAllToken={collapseAllToken} />}
+                {oversizedDocument ? <div className="flex h-full items-center justify-center px-6 text-center text-caption leading-5 text-amber-200">{t("jsonb.oversizedGraph")}</div> : !hasParsed ? <div className="flex h-full items-center justify-center text-caption text-slate-600">{t("jsonb.graphEmpty")}</div> : <JsonFlowCanvas value={parsed.value} selectedPath={selectedPath} searchMatches={searchMatches} onSelectPath={revealPathInEditor} onCopy={(value) => void copyValue(value)} collapseAllToken={collapseAllToken} />}
               </div>
             )}
           </section>
@@ -811,7 +841,7 @@ export default function JsonBrowser() {
       </div>
 
       <div className="flex h-7 shrink-0 items-center gap-3 border-t border-white/10 bg-slate-950/55 px-3 text-tiny text-slate-500">
-        <span className="flex items-center gap-1"><Play className="h-3 w-3 text-emerald-400" />{oversizedDocument ? t("jsonb.modeText") : parsePending ? t("jsonb.modeParsing") : parsed.error ? t("jsonb.modeInvalid") : parsed.value === null ? t("jsonb.modeWaiting") : t("jsonb.modeValid")}</span>
+        <span className="flex items-center gap-1"><Play className="h-3 w-3 text-emerald-400" />{oversizedDocument ? t("jsonb.modeText") : parsePending ? t("jsonb.modeParsing") : parsed.error ? t("jsonb.modeInvalid") : !hasParsed ? t("jsonb.modeWaiting") : t("jsonb.modeValid")}</span>
         <span>{active ? `${active.name}${active.path ? ` · ${active.path}` : ""}` : t("jsonb.noDoc")}</span>
         <span className="ml-auto">{active ? `${formatBytes(new Blob([active.text]).size)} · ${t("jsonb.lines", { count: active.text.split(/\r?\n/).length })}` : ""}</span>
         <button type="button" className="hover:text-slate-200" onClick={() => setShowRight((value) => !value)} title={showRight ? t("jsonb.hideRight") : t("jsonb.showRight")} aria-label={showRight ? t("jsonb.hideRight") : t("jsonb.showRight")}>{showRight ? <PanelRight className="h-3.5 w-3.5" /> : <PanelRight className="h-3.5 w-3.5 opacity-50" />}</button>

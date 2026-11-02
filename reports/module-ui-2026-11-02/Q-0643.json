@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0643",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "JSON浏览：重新打开已打开文件会更新当前错误标签，恢复闭包可重复开文件/超标签数，未保存新文档关闭无提示，旧解析/搜索可能覆盖新状态；统一工具栏。",
+  "root_cause": "**openPath**切换activeId后仍调用旧active绑定的updateActive；恢复捕获初始tabs，持久化随每次文本编辑写入；新建savedText=null被当成未脏，搜索早退未失效旧ID，合法JSON标量用真假值判断。",
+  "solution": "",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/SystemTools/JsonBrowser.tsx** | JSON文档所有权或解析/公共控件/回归 |\n| **src/components/SystemTools/JsonBrowser.tabs.ts** | JSON文档所有权或解析/公共控件/回归 |\n| **src/components/SystemTools/JsonBrowser.tabs.test.ts** | JSON文档所有权或解析/公共控件/回归 |\n| **src/components/SystemTools/jsonWorker.ts** | JSON文档所有权或解析/公共控件/回归 |\n| **src/components/SystemTools/jsonWorker.test.ts** | JSON文档所有权或解析/公共控件/回归 |\n| **src/i18n/locales/zh/translation.json** | JSON文档所有权或解析/公共控件/回归 |\n| **src/i18n/locales/en/translation.json** | JSON文档所有权或解析/公共控件/回归 |\n",
+  "created_at": "2026-11-02 17:59:21",
+  "updated_at": "2026-11-02 18:03:26",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

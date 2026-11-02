@@ -1774,7 +1774,9 @@
     "copySubtree": "复制子树",
     "copyValue": "复制值",
     "truncated": "仅显示前 {{count}} 行（超出部分已截断，请搜索或折叠以缩小范围）",
-    "syncScrollAria": "同步滚动"
+    "syncScrollAria": "同步滚动",
+    "fileTooLarge": "文件不能超过 64 MiB，请分段打开。",
+    "workerUnavailable": "解析线程不可用，大文档结构预览已暂停，请重新打开此模块。"
   },
   "additem": {
     "editTitle": "编辑启动项",

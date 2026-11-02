@@ -1768,7 +1768,9 @@
     "copySubtree": "Copy subtree",
     "copyValue": "Copy value",
     "truncated": "Showing first {{count}} rows only (truncated — search or collapse to narrow the range)",
-    "syncScrollAria": "Sync scroll"
+    "syncScrollAria": "Sync scroll",
+    "fileTooLarge": "Files must be 64 MiB or smaller. Open a smaller section.",
+    "workerUnavailable": "The parsing worker is unavailable. Structured preview for large documents is paused. Reopen this module."
   },
   "additem": {
     "editTitle": "Edit Launcher Item",
