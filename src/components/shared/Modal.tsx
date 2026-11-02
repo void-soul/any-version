@@ -2,7 +2,7 @@
 // - 遵循全 app 统一规则：禁止 Esc / 点击遮罩关闭，只能点关闭按钮（见 main.tsx）
 // - 主题色使用 --module-accent 系列 CSS 变量，随模块动态主题色联动
 // - 用 createPortal 挂到 body，避免被父容器 overflow/transform 裁剪
-import { useEffect } from "react";
+import { useEffect, useId } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 
@@ -11,6 +11,8 @@ import { X } from "lucide-react";
 interface SharedModalProps {
   open: boolean;
   onClose: () => void;
+  /** Prevent closing while a required save/delete operation is pending. */
+  closeDisabled?: boolean;
   title?: React.ReactNode;
   /** 尺寸预设，覆盖最大宽度（px） */
   width?: number;
@@ -33,6 +35,7 @@ interface SharedModalProps {
 export function SharedModal({
   open,
   onClose,
+  closeDisabled = false,
   title,
   width = 520,
   className = "",
@@ -42,6 +45,7 @@ export function SharedModal({
   children,
 }: SharedModalProps) {
   const { t } = useTranslation();
+  const titleId = useId();
   // 弹框打开期间禁止 Esc 关闭（全 app 规则）
   useEffect(() => {
     if (!open) return;
@@ -61,20 +65,24 @@ export function SharedModal({
       <div
         role="dialog"
         aria-modal="true"
+        aria-labelledby={title ? titleId : undefined}
         className={`ui-modal relative w-full shadow-2xl shadow-black/60 ${className}`}
         style={{ maxWidth: width, maxHeight: "88vh" }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* 顶栏：标题 + 关闭按钮（主题色装饰线） */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 sticky top-0 z-10 rounded-t-panel">
-          <h3 className="text-title font-bold text-white flex items-center gap-2 min-w-0">
+          <h3 id={titleId} className="text-title font-bold text-white flex items-center gap-2 min-w-0">
             <span className="w-1 h-4 rounded-full bg-[var(--module-accent)] flex-shrink-0" />
             <span className="truncate">{title}</span>
           </h3>
           <div className="flex items-center gap-2 flex-shrink-0">
             {headerActions}
             <button
-              className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-white/10 transition-all cursor-pointer"
+              type="button"
+              disabled={closeDisabled}
+              aria-label={t("common.dialogClose")}
+              className="ui-icon-btn w-7 h-7"
               onClick={onClose}
               title={t("common.dialogClose")}
             >

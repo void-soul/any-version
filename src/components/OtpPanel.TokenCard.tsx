@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Copy, Trash2, Pin, Pencil, Check, Folder } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { TOKEN_TYPE_LABELS, formatCode, generateCode, remainingSeconds, type OtpToken } from "./OtpPanel.model";
+import { TOKEN_TYPE_LABELS, formatCode, generateCode, remainingSeconds, otpGenerationStep, otpDisplayPeriod, type OtpToken } from "./OtpPanel.model";
 import { BrandIcon } from "./OtpPanel.BrandIcon";
 // 令牌卡片
 export function TokenCard({
@@ -26,21 +26,21 @@ export function TokenCard({
 }) {
   const { t } = useTranslation();
   const [code, setCode] = useState("------");
-  const [remain, setRemain] = useState(30);
+  const remain = remainingSeconds(token, now);
+  const step = otpGenerationStep(token, now);
 
   useEffect(() => {
     let alive = true;
     generateCode(token, now).then((c) => {
       if (alive) setCode(c);
     });
-    setRemain(remainingSeconds(token, now));
     return () => {
       alive = false;
     };
-  }, [token, now]);
+  }, [token, step]);
 
   const isHotp = token.tokenType === "HOTP";
-  const progress = isHotp ? 0 : remain / (token.period || 30);
+  const progress = isHotp ? 0 : remain / otpDisplayPeriod(token);
 
   return (
     <div
@@ -49,7 +49,7 @@ export function TokenCard({
           ? "bg-amber-500/[0.06] border-amber-500/25"
           : "bg-white/[0.03] border-white/10 hover:bg-white/[0.05] hover:border-white/20"
       }`}
-      onClick={onCopy}
+      onClick={() => { if (code !== "ERROR") onCopy(); }}
       title={t("otp.copyCode")}
     >
       <div className="flex items-start gap-2">
@@ -71,7 +71,7 @@ export function TokenCard({
               {categories.map((c, i) => (
                 <span
                   key={i}
-                  className="inline-flex items-center gap-0.5 text-[8px] px-1 py-0.5 rounded bg-[var(--module-accent)]/10 text-[var(--module-accent)] border border-[var(--module-accent)]/20"
+                  className="inline-flex items-center gap-0.5 text-micro px-1 py-0.5 rounded bg-[var(--module-accent)]/10 text-[var(--module-accent)] border border-[var(--module-accent)]/20"
                 >
                   <Folder className="w-2 h-2" />{c}
                 </span>
@@ -82,7 +82,7 @@ export function TokenCard({
           {token.tags && (
             <div className="flex flex-wrap gap-1 mt-1">
               {token.tags.split(",").filter(Boolean).map((t, i) => (
-                <span key={i} className="text-[8px] px-1 py-0.5 rounded bg-white/5 text-slate-400">
+                <span key={i} className="text-micro px-1 py-0.5 rounded bg-white/5 text-slate-400">
                   #{t.trim()}
                 </span>
               ))}
@@ -96,9 +96,11 @@ export function TokenCard({
 
       <div className="mt-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-xl font-mono font-bold text-white tracking-wider select-none">
-            {formatCode(code)}
-          </span>
+          <button type="button" disabled={code === "ERROR" || code === "------"} aria-label={t("otp.copyCode")}
+            onClick={(event) => { event.stopPropagation(); onCopy(); }}
+            className="text-xl font-mono font-bold text-white tracking-wider select-none cursor-pointer disabled:cursor-not-allowed">
+            {code === "ERROR" ? "— — —" : formatCode(code)}
+          </button>
           {copied ? (
             <Check className="w-4 h-4 text-emerald-400" />
           ) : (
@@ -122,13 +124,14 @@ export function TokenCard({
               transform="rotate(-90 12 12)"
               style={{ transition: "stroke-dashoffset 1s linear" }}
             />
-            <text x="12" y="15" textAnchor="middle" className="fill-slate-400" style={{ fontSize: 8 }}>
+            <text x="12" y="15" textAnchor="middle" className="fill-slate-400" style={{ fontSize: "var(--text-micro)" }}>
               {remain}
             </text>
           </svg>
         )}
       </div>
 
+      {code === "ERROR" && <p role="alert" className="text-caption text-rose-300 mt-2">{t("otp.codeUnavailable")}</p>}
       {/* hover 操作（左下角，避免与顶部右侧的类型/标签重叠） */}
       <div className="absolute left-2 bottom-2 hidden group-hover:flex items-center gap-1">
         <button

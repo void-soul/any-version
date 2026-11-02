@@ -4805,6 +4805,9 @@
     "backToTop": "返回顶部"
   },
   "otp": {
+    "codeUnavailable": "验证码不可用，请检查密钥和令牌参数。",
+    "copyFail": "复制失败：{{err}}",
+    "categoryLinkFail": "令牌已保存，但分类关联失败。可直接重试保存，无需重新创建：{{err}}",
     "scanPickTitle": "选择包含二维码的图片",
     "pickImage": "图片",
     "scanNotOtpauth": "二维码内容不是有效的 otpauth 链接",

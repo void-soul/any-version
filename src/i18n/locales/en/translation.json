@@ -4805,6 +4805,9 @@
     "backToTop": "Back to top"
   },
   "otp": {
+    "codeUnavailable": "Code unavailable. Check the secret and token settings.",
+    "copyFail": "Copy failed: {{err}}",
+    "categoryLinkFail": "The token was saved, but categories could not be linked. Retry saving without creating it again: {{err}}",
     "scanPickTitle": "Select an image containing a QR code",
     "pickImage": "Image",
     "scanNotOtpauth": "QR content is not a valid otpauth link",

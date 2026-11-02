@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0632",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "按顺序完善OTP模块：ERROR占位值可被复制粘贴、列表和复制失败静默，复制计时器无清理；编辑/分类/确认弹窗控件不一致，需保护保存和验证码复制交互。",
+  "root_cause": "**generateCode**以ERROR表示失败，但copyCode原样粘贴并记成功；列表/复制错误只console，提示timer未清理；新令牌落库后分类失败重试仍携带id0，删除确认先关窗再丢弃Promise。弹窗自造控件且公共SharedModal标题未与dialog关联。",
+  "solution": "1. 阻止ERROR复制，生成失败卡片显示可见提示；验证码区域增加可聚焦复制按钮，并按generationStep计算而不是每秒重复HMAC/IPC。\n2. 列表代次防旧结果回写、错误alert；复制反馈timer重置与卸载清理；分类/令牌保存同步闸，部分保存保留新ID供更新重试，提示分类关联失败。\n3. 删除确认await实际删除，失败保留弹窗与alert；编辑/分类/确认弹窗统一公共控件和命名，忙态不关闭。\n4. SharedModal通用层补标题aria-labelledby、统一关闭图标和可选closeDisabled；默认关闭策略保持不变，所有已有调用兼容。\n5. 中英文反馈同步；构建与456前端测试通过，未复制、修改或删除真实令牌，真实UI交互验证待补。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/OtpPanel.tsx** | OTP生成或界面操作验收 |\n| **src/components/OtpPanel.TokenCard.tsx** | OTP生成或界面操作验收 |\n| **src/components/OtpPanel.TokenForm.tsx** | OTP生成或界面操作验收 |\n| **src/components/OtpPanel.CategoryModal.tsx** | OTP生成或界面操作验收 |\n| **src/components/OtpPanel.ConfirmModal.tsx** | OTP生成或界面操作验收 |\n| **src/components/shared/Modal.tsx** | OTP生成或界面操作验收 |\n| **src/i18n/locales/zh/translation.json** | OTP生成或界面操作验收 |\n| **src/i18n/locales/en/translation.json** | OTP生成或界面操作验收 |",
+  "created_at": "2026-11-02 16:55:52",
+  "updated_at": "2026-11-02 17:07:38",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

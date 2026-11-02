@@ -1,3 +1,4 @@
+import { btnPrimary, btnSecondary } from "./shared/Button";
 import { useState } from "react";
 import { Pencil, Check, X, Loader2, FolderPlus } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -19,6 +20,7 @@ export function CategoryModal({
   const [name, setName] = useState(initial);
 
   const submit = () => {
+    if (busy) return;
     const trimmed = name.trim();
     if (!trimmed) return;
     onSubmit(trimmed);
@@ -33,7 +35,7 @@ export function CategoryModal({
       className="fixed inset-0 z-[120] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
     >
       <div
-        className="w-[360px] max-w-[95vw] rounded-panel border border-white/10 bg-slate-900/95 shadow-2xl p-5"
+        role="dialog" aria-modal="true" aria-label={mode === "add" ? t("otp.newCatTitle") : t("otp.renameCatTitle")} className="w-[360px] max-w-[95vw] rounded-panel border border-white/10 bg-surface-modal shadow-2xl p-4"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2.5 mb-4">
@@ -45,7 +47,7 @@ export function CategoryModal({
             )}
           </div>
           <div className="flex-1">
-            <h3 className="text-sm font-bold text-white">
+            <h3 className="text-title font-semibold text-white">
               {mode === "add" ? t("otp.newCatTitle") : t("otp.renameCatTitle")}
             </h3>
             <p className="text-tiny text-slate-500">
@@ -54,7 +56,7 @@ export function CategoryModal({
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-ctl hover:bg-white/10 text-slate-400 cursor-pointer"
+            disabled={busy} aria-label={t("common.dialogClose")} className="ui-icon-btn w-7 h-7"
           >
             <X className="w-4 h-4" />
           </button>
@@ -72,14 +74,14 @@ export function CategoryModal({
         <div className="flex justify-end gap-2 mt-4">
           <button
             onClick={onClose}
-            className="px-3 py-1.5 rounded-ctl text-caption text-slate-400 hover:bg-white/5 cursor-pointer"
+            disabled={busy} className={btnSecondary}
           >
             {t("otp.cancel")}
           </button>
           <button
             onClick={submit}
             disabled={busy || !name.trim()}
-            className="px-4 py-1.5 rounded-ctl text-caption bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
+            className={btnPrimary}
           >
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {t("otp.save")}
           </button>

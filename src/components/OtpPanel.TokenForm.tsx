@@ -1,3 +1,4 @@
+import { btnPrimary, btnSecondary } from "./shared/Button";
 import { useState } from "react";
 import { theamedAlert } from "./shared/ThemedAlert";
 import { Check, X, Loader2 } from "lucide-react";
@@ -55,6 +56,7 @@ export function TokenForm({
     );
 
   const submit = () => {
+    if (busy) return;
     if (!form.secret.trim()) {
       theamedAlert(t("otp.needSecret"));
       return;
@@ -69,10 +71,10 @@ export function TokenForm({
 
   return (
     <div className="fixed inset-0 z-[110] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="w-[460px] max-w-[95vw] max-h-[90vh] overflow-y-auto rounded-panel border border-white/10 bg-slate-900/95 shadow-2xl p-5" onClick={(e) => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-label={token ? t("otp.editToken") : t("otp.addToken")} className="w-[460px] max-w-[95vw] max-h-[90vh] overflow-y-auto rounded-panel border border-white/10 bg-surface-modal shadow-2xl p-4" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-bold text-white">{token ? t("otp.editToken") : t("otp.addToken")}</h3>
-          <button onClick={onClose} className="p-1 rounded hover:bg-white/10 text-slate-400 cursor-pointer">
+          <h3 className="text-title font-semibold text-white">{token ? t("otp.editToken") : t("otp.addToken")}</h3>
+          <button onClick={onClose} disabled={busy} aria-label={t("common.dialogClose")} className="ui-icon-btn w-7 h-7">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -91,7 +93,7 @@ export function TokenForm({
                   algorithm: t === "Steam" || t === "Yandex" || t === "MOTP" ? "SHA1" : f.algorithm,
                 }));
               }}
-              className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+              disabled={busy} className="ui-input w-full h-9 px-2.5"
             >
               <option value="TOTP">{t("otp.totp")}</option>
               <option value="HOTP">{t("otp.hotp")}</option>
@@ -108,7 +110,7 @@ export function TokenForm({
                 value={form.issuer}
                 onChange={(e) => set("issuer", e.target.value)}
                 placeholder={t("otp.issuerPh")}
-                className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+                disabled={busy} className="ui-input w-full h-9 px-2.5"
               />
             </div>
             <div>
@@ -117,7 +119,7 @@ export function TokenForm({
                 value={form.account}
                 onChange={(e) => set("account", e.target.value)}
                 placeholder={t("otp.accountPh")}
-                className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+                disabled={busy} className="ui-input w-full h-9 px-2.5"
               />
             </div>
           </div>
@@ -138,7 +140,7 @@ export function TokenForm({
               value={form.description}
               onChange={(e) => set("description", e.target.value)}
               placeholder={t("otp.descPh")}
-              className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+              disabled={busy} className="ui-input w-full h-9 px-2.5"
             />
           </div>
 
@@ -179,7 +181,7 @@ export function TokenForm({
                 value={form.tags}
                 onChange={(e) => set("tags", e.target.value)}
                 placeholder={t("otp.tagsPh")}
-                className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+                disabled={busy} className="ui-input w-full h-9 px-2.5"
               />
             </div>
             <div>
@@ -188,7 +190,7 @@ export function TokenForm({
                 value={form.customIcon}
                 onChange={(e) => set("customIcon", e.target.value)}
                 placeholder={t("otp.iconPh")}
-                className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+                disabled={busy} className="ui-input w-full h-9 px-2.5"
               />
             </div>
           </div>
@@ -200,7 +202,7 @@ export function TokenForm({
                 <select
                   value={form.algorithm}
                   onChange={(e) => set("algorithm", e.target.value)}
-                  className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+                  disabled={busy} className="ui-input w-full h-9 px-2.5"
                 >
                   <option value="SHA1">SHA1</option>
                   <option value="SHA256">SHA256</option>
@@ -212,7 +214,7 @@ export function TokenForm({
                 <select
                   value={form.digits}
                   onChange={(e) => set("digits", Number(e.target.value))}
-                  className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+                  disabled={busy} className="ui-input w-full h-9 px-2.5"
                 >
                   {[5, 6, 7, 8].map((d) => (
                     <option key={d} value={d}>{t("otp.digitsCount", { count: d })}</option>
@@ -229,7 +231,7 @@ export function TokenForm({
                 type="number"
                 value={form.counter}
                 onChange={(e) => set("counter", Number(e.target.value))}
-                className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+                disabled={busy} className="ui-input w-full h-9 px-2.5"
               />
             </div>
           ) : !isSteam && !isYandex ? (
@@ -239,7 +241,7 @@ export function TokenForm({
                 type="number"
                 value={form.period}
                 onChange={(e) => set("period", Number(e.target.value))}
-                className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+                disabled={busy} className="ui-input w-full h-9 px-2.5"
               />
             </div>
           ) : null}
@@ -251,18 +253,18 @@ export function TokenForm({
                 value={form.pin}
                 onChange={(e) => set("pin", e.target.value)}
                 placeholder={isMotp ? t("otp.pinPh") : t("otp.pinPhShort")}
-                className="w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none"
+                disabled={busy} className="ui-input w-full h-9 px-2.5"
               />
             </div>
           )}
         </div>
 
         <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} className="px-3 py-1.5 rounded-ctl text-caption text-slate-400 hover:bg-white/5 cursor-pointer">{t("otp.cancel")}</button>
+          <button onClick={onClose} disabled={busy} className={btnSecondary}>{t("otp.cancel")}</button>
           <button
             onClick={submit}
             disabled={busy}
-            className="px-3 py-1.5 rounded-ctl text-caption bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
+            className={btnPrimary}
           >
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {t("otp.save")}
           </button>

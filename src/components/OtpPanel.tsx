@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { theamedAlert, alertError } from "./shared/ThemedAlert";
 import { Plus, Search, Trash2, Pencil, KeyRound, Import, X, Loader2, ScanLine, Tag, Folder, FolderPlus } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -15,6 +15,15 @@ export default function OtpPanel() {
   const [search, setSearch] = useState("");
   const [now, setNow] = useState(Date.now());
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const loadGeneration = useRef(0);
+  const lifetime = useRef(0);
+  const copyTimer = useRef<number | null>(null);
+  const formInFlight = useRef(false);
+  useEffect(() => () => {
+    lifetime.current++; loadGeneration.current++;
+    if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+  }, []);
   const [editing, setEditing] = useState<OtpToken | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [importText, setImportText] = useState("");
@@ -29,17 +38,18 @@ export default function OtpPanel() {
     title: string;
     message: string;
     danger?: boolean;
-    onConfirm: () => void;
+    onConfirm: () => void | Promise<void>;
   } | null>(null);
 
   const load = useCallback(async () => {
+    const generation = ++loadGeneration.current;
     try {
       const list = await invoke<OtpToken[]>("otp_list");
-      setTokens(list);
       const cats = await invoke<OtpCategory[]>("otp_list_categories");
-      setCategories(cats);
+      if (loadGeneration.current !== generation) return;
+      setTokens(list); setCategories(cats); setLoadError("");
     } catch (e) {
-      console.error("加载 OTP 失败", e);
+      if (loadGeneration.current === generation) setLoadError(String(e));
     }
   }, []);
 
@@ -54,18 +64,23 @@ export default function OtpPanel() {
   }, []);
 
   const copyCode = async (token: OtpToken) => {
-    const code = await generateCode(token, Date.now());
+    const owner = lifetime.current;
     try {
+      const code = await generateCode(token, Date.now());
+      if (code === "ERROR") throw new Error(t("otp.codeUnavailable"));
+      if (lifetime.current !== owner) return;
       // 复用剪贴板模块的「写入 → 隐藏 → 粘贴」通道：
       // 目标窗口取自唤起 Kira 前的活动窗口，避免把验证码粘回 OTP 面板。
       await invoke("clipboard_paste_text", { text: code });
+      if (lifetime.current !== owner) return;
       setCopiedId(token.id);
-      setTimeout(() => setCopiedId(null), 1500);
+      if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+      copyTimer.current = window.setTimeout(() => setCopiedId(null), 1500);
       // 更新复制统计
       await invoke("otp_mark_copied", { id: token.id }).catch(() => {});
       load();
     } catch (e) {
-      console.error("复制失败", e);
+      if (lifetime.current === owner) alertError(t("otp.copyFail", { err: String(e) }));
     }
   };
 
@@ -107,7 +122,9 @@ export default function OtpPanel() {
     setCatModal({ mode: "rename", cat });
   };
   const submitCategory = async (title: string) => {
-    if (!catModal) return;
+    if (!catModal || formInFlight.current) return;
+    formInFlight.current = true;
+    setBusy(true);
     try {
       if (catModal.mode === "add") {
         await invoke("otp_add_category", { title: title.trim() });
@@ -118,7 +135,7 @@ export default function OtpPanel() {
       load();
     } catch (e) {
       alertError(t("otp.catSaveFail", { err: String(e) }));
-    }
+    } finally { formInFlight.current = false; setBusy(false); }
   };
   const deleteCategory = (cat: OtpCategory) => {
     setConfirmModal({
@@ -152,26 +169,27 @@ export default function OtpPanel() {
   };
 
   const saveToken = async (token: OtpToken, categoryIds: number[]) => {
+    if (formInFlight.current) return;
+    formInFlight.current = true;
     setBusy(true);
+    let id = token.id || editing?.id || 0;
+    let stored = false;
     try {
-      let id = token.id;
-      if (token.id) {
-        await invoke("otp_update", { token });
-      } else {
+      if (id) await invoke("otp_update", { token: { ...token, id } });
+      else {
         id = await invoke<number>("otp_add", { token });
+        // Retain the assigned identity if category linking fails; retry must not add another token.
+        setEditing({ ...token, id });
       }
-      // 保存令牌后设置其所属分类（整体替换绑定）
-      if (id) {
-        await invoke("otp_set_token_categories", { tokenId: id, categoryIds });
-      }
-      setShowAdd(false);
-      setEditing(null);
-      load();
-    } catch (e) {
-      alertError(t("otp.saveFail", { err: String(e) }));
-    } finally {
-      setBusy(false);
-    }
+      stored = true;
+      if (id) await invoke("otp_set_token_categories", { tokenId: id, categoryIds });
+      setShowAdd(false); setEditing(null);
+      void load();
+    } catch (error) {
+      alertError(t(stored ? "otp.categoryLinkFail" : "otp.saveFail", { err: String(error) }));
+      if (stored) void load();
+    } finally { formInFlight.current = false; setBusy(false); }
+
   };
 
   const doImport = async () => {
@@ -205,6 +223,7 @@ export default function OtpPanel() {
 
   return (
     <div className="h-full w-full flex flex-col">
+      {loadError && <p role="alert" className="ui-note ui-note-error text-body px-3 py-2 m-3 break-words">{loadError}</p>}
       {/* 头部 */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5 flex-shrink-0">
         <KeyRound className="w-4 h-4 text-[var(--module-accent)]" />
@@ -390,11 +409,7 @@ export default function OtpPanel() {
           title={confirmModal.title}
           message={confirmModal.message}
           danger={confirmModal.danger}
-          onConfirm={() => {
-            const cb = confirmModal.onConfirm;
-            setConfirmModal(null);
-            cb();
-          }}
+          onConfirm={confirmModal.onConfirm}
           onClose={() => setConfirmModal(null)}
         />
       )}
