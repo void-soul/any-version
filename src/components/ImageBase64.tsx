@@ -1,8 +1,10 @@
-﻿import { useState, useRef } from "react";
+﻿import { useState, useRef, useEffect } from "react";
 
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
+import { btnPrimary, btnSecondary } from "./shared/Button";
+import { MAX_IMAGE_BYTES, MAX_IMAGE_BASE64_CHARS, parseImageBase64 } from "./imageBase64Data";
 import { theamedAlert, alertError } from "./shared/ThemedAlert";
 import { 
   Upload, 
@@ -35,8 +37,21 @@ export default function ImageBase64() {
   const [error2, setError2] = useState<string | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
 
+  const [previewValid, setPreviewValid] = useState(false);
+  const alive = useRef(false);
+  const imageRequest = useRef(0);
+  const readerRef = useRef<FileReader | null>(null);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saving = useRef(false);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; imageRequest.current++; readerRef.current?.abort(); if (copyTimer.current) clearTimeout(copyTimer.current); };
+  }, []);
+  const imageError = (e: unknown) => String(e).includes("tooLarge") ? t("imgbase64.tooLarge") : t("imgbase64.invalidBase64");
   // --- Image to Base64 handlers ---
   const handleSelectLocalImage = async () => {
+    const request = ++imageRequest.current;
+    readerRef.current?.abort();
     setError1(null);
     try {
       const selected = await open({
@@ -46,19 +61,20 @@ export default function ImageBase64() {
           extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "ico"]
         }]
       });
-      if (selected && typeof selected === "string") {
+      if (alive.current && request === imageRequest.current && selected && typeof selected === "string") {
         const b64 = await invoke<string>("image_to_base64", { filePath: selected });
+        if (!alive.current || request !== imageRequest.current) return;
+        const parsed = parseImageBase64(b64);
         setImgSrc(b64);
         setBase64Result(b64);
         
         // Extract meta details
-        const fileName = selected.substring(selected.lastIndexOf("\\") + 1);
+        const fileName = selected.split(/[\\/]/).pop() || selected;
         const match = b64.match(/^data:(image\/[a-z0-9+.-]+);base64,/);
         const type = match ? match[1] : "image/png";
         
         // Estimate size from Base64 length
-        const base64Len = b64.substring(b64.indexOf(",") + 1).length;
-        const sizeBytes = Math.floor(base64Len * 0.75);
+        const sizeBytes = parsed.bytes;
         setImgDetails({
           name: fileName,
           size: (sizeBytes / 1024).toFixed(1) + " KB",
@@ -66,68 +82,59 @@ export default function ImageBase64() {
         });
       }
     } catch (e: any) {
-      setError1(String(e));
+      if (alive.current && request === imageRequest.current) setError1(String(e));
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    
+  const readImage = (file: File) => {
+    const request = ++imageRequest.current;
+    readerRef.current?.abort();
+    setError1(null);
+    if (file.size > MAX_IMAGE_BYTES) { setError1(t("imgbase64.tooLarge")); return; }
+    if (!file.type.startsWith("image/")) { setError1(t("imgbase64.invalidBase64")); return; }
     const reader = new FileReader();
-    reader.onload = (event) => {
-      const result = event.target?.result;
-      if (typeof result === "string") {
-        setImgSrc(result);
-        setBase64Result(result);
-        setImgDetails({
-          name: file.name,
-          size: (file.size / 1024).toFixed(1) + " KB",
-          type: file.type
-        });
-      }
+    readerRef.current = reader;
+    reader.onload = () => {
+      if (!alive.current || request !== imageRequest.current) return;
+      try {
+        const parsed = parseImageBase64(String(reader.result));
+        setImgSrc(parsed.src); setBase64Result(parsed.src); setCopySuccess(null);
+        setImgDetails({ name: file.name, size: (parsed.bytes / 1024).toFixed(1) + " KB", type: parsed.mime });
+      } catch (e) { setError1(imageError(e)); }
     };
+    reader.onerror = () => { if (alive.current && request === imageRequest.current) setError1(String(reader.error)); };
     reader.readAsDataURL(file);
   };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) readImage(file);
+    e.target.value = "";
   };
-
+  const handleDragOver = (e: React.DragEvent) => e.preventDefault();
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const file = e.dataTransfer.files?.[0];
-    if (file && file.type.startsWith("image/")) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const result = event.target?.result;
-        if (typeof result === "string") {
-          setImgSrc(result);
-          setBase64Result(result);
-          setImgDetails({
-            name: file.name,
-            size: (file.size / 1024).toFixed(1) + " KB",
-            type: file.type
-          });
-        }
-      };
-      reader.readAsDataURL(file);
-    }
+    if (file) readImage(file);
   };
 
-  const handleCopy = (type: "base64" | "html" | "css") => {
+  const handleCopy = async (type: "base64" | "html" | "css") => {
     let text = base64Result;
     if (type === "html") {
       text = `<img src="${base64Result}" alt="image" />`;
     } else if (type === "css") {
       text = `background-image: url("${base64Result}");`;
     }
-    navigator.clipboard.writeText(text);
-    setCopySuccess(type);
-    setTimeout(() => setCopySuccess(null), 2000);
+    try {
+      await navigator.clipboard.writeText(text);
+      if (!alive.current) return;
+      setCopySuccess(type);
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopySuccess(null), 2000);
+    } catch (e) { if (alive.current) setError1(String(e)); }
   };
 
   const handleClearImage = () => {
+    imageRequest.current++; readerRef.current?.abort(); setCopySuccess(null);
     setImgSrc(null);
     setBase64Result("");
     setImgDetails(null);
@@ -137,48 +144,25 @@ export default function ImageBase64() {
 
   // --- Base64 to Image handlers ---
   const handleBase64InputChange = (val: string) => {
-    setBase64Input(val);
+    setPreviewValid(false);
     setError2(null);
-    
-    if (!val.trim()) {
-      setPreviewSrc(null);
-      setPreviewDetails(null);
-      return;
-    }
-
-    // Auto-detect format & try rendering
-    let formatted = val.trim();
-    if (!formatted.startsWith("data:image/")) {
-      // Find standard headers if they pasted raw base64 but we need to guess format
-      // Default to png if raw
-      formatted = `data:image/png;base64,${formatted}`;
-    }
-
-    // Basic Base64 Validation
-    const base64Data = formatted.substring(formatted.indexOf(",") + 1);
-    const regex = /^[a-zA-Z0-9+/]*={0,2}$/;
-    if (!regex.test(base64Data.replace(/\s/g, ""))) {
-      setError2(t("imgbase64.invalidBase64"));
-      setPreviewSrc(null);
-      setPreviewDetails(null);
-      return;
-    }
-
-    setPreviewSrc(formatted);
-    const match = formatted.match(/^data:(image\/[a-z0-9+.-]+);base64,/);
-    const type = match ? match[1] : "image/png";
-    const sizeBytes = Math.floor(base64Data.length * 0.75);
-    setPreviewDetails({
-      type,
-      size: (sizeBytes / 1024).toFixed(1) + " KB"
-    });
+    setPreviewSrc(null); setPreviewDetails(null);
+    if (val.length > MAX_IMAGE_BASE64_CHARS) { setError2(t("imgbase64.tooLarge")); return; }
+    setBase64Input(val);
+    if (!val.trim()) return;
+    try {
+      const parsed = parseImageBase64(val);
+      setPreviewSrc(parsed.src);
+      setPreviewDetails({ type: parsed.mime, size: (parsed.bytes / 1024).toFixed(1) + " KB" });
+    } catch (e) { setError2(imageError(e)); }
   };
 
   const handleSaveImage = async () => {
-    if (!previewSrc) return;
+    if (!previewSrc || !previewValid || saving.current) return;
+    saving.current = true;
     setSaveLoading(true);
     try {
-      const ext = previewDetails?.type.split("/")[1] || "png";
+      const ext = parseImageBase64(previewSrc).extension;
       const savePath = await save({
         title: t("imgbase64.saveTitle"),
         defaultPath: `image.${ext}`,
@@ -198,32 +182,35 @@ export default function ImageBase64() {
     } catch (e: any) {
       alertError(t("imgbase64.saveFail", { err: String(e) }));
     } finally {
-      setSaveLoading(false);
+      saving.current = false;
+      if (alive.current) setSaveLoading(false);
     }
   };
 
   return (
-    <div className="space-y-6 px-20 py-4 ">
-      <div className="flex items-center justify-between">
+    <div className="space-y-5 px-4 lg:px-6 py-4 max-w-[1200px] mx-auto">
+      <div className="flex flex-wrap gap-3 items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-white">{t("imgbase64.title")}</h3>
+          <h3 className="text-title font-semibold text-white">{t("imgbase64.title")}</h3>
           <p className="text-caption text-slate-400 mt-0.5">{t("imgbase64.subtitle")}</p>
         </div>
         
         {/* Tab Selector */}
         <div className="flex bg-white/5 border border-white/5 rounded-ctl p-0.5">
           <button
+            aria-pressed={activeTab === "toBase64"}
             onClick={() => setActiveTab("toBase64")}
             className={`px-3 py-1 rounded text-tiny font-semibold transition-all cursor-pointer ${
-              activeTab === "toBase64" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"
+              activeTab === "toBase64" ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200"
             }`}
           >
             {t("imgbase64.imgToBase64")}
           </button>
           <button
+            aria-pressed={activeTab === "toImage"}
             onClick={() => setActiveTab("toImage")}
             className={`px-3 py-1 rounded text-tiny font-semibold transition-all cursor-pointer ${
-              activeTab === "toImage" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"
+              activeTab === "toImage" ? "bg-[var(--module-accent)] text-white" : "text-slate-400 hover:text-slate-200"
             }`}
           >
             {t("imgbase64.base64ToImg")}
@@ -235,10 +222,10 @@ export default function ImageBase64() {
       {activeTab === "toBase64" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           {/* 左侧：图片上传与预览 */}
-          <div className="glass-panel border border-white/5 rounded-panel p-5 bg-white/2 flex flex-col h-[400px]">
+          <div className="ui-card p-4 flex flex-col h-[400px]">
             <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-4 flex-shrink-0">
               <span className="text-body font-semibold text-white flex items-center gap-1.5">
-                <ImageIcon className="w-4 h-4 text-blue-400" />
+                <ImageIcon className="w-4 h-4 text-[var(--module-accent)]" />
                 {t("imgbase64.imgSource")}
               </span>
               {imgSrc && (
@@ -255,11 +242,11 @@ export default function ImageBase64() {
               <div 
                 onDragOver={handleDragOver}
                 onDrop={handleDrop}
-                className="flex-1 border-2 border-dashed border-white/10 hover:border-blue-500/50 rounded-panel flex flex-col items-center justify-center p-6 text-center space-y-3 cursor-pointer transition-colors bg-black/10"
+                className="flex-1 border-2 border-dashed border-white/10 hover:border-[var(--module-accent)] rounded-panel flex flex-col items-center justify-center p-6 text-center space-y-3 cursor-pointer transition-colors bg-black/10"
                 onClick={() => fileInputRef.current?.click()}
               >
-                <div className="w-12 h-12 rounded-full bg-blue-600/10 flex items-center justify-center">
-                  <Upload className="w-6 h-6 text-blue-400" />
+                <div className="w-12 h-12 rounded-full bg-[var(--module-accent-soft)] flex items-center justify-center">
+                  <Upload className="w-6 h-6 text-[var(--module-accent)]" />
                 </div>
                 <div>
                   <p className="text-body text-slate-300 font-medium">{t("imgbase64.dragHint")}</p>
@@ -272,7 +259,7 @@ export default function ImageBase64() {
                       e.stopPropagation();
                       handleSelectLocalImage();
                     }}
-                    className="px-3.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/5 text-slate-300 rounded-ctl text-tiny font-semibold cursor-pointer transition-colors"
+                    className={btnSecondary}
                   >
                     {t("imgbase64.pickFromDir")}
                   </button>
@@ -304,7 +291,7 @@ export default function ImageBase64() {
             )}
 
             {error1 && (
-              <div className="mt-3 p-3 bg-red-500/10 border border-red-500/20 text-red-200 text-body rounded-card flex items-center gap-2 flex-shrink-0">
+              <div role="alert" className="mt-3 p-3 bg-red-500/10 border border-red-500/20 text-red-200 text-body rounded-card flex items-center gap-2 flex-shrink-0">
                 <AlertCircle className="w-4 h-4 text-red-400" />
                 <span>{error1}</span>
               </div>
@@ -312,16 +299,17 @@ export default function ImageBase64() {
           </div>
 
           {/* 右侧：Base64 结果 */}
-          <div className="glass-panel border border-white/5 rounded-panel p-5 bg-white/2 flex flex-col h-[400px]">
+          <div className="ui-card p-4 flex flex-col h-[400px]">
             <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-4 flex-shrink-0">
               <span className="text-body font-semibold text-white flex items-center gap-1.5">
-                <FileCode className="w-4 h-4 text-blue-400" />
+                <FileCode className="w-4 h-4 text-[var(--module-accent)]" />
                 {t("imgbase64.base64Result")}
               </span>
             </div>
 
             <div className="flex-1 min-h-0 relative">
               <textarea
+                aria-label={t("imgbase64.base64Result")}
                 value={base64Result}
                 readOnly
                 placeholder={t("imgbase64.resultPh")}
@@ -340,21 +328,21 @@ export default function ImageBase64() {
               <div className="mt-4 flex flex-wrap gap-2 flex-shrink-0">
                 <button
                   onClick={() => handleCopy("base64")}
-                  className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-card text-tiny font-semibold cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                  className={`${btnPrimary} flex-1`}
                 >
                   {copySuccess === "base64" ? <CheckCircle className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                   {copySuccess === "base64" ? t("imgbase64.copied") : t("imgbase64.copyBase64")}
                 </button>
                 <button
                   onClick={() => handleCopy("html")}
-                  className="px-3 py-2 bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 rounded-card text-tiny font-semibold cursor-pointer transition-colors flex items-center gap-1"
+                  className={btnSecondary}
                 >
                   {copySuccess === "html" ? <CheckCircle className="w-3.5 h-3.5 text-emerald-400" /> : <FileCode className="w-3.5 h-3.5" />}
                   {t("imgbase64.htmlTag")}
                 </button>
                 <button
                   onClick={() => handleCopy("css")}
-                  className="px-3 py-2 bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 rounded-card text-tiny font-semibold cursor-pointer transition-colors flex items-center gap-1"
+                  className={btnSecondary}
                 >
                   {copySuccess === "css" ? <CheckCircle className="w-3.5 h-3.5 text-emerald-400" /> : <Scissors className="w-3.5 h-3.5" />}
                   {t("imgbase64.cssStyle")}
@@ -369,10 +357,10 @@ export default function ImageBase64() {
       {activeTab === "toImage" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           {/* 左侧：输入框 */}
-          <div className="glass-panel border border-white/5 rounded-panel p-5 bg-white/2 flex flex-col h-[400px]">
+          <div className="ui-card p-4 flex flex-col h-[400px]">
             <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-4 flex-shrink-0">
               <span className="text-body font-semibold text-white flex items-center gap-1.5">
-                <FileCode className="w-4 h-4 text-blue-400" />
+                <FileCode className="w-4 h-4 text-[var(--module-accent)]" />
                 {t("imgbase64.inputBase64")}
               </span>
               {base64Input && (
@@ -387,6 +375,7 @@ export default function ImageBase64() {
 
             <div className="flex-1 min-h-0">
               <textarea
+                aria-label={t("imgbase64.inputBase64")}
                 value={base64Input}
                 onChange={(e) => handleBase64InputChange(e.target.value)}
                 placeholder={t("imgbase64.inputPh")}
@@ -395,7 +384,7 @@ export default function ImageBase64() {
             </div>
 
             {error2 && (
-              <div className="mt-3 p-3 bg-red-500/10 border border-red-500/20 text-red-200 text-body rounded-card flex items-center gap-2 flex-shrink-0">
+              <div role="alert" className="mt-3 p-3 bg-red-500/10 border border-red-500/20 text-red-200 text-body rounded-card flex items-center gap-2 flex-shrink-0">
                 <AlertCircle className="w-4 h-4 text-red-400" />
                 <span>{error2}</span>
               </div>
@@ -403,10 +392,10 @@ export default function ImageBase64() {
           </div>
 
           {/* 右侧：图片预览及保存 */}
-          <div className="glass-panel border border-white/5 rounded-panel p-5 bg-white/2 flex flex-col h-[400px]">
+          <div className="ui-card p-4 flex flex-col h-[400px]">
             <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-4 flex-shrink-0">
               <span className="text-body font-semibold text-white flex items-center gap-1.5">
-                <ImageIcon className="w-4 h-4 text-blue-400" />
+                <ImageIcon className="w-4 h-4 text-[var(--module-accent)]" />
                 {t("imgbase64.preview")}
               </span>
             </div>
@@ -419,9 +408,11 @@ export default function ImageBase64() {
               <div className="flex-1 flex flex-col min-h-0 bg-black/20 border border-white/5 rounded-card overflow-hidden">
                 <div className="flex-1 p-4 flex items-center justify-center min-h-0">
                   <img
+                    key={previewSrc}
                     src={previewSrc}
+                    onLoad={() => setPreviewValid(true)}
                     alt="Restored Preview"
-                    onError={() => setError2(t("imgbase64.loadFail"))}
+                    onError={() => { setPreviewValid(false); setError2(t("imgbase64.loadFail")); }}
                     className="max-h-full max-w-full object-contain rounded shadow-lg"
                   />
                 </div>
@@ -438,8 +429,8 @@ export default function ImageBase64() {
               <div className="mt-4 flex-shrink-0">
                 <button
                   onClick={handleSaveImage}
-                  disabled={saveLoading}
-                  className="w-full px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-card text-body font-semibold shadow-lg shadow-blue-500/20 cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                  disabled={saveLoading || !previewValid}
+                  className={`${btnPrimary} w-full`}
                 >
                   <Download className="w-3.5 h-3.5" />
                   {saveLoading ? t("imgbase64.saving") : t("imgbase64.saveAsImg")}

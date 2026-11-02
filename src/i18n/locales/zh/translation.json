@@ -5452,7 +5452,8 @@
     "detectFormat": "检测格式: {{type}}",
     "fileSize": "文件大小: {{size}}",
     "saving": "正在保存...",
-    "saveAsImg": "保存为图片文件"
+    "saveAsImg": "保存为图片文件",
+    "tooLarge": "图片不能超过 16 MiB，请选择较小的图片。"
   },
   "aicache": {
     "pickNewCacheDir": "选择新的缓存目录（仅支持 Junction）",

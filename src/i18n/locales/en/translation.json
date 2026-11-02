@@ -5452,7 +5452,8 @@
     "detectFormat": "Detected format: {{type}}",
     "fileSize": "File size: {{size}}",
     "saving": "Saving...",
-    "saveAsImg": "Save as image file"
+    "saveAsImg": "Save as image file",
+    "tooLarge": "Images must be 16 MiB or smaller. Please select a smaller image."
   },
   "aicache": {
     "pickNewCacheDir": "Select a new cache directory (Junction only)",

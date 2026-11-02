@@ -1,90 +1,40 @@
 use std::path::Path;
 
-const BASE64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+use base64::Engine;
+use std::io::Read;
+const MAX_IMAGE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_BASE64_CHARS: usize = ((MAX_IMAGE_BYTES + 2) / 3) * 4 + 256;
 
 fn encode_base64(bytes: &[u8]) -> String {
-    let mut result = String::new();
-    let mut i = 0;
-    while i < bytes.len() {
-        let b0 = bytes[i];
-        let b1 = if i + 1 < bytes.len() { bytes[i + 1] } else { 0 };
-        let b2 = if i + 2 < bytes.len() { bytes[i + 2] } else { 0 };
-
-        let n = ((b0 as u32) << 16) | ((b1 as u32) << 8) | (b2 as u32);
-
-        let c0 = (n >> 18) & 63;
-        let c1 = (n >> 12) & 63;
-        let c2 = (n >> 6) & 63;
-        let c3 = n & 63;
-
-        result.push(BASE64_CHARS[c0 as usize] as char);
-        result.push(BASE64_CHARS[c1 as usize] as char);
-        if i + 1 < bytes.len() {
-            result.push(BASE64_CHARS[c2 as usize] as char);
-        } else {
-            result.push('=');
-        }
-        if i + 2 < bytes.len() {
-            result.push(BASE64_CHARS[c3 as usize] as char);
-        } else {
-            result.push('=');
-        }
-        i += 3;
-    }
-    result
+    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
-
-fn decode_base64(s: &str) -> Result<Vec<u8>, String> {
-    let mut bytes = Vec::new();
-    let mut buffer = 0u32;
-    let mut count = 0;
-    for c in s.chars() {
-        if c.is_whitespace() || c == '=' {
-            continue;
-        }
-        let val = match c {
-            'A'..='Z' => c as u32 - 'A' as u32,
-            'a'..='z' => c as u32 - 'a' as u32 + 26,
-            '0'..='9' => c as u32 - '0' as u32 + 52,
-            '+' => 62,
-            '/' => 63,
-            _ => return Err(format!("无效的 Base64 字符: {}", c)),
-        };
-        buffer = (buffer << 6) | val;
-        count += 1;
-        if count == 4 {
-            bytes.push((buffer >> 16) as u8);
-            bytes.push((buffer >> 8) as u8);
-            bytes.push(buffer as u8);
-            buffer = 0;
-            count = 0;
-        }
-    }
-    if count == 2 {
-        bytes.push((buffer >> 4) as u8);
-    } else if count == 3 {
-        bytes.push((buffer >> 10) as u8);
-        bytes.push((buffer >> 2) as u8);
-    } else if count != 0 {
-        return Err("Base64 字符串长度不正确".to_string());
-    }
+fn decode_base64(input: &str) -> Result<Vec<u8>, String> {
+    if input.len() > MAX_BASE64_CHARS { return Err("图片不能超过16 MiB".into()); }
+    let mut clean: String = input.chars().filter(|c| !c.is_whitespace()).collect();
+    if clean.is_empty() { return Err("Base64不能为空".into()); }
+    if !clean.contains('=') { while clean.len() % 4 != 0 { clean.push('='); } }
+    let bytes = base64::engine::general_purpose::STANDARD.decode(clean).map_err(|e| format!("Base64格式错误: {e}"))?;
+    if bytes.len() > MAX_IMAGE_BYTES { return Err("图片不能超过16 MiB".into()); }
     Ok(bytes)
 }
 
 #[tauri::command]
 pub fn image_to_base64(file_path: String) -> Result<String, String> {
-    let bytes = std::fs::read(&file_path)
-        .map_err(|e| format!("读取图片文件失败: {}", e))?;
+    let file = std::fs::File::open(&file_path).map_err(|e| format!("读取图片文件失败: {e}"))?;
+    let mut bytes = Vec::new();
+    file.take(MAX_IMAGE_BYTES as u64 + 1).read_to_end(&mut bytes).map_err(|e| format!("读取图片文件失败: {e}"))?;
+    if bytes.len() > MAX_IMAGE_BYTES { return Err("图片不能超过16 MiB".into()); }
     
     let path = Path::new(&file_path);
-    let mime = match path.extension().and_then(|s| s.to_str()) {
-        Some("png") => "image/png",
-        Some("jpg") | Some("jpeg") => "image/jpeg",
-        Some("gif") => "image/gif",
-        Some("svg") => "image/svg+xml",
-        Some("webp") => "image/webp",
-        Some("ico") => "image/x-icon",
-        _ => "image/png",
+    let extension = path.extension().and_then(|s| s.to_str()).unwrap_or_default().to_ascii_lowercase();
+    let mime = match extension.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        "ico" => "image/x-icon",
+        _ => return Err("不支持的图片格式".into()),
     };
 
     let b64 = encode_base64(&bytes);
@@ -93,6 +43,7 @@ pub fn image_to_base64(file_path: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn save_base64_image(base64_str: String, file_path: String) -> Result<(), String> {
+    if base64_str.len() > MAX_BASE64_CHARS { return Err("图片不能超过16 MiB".into()); }
     let clean_base64 = if let Some(pos) = base64_str.find(";base64,") {
         &base64_str[pos + 8..]
     } else {
@@ -101,8 +52,23 @@ pub fn save_base64_image(base64_str: String, file_path: String) -> Result<(), St
 
     let bytes = decode_base64(clean_base64)?;
 
-    std::fs::write(file_path, bytes)
-        .map_err(|e| format!("写入文件失败: {}", e))?;
+    crate::commands::config::atomic_write_file(Path::new(&file_path), &bytes)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn rejects_invalid_padding_and_preserves_unpadded_compatibility() {
+        for invalid in ["T=Q=", "TQ=", "TQ===", "TR==", "A"] { assert!(decode_base64(invalid).is_err(), "{invalid}"); }
+        assert_eq!(decode_base64("TQ").unwrap(), b"M");
+        assert_eq!(decode_base64(" TQ==\n").unwrap(), b"M");
+        assert_eq!(encode_base64(b"Man"), "TWFu");
+    }
+    #[test]
+    fn rejects_oversized_base64_before_decoding() {
+        assert!(decode_base64(&"A".repeat(MAX_BASE64_CHARS + 1)).is_err());
+    }
 }
