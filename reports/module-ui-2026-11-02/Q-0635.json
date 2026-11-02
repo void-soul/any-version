@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0635",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "Picky模块：阅读抓取旧结果会重新打开已关弹窗，删除确认丢弃异步错误，云同步读取失败一直加载且无法保存停用状态；统一弹窗与控件。",
+  "root_cause": "**openReading**的迟到结果不核对选择，已有关联正文时刷新直接早退；删除确认关闭并丢弃Promise；SyncModal将保存与启用绑定且加载失败消息不渲染；手写弹窗和控件样式不一致。",
+  "solution": "",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/PickyPanel.tsx** | Picky交互或公共UI修复 |\n| **src/components/PickyPanel.ModalShell.tsx** | Picky交互或公共UI修复 |\n| **src/components/PickyPanel.ConfirmModal.tsx** | Picky交互或公共UI修复 |\n| **src/components/PickyPanel.BookmarkModal.tsx** | Picky交互或公共UI修复 |\n| **src/components/PickyPanel.SyncModal.tsx** | Picky交互或公共UI修复 |\n| **src/components/PickyPanel.ReadingModal.tsx** | Picky交互或公共UI修复 |\n",
+  "created_at": "2026-11-02 17:18:02",
+  "updated_at": "2026-11-02 17:21:50",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

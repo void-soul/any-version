@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { X, Loader2, RefreshCw, BookOpen } from "lucide-react";
@@ -16,21 +17,23 @@ export function ReadingModal({
   onRefetch: () => void;
 }) {
   const { t } = useTranslation();
+  const [openError, setOpenError] = useState("");
   const content = (b.content ?? "").trim();
   const wordCount = content ? content.replace(/\s+/g, " ").trim().split(" ").length : 0;
   return (
     <div className="fixed inset-0 z-[110] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
       <div
-        className="w-[720px] max-w-[95vw] max-h-[90vh] flex flex-col rounded-panel border border-white/10 bg-slate-900/95 shadow-2xl overflow-hidden"
+        role="dialog" aria-modal="true" aria-label={b.title || t("picky.unnamed")}
+        className="ui-modal w-[720px] max-w-[95vw] max-h-[90vh] flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头部：标题 + 操作 */}
         <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3 flex-shrink-0">
           <BookOpen className="w-4 h-4 text-[var(--module-accent)] flex-shrink-0" />
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-bold text-white truncate" title={b.title}>{b.title || t("picky.unnamed")}</div>
+            <div className="text-title font-bold text-white truncate" title={b.title}>{b.title || t("picky.unnamed")}</div>
             {b.url && (
-              <button onClick={() => void openUrl(b.url!)} className="text-tiny text-sky-400/80 hover:text-sky-300 truncate block max-w-full cursor-pointer" title={b.url}>
+              <button onClick={() => { void openUrl(b.url!).catch((e) => setOpenError(String(e))); }} className="text-tiny text-sky-400/80 hover:text-sky-300 truncate block max-w-full cursor-pointer" title={b.url}>
                 {hostOf(b.url)}
               </button>
             )}
@@ -43,11 +46,12 @@ export function ReadingModal({
             title={t("picky.readRefetch")}>
             <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
           </button>
-          <button onClick={onClose} className="p-1.5 rounded-ctl hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer flex-shrink-0">
+          <button type="button" aria-label={t("common.dialogClose")} onClick={onClose} className="ui-icon-btn w-7 h-7 shrink-0">
             <X className="w-4 h-4" />
           </button>
         </div>
 
+        {openError && <p role="alert" className="ui-note-error mx-4 my-2">{openError}</p>}
         {/* 正文区 */}
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {loading ? (

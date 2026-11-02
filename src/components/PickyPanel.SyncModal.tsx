@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { Loader2, Cloud } from "lucide-react";
 import { fmtTime, type PickySyncConfig } from "./PickyPanel.model";
+import { btnPrimary, btnSecondary, inputCls, labelCls } from "./shared/Button";
 import { ModalShell } from "./PickyPanel.ModalShell";
 // ─── 云同步设置 ───
 
@@ -12,17 +13,20 @@ export function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (m
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
+  const inFlight = useRef(false);
   useEffect(() => {
+    let disposed = false;
     invoke<PickySyncConfig>("picky_get_sync_config")
-      .then(setCfg)
-      .catch((e) => setMsg(t("picky.readCfgFail", { err: String(e) })));
+      .then((config) => { if (!disposed) setCfg(config); })
+      .catch((e) => { if (!disposed) setMsg(t("picky.readCfgFail", { err: String(e) })); });
+    return () => { disposed = true; };
   }, []);
 
   if (!cfg) {
     return (
       <ModalShell onClose={onClose} title={t("picky.syncModalTitle")}>
-        <div className="flex items-center gap-2 text-body text-slate-500">
-          <Loader2 className="w-4 h-4 animate-spin" /> {t("picky.loadingCfg")}
+        <div role={msg ? "alert" : "status"} className="flex items-center gap-2 text-body text-slate-500">
+          {msg ? msg : <><Loader2 className="w-4 h-4 animate-spin" /> {t("picky.loadingCfg")}</>}
         </div>
       </ModalShell>
     );
@@ -31,10 +35,8 @@ export function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (m
   const set = (k: keyof PickySyncConfig, v: unknown) => setCfg((c) => (c ? { ...c, [k]: v } : c));
 
   const save = async () => {
-    if (!cfg.enabled) {
-      setMsg(t("picky.needEnableSave"));
-      return;
-    }
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setMsg("");
     try {
@@ -43,6 +45,7 @@ export function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (m
     } catch (e) {
       setMsg(t("picky.saveFail", { err: String(e) }));
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   };
@@ -53,6 +56,8 @@ export function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (m
       setMsg(t("picky.needEnableSync"));
       return;
     }
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setMsg("");
     try {
@@ -63,15 +68,16 @@ export function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (m
     } catch (e) {
       setMsg(t("picky.syncFail", { err: String(e) }));
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   };
 
-  const field = "w-full glass-input px-3 py-2 text-body bg-black/30 border border-white/10 rounded-ctl focus:outline-none focus:border-[var(--module-accent)]/50";
+  const field = inputCls;
 
   return (
-    <ModalShell onClose={onClose} title={t("picky.syncModalTitle2")}>
-      <div className="space-y-3">
+    <ModalShell onClose={onClose} title={t("picky.syncModalTitle2")} busy={busy}>
+      <fieldset disabled={busy} className="space-y-3 min-w-0" aria-busy={busy}>
         <label className="flex items-center gap-2 text-caption text-slate-300 cursor-pointer">
           <input
             type="checkbox"
@@ -89,25 +95,25 @@ export function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (m
         {cfg.lastSyncAt && <p className="text-tiny text-slate-500">{t("picky.lastSync", { time: fmtTime(cfg.lastSyncAt) })}</p>}
 
         <div>
-          <label className="text-tiny text-slate-400 mb-1 block">{t("picky.endpointLabel")}</label>
+          <label className={labelCls}>{t("picky.endpointLabel")}</label>
           <input value={cfg.endpoint || ""} onChange={(e) => set("endpoint", e.target.value)} placeholder="https://s3.example.com" disabled={!cfg.enabled} className={field} />
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="text-tiny text-slate-400 mb-1 block">Region</label>
+            <label className={labelCls}>Region</label>
             <input value={cfg.region} onChange={(e) => set("region", e.target.value)} disabled={!cfg.enabled} className={field} />
           </div>
           <div>
-            <label className="text-tiny text-slate-400 mb-1 block">Bucket</label>
+            <label className={labelCls}>Bucket</label>
             <input value={cfg.bucketName} onChange={(e) => set("bucketName", e.target.value)} disabled={!cfg.enabled} className={field} />
           </div>
         </div>
         <div>
-          <label className="text-tiny text-slate-400 mb-1 block">AccessKey ID</label>
+          <label className={labelCls}>AccessKey ID</label>
           <input value={cfg.accessKeyId} onChange={(e) => set("accessKeyId", e.target.value)} disabled={!cfg.enabled} className={field} />
         </div>
         <div>
-          <label className="text-tiny text-slate-400 mb-1 block">{t("picky.secretKey")}</label>
+          <label className={labelCls}>{t("picky.secretKey")}</label>
           <input
             type="password"
             value={cfg.secretAccessKey}
@@ -118,11 +124,11 @@ export function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (m
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="text-tiny text-slate-400 mb-1 block">{t("picky.prefix")}</label>
+            <label className={labelCls}>{t("picky.prefix")}</label>
             <input value={cfg.prefix || ""} onChange={(e) => set("prefix", e.target.value)} placeholder="picky/" disabled={!cfg.enabled} className={field} />
           </div>
           <div>
-            <label className="text-tiny text-slate-400 mb-1 block">{t("picky.addrStyle")}</label>
+            <label className={labelCls}>{t("picky.addrStyle")}</label>
             <select value={cfg.addressingStyle} onChange={(e) => set("addressingStyle", e.target.value)} disabled={!cfg.enabled} className={field}>
               <option value="auto">{t("picky.styleAuto")}</option>
               <option value="path">{t("picky.stylePath")}</option>
@@ -145,25 +151,25 @@ export function SyncModal({ onClose, onDone }: { onClose: () => void; onDone: (m
           {t("picky.syncDesc")}
         </p>
 
-        {msg && <p className="text-caption text-[var(--module-accent)] break-words">{msg}</p>}
+        {msg && <p role="status" className="text-caption text-[var(--module-accent)] break-words">{msg}</p>}
 
         <div className="flex justify-end gap-2 pt-1">
           <button
             onClick={save}
-            disabled={!cfg.enabled || busy}
-            className="px-3 py-1.5 rounded-ctl text-caption ui-btn text-slate-300 cursor-pointer disabled:opacity-50"
+            disabled={busy}
+            className={btnSecondary}
           >
             {t("picky.saveCfg")}
           </button>
           <button
             onClick={syncNow}
             disabled={!cfg.enabled || busy}
-            className="px-4 py-1.5 rounded-ctl text-caption bg-[var(--module-accent)] text-white font-semibold cursor-pointer hover:opacity-85 disabled:opacity-50 flex items-center gap-1"
+            className={btnPrimary}
           >
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Cloud className="w-3 h-3" />} {t("picky.doSync")}
           </button>
         </div>
-      </div>
+      </fieldset>
     </ModalShell>
   );
 }
