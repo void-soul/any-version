@@ -12,7 +12,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, Download, Loader2, Play, Search } from "lucide-react";
 
-import { SharedButton } from "../shared/Button";
+import { inputCls, SharedButton } from "../shared/Button";
 import { toast } from "../shared/Toast";
 import VexEmptyState from "../VexEmptyState";
 import {
@@ -62,55 +62,78 @@ export default function OnlineSearch({ onPlayer, onLibrary }: Props) {
   const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
   const pageRef = useRef(1);
+  const searchEpoch = useRef(0);
+  const searchBusy = useRef(false);
+  const playBusy = useRef(false);
+  const downloadBusy = useRef(false);
+  const mounted = useRef(false);
   const [playingKey, setPlayingKey] = useState<string | null>(null);
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
 
-  // 下载进度：按 label 匹配当前下载的那首，避免串台
   useEffect(() => {
-    const unlisten = listen<DownloadProgress>(DOWNLOAD_PROGRESS_EVENT, (event) => {
-      setProgress(event.payload);
+    mounted.current = true;
+    let disposed = false;
+    let off: (() => void) | undefined;
+    void listen<DownloadProgress>(DOWNLOAD_PROGRESS_EVENT, (event) => {
+      if (!disposed && downloadBusy.current) setProgress(event.payload);
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else off = unlisten;
+    }).catch((error) => {
+      if (!disposed) toast(String(error), "err");
     });
     return () => {
-      void unlisten.then((off) => off());
+      disposed = true;
+      mounted.current = false;
+      searchEpoch.current += 1;
+      searchBusy.current = false;
+      off?.();
     };
   }, []);
 
   const runSearch = useCallback(
-    async (nextPage: number, replace: boolean) => {
-      const target = submitted.trim();
-      if (!target) return;
+    async (target: string, nextPage: number, replace: boolean) => {
+      if (!target || searchBusy.current) return;
+      searchBusy.current = true;
+      const epoch = ++searchEpoch.current;
       setLoading(true);
       try {
         const outcome = await invoke<SearchOutcome>("music_plugin_search", {
           keyword: target,
           page: nextPage,
         });
+        if (!mounted.current || epoch !== searchEpoch.current) return;
         setFailures(outcome.failures);
         setExhausted(outcome.exhausted);
         pageRef.current = nextPage;
         setHits((prev) => (replace ? outcome.hits : [...prev, ...outcome.hits]));
         setSearched(true);
       } catch (e) {
-        toast(t("music.onlineSearchFail", { err: String(e) }), "err");
+        if (mounted.current && epoch === searchEpoch.current) toast(t("music.onlineSearchFail", { err: String(e) }), "err");
       } finally {
-        setLoading(false);
+        if (epoch === searchEpoch.current) {
+          searchBusy.current = false;
+          if (mounted.current) setLoading(false);
+        }
       }
     },
-    [submitted, t]
+    [t]
   );
 
   const submit = () => {
     const trimmed = keyword.trim();
-    if (!trimmed) return;
+    if (!trimmed || searchBusy.current) return;
     setSubmitted(trimmed);
     setHits([]);
     // 换了关键词，上一次选中的音源大概率没有结果了，回到「全部」
     setActiveSource("");
-    void runSearch(1, true);
+    void runSearch(trimmed, 1, true);
   };
 
   const play = async (hit: SearchHit) => {
+    if (playBusy.current) return;
+    playBusy.current = true;
     const key = hitKey(hit);
     setPlayingKey(key);
     try {
@@ -124,17 +147,21 @@ export default function OnlineSearch({ onPlayer, onLibrary }: Props) {
         hits: visibleHits.map((item) => ({ file: item.file, item: item.item })),
         index: index < 0 ? 0 : index,
       });
+      if (!mounted.current) return;
       onPlayer(outcome.player);
       if (outcome.from_cache) toast(t("music.onlinePlayCached"));
     } catch (e) {
       // 不加「播放失败:」前缀：后端消息本身已说清是什么失败、为什么、怎么办
-      toast(String(e), "err");
+      if (mounted.current) toast(String(e), "err");
     } finally {
-      setPlayingKey(null);
+      playBusy.current = false;
+      if (mounted.current) setPlayingKey(null);
     }
   };
 
   const download = async (hit: SearchHit) => {
+    if (downloadBusy.current) return;
+    downloadBusy.current = true;
     const key = hitKey(hit);
     setDownloadingKey(key);
     setProgress(null);
@@ -144,13 +171,14 @@ export default function OnlineSearch({ onPlayer, onLibrary }: Props) {
         item: hit.item,
         quality,
       });
+      if (!mounted.current) return;
       onLibrary(outcome.library);
       toast(t("music.onlineDownloaded", { dir: outcome.dir }));
     } catch (e) {
-      toast(String(e), "err");
+      if (mounted.current) toast(String(e), "err");
     } finally {
-      setDownloadingKey(null);
-      setProgress(null);
+      downloadBusy.current = false;
+      if (mounted.current) { setDownloadingKey(null); setProgress(null); }
     }
   };
 
@@ -192,14 +220,15 @@ export default function OnlineSearch({ onPlayer, onLibrary }: Props) {
               if (e.key === "Enter") submit();
             }}
             placeholder={t("music.onlineSearchPh")}
-            className="glass-input w-full pl-7 pr-2 h-8 text-caption"
+            aria-label={t("music.onlineSearchPh")}
+            className={`${inputCls} !pl-7`}
           />
         </div>
         <select
           value={quality}
           onChange={(e) => setQuality(e.target.value as MusicQuality)}
           title={t("music.qualityLabel")}
-          className="glass-input h-8 text-caption cursor-pointer"
+          className={`${inputCls} !w-auto cursor-pointer`}
         >
           {QUALITIES.map((item) => (
             <option key={item} value={item}>
@@ -343,7 +372,8 @@ export default function OnlineSearch({ onPlayer, onLibrary }: Props) {
                       onClick={() => void play(hit)}
                       // 双击按钮不该再冒泡成「双击行」，否则会触发第二次播放
                       onDoubleClick={(e) => e.stopPropagation()}
-                      disabled={isPlaying}
+                      disabled={playingKey !== null}
+                      aria-label={t("music.onlinePlay")}
                       title={t("music.onlinePlay")}
                       className="p-1 rounded text-slate-500 hover:text-[var(--module-accent)] hover:bg-white/10 cursor-pointer disabled:opacity-40"
                     >
@@ -357,7 +387,8 @@ export default function OnlineSearch({ onPlayer, onLibrary }: Props) {
                       onClick={() => void download(hit)}
                       // 同上：连点下载也不该顺带把这首歌播了
                       onDoubleClick={(e) => e.stopPropagation()}
-                      disabled={isDownloading}
+                      disabled={downloadingKey !== null}
+                      aria-label={t("music.onlineDownload")}
                       title={t("music.onlineDownload")}
                       className="p-1 rounded text-slate-500 hover:text-emerald-400 hover:bg-emerald-500/10 cursor-pointer disabled:opacity-40"
                     >
@@ -375,7 +406,7 @@ export default function OnlineSearch({ onPlayer, onLibrary }: Props) {
               <div className="p-3 flex justify-center">
                 <SharedButton
                   variant="secondary"
-                  onClick={() => void runSearch(pageRef.current + 1, false)}
+                  onClick={() => void runSearch(submitted, pageRef.current + 1, false)}
                   disabled={loading}
                 >
                   {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}

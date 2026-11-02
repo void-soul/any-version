@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0650",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "按模块顺序检查音乐播放器：在线搜索使用旧关键词，异步结果和进度监听缺少生命周期保护，连点播放下载可重复请求；统一搜索控件和操作状态。",
+  "root_cause": "**submit**设置React状态后立即调用捕获旧**submitted**的回调；搜索无同步互斥与卸载失效代次，监听注册失败或晚返回未处理。",
+  "solution": "1. 显式传入本次关键词，使用同步门闩和请求代次保护分页结果。\n2. 监听注册增加失败提示和延迟返回解绑；播放、下载互斥并忽略卸载后的结果。\n3. 搜索输入使用公共控件，图标操作增加名称；生产构建通过。真实音源与交互仍待最终验收。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/music/OnlineSearch.tsx** | 搜索关键词、异步生命周期、互斥与控件 |",
+  "created_at": "2026-11-02 19:49:47",
+  "updated_at": "2026-11-02 19:51:23",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}
