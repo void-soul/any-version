@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0657",
+  "date": "2026-11-02",
+  "category": "Performance",
+  "status": "已验证",
+  "phenomenon": "Suno下载响应通过bytes一次性读入内存，音频和封面无字节上限；改成流式有界写入并在失败时清理残件。",
+  "root_cause": "**download_file**调用response.bytes整份分配且没有Content-Length与实际流大小预算，异常响应可耗尽内存。",
+  "solution": "1. 音频256MiB、封面16MiB双重检查声明长度及实际累计长度，异步分块写文件，检查模块取消。\n2. 流中错误、超限或取消均清理未完成文件，保留原有转码和同名保护。\n3. 新增流边界/不写越界块/读取失败/取消回归；Suno共14项Rust测试通过，无网络请求和真实下载。",
+  "files": "| File | Change |\n|------|--------|\n| **src-tauri/src/commands/suno/mod.rs** | 有界流式下载及隔离回归 |\n| **src-tauri/src/commands/suno/download.rs** | 有界流式下载及隔离回归 |\n| **src-tauri/src/commands/suno/download_stream.rs** | 有界流式下载及隔离回归 |\n",
+  "created_at": "2026-11-02 20:13:16",
+  "updated_at": "2026-11-02 20:16:05",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

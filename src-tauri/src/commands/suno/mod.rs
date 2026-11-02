@@ -25,6 +25,7 @@ mod http;
 use http::*;
 mod profiles;
 pub use profiles::*;
+mod download_stream;
 mod download;
 pub use download::*;
 mod parsing;

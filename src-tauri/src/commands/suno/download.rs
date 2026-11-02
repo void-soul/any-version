@@ -102,11 +102,11 @@ pub(super) async fn download_one(
             stage: "download".to_string(),
         },
     );
-    download_file(&song.audio_url, &tmp).await?;
+    download_file(&song.audio_url, &tmp, 256 * 1024 * 1024).await?;
 
     // 封面可选：下载失败不阻断音频下载，只是不带封面
     let cover = match &song.image_url {
-        Some(url) if !url.is_empty() => match download_file(url, &cover_tmp).await {
+        Some(url) if !url.is_empty() => match download_file(url, &cover_tmp, 16 * 1024 * 1024).await {
             Ok(()) if cover_tmp.is_file() => Some(cover_tmp.as_path()),
             _ => None,
         },
@@ -139,7 +139,7 @@ pub(super) async fn download_one(
     result
 }
 
-pub(super) async fn download_file(url: &str, dest: &Path) -> Result<(), String> {
+pub(super) async fn download_file(url: &str, dest: &Path, limit: u64) -> Result<(), String> {
     let client = http_client();
     let resp = client.get(url).send().await.map_err(|e| {
         eprintln!("[Suno] 下载失败 {url}: {e}");
@@ -156,12 +156,18 @@ pub(super) async fn download_file(url: &str, dest: &Path) -> Result<(), String> 
         eprintln!("[Suno] 下载返回 HTTP {status}，content-type={content_type}");
         return Err(format!("下载返回 HTTP {status}"));
     }
-    let bytes = resp.bytes().await.map_err(|e| format!("读取失败: {e}"))?;
-    eprintln!(
-        "[Suno] 下载完成 {url}：{} 字节，content-type={content_type}",
-        bytes.len()
-    );
-    std::fs::write(dest, &bytes).map_err(|e| format!("写入临时文件失败: {e}"))?;
+    if resp.content_length().is_some_and(|size| size > limit) {
+        return Err(format!("下载文件超过大小限制（{} MiB）", limit / 1024 / 1024));
+    }
+    let mut pending = PendingOutput(Some(dest.to_path_buf()));
+    let mut output = tokio::fs::File::create(dest).await.map_err(|e| format!("创建临时文件失败: {e}"))?;
+    let result = super::download_stream::copy_limited(
+        resp.bytes_stream(), &mut output, limit,
+        || owned_process::ensure_running("suno"),
+    ).await;
+    drop(output);
+    result?;
+    pending.0 = None;
     Ok(())
 }
 
