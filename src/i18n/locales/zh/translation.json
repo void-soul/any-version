@@ -5368,6 +5368,8 @@
     "viewLogs": "查看实时日志 ({{count}} 行)"
   },
   "rss": {
+    "invalidArticleLink": "文章链接无效，仅支持 HTTP 或 HTTPS 地址。",
+    "openArticleFail": "无法打开文章：{{err}}",
     "sourceBadge": "RSS 来源",
     "noTitle": "无标题",
     "undefinedFeed": "未定义源",

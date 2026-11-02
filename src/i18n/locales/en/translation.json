@@ -5368,6 +5368,8 @@
     "viewLogs": "View live logs ({{count}} lines)"
   },
   "rss": {
+    "invalidArticleLink": "Invalid article link. Only HTTP and HTTPS addresses are supported.",
+    "openArticleFail": "Could not open article: {{err}}",
     "sourceBadge": "RSS source",
     "noTitle": "Untitled",
     "undefinedFeed": "Undefined feed",

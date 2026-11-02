@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0627",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "按顺序检查资讯模块，缓存配额异常会把有效RSS算失败，旧刷新可覆盖新结果、延迟初始化未取消，配置保存可重入；需完善反馈、限制文章链接协议并统一来源管理弹窗样式。",
+  "root_cause": "RSS网络获取与localStorage缓存写在同一try，配额异常被误认为源失败；刷新缺少代次与延迟初始化清理，旧响应可覆盖新源。配置保存未防重入，文章打开失败回退window.open且未限制协议，字号和弹窗底色自造。",
+  "solution": "1. **rssData**把缓存读写变为尽力而为，校验TTL/数据形态/未来时间；缓存异常不丢有效网络内容，全部源失败保留旧文章。\n2. 刷新代次屏蔽旧结果与旧缓存写入，取消延迟初始化，卸载失效；配置保存同步闸与忙态禁用整组控件。\n3. 文章仅允许HTTP/HTTPS，经opener打开失败显示反馈，不再window.open兜底；中英文错误文案同步。\n4. 来源管理弹窗ui-modal、底部公共按钮与标准字号，错误区role=alert。\n5. 新增3个缓存/权限/链接协议测试；构建、447前端测试、1132文件架构通过，未请求真实订阅源或改真实配置。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/RssReader.tsx** | RSS刷新与UI验收 |\n| **src/components/rssData.ts** | RSS刷新与UI验收 |\n| **src/components/rssData.test.ts** | RSS刷新与UI验收 |\n| **src/i18n/locales/zh/translation.json** | RSS刷新与UI验收 |\n| **src/i18n/locales/en/translation.json** | RSS刷新与UI验收 |",
+  "created_at": "2026-11-02 16:34:52",
+  "updated_at": "2026-11-02 16:36:52",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

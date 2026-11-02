@@ -1,4 +1,6 @@
-import { useState, useEffect, useMemo } from "react";
+import { readRssCache, writeRssCache, articleHttpUrl } from "./rssData";
+import { btnPrimary, btnSecondary } from "./shared/Button";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useTranslation } from "react-i18next";
@@ -41,10 +43,10 @@ function SourceBadge({ source }: { source: string }) {
   const initial = (source.trim().charAt(0) || "?").toUpperCase();
   return (
     <span
-      className="px-1 py-0.5 rounded-md flex items-center gap-1 text-[8px] font-bold border bg-white/5 border-white/10 text-slate-300"
+      className="px-1 py-0.5 rounded-md flex items-center gap-1 text-micro font-bold border bg-white/5 border-white/10 text-slate-300"
       title={t("rss.sourceBadge")}
     >
-      <span className="w-3.5 h-3.5 rounded flex items-center justify-center text-[7px] font-black shrink-0 bg-slate-600/40 text-slate-300">
+      <span className="w-3.5 h-3.5 rounded flex items-center justify-center text-micro font-black shrink-0 bg-slate-600/40 text-slate-300">
         {initial}
       </span>
       {source}
@@ -174,6 +176,9 @@ export default function RssReader() {
   const [sources, setSources] = useState<RssSource[]>([]);
   const [articles, setArticles] = useState<RssArticle[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
+  const refreshGeneration = useRef(0);
+  const configInFlight = useRef(false);
+  const [configSaving, setConfigSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
   // Date filter state
@@ -268,21 +273,25 @@ export default function RssReader() {
 
   // Load config & sources
   const loadRssConfig = async () => {
+    const generation = refreshGeneration.current;
     try {
       const res = await invoke<RssConfig>("get_rss_config");
+      if (refreshGeneration.current !== generation) return [];
       setSources(res.sources);
       setEditSources(res.sources);
       return res.sources;
     } catch (err: any) {
-      setError(t("rss.loadCfgFail", { err: err.message || err }));
+      if (refreshGeneration.current === generation) setError(t("rss.loadCfgFail", { err: err.message || err }));
       return [];
     }
   };
 
   // Fetch articles from all sources
   const fetchAllFeeds = async (feedSources: RssSource[], force = false) => {
+    const generation = ++refreshGeneration.current;
     if (feedSources.length === 0) {
       setArticles([]);
+      setLoading(false);
       setError(t("rss.noSources"));
       return;
     }
@@ -303,44 +312,29 @@ export default function RssReader() {
           let useCache = false;
 
           if (!force) {
-            const cachedData = localStorage.getItem(`rss_cache_${url}`);
-            if (cachedData) {
-              try {
-                const { xml, fetchedAt } = JSON.parse(cachedData);
-                if (xml && fetchedAt && (now - fetchedAt < cacheDuration)) {
-                  xmlText = xml;
-                  useCache = true;
-                }
-              } catch (e) {
-                console.error("解析 RSS 缓存失败:", e);
-              }
-            }
+            const cached = readRssCache(localStorage, `rss_cache_${url}`, now, cacheDuration);
+            if (cached !== null) { xmlText = cached; useCache = true; }
           }
-
           if (!useCache) {
             xmlText = await invoke<string>("fetch_rss_feed", { url });
-            if (xmlText && xmlText.trim()) {
-              localStorage.setItem(`rss_cache_${url}`, JSON.stringify({
-                xml: xmlText,
-                fetchedAt: now
-              }));
-            } else {
-              localStorage.removeItem(`rss_cache_${url}`);
-            }
+            if (refreshGeneration.current !== generation) return;
+            writeRssCache(localStorage, `rss_cache_${url}`, xmlText, now);
           }
 
           feedData.push({ source: { url, name }, xml: xmlText });
         } catch (err: any) {
           console.error(`Fetch feed error for ${url}:`, err);
-          localStorage.removeItem(`rss_cache_${url}`);
+          writeRssCache(localStorage, `rss_cache_${url}`, "", now);
           errors.push(`${name || url}: ${err.message || err}`);
         }
       })
     );
 
     // ── Phase 2: 逐源解析，每个源之间 yield 事件循环，避免主线程长时间阻塞 ──
+    if (refreshGeneration.current !== generation) return;
     const allArticles: RssArticle[] = [];
     for (const { source, xml } of feedData) {
+      if (refreshGeneration.current !== generation) return;
       try {
         if (xml) {
           const parsed = parseRssXml(xml, source.url, source.name);
@@ -361,7 +355,8 @@ export default function RssReader() {
       return b.pubDate.getTime() - a.pubDate.getTime();
     });
 
-    setArticles(allArticles);
+    if (refreshGeneration.current !== generation) return;
+    if (allArticles.length > 0 || errors.length === 0) setArticles(allArticles);
     setLoading(false);
 
     if (errors.length > 0 && allArticles.length === 0) {
@@ -373,20 +368,13 @@ export default function RssReader() {
 
   // 延迟初始化：让 UI 先完成首帧渲染，再开始抓取/解析 RSS
   useEffect(() => {
-    const schedule = (cb: () => void) => {
-      if ("requestIdleCallback" in window) {
-        (window as any).requestIdleCallback(cb, { timeout: 2000 });
-      } else {
-        setTimeout(cb, 100);
-      }
+    let disposed = false;
+    const start = () => {
+      if (disposed) return;
+      void loadRssConfig().then((list) => { if (!disposed && list.length > 0) void fetchAllFeeds(list, false); });
     };
-    schedule(() => {
-      loadRssConfig().then((list) => {
-        if (list.length > 0) {
-          fetchAllFeeds(list, false);
-        }
-      });
-    });
+    const timer = window.setTimeout(start, 100);
+    return () => { disposed = true; window.clearTimeout(timer); refreshGeneration.current++; };
   }, []);
 
   // 当前资讯中出现的所有来源名称（用于按名称筛选）
@@ -437,12 +425,10 @@ export default function RssReader() {
 
   // Article open helper
   const handleOpenArticle = async (url: string) => {
-    if (!url) return;
-    try {
-      await openUrl(url);
-    } catch (err) {
-      window.open(url, "_blank");
-    }
+    const safeUrl = articleHttpUrl(url);
+    if (!safeUrl) { setError(t("rss.invalidArticleLink")); return; }
+    try { await openUrl(safeUrl); }
+    catch (error) { setError(t("rss.openArticleFail", { err: String(error) })); }
   };
 
   // Test RSS link
@@ -490,6 +476,9 @@ export default function RssReader() {
 
   // Save config
   const handleSaveConfig = async () => {
+    if (configInFlight.current) return;
+    configInFlight.current = true;
+    setConfigSaving(true);
     try {
       const cleaned = editSources.map((s) => ({ url: s.url, name: s.name.trim() }));
       await invoke("set_rss_sources", { sources: cleaned });
@@ -503,7 +492,7 @@ export default function RssReader() {
       fetchAllFeeds(cleaned);
     } catch (err: any) {
       setConfigMessage(t("rss.saveFail", { err: err.message || err }));
-    }
+    } finally { configInFlight.current = false; setConfigSaving(false); }
   };
 
   // Format date helper
@@ -654,7 +643,7 @@ export default function RssReader() {
 
       {/* 错误提示 */}
       {error && (
-        <div className="mx-4 mt-4 p-3 bg-red-500/10 border border-red-500/20 text-tiny text-red-400 rounded-card flex items-start gap-2">
+        <div role="alert" className="mx-4 mt-4 p-3 bg-red-500/10 border border-red-500/20 text-tiny text-red-400 rounded-card flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
           <div className="whitespace-pre-line">{error}</div>
         </div>
@@ -686,7 +675,7 @@ export default function RssReader() {
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex items-center gap-2 flex-wrap">
                       <SourceBadge source={article.source} />
-                      <span className="text-[9.5px] text-slate-500 flex items-center gap-1">
+                      <span className="text-tiny text-slate-500 flex items-center gap-1">
                         <Calendar className="w-3 h-3" />
                         {formatDate(article.pubDate)}
                       </span>
@@ -745,7 +734,7 @@ export default function RssReader() {
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex items-center gap-2 flex-wrap">
                       <SourceBadge source={article.source} />
-                      <span className="text-[9.5px] text-slate-500 flex items-center gap-1">
+                      <span className="text-tiny text-slate-500 flex items-center gap-1">
                         <Calendar className="w-3 h-3" />
                         {formatDate(article.pubDate)}
                       </span>
@@ -793,7 +782,8 @@ export default function RssReader() {
       {/* 配置模态窗 */}
       {showConfig && (
         <div className="fixed inset-0 modal-mask bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-lg bg-slate-950/95 border border-white/10 rounded-panel shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
+          <div role="dialog" aria-modal="true" aria-label={t("rss.feedManage")} aria-busy={configSaving} className="ui-modal w-full max-w-lg shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
+            <fieldset disabled={configSaving} className="contents">
             {/* Header */}
             <div className="p-4 border-b border-white/5 flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -805,7 +795,7 @@ export default function RssReader() {
                   setShowConfig(false);
                   setConfigMessage(null);
                 }}
-                className="text-slate-500 hover:text-slate-300 text-body"
+                disabled={configSaving} className="ui-btn ui-btn-ghost h-8 px-2"
               >
                 {t("rss.close")}
               </button>
@@ -819,14 +809,14 @@ export default function RssReader() {
                   placeholder={t("rss.namePh")}
                   value={newSourceName}
                   onChange={(e) => setNewSourceName(e.target.value)}
-                  className="w-[130px] flex-shrink-0 ui-input rounded-ctl px-2.5 py-1.5 text-[10.5px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                  className="w-[130px] flex-shrink-0 ui-input rounded-ctl px-2.5 py-1.5 text-caption text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
                 />
                 <input
                   type="text"
                   placeholder={t("rss.urlPh")}
                   value={newSourceUrl}
                   onChange={(e) => setNewSourceUrl(e.target.value)}
-                  className="flex-1 ui-input rounded-ctl px-2.5 py-1.5 text-[10.5px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                  className="flex-1 ui-input rounded-ctl px-2.5 py-1.5 text-caption text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
                 />
                 <button
                   onClick={() => testRssUrl(newSourceUrl)}
@@ -844,7 +834,7 @@ export default function RssReader() {
                 </button>
               </div>
               {configMessage && (
-                <div className="text-[9.5px] text-red-400 mt-2 flex items-center gap-1 font-medium">
+                <div className="text-tiny text-red-400 mt-2 flex items-center gap-1 font-medium">
                   <AlertTriangle className="w-3.5 h-3.5" />
                   {configMessage}
                 </div>
@@ -855,7 +845,7 @@ export default function RssReader() {
             <div className="flex-grow overflow-y-auto p-4 space-y-2">
               <div className="text-tiny font-bold text-slate-500 mb-1">{t("rss.curSources", { count: editSources.length })}</div>
               {editSources.length === 0 ? (
-                <div className="py-8 text-center text-[10.5px] text-slate-600">{t("rss.noFeeds")}</div>
+                <div className="py-8 text-center text-caption text-slate-600">{t("rss.noFeeds")}</div>
               ) : (
                 editSources.map(({ url, name }) => {
                   const status = testStatus[url];
@@ -873,7 +863,7 @@ export default function RssReader() {
                           className="w-full max-w-[200px] ui-input rounded-md px-2 py-1 text-tiny text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
                         />
                         <div className="flex items-center gap-1.5">
-                          <span className="rounded px-1 py-0.5 text-[8px] font-semibold bg-white/5 text-slate-500 border border-white/5">
+                          <span className="rounded px-1 py-0.5 text-micro font-semibold bg-white/5 text-slate-500 border border-white/5">
                             RSS
                           </span>
                           <span className="font-mono text-slate-400 break-all truncate max-w-[280px] select-all" title={url}>{url}</span>
@@ -929,17 +919,20 @@ export default function RssReader() {
                   setShowConfig(false);
                   setConfigMessage(null);
                 }}
-                className="px-3 py-1.5 rounded-ctl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 text-tiny font-semibold cursor-pointer"
+                disabled={configSaving}
+                className={btnSecondary}
               >
                 {t("rss.cancel")}
               </button>
               <button
                 onClick={handleSaveConfig}
-                className="px-3.5 py-1.5 rounded-ctl bg-blue-600 hover:bg-blue-500 text-white text-tiny font-semibold cursor-pointer"
+                disabled={configSaving}
+                className={btnPrimary}
               >
                 {t("rss.saveChanges")}
               </button>
             </div>
+            </fieldset>
           </div>
         </div>
       )}
