@@ -14,13 +14,15 @@ interface SkillManagerHeaderProps {
 export function SkillManagerHeader({ setTab, tab, skillsDir, setDirDialog }: SkillManagerHeaderProps) {
   const { t } = useTranslation();
   return (
-    <div className="flex items-center justify-between px-4 pt-3 border-b border-white/5 bg-white/[0.02]">
+    <div className="flex items-center justify-between gap-3 flex-wrap px-4 pt-3 border-b border-white/5 bg-white/[0.02]">
       <div className="flex items-center gap-1">
         {([
           { k: 'skills' as TabKey, label: t("skillmgr.tabSkills"), icon: Package },
           { k: 'projects' as TabKey, label: t("skillmgr.tabProjects"), icon: FolderOpen },
         ]).map(({ k, label, icon: Icon }) => (
           <button
+            type="button"
+            aria-pressed={tab === k}
             key={k}
             onClick={() => setTab(k)}
             className={`flex items-center gap-1.5 px-3.5 py-2.5 text-body font-semibold border-b-2 transition-all cursor-pointer ${
@@ -40,7 +42,9 @@ export function SkillManagerHeader({ setTab, tab, skillsDir, setDirDialog }: Ski
         </div>
         <button
           onClick={() => setDirDialog({ path: skillsDir, busy: false, msg: null })}
-          className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-slate-200 cursor-pointer flex-shrink-0"
+          type="button"
+          aria-label={t("skillmgr.dirChange")}
+          className="ui-icon-btn w-8 h-8 flex-shrink-0"
           title={t("skillmgr.dirChange")}
         >
           <Settings2 className="w-3.5 h-3.5" />

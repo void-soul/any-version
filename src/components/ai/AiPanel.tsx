@@ -47,11 +47,13 @@ export default function AiPanel() {
       <div className="w-25 flex-shrink-0 border-r border-white/5 py-3 px-2 space-y-0.5 overflow-y-auto">
         {TABS.map(({ key, label, icon: Icon }) => (
           <button
+            type="button"
+            aria-pressed={activeTab === key}
             key={key}
             onClick={() => switchTab(key)}
-            className={`w-full px-3 py-2 rounded-ctl text-caption font-semibold flex items-center gap-2 transition-all cursor-pointer text-left ${
+            className={`ui-row w-full px-3 h-9 text-caption font-semibold gap-2 text-left ${
               activeTab === key
-                ? "bg-[var(--module-accent)] text-white shadow-md shadow-[var(--module-accent-ring)]"
+                ? "ui-row-active"
                 : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
             }`}
           >
@@ -62,7 +64,7 @@ export default function AiPanel() {
       </div>
 
       {/* 右侧内容区域 */}
-      <div className="flex-1 min-h-0 overflow-hidden">
+      <div className="flex-1 min-w-0 min-h-0 overflow-hidden">
         {mountedTabs.has("model") && (
           <div className={activeTab === "model" ? "h-full" : "hidden"}>
             <ModelConfig />

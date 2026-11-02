@@ -1,3 +1,5 @@
+import { useState, useEffect, useRef } from "react";
+import { btnSecondary, btnDanger } from "../shared/Button";
 import { useTranslation } from "react-i18next";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { CheckCircle, RefreshCw, Bot, ExternalLink, Trash2, Download } from "lucide-react";
@@ -15,16 +17,23 @@ interface ToolInstallationHeaderProps {
 /** Pure ToolInstallationHeader view; its owning panel retains side effects and state. */
 export function ToolInstallationHeader({ selectedTool, getBusy, versionStatuses, handleUpgrade, askUninstall }: ToolInstallationHeaderProps) {
   const { t } = useTranslation();
+  const [siteError, setSiteError] = useState("");
+  const siteRequest = useRef(0);
+  useEffect(() => {
+    siteRequest.current++;
+    setSiteError("");
+    return () => { siteRequest.current++; };
+  }, [selectedTool.id]);
   return (
     <div className="flex items-center gap-3">
       <div className="p-2 rounded-ctl bg-[var(--module-accent-soft)]">
         <Bot className="w-5 h-5 text-[var(--module-accent)]" />
       </div>
-      <div>
-        <h3 className="text-sm font-bold text-white">{selectedTool.display_name}</h3>
-        <div className="flex items-center gap-2 mt-0.5">
+      <div className="min-w-0 flex-1">
+        <h3 className="text-title font-semibold text-white">{selectedTool.display_name}</h3>
+        <div className="flex flex-wrap items-center gap-2 mt-0.5">
           {getBusy(selectedTool.id) && (
-            <span className="flex items-center gap-1 text-tiny font-semibold text-blue-300">
+            <span role="status" className="flex items-center gap-1 text-caption font-medium text-slate-300">
               <RefreshCw className="w-3 h-3 animate-spin" />
               {getBusy(selectedTool.id) === "upgrading" ? `${t("toollaunch.upgrading")}...` : getBusy(selectedTool.id) === "installing" ? `${t("toollaunch.installing")}...` : `${t("toollaunch.uninstalling")}...`}
             </span>
@@ -46,8 +55,8 @@ export function ToolInstallationHeader({ selectedTool, getBusy, versionStatuses,
                   <span className="text-tiny text-amber-400 ml-1">→ {t("toollaunch.latest")}: {versionStatuses[selectedTool.id].latest}</span>
                   <button
                     onClick={() => handleUpgrade(selectedTool)}
-                    disabled={getBusy(selectedTool.id) === "upgrading"}
-                    className="px-2 py-0.5 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 text-micro font-semibold text-emerald-400 cursor-pointer transition-all flex items-center gap-0.5 disabled:opacity-50"
+                    disabled={!!getBusy(selectedTool.id)}
+                    className={btnSecondary}
                     title={t("toollaunch.upgradeLatest")}
                   >
                     <Download className={`w-3 h-3 ${getBusy(selectedTool.id) === "upgrading" ? "animate-spin" : ""}`} />
@@ -55,8 +64,8 @@ export function ToolInstallationHeader({ selectedTool, getBusy, versionStatuses,
                   </button>
                   <button
                     onClick={() => void askUninstall(selectedTool)}
-                    disabled={getBusy(selectedTool.id) === "uninstalling"}
-                    className="px-2 py-0.5 rounded-md bg-red-500/10 hover:bg-red-500/20 text-micro font-semibold text-red-400 cursor-pointer transition-all flex items-center gap-0.5 disabled:opacity-50"
+                    disabled={!!getBusy(selectedTool.id)}
+                    className={btnDanger}
                     title={t("toollaunch.uninstallTitle")}
                   >
                     <Trash2 className={`w-3 h-3 ${getBusy(selectedTool.id) === "uninstalling" ? "animate-spin" : ""}`} />
@@ -70,12 +79,20 @@ export function ToolInstallationHeader({ selectedTool, getBusy, versionStatuses,
           )}
           <span className="text-tiny text-slate-500">· {selectedTool.api_protocol === "none" ? t("toollaunch.modelNone") : PROTOCOL_LABELS[selectedTool.api_protocol]}</span>
           <a href={selectedTool.website} target="_blank" rel="noopener noreferrer"
-            onClick={(e) => { e.preventDefault(); void openUrl(selectedTool.website); }}
+            onClick={(e) => {
+              e.preventDefault();
+              const request = ++siteRequest.current;
+              setSiteError("");
+              void openUrl(selectedTool.website).catch((error) => {
+                if (siteRequest.current === request) setSiteError(String(error));
+              });
+            }}
             className="text-tiny text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-0.5 ml-1"
             title={t("toollaunch.openSite")}>
             <ExternalLink className="w-3 h-3" /> {t("toollaunch.site")}
           </a>
         </div>
+        {siteError && <p role="alert" className="ui-note ui-note-error text-body px-3 py-2 mt-2 break-words">{siteError}</p>}
       </div>
     </div>
   );

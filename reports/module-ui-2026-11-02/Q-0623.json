@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0623",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "按顺序检查AI入口，工具官网打开失败缺少反馈、元信息长行可能挤压，子页及技能入口控件风格和选中状态语义不统一，需要完善入口交互并保留现有模型与代理行为。",
+  "root_cause": "**ToolInstallationHeader** 的openUrl拒绝未处理，元信息行不换行且按钮自造微小字号；**AiPanel/SkillManagerHeader**未表达选中按钮状态。精读纠正：升级/卸载外层已有!getBusy条件，不能把各自disabled条件误报为并发漏洞。",
+  "solution": "1. 子页与技能入口补aria-pressed和明确按钮类型，导航复用ui-row，内容补min-w-0避免长配置挤破分栏。\n2. 工具升级/卸载复用公共按钮，保留原忙状态互斥；元信息换行，标题统一text-title，操作中消息提供status。\n3. 官网打开失败显示alert；切换工具/卸载和下一次点击让旧打开请求失效，不串入新工具。\n4. 构建、443前端测试及1128文件架构检查通过。未改工具安装实现、模型配置、代理或已访问tab的保活策略，真实窗口验证待补。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/ai/AiPanel.tsx** | AI入口交互与公共样式 |\n| **src/components/ai/SkillManagerHeader.tsx** | AI入口交互与公共样式 |\n| **src/components/ai/ToolInstallationHeader.tsx** | AI入口交互与公共样式 |",
+  "created_at": "2026-11-02 16:19:48",
+  "updated_at": "2026-11-02 16:21:10",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}
