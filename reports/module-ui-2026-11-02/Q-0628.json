@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0628",
+  "date": "2026-11-02",
+  "category": "Bug Fix",
+  "status": "已验证",
+  "phenomenon": "按顺序检查代理模块，公共按钮和弹窗与应用标准有偏差，无label的设置开关缺少关联名称；顶层状态轮询会重叠且失败静默，操作入口缺少同步防重入，需要统一并补反馈。",
+  "root_cause": "代理公共ui保留第二套按钮尺寸与自造Modal；SettingItem与无label的Toggle没有名称关联。顶层3秒轮询没有inFlight保护且失败静默，act入口仅setState忙态不能同步防重入。",
+  "solution": "1. 公共按钮直接复用shared/Button导出，Modal改typed props并接SharedModal；忙态禁用正文/底部控件，遮罩提供status。\n2. SettingItem用useId/context关联开关aria-labelledby，显式label优先；设置行可换行，保留原onChange与禁用语义。\n3. 顶层状态轮询不重叠，失败显示alert，清理代次阻止旧状态回写，操作同步闸防重入并按生命周期保护刷新/错误弹框。\n4. 新增2项开关名称优先级测试；构建、449前端测试及1133文件架构检查通过。未改控制器API、真实代理状态或系统代理设置。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/SystemTools/Mihomo.tsx** | 代理公共UI与状态刷新 |\n| **src/components/SystemTools/mihomo/ui.tsx** | 代理公共UI与状态刷新 |\n| **src/components/SystemTools/mihomo/__tests__/ui.test.tsx** | 代理公共UI与状态刷新 |",
+  "created_at": "2026-11-02 16:38:56",
+  "updated_at": "2026-11-02 16:40:25",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

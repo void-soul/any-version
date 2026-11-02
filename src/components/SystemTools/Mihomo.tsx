@@ -1,5 +1,5 @@
 // Mihomo 代理管理（功能对齐 clash-party，外观沿用 SystemTools 风格：Tailwind + emerald + glass-panel）
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { alertError } from "../shared/ThemedAlert";
 import { useTranslation } from "react-i18next";
 import { Waypoints, Play, Square, RefreshCw, AlertTriangle } from "lucide-react";
@@ -121,25 +121,38 @@ export default function Mihomo() {
   const [info, setInfo] = useState<any>(null);
   const [logLevel, setLogLevel] = useState<string>("info");
   const [busy, setBusy] = useState("");
+  const [stateError, setStateError] = useState("");
+  const epoch = useRef(0);
+  const polling = useRef<number | null>(null);
+  const actionInFlight = useRef(false);
 
   const refreshState = async () => {
-    try { setState(await mihomoApi.getState()); } catch {}
+    const owner = epoch.current;
+    if (polling.current === owner) return;
+    polling.current = owner;
+    try {
+      const next = await mihomoApi.getState();
+      if (epoch.current === owner) { setState(next); setStateError(""); }
+    } catch (error) { if (epoch.current === owner) setStateError(String(error)); }
+    finally { if (polling.current === owner) polling.current = null; }
   };
   const refreshInfo = async () => {
-    try { setInfo(await mihomoApi.controllerInfo()); } catch {}
+    const owner = epoch.current;
+    try { const next = await mihomoApi.controllerInfo(); if (epoch.current === owner) setInfo(next); } catch {}
   };
   const refreshAll = async () => {
+    const owner = epoch.current;
     await Promise.all([refreshState(), refreshInfo()]);
     try {
       const c = await mihomoApi.getControled();
-      if (c?.["log-level"]) setLogLevel(c["log-level"]);
+      if (epoch.current === owner && c?.["log-level"]) setLogLevel(c["log-level"]);
     } catch {}
   };
 
   useEffect(() => {
     refreshAll();
     const t = setInterval(refreshState, 3000);
-    return () => clearInterval(t);
+    return () => { clearInterval(t); epoch.current++; };
   }, []);
 
   const running = !!state?.running;
@@ -152,14 +165,21 @@ export default function Mihomo() {
   }, [running, info?.port, info?.secret]);
 
   const act = async (key: string, fn: () => Promise<any>) => {
+    if (actionInFlight.current) return;
+    actionInFlight.current = true;
+    const owner = epoch.current;
     setBusy(key);
-    try { await fn(); } catch (e: any) { alertError(String(e)); }
-    await refreshAll();
-    setBusy("");
+    try { await fn(); }
+    catch (error) { if (epoch.current === owner) alertError(String(error)); }
+    finally {
+      if (epoch.current === owner) { await refreshAll(); if (epoch.current === owner) setBusy(""); }
+      actionInFlight.current = false;
+    }
   };
 
   return (
     <div className="h-full flex flex-col select-none text-slate-200">
+      {stateError && <p role="alert" className="ui-note ui-note-error text-body px-3 py-2 m-3 break-words">{stateError}</p>}
       {/* 固定区：头部控制栏 + 告警 + Tab 栏（不滚动） */}
       <div className="flex-shrink-0 px-6 pt-4 space-y-4">
       {/* 头部控制栏 */}
@@ -267,6 +287,8 @@ export default function Mihomo() {
         {TABS.map((tb) => (
           <button
             key={tb.k}
+            type="button"
+            aria-pressed={tab === tb.k}
             onClick={() => setTab(tb.k)}
             className={`px-3 py-2 text-body font-medium cursor-pointer border-b-2 -mb-px transition-all whitespace-nowrap ${
               tab === tb.k
