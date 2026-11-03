@@ -307,6 +307,7 @@ export default function LauncherPanel() {
     effectiveFileHits,
     fileQueryError,
     fileSearchBusy,
+    fileScope, setFileScope, refreshFiles,
     searchTotal,
     openSearch,
     closeSearch,
@@ -858,6 +859,7 @@ export default function LauncherPanel() {
             handleExecuteItem={handleExecuteItem}
             fileQueryError={fileQueryError}
             fileSearchBusy={fileSearchBusy}
+            fileScope={fileScope} setFileScope={setFileScope} refreshFiles={refreshFiles}
             effectiveFileHits={effectiveFileHits}
             openFileHit={openFileHit}
             webSources={webSources}

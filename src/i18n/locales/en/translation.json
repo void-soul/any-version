@@ -712,6 +712,8 @@
     "confirmTitle": "Confirm Action"
   },
   "launcher": {
+    "fileType": "File type",
+    "unifiedIndexHint": "Launcher items are ready to search. For files across drives, build a drive index using Index Manager here.",
     "usageStats": "Launch Stats",
     "usageStatsTitle": "View launch counts for all projects with icons",
     "usageStatsHint": "Sorted by launch count; click an item to launch it",

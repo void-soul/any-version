@@ -1,3 +1,4 @@
+import { fileSearchRequest, type FileSearchScope } from "./fileSearchScope";
 import type { WebSearchSource } from "./types";
 import type { SearchQuickAction } from "./LauncherPanel.model";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
@@ -31,6 +32,10 @@ export function useLauncherSearch({ classificationMap, searchQuery, webSources, 
   const [fileSearchBusy, setFileSearchBusy] = useState(false);
 
   const fileSearchReqRef = useRef(0);
+  const [fileScope, setFileScope] = useState<FileSearchScope>({ drive: "", filter: "all" });
+  const [fileIndexVersion, setFileIndexVersion] = useState(0);
+  const refreshFiles = useCallback(() => setFileIndexVersion((value) => value + 1), []);
+  const fileRequest = fileSearchRequest(searchQuery, fileScope);
 
 
   /** 分类（含祖先）是否在「全局快速搜索」中被排除。 */
@@ -117,20 +122,22 @@ export function useLauncherSearch({ classificationMap, searchQuery, webSources, 
       return;
     }
     const req = ++fileSearchReqRef.current;
+    const { options, key } = fileSearchRequest(q, fileScope);
+    setSearchSelectedIndex(0);
     setFileSearchBusy(true);
     const timer = window.setTimeout(() => {
-      invoke<FileHit[]>("file_search_query", { query: q, limit: 30 })
+      invoke<FileHit[]>("file_search_query", options)
         .then((list) => {
           if (fileSearchReqRef.current !== req) return;
           setFileHits(list);
-          setFileHitsQuery(q);
+          setFileHitsQuery(key);
           setFileSearchBusy(false);
         })
         .catch((error) => {
           if (fileSearchReqRef.current !== req) return;
           setFileQueryError(String(error));
           setFileHits([]);
-          setFileHitsQuery(q);
+          setFileHitsQuery(key);
           setFileSearchBusy(false);
         });
     }, 200);
@@ -138,7 +145,7 @@ export function useLauncherSearch({ classificationMap, searchQuery, webSources, 
       window.clearTimeout(timer);
       fileSearchReqRef.current++;
     };
-  }, [searchQuery, isSearchOpen]);
+  }, [searchQuery, isSearchOpen, fileScope, fileIndexVersion, setSearchSelectedIndex]);
 
 
   const openFileHit = async (hit: FileHit): Promise<boolean> => {
@@ -158,7 +165,7 @@ export function useLauncherSearch({ classificationMap, searchQuery, webSources, 
 
 
   // 只展示与当前关键词一致的结果（防抖期间不显示过期条目）
-  const effectiveFileHits = fileHitsQuery === searchQuery.trim() ? fileHits : [];
+  const effectiveFileHits = fileHitsQuery === fileRequest.key ? fileHits : [];
 
 
   const searchTotal = searchQuickActions.length + searchResults.length + effectiveFileHits.length;
@@ -184,6 +191,7 @@ export function useLauncherSearch({ classificationMap, searchQuery, webSources, 
     setSearchQuery("");
   };
   return {
+    fileScope, setFileScope, refreshFiles,
     fileQueryError,
     fileSearchBusy,
     searchQuickActions,

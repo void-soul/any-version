@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0659",
+  "date": "2026-11-03",
+  "category": "Feature",
+  "status": "已验证",
+  "phenomenon": "启动模块将启动项和全盘文件合并为一个搜索框，筛选及建索引在同一搜索界面完成，移除跳到独立文件搜索窗口的入口。",
+  "root_cause": "主框虽调用**file_search_query**，但**LauncherSearchOverlay**仍通过独立窗口承载筛选及索引管理，未建索引时没有就地配置链路；结果身份只包含关键词，无法隔离同词不同筛选。",
+  "solution": "1. 保留唯一主搜索输入框，同一结果区域同时展示启动项和全盘文件，删除打开独立文件搜索窗口的入口。\n2. 同界面提供盘符/类型筛选及可折叠索引管理；建索引、更新、停止和进度均使用既有后端命令，仅明确点击才触发扫描。\n3. 请求身份加入盘符/类型，筛选变化立即隐藏旧结果，索引完成重查当前关键词；监听晚返回和卸载正确释放。\n4. 477项前端测试、生产构建、1170文件架构检查通过；新增2项覆盖单框混合结果与筛选隔离。未操作真实磁盘索引，未完成真实窗口目视验收。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/launcher/LauncherPanel.tsx** | 传递统一文件搜索范围和索引刷新 |\n| **src/components/launcher/LauncherSearchOverlay.tsx** | 移除独立窗口入口并内嵌工具 |\n| **src/components/launcher/useLauncherSearch.tsx** | 盘符/类型参与请求和旧结果隔离，索引完成刷新 |\n| **src/components/launcher/LauncherFileSearchTools.tsx** | 同界面筛选、建索引/更新/停止和进度 |\n| **src/components/launcher/fileSearchScope.ts** | 搜索范围请求构造及身份 |\n| **src/components/launcher/unifiedSearch.test.tsx** | 单输入框混合结果及筛选身份回归 |\n| **src/i18n/locales/zh/translation.json** | 中文类型和未建索引引导 |\n| **src/i18n/locales/en/translation.json** | 对应英文文案 |\n",
+  "created_at": "2026-11-03 10:01:57",
+  "updated_at": "2026-11-03 10:05:03",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}
