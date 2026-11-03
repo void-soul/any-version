@@ -1,35 +1,83 @@
 //! SSE 流式解析工具
 
-/// 从 buffer 中提取一个完整的 SSE 块（以 \n\n 或 \r\n\r\n 分隔）
-pub fn take_sse_block(buffer: &str) -> Option<(String, &str)> {
-    // 查找块分隔符
-    if let Some(pos) = buffer.find("\n\n") {
-        let block = &buffer[..pos];
-        let remainder = &buffer[pos + 2..];
-        return Some((block.to_string(), remainder));
+/// Network chunks are arbitrary byte fragments, never UTF-8 or SSE boundaries.
+/// Decode only complete lines, retaining unfinished bytes between pushes.
+#[derive(Default)]
+pub struct SseBuffer {
+    bytes: Vec<u8>,
+    scan: usize,
+    line_start: usize,
+    block: String,
+    skip_lf: bool,
+    started: bool,
+    failed: bool,
+}
+
+impl SseBuffer {
+    pub fn push(&mut self, bytes: &[u8]) {
+        if self.line_start > 0 {
+            self.bytes.drain(..self.line_start);
+            self.scan -= self.line_start;
+            self.line_start = 0;
+        }
+        self.bytes.extend_from_slice(bytes);
     }
-    if let Some(pos) = buffer.find("\r\n\r\n") {
-        let block = &buffer[..pos];
-        let remainder = &buffer[pos + 4..];
-        return Some((block.to_string(), remainder));
+
+    pub fn next_block(&mut self) -> Result<Option<String>, &'static str> {
+        if self.failed { return Err("invalid UTF-8 in upstream event stream"); }
+        while self.scan < self.bytes.len() {
+            let byte = self.bytes[self.scan];
+            self.scan += 1;
+            if self.skip_lf {
+                self.skip_lf = false;
+                if byte == b'\n' { self.line_start = self.scan; continue; }
+            }
+            if byte != b'\r' && byte != b'\n' { continue; }
+            self.skip_lf = byte == b'\r';
+            let line = match std::str::from_utf8(&self.bytes[self.line_start..self.scan - 1]) {
+                Ok(line) => line.to_string(),
+                Err(_) => { self.failed = true; return Err("invalid UTF-8 in upstream event stream"); }
+            };
+            self.line_start = self.scan;
+            let line = self.strip_initial_bom(&line);
+            if line.is_empty() {
+                if !self.block.is_empty() { return Ok(Some(std::mem::take(&mut self.block))); }
+            } else {
+                if !self.block.is_empty() { self.block.push('\n'); }
+                self.block.push_str(line);
+            }
+        }
+        Ok(None)
     }
-    None
+
+    fn strip_initial_bom<'a>(&mut self, line: &'a str) -> &'a str {
+        if std::mem::replace(&mut self.started, true) { line }
+        else { line.strip_prefix('\u{feff}').unwrap_or(line) }
+    }
+
+    /// Expose the final undelimited block for callers with legacy JSON-tail
+    /// compatibility. The caller must validate it, not assume EOF is success.
+    pub fn finish(&mut self) -> Result<Option<String>, &'static str> {
+        if self.failed { return Err("invalid UTF-8 in upstream event stream"); }
+        let line = std::str::from_utf8(&self.bytes[self.line_start..])
+            .map_err(|_| "incomplete UTF-8 at end of upstream event stream")?.to_string();
+        let line = self.strip_initial_bom(&line);
+        if !line.is_empty() {
+            if !self.block.is_empty() { self.block.push('\n'); }
+            self.block.push_str(line);
+        }
+        self.bytes.clear(); self.scan = 0; self.line_start = 0;
+        Ok((!self.block.is_empty()).then(|| std::mem::take(&mut self.block)))
+    }
 }
 
 /// 从 SSE 块中提取 data 字段值
 pub fn extract_sse_data(block: &str) -> Option<String> {
-    for line in block.lines() {
-        if let Some(rest) = line.strip_prefix("data:") {
-            let data = rest.strip_prefix(" ").unwrap_or(rest);
-            if !data.is_empty() && data != "[DONE]" {
-                return Some(data.to_string());
-            }
-            if data == "[DONE]" {
-                return Some("[DONE]".to_string());
-            }
-        }
-    }
-    None
+    let data: Vec<&str> = block.split(['\r', '\n']).filter_map(|line| {
+        if line == "data" { Some("") }
+        else { line.strip_prefix("data:").map(|value| value.strip_prefix(' ').unwrap_or(value)) }
+    }).collect();
+    (!data.is_empty()).then(|| data.join("\n"))
 }
 
 /// 从 SSE 块中提取 event 字段值
@@ -45,24 +93,9 @@ pub fn extract_sse_event(block: &str) -> Option<String> {
     None
 }
 
-/// 安全地将新字节追加到 UTF-8 buffer，处理跨 chunk 的多字节字符
-pub fn append_utf8_safe(buffer: &str, new_bytes: &[u8]) -> String {
-    let mut combined = buffer.to_string();
-    match std::str::from_utf8(new_bytes) {
-        Ok(s) => {
-            combined.push_str(s);
-        }
-        Err(e) => {
-            // 截取有效的 UTF-8 部分
-            let valid_up_to = e.valid_up_to();
-            if valid_up_to > 0 {
-                combined.push_str(std::str::from_utf8(&new_bytes[..valid_up_to]).unwrap());
-            }
-            // 剩余的不完整字节留给下一个 chunk 处理
-        }
-    }
-    combined
-}
+#[cfg(test)]
+#[path = "sse/parser_tests.rs"]
+mod parser_tests;
 
 /// 把 OpenAI `chat.completion.chunk` 序列聚合成单个 `chat.completion`。
 ///

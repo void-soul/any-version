@@ -1,0 +1,18 @@
+## Q-0678 | 2026-11-03 | Bug Fix | 已验证
+
+**现象/需求:** 用户批准SSE解析续修1：append_utf8_safe丢弃跨网络块的不完整UTF-8尾字节，需保留原始字节后解码，修复代理聚合/透传观察/跨协议及AI聚合四处调用并补中文emoji分片回归。
+
+**根因:** 旧字符串追加器在网络分片结束于不完整UTF-8字符时丢弃字节，四个调用链共享该缺陷。
+
+**解决方案:** 新增按字节保留未完成行的SseBuffer，完整行后严格UTF-8解码；替换代理聚合、同协议观察、代理跨协议与AI聚合跨协议四处调用。中文/emoji和工具参数逐字节及所有分片位置测试通过。 验证：319项定向原生测试通过（含本轮新增13项），独立解析器4项通过，架构1182文件及TypeScript通过；未发起真实账号请求。
+
+**涉及文件:**
+| File | Change |
+|------|--------|
+| src-tauri/src/proxy/sse.rs | 共享解析、调用链或隔离回归 |
+| src-tauri/src/proxy/sse/parser_tests.rs | 共享解析、调用链或隔离回归 |
+| src-tauri/src/proxy/server/response.rs | 共享解析、调用链或隔离回归 |
+| src-tauri/src/proxy/server/response_tests.rs | 共享解析、调用链或隔离回归 |
+| src-tauri/src/commands/ai/aggregate/upstream_response.rs | 共享解析、调用链或隔离回归 |
+| src-tauri/src/commands/ai/aggregate/upstream_response/stream_tests.rs | 共享解析、调用链或隔离回归 |
+---

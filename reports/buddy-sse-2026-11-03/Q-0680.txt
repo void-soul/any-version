@@ -1,0 +1,18 @@
+## Q-0680 | 2026-11-03 | Bug Fix | 已验证
+
+**现象/需求:** 用户批准SSE解析续修3：AI聚合跨协议流在缺少正常结束标志或异常断流后仍调用conv.finish补正常完成；复用StreamProgress，失败只关闭打开块并发错误，明确流已开始不能改HTTP头为502。
+
+**根因:** AI聚合跨协议在异常EOF后无条件finish，可能制造message_stop或正常finish_reason。
+
+**解决方案:** 接入StreamProgress，区分finish/DONE与截断、空流、超时、读错、JSON错、error帧；失败仅闭合已打开块并发协议错误，不补正常结束。响应头已发送时HTTP仍200，错误体明确失败。DONE后停止读取垃圾；保留实际token用量计费。 验证：319项定向原生测试通过（含本轮新增13项），独立解析器4项通过，架构1182文件及TypeScript通过；未发起真实账号请求。
+
+**涉及文件:**
+| File | Change |
+|------|--------|
+| src-tauri/src/proxy/sse.rs | 共享解析、调用链或隔离回归 |
+| src-tauri/src/proxy/sse/parser_tests.rs | 共享解析、调用链或隔离回归 |
+| src-tauri/src/proxy/server/response.rs | 共享解析、调用链或隔离回归 |
+| src-tauri/src/proxy/server/response_tests.rs | 共享解析、调用链或隔离回归 |
+| src-tauri/src/commands/ai/aggregate/upstream_response.rs | 共享解析、调用链或隔离回归 |
+| src-tauri/src/commands/ai/aggregate/upstream_response/stream_tests.rs | 共享解析、调用链或隔离回归 |
+---

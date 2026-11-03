@@ -183,7 +183,7 @@ pub(super) async fn aggregate_upstream_stream(
 
     // 逐帧收集上游的 chat.completion.chunk
     let mut chunks: Vec<Value> = Vec::new();
-    let mut buffer = String::new();
+    let mut buffer = sse::SseBuffer::default();
     let mut progress = stream_guard::StreamProgress::new();
     let mut failure = None;
     let mut byte_stream = upstream_resp.bytes_stream();
@@ -195,15 +195,13 @@ pub(super) async fn aggregate_upstream_stream(
                 break;
             }
         };
-        buffer = sse::append_utf8_safe(&buffer, &bytes);
+        buffer.push(&bytes);
         loop {
-            // take_sse_block 返回的 rest 借用 buffer，这里立刻转成 owned 再回写 buffer
-            let Some((block, rest_owned)) =
-                sse::take_sse_block(&buffer).map(|(b, r)| (b, r.to_string()))
-            else {
-                break;
+            let block = match buffer.next_block() {
+                Ok(Some(block)) => block,
+                Ok(None) => break,
+                Err(error) => { failure = Some(error); break 'read; }
             };
-            buffer = rest_owned;
             let Some(data) = sse::extract_sse_data(&block) else {
                 continue;
             };
@@ -211,12 +209,19 @@ pub(super) async fn aggregate_upstream_stream(
                 failure = Some(error);
                 break 'read;
             }
+            if progress.saw_done() { break 'read; }
         }
     }
     // 流末尾可能还挂着没分隔符的半帧
-    if failure.is_none() {
-        if let Some(data) = sse::extract_sse_data(&buffer) {
-            failure = collect_aggregate_payload(&data, outbound, &mut chunks, &mut progress).err();
+    if failure.is_none() && !progress.saw_done() {
+        match buffer.finish() {
+            Ok(Some(block)) => {
+                if let Some(data) = sse::extract_sse_data(&block) {
+                    failure = collect_aggregate_payload(&data, outbound, &mut chunks, &mut progress).err();
+                }
+            }
+            Ok(None) => {}
+            Err(error) => failure = Some(error),
         }
     }
 
@@ -314,6 +319,19 @@ fn collect_aggregate_payload(
     Ok(())
 }
 
+fn raw_sse_event(raw: &str) -> Event {
+    let mut event = Event::default();
+    if let Some(name) = sse::extract_sse_event(raw) { event = event.event(name); }
+    if let Some(data) = sse::extract_sse_data(raw) { event = event.data(data); }
+    event
+}
+
+fn protocol_error_event(protocol: &str, message: &str) -> Event {
+    let data = json!({"type":"error", "error":{"message":message,"type":"upstream_error","code":"upstream_parse"}});
+    let event = Event::default().data(data.to_string());
+    if protocol == "anthropic" { event.event("error") } else { event }
+}
+
 /// 流式响应：把上游（出站协议）SSE 转换为入站协议 SSE。
 /// - `claimed_model`：声明名 C（用于转换器回填）
 /// - `actual_model`：实际模型 B（用于流式用量统计落库）
@@ -349,7 +367,7 @@ pub(super) async fn stream_response(
         let sse = async_stream::stream! {
             use futures_util::StreamExt;
             tokio::pin!(stream);
-            let mut buffer = String::new();
+            let mut buffer = sse::SseBuffer::default();
             let mut acc_in: u64 = 0;
             let mut acc_out: u64 = 0;
             let mut acc_text = String::new();
@@ -358,6 +376,7 @@ pub(super) async fn stream_response(
             let mut progress = stream_guard::StreamProgress::new();
             // 传输层是否出过错（`yield Err` 之后 break 的情况）
             let mut transport_failed = false;
+            let mut failure_recorded = false;
             // 纯思考轮次兜底：需要把补帧插到 finish 之前，所以见到 finish 后先把原始
             // 字节缓冲起来，流结束时按需「补帧 → 原样吐出」。
             let mut fb = reasoning_fallback::ReasoningTracker::new();
@@ -367,19 +386,32 @@ pub(super) async fn stream_response(
             // 首个文本增量到达的时刻：t/s 统计要从生成窗口中扣掉首字等待（抄自 cc-switch dc0febe5）
             let mut first_token_ms: u64 = 0;
             let stream_start = Instant::now();
-            while let Some(r) = stream.next().await {
+            'read: while let Some(r) = stream.next().await {
                 let chunk = match r {
                     Ok(c) => c,
                     Err(e) => {
                         transport_failed = true;
+                        stats.write().await.failed_requests += 1;
+                        failure_recorded = true;
                         yield Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
                         break;
                     }
                 };
                 // 边转发边解析 usage（不改动原始字节）
-                buffer = sse::append_utf8_safe(&buffer, &chunk);
-                while let Some((block, remainder)) = sse::take_sse_block(&buffer) {
-                    buffer = remainder.to_string();
+                buffer.push(&chunk);
+                loop {
+                    let block = match buffer.next_block() {
+                        Ok(Some(block)) => block,
+                        Ok(None) => break,
+                        Err(error) => {
+                            transport_failed = true;
+                            stats.write().await.failed_requests += 1;
+                            failure_recorded = true;
+                            push_request_log(&ls, format!("✗ SSE解析失败: {error}"));
+                            yield Err(std::io::Error::new(std::io::ErrorKind::InvalidData, error));
+                            break 'read;
+                        }
+                    };
                     if let Some(data_str) = sse::extract_sse_data(&block) {
                         if data_str != "[DONE]" {
                             if let Ok(cj) = serde_json::from_str::<Value>(&data_str) {
@@ -433,6 +465,15 @@ pub(super) async fn stream_response(
                 }
                 yield Ok::<_, std::io::Error>(chunk);
             }
+            if !transport_failed {
+                if let Err(error) = buffer.finish() {
+                    transport_failed = true;
+                    stats.write().await.failed_requests += 1;
+                    failure_recorded = true;
+                    push_request_log(&ls, format!("✗ SSE解析失败: {error}"));
+                    yield Err(std::io::Error::new(std::io::ErrorKind::InvalidData, error));
+                }
+            }
             // 截断判定：已转发内容、但既无 finish_reason 也无 [DONE]。
             // 这是「上游 200 之后被掐断」，不是「模型说完」——见 stream_guard 模块头。
             let truncated = guard && !transport_failed && progress.is_truncated();
@@ -447,7 +488,7 @@ pub(super) async fn stream_response(
                 yield Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
                     stream_guard::TRUNCATED_STREAM_FRAME.as_bytes(),
                 ));
-            } else {
+            } else if !transport_failed {
                 // 纯思考轮次：把思考原文补成一帧正文。
                 // **必须在这里**（缓冲的 finish 帧吐出之前）—— 客户端见到 finish_reason
                 // 就停止累积，补在它后面等于没发。
@@ -509,7 +550,7 @@ pub(super) async fn stream_response(
             if transport_failed || truncated {
                 // 截断/断流不计成功：否则日志里只剩一条 tok 正常的假成功
                 //（参考侧原话：这正是这类问题长期查不出来的原因）
-                s.failed_requests += 1;
+                if !failure_recorded { s.failed_requests += 1; }
             } else {
                 s.success_requests += 1;
             }
@@ -534,10 +575,11 @@ pub(super) async fn stream_response(
             let collab_ctx = (state.app_handle.clone(), state.collab_room_id.clone());
             let collab_tool_id = state.tool_id.clone();
             let out_proto = outbound.to_string();
+            let in_proto = inbound.to_string();
             let stream = upstream_resp.bytes_stream();
             let sse = async_stream::stream! {
                 use futures_util::StreamExt;
-                let mut buffer = String::new();
+                let mut buffer = sse::SseBuffer::default();
                 tokio::pin!(stream);
                 let mut acc_text = String::new();
                 let mut chunk_count: u64 = 0;
@@ -550,7 +592,7 @@ pub(super) async fn stream_response(
                 // 首个文本增量到达的时刻：t/s 统计要从生成窗口中扣掉首字等待
                 let mut first_token_ms: u64 = 0;
                 let stream_start = Instant::now();
-                while let Some(r) = stream.next().await {
+                'read: while let Some(r) = stream.next().await {
                     let chunk = match r {
                         Ok(c) => c,
                         Err(e) => {
@@ -574,14 +616,24 @@ pub(super) async fn stream_response(
                                 log_proxy(&format!("  ✗ 上游在终止事件之后断流，丢弃错误事件: {}", e));
                             } else {
                                 log_proxy(&format!("  ✗ 上游流中断: {}", e));
-                                yield Ok::<_, Infallible>(Event::default().data(format!("{{\"error\":\"{}\"}}", e)));
+                                yield Ok::<_, Infallible>(protocol_error_event(&in_proto, &e.to_string()));
                             }
                             break;
                         }
                     };
-                    buffer = sse::append_utf8_safe(&buffer, &chunk);
-                    while let Some((block, remainder)) = sse::take_sse_block(&buffer) {
-                        buffer = remainder.to_string();
+                    buffer.push(&chunk);
+                    loop {
+                        let block = match buffer.next_block() {
+                            Ok(Some(block)) => block,
+                            Ok(None) => break,
+                            Err(error) => {
+                                transport_failed = true;
+                                for ev in conv.close_open_blocks() { yield Ok::<_, Infallible>(raw_sse_event(&ev)); }
+                                if !conv.is_terminated() { yield Ok::<_, Infallible>(protocol_error_event(&in_proto, error)); }
+                                push_request_log(&ls, format!("✗ SSE解析失败: {error}"));
+                                break 'read;
+                            }
+                        };
                         let data_str = match sse::extract_sse_data(&block) {
                             Some(d) => d,
                             None => continue,
@@ -645,6 +697,14 @@ pub(super) async fn stream_response(
                         }
                     }
                 }
+                if !transport_failed {
+                    if let Err(error) = buffer.finish() {
+                        transport_failed = true;
+                        for ev in conv.close_open_blocks() { yield Ok::<_, Infallible>(raw_sse_event(&ev)); }
+                        if !conv.is_terminated() { yield Ok::<_, Infallible>(protocol_error_event(&in_proto, error)); }
+                        push_request_log(&ls, format!("✗ SSE解析失败: {error}"));
+                    }
+                }
                 // 循环结束。两种可能必须分开：
                 // ① 上游已经发了终止标记 → 正常收尾；
                 // ② 转发过内容、却没有任何终止标记 → **截断**：只能闭合块 + 补 error 事件，
@@ -669,10 +729,8 @@ pub(super) async fn stream_response(
                     if !ls.is_empty() {
                         push_request_log(&ls, "✗ 上游流被截断，已补 error 事件".to_string());
                     }
-                    yield Ok::<_, Infallible>(Event::default().data(
-                        "{\"error\":{\"message\":\"upstream stream ended before completion (truncated)\",\"type\":\"upstream_error\",\"code\":\"upstream_parse\"}}",
-                    ));
-                } else if !sent_done {
+                    yield Ok::<_, Infallible>(protocol_error_event(&in_proto, "upstream stream ended before completion (truncated)"));
+                } else if !transport_failed && !sent_done {
                     // 已终止但没见到 [DONE]（部分上游如此）：补收尾，
                     // 否则客户端拿到的是未闭合的 content block
                     for ev in conv.finish() {
@@ -687,7 +745,7 @@ pub(super) async fn stream_response(
                         yield Ok::<_, Infallible>(event);
                     }
                 }
-                if !truncated {
+                if !truncated && !transport_failed {
                     log_proxy(&format!("✓ 跨协议流式完成: {} chunks, {} chars text, {}ms",
                         chunk_count, acc_text.len(), stream_start.elapsed().as_millis()));
                 }

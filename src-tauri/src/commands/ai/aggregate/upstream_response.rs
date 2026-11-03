@@ -377,6 +377,17 @@ pub(super) fn stream_cross_protocol(
     started: std::time::Instant,
     idle_timeout: std::time::Duration,
 ) -> Result<Response, CandidateError> {
+    Ok(cross_protocol_response(Some(state.app.clone()), candidate.clone(), inbound, resp, started, idle_timeout))
+}
+
+fn cross_protocol_response(
+    app: Option<tauri::AppHandle>,
+    candidate: AggCandidate,
+    inbound: &'static str,
+    resp: reqwest::Response,
+    started: std::time::Instant,
+    idle_timeout: std::time::Duration,
+) -> Response {
     use axum::response::sse::{Event, Sse};
     use futures_util::StreamExt;
 
@@ -384,8 +395,6 @@ pub(super) fn stream_cross_protocol(
     let provider_id = candidate.provider_id.clone();
     let outbound = candidate.outbound;
     let stream = resp.bytes_stream();
-    // 生成出的流必须 'static，不能借用 `state`，先把 AppHandle 克隆进去
-    let app = state.app.clone();
     let sse = async_stream::stream! {
         let mut conv = match (inbound, outbound) {
             ("anthropic", Outbound::OpenAi) => Some(CrossStreamConverter::AnthropicToOpenai(
@@ -400,80 +409,83 @@ pub(super) fn stream_cross_protocol(
             yield Ok::<_, std::convert::Infallible>(Event::default().data("{\"error\":\"unsupported stream pair\"}"));
             return;
         };
-        let mut buffer = String::new();
+        let mut buffer = crate::proxy::sse::SseBuffer::default();
         tokio::pin!(stream);
-        // 上游是否已发过 [DONE]（OpenAI 出站下它即完整终止，补收尾会重复发）
-        let mut sent_done = false;
+        let mut progress = crate::proxy::stream_guard::StreamProgress::new();
+        let mut failure = None;
         // 空闲超时：两个 chunk 之间超过 `idle_timeout` 无数据就终止流（首字节之后不能换
         // 候选 —— 上游已在产出，换一家会重复计费，只能把错误传给客户端让它立刻失败）
-        loop {
+        'read: loop {
             let next = tokio::time::timeout(idle_timeout, stream.next()).await;
             let r = match next {
                 Ok(Some(r)) => r,
                 Ok(None) => break,
                 Err(_) => {
-                    let msg = format!("上游流式响应空闲超时（{}s 无数据）", idle_timeout.as_secs());
-                    emit_aggregate_log(&app, "route", "warn", format!(
-                        "候选 {} / {} 流式空闲超时，已终止该流: {msg}", provider_id, model
-                    ));
-                    // 先闭合已打开的 block 再报错；流已终止则只记日志，不再写事件
-                    for ev in conv.close_open_blocks() {
-                        yield Ok::<_, std::convert::Infallible>(to_event(&ev));
-                    }
-                    if conv.is_terminated() {
-                        emit_aggregate_log(&app, "route", "warn", format!(
-                            "候选 {} / {} 在终止事件之后超时，丢弃错误事件", provider_id, model
-                        ));
-                    } else {
-                        yield Ok::<_, std::convert::Infallible>(Event::default().data(format!("{{\"error\":\"{msg}\"}}")));
-                    }
+                    failure = Some(format!("上游流式响应空闲超时（{}s 无数据）", idle_timeout.as_secs()));
                     break;
                 }
             };
             let chunk = match r {
                 Ok(c) => c,
                 Err(e) => {
-                    for ev in conv.close_open_blocks() {
-                        yield Ok::<_, std::convert::Infallible>(to_event(&ev));
-                    }
-                    if conv.is_terminated() {
-                        emit_aggregate_log(&app, "route", "warn", format!(
-                            "候选 {} / {} 在终止事件之后断流，丢弃错误事件", provider_id, model
-                        ));
-                    } else {
-                        yield Ok::<_, std::convert::Infallible>(Event::default().data(format!("{{\"error\":\"{}\"}}", e)));
-                    }
+                    failure = Some(format!("上游流式响应读取失败: {e}"));
                     break;
                 }
             };
-            buffer = crate::proxy::sse::append_utf8_safe(&buffer, &chunk);
-            while let Some((block, remainder)) = crate::proxy::sse::take_sse_block(&buffer) {
-                buffer = remainder.to_string();
+            buffer.push(&chunk);
+            loop {
+                let block = match buffer.next_block() {
+                    Ok(Some(block)) => block,
+                    Ok(None) => break,
+                    Err(error) => { failure = Some(error.into()); break 'read; }
+                };
                 let data_str = match crate::proxy::sse::extract_sse_data(&block) {
                     Some(d) => d,
                     None => continue,
                 };
-                if data_str == "[DONE]" {
-                    sent_done = true;
-                    yield Ok::<_, std::convert::Infallible>(Event::default().data("[DONE]"));
-                    // 只发 [DONE] 不带 finish_reason 的上游：Anthropic 出站需补收尾
-                    if inbound == "anthropic" {
-                        for ev in conv.finish() {
-                            yield Ok::<_, std::convert::Infallible>(to_event(&ev));
-                        }
-                    }
-                    continue;
+                if data_str.trim().is_empty() { continue; }
+                if data_str.trim() == "[DONE]" {
+                    progress.observe_done();
+                    break 'read;
                 }
-                if let Ok(cj) = serde_json::from_str::<Value>(&data_str) {
-                    for ev in conv.convert_chunk(&cj) {
-                        yield Ok::<_, std::convert::Infallible>(to_event(&ev));
-                    }
+                let cj: Value = match serde_json::from_str(&data_str) {
+                    Ok(value) => value,
+                    Err(_) => { failure = Some("invalid upstream stream frame".into()); break 'read; }
+                };
+                if cj.get("error").is_some_and(|error| !error.is_null()) {
+                    failure = Some("upstream stream returned an error frame".into());
+                    break 'read;
+                }
+                progress.observe_value(outbound.as_str(), &cj);
+                for ev in conv.convert_chunk(&cj) {
+                    yield Ok::<_, std::convert::Infallible>(to_event(&ev));
                 }
             }
         }
-        // 循环自然结束（上游没发 finish_reason 就断了）：补收尾，
-        // 否则客户端拿到的是未闭合的 content block（Anthropic 客户端会报错/挂住）
-        if !sent_done {
+        if failure.is_none() && !progress.saw_done() {
+            if let Err(error) = buffer.finish() { failure = Some(error.into()); }
+        }
+        if failure.is_none() && progress.is_truncated() {
+            failure = Some("upstream stream ended before completion (truncated)".into());
+        }
+        if failure.is_none() && !progress.saw_content() && !progress.saw_finish() {
+            failure = Some("empty upstream completion".into());
+        }
+        if let Some(message) = failure {
+            let line = format!("候选 {provider_id} / {model} 流失败: {message}");
+            tracing::warn!("{line}");
+            if let Some(app) = &app { emit_aggregate_log(app, "route", "error", line); }
+            for ev in conv.close_open_blocks() { yield Ok::<_, std::convert::Infallible>(to_event(&ev)); }
+            // Headers are already sent. Signal failure in the body, never
+            // manufacture a normal finish/message_stop after an error.
+            if !conv.is_terminated() {
+                let payload = serde_json::json!({"type":"error", "error":{"message":message,"type":"upstream_error","code":"upstream_parse"}});
+                let mut event = Event::default().data(payload.to_string());
+                if inbound == "anthropic" { event = event.event("error"); }
+                yield Ok::<_, std::convert::Infallible>(event);
+                if inbound == "openai" { yield Ok::<_, std::convert::Infallible>(Event::default().data("[DONE]")); }
+            }
+        } else {
             for ev in conv.finish() {
                 yield Ok::<_, std::convert::Infallible>(to_event(&ev));
             }
@@ -492,8 +504,12 @@ pub(super) fn stream_cross_protocol(
             );
         }
     };
-    Ok(Sse::new(sse).into_response())
+    Sse::new(sse).into_response()
 }
+
+#[cfg(test)]
+#[path = "upstream_response/stream_tests.rs"]
+mod stream_tests;
 
 /// 上游错误体压成一行（用于日志与 `CandidateError.message`）。
 /// 截断走 [`crate::commands::utils::truncate_utf8`]：上游错误文案常带中文，

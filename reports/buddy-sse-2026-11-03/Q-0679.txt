@@ -1,0 +1,18 @@
+## Q-0679 | 2026-11-03 | Bug Fix | 已验证
+
+**现象/需求:** 用户批准SSE解析续修2：多行data只取首行，混合LF与CRLF时越过最早边界，单独CR不能分帧；按事件顺序处理多行数据、注释、空值及开头BOM，保留完整JSON尾帧兼容且不把残帧当成功。
+
+**根因:** 旧解析器优先选择某一种空行而非最早事件边界，仅取首个data字段，不支持裸CR。
+
+**解决方案:** 统一CRLF/LF/裸CR逐行定界、单一首BOM、注释和多行data拼接，data空值保留且只移除一个可选空格。聚合路径保留已有完整JSON EOF尾兼容，不将残缺UTF-8或JSON猜为成功。 验证：319项定向原生测试通过（含本轮新增13项），独立解析器4项通过，架构1182文件及TypeScript通过；未发起真实账号请求。
+
+**涉及文件:**
+| File | Change |
+|------|--------|
+| src-tauri/src/proxy/sse.rs | 共享解析、调用链或隔离回归 |
+| src-tauri/src/proxy/sse/parser_tests.rs | 共享解析、调用链或隔离回归 |
+| src-tauri/src/proxy/server/response.rs | 共享解析、调用链或隔离回归 |
+| src-tauri/src/proxy/server/response_tests.rs | 共享解析、调用链或隔离回归 |
+| src-tauri/src/commands/ai/aggregate/upstream_response.rs | 共享解析、调用链或隔离回归 |
+| src-tauri/src/commands/ai/aggregate/upstream_response/stream_tests.rs | 共享解析、调用链或隔离回归 |
+---
