@@ -10,6 +10,10 @@ use super::{
     ProxyConfig, ProxyState, Response, Sse, StatusCode, Value,
 };
 
+#[cfg(test)]
+#[path = "response_tests.rs"]
+mod tests;
+
 /// 处理成功的上游响应（流式 / 非流式）
 /// - `claimed_model`：声明名 C，用于响应转换回填（⑧⑨）
 /// - `actual_model`：实际模型 B，用于用量统计落库（⑩）
@@ -180,9 +184,17 @@ pub(super) async fn aggregate_upstream_stream(
     // 逐帧收集上游的 chat.completion.chunk
     let mut chunks: Vec<Value> = Vec::new();
     let mut buffer = String::new();
+    let mut progress = stream_guard::StreamProgress::new();
+    let mut failure = None;
     let mut byte_stream = upstream_resp.bytes_stream();
-    while let Some(item) = byte_stream.next().await {
-        let Ok(bytes) = item else { break };
+    'read: while let Some(item) = byte_stream.next().await {
+        let bytes = match item {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                failure = Some("upstream stream read failed");
+                break;
+            }
+        };
         buffer = sse::append_utf8_safe(&buffer, &bytes);
         loop {
             // take_sse_block 返回的 rest 借用 buffer，这里立刻转成 owned 再回写 buffer
@@ -195,32 +207,39 @@ pub(super) async fn aggregate_upstream_stream(
             let Some(data) = sse::extract_sse_data(&block) else {
                 continue;
             };
-            let trimmed = data.trim();
-            if trimmed.is_empty() || trimmed == "[DONE]" {
-                continue;
-            }
-            if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
-                chunks.push(v);
+            if let Err(error) = collect_aggregate_payload(&data, outbound, &mut chunks, &mut progress) {
+                failure = Some(error);
+                break 'read;
             }
         }
     }
     // 流末尾可能还挂着没分隔符的半帧
-    if let Some(data) = sse::extract_sse_data(&buffer) {
-        let trimmed = data.trim();
-        if !trimmed.is_empty() && trimmed != "[DONE]" {
-            if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
-                chunks.push(v);
-            }
+    if failure.is_none() {
+        if let Some(data) = sse::extract_sse_data(&buffer) {
+            failure = collect_aggregate_payload(&data, outbound, &mut chunks, &mut progress).err();
         }
     }
 
-    if chunks.is_empty() {
+    if failure.is_none() && config.stream_truncation_guard {
+        if progress.is_truncated() {
+            failure = Some("upstream stream ended before completion (truncated)");
+        } else if !progress.saw_content() && !progress.saw_finish() {
+            failure = Some("empty upstream completion");
+        }
+    }
+    if chunks.is_empty() || failure.is_some() {
+        let message = failure.unwrap_or("empty upstream stream");
         let mut stats = state.stats.write().await;
         stats.failed_requests += 1;
+        push_request_log(&config.source, format!("✗ 聚合流失败 502: {message}"));
+        crate::proxy::hooks::current().record_failure(
+            &config.tool_id, actual_model, &config.provider_id,
+            crate::proxy::failure::FailureClass::Transient.as_str(),
+        );
         return (
             StatusCode::BAD_GATEWAY,
             Json(json!({
-                "error": {"message": "上游流式响应为空（已强制流式但没收到任何数据）"}
+                "error": {"message": message, "type":"upstream_error", "code":"upstream_parse"}
             })),
         )
             .into_response();
@@ -275,6 +294,24 @@ pub(super) async fn aggregate_upstream_stream(
 
     // 聚合后是普通 JSON，与转换后的非流式响应同样用 application/json
     Json(in_resp).into_response()
+}
+
+fn collect_aggregate_payload(
+    data: &str,
+    protocol: &str,
+    chunks: &mut Vec<Value>,
+    progress: &mut stream_guard::StreamProgress,
+) -> Result<(), &'static str> {
+    let data = data.trim();
+    if data.is_empty() { return Ok(()); }
+    if data == "[DONE]" { progress.observe_done(); return Ok(()); }
+    let value: Value = serde_json::from_str(data).map_err(|_| "invalid upstream stream frame")?;
+    if value.get("error").is_some_and(|error| !error.is_null()) {
+        return Err("upstream stream returned an error frame");
+    }
+    progress.observe_value(protocol, &value);
+    chunks.push(value);
+    Ok(())
 }
 
 /// 流式响应：把上游（出站协议）SSE 转换为入站协议 SSE。

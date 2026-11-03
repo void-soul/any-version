@@ -1,0 +1,14 @@
+## Q-0673 | 2026-11-03 | Bug Fix | 已验证
+
+**现象/需求:** 用户批准反向代理修复：强制上游流式的非流式聚合分支未检查截断/读取错误/error帧，可能把半截回答记为成功；对齐参考D 0014/0028并补本机隔离回归。
+
+**根因:** 参考D 0014/0028要求截断、空流及error明确失败；我方仅stream_response等分支接StreamProgress，强制流式到非流式聚合遇读错break且只判chunks.is_empty，半截、error帧和角色/用量帧均被记成功。
+
+**解决方案:** 聚合同时观察finish/DONE与有效内容，传输错误/无效JSON/error帧返回502，按既有transient类别落失败统计和请求日志，不再计成功。复用原guard开关，正常finish或DONE继续聚合。4项新增回归含多个子场景；修复前3项失败，修复后通过。适用2API/OpenAI强制流式聚合，真实上游未调用。
+
+**涉及文件:**
+| File | Change |
+|------|--------|
+| src-tauri/src/proxy/server/response.rs | 聚合收尾及错误传播 |
+| src-tauri/src/proxy/server/response_tests.rs | 合成HTTP响应回归 |
+---
