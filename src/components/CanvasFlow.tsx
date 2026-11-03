@@ -185,7 +185,7 @@ const JsonFlowNode = memo(function JsonFlowNode({ data }: NodeProps<Node<JsonFlo
         <span className={`min-w-0 flex-1 truncate font-mono text-caption ${directMatch && !hlLevel ? "text-yellow-300" : "text-cyan-200"}`} style={{ textShadow: hlGlow || undefined }}>{item.name}</span>
         <button type="button" className="nodrag nopan text-slate-600 hover:text-white" onClick={(event) => { event.stopPropagation(); onCopy(copyJsonValue(item.value)); }} title={t("canvasflow.copyNode")}><span className="text-tiny">⧉</span></button>
       </div>
-      <div className="mt-1 truncate font-mono text-tiny" style={{ color, backgroundColor: hlHeader || undefined, borderRadius: hlHeader ? 3 : undefined }}>{jsonSummary(item.value)}</div>
+      <div className="mt-1 truncate font-mono text-tiny" title={typeof item.value === "string" ? item.value : undefined} style={{ color, backgroundColor: hlHeader || undefined, borderRadius: hlHeader ? 3 : undefined }}>{jsonSummary(item.value)}</div>
       {Array.isArray(item.value) && !collapsed.has(item.path) && <JsonArrayTable value={item.value} path={item.path} onSelect={onSelect} />}
       <Handle type="source" position={Position.Right} isConnectable={false} className="!h-2.5 !w-2.5 !border-2 !border-slate-950" style={{ background: color }} />
     </div>

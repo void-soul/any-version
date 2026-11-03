@@ -221,12 +221,15 @@ function VirtualJsonTree({ value, searchMatches, collapsed, largeDocument, expan
               {row.container ? (
                 <span className="text-sky-400">{type === "array" ? `array [${displayChildCount(row.value)}]` : `object {${displayChildCount(row.value)}}`}</span>
               ) : (
-                <span className={SCALAR_VALUE_CLASS[type] ?? "text-slate-400"}>{type === "string" ? `"${row.value}"` : String(row.value)}</span>
+                <span
+                  className={`${SCALAR_VALUE_CLASS[type] ?? "text-slate-400"} ${type === "string" ? "min-w-0 max-w-[48ch] truncate" : ""}`}
+                  title={type === "string" ? String(row.value) : undefined}
+                >{type === "string" ? `"${row.value}"` : String(row.value)}</span>
               )}
               <button
                 type="button"
                 onClick={() => onCopy(copyValue(row.value))}
-                className="ml-1 opacity-0 transition-opacity group-hover:opacity-100 text-slate-500 hover:text-slate-200"
+                className="ml-1 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 text-slate-500 hover:text-slate-200"
                 title={row.container ? t("jsonb.copySubtree") : t("jsonb.copyValue")}
                 aria-label={row.container ? t("jsonb.copySubtree") : t("jsonb.copyValue")}
               >
