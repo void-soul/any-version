@@ -1,0 +1,73 @@
+AnyVersion 项目检查报告
+日期：2026-10-30（Asia/Shanghai）
+代码基线：780ed48，版本 2.9.2
+
+一、结论与范围
+本轮发现 6 项具体缺陷：1 项 P1（优先修复），5 项 P2（常规修复）。
+检查方式：前端测试、TypeScript 类型检查、前端生产打包、Rust 编译检查，以及文件服务、文件关联和证书接收流程的重点代码审查。
+这是一轮重点检查，不是全量安全审计。未启动桌面 GUI，未操作真实注册表关联、证书部署或外部服务，未执行主项目全部 Rust 单元测试、完整安装包构建和联网依赖漏洞扫描。
+检查前已有 qa.db 修改，本轮未更改该文件或业务源码。
+
+二、问题清单
+
+1. [P1] HTTP 文件服务可通过 Windows 反斜杠路径越出共享目录
+位置：src-tauri/src/commands/http_server.rs:245-278
+证据：路径只按 / 分割并处理单独的 ..，但 PathBuf::push 在 Windows 同时接受反斜杠。starts_with 只是组件前缀比较，不消除内部 ..，也不解析 junction / symlink。
+复现：共享根为 C:\shared，请求 /..%5Coutside%5Csecret.txt。解码后得到 /..\outside\secret.txt，候选路径为 C:\shared\..\outside\secret.txt，当前 starts_with 返回 true。独立 Rust 程序已在本机复现该判定，未读取目录外真实文件；尚未通过运行中的 HTTP 服务进行端到端验证。
+影响：服务开启时，可达该端口的客户端可能读取进程有权限访问的共享根外文件。默认仅回环监听；用户选择局域网开放后影响范围扩大。根内 junction / symlink 也是同一目录边界问题。
+建议：canonicalize 根目录和实际目标后再校验归属；明确拒绝含反斜杠、路径前缀及非普通组件的请求；对目录默认首页也检查最终路径。增加编码反斜杠、父目录、junction、绝对路径回归测试。
+
+2. [P2] 解除 Markdown 关联时缺少查询权限，却吞掉读取失败
+位置：src-tauri/src/commands/file_io.rs:145-158
+证据：扩展名注册表键仅以 KEY_SET_VALUE 打开，随后调用 get_value。查询默认值需要 KEY_QUERY_VALUE；读取错误被 if let Ok 忽略，因此删除扩展名默认值的分支不会正常执行。
+触发：已注册 .md / .markdown 后，在界面点击解除关联。
+影响：可能保留指向 AnyMarkdown.Document 的扩展名默认值，同时继续尝试删除 ProgID，最后仍返回成功提示，导致解除不完整或留下失效关联。
+建议：按需申请 KEY_QUERY_VALUE | KEY_SET_VALUE；处理和上报读写、删除错误；操作后重新读取确认。应使用隔离测试键验证，不直接修改用户真实关联。
+验证程度：静态代码确认，未实际修改注册表。
+
+3. [P2] HTTP 目录列表未对文件名进行 URL 编码和 HTML 转义
+位置：src-tauri/src/commands/http_server.rs:143、157、180-184；url_decode 位于 33-55
+证据：文件名直接插入 href 和显示文本；解码又把路径中的 + 变为空格。
+触发：共享目录内存在 a#b.txt、a%b.txt、a+b.txt 等 Windows 合法文件名。
+影响：# 被浏览器当成片段，%xx 可能被错误解码，+ 被替换为空格，导致列表能看到但点击打不开；& 等字符也可能被 HTML 解析为实体，显示或定位错误。
+建议：对 URL 路径段进行百分号编码，对 HTML 文本和属性分别转义；路径解码保留字面 +。为 #、%、+、&、中文及空格文件名增加访问回归测试。
+验证程度：静态数据流确认，未执行浏览器端到端访问。
+
+4. [P2] domain 布局允许未写入任何证书却报告成功
+位置：cert-receiver/src/server.rs:332-360、383-398
+证据：仅要求 certificate_id 和 domain 不同时为空。layout=domain 且只有 certificate_id 时，domain 分支跳过 write_layout，但仍执行重载并返回 Ok((wrote, reload))，其中 wrote 为空。domains 第一项为空字符串时也不会回退到 body.domain。
+触发：以 domain 布局发送有效鉴权请求，certificate_id 非空，domain 和 domains 为空，reload_mode=none。
+影响：接口返回 ok=true、written=[]，推送方可能认为证书部署完成，实际目标目录未更新。
+建议：按布局校验所需字段；过滤空域名并合理回退；写入列表为空时返回 400，且不执行重载。
+验证程度：静态控制流确认，未启动接收服务。
+
+5. [P2] 证书与私钥直接分步覆盖，失败时无法保持上一组有效文件
+位置：cert-receiver/src/server.rs:91-93、120-135、349-380
+证据：write_layout 先覆盖 cert.key，再覆盖 fullchain.cer 等文件；没有预校验、暂存、事务提交或回滚。后续写入失败会留下部分更新，重载失败也不会恢复旧文件。
+触发：新私钥写入成功后，证书文件因权限、磁盘空间或进程中断未写入成功。
+影响：磁盘上的证书与私钥可能不匹配。当前 nginx 工作进程可能继续使用旧内存配置，但下一次启动或重载可能失败。
+建议：写入前验证 PEM 及证书私钥匹配；先在独立暂存目录写完整文件，验证后按部署策略切换；保留上一版本以便回滚。增加中途失败和并发推送测试。
+验证程度：静态审查，未对真实证书目录注入故障。
+
+6. [P2] 证书推送在异步请求内同步等待外部命令，且没有执行超时
+位置：cert-receiver/src/server.rs:145-158、193-259、288-303、383
+证据：async push 直接调用同步 push_inner，后者执行 std::process::Command::output；没有超时或并发限制。
+触发：配置的重载脚本或 nginx 检查命令卡住，或多个已鉴权推送同时到达。
+影响：占用异步运行时工作线程，阻塞请求响应；足够多的卡住命令会影响其他接口和服务优雅停止。
+建议：使用 tokio::process 配合超时及超时终止子进程；将文件操作移入阻塞任务；对部署及重载流程串行化或限制并发。
+验证程度：静态调用链确认，未运行会挂起的外部命令。
+
+三、验证记录
+1. npm test -- --reporter=dot：通过，47 个测试文件、391 项测试。eventBuffer 的异常日志来自预期的异常分支测试，不属于失败。
+2. npx --no-install tsc --noEmit：通过。
+3. npx --no-install vite build：通过，3852 个模块，约 11.74 秒。存在超过 500 kB 的分块提示；editor.api 约 2.65 MB、monacoSetup 约 1.27 MB，是否影响启动需进一步测量，不据此认定性能缺陷。
+4. cargo check --locked --offline --manifest-path src-tauri/Cargo.toml：通过，约 57.94 秒。库产生 52 条编译警告，主要涉及未使用导入、变量、赋值和代码；另有文件系统硬链接失败后退回复制的环境警告。
+5. Windows 路径最小复现：输出 candidate=C:\shared\..\outside\secret.txt allowed=true，确认问题 1 的校验绕过。
+6. 证书接收端测试结果：见报告末尾补充。
+
+四、建议处理顺序
+首先修复问题 1 并补目录边界测试；随后修复问题 2、4 的确定性功能错误；再处理问题 5、6 的部署可靠性及问题 3 的文件访问兼容性。
+现有测试通过只能证明已覆盖的行为；本轮发现的请求路径、注册表权限和部署失败分支仍需对应回归验证。
+
+补充：cargo test --locked --offline --manifest-path cert-receiver/Cargo.toml 已完成，通过 8 项测试，0 失败。
+
