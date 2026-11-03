@@ -1,8 +1,8 @@
 import { buildLogIndex, DEFAULT_LOG_LIMITS } from "./index";
 import type { TFunction } from "i18next";
-import { pickLogSource, sameLogBytes, type LogSource } from "./source";
+import { pickLogSource, sameLogBytes, type LogSelection, type LogSource } from "./source";
 
-export function mountLogViewer(root: HTMLDivElement, t: TFunction) {
+export function mountLogViewer(root: HTMLDivElement, t: TFunction, selection: LogSelection) {
   const $ = <T extends HTMLElement = HTMLElement>(sel: string) =>
     root.querySelector(sel) as T;
 
@@ -613,6 +613,7 @@ export function mountLogViewer(root: HTMLDivElement, t: TFunction) {
   };
   const loadSnapshot = (file?: File) => {
     sourceRequest++; currentSource = null;
+    selection.source = null; selection.file = file || null;
     if (tailMode) toggleTailOff();
     void loadFile(file);
   };
@@ -659,6 +660,7 @@ export function mountLogViewer(root: HTMLDivElement, t: TFunction) {
       const file = await source.getFile();
       if (disposed || request !== sourceRequest) return;
       toggleTailOff(); currentSource = source;
+      selection.source = source; selection.file = null;
       await loadFile(file);
     } catch (error) {
       if (request === sourceRequest && !(error instanceof DOMException && error.name === "AbortError")) showError(error);
@@ -693,6 +695,22 @@ export function mountLogViewer(root: HTMLDivElement, t: TFunction) {
   const ro = new ResizeObserver(onResize);
   ro.observe(viewer);
   window.addEventListener("resize", onResize);
+
+  // React Activity destroys effects while hidden but preserves the component/ref.
+  // Reset the imperative DOM and re-open its lightweight source on restoration.
+  toggleTailOff();
+  $("#lv-dropzone").style.display = "flex"; viewer.style.display = "none";
+  $("#lv-statusFile").textContent = t("logview.noFile");
+  updateStatus(); $("#lv-statusSize").textContent = "";
+  $("#lv-infoText").textContent = ""; fileInput.value = ""; searchBox.value = "";
+  const restoreRequest = sourceRequest;
+  if (selection.source) {
+    const source = selection.source;
+    currentSource = source;
+    void source.getFile().then(file => {
+      if (!disposed && restoreRequest === sourceRequest) return loadFile(file);
+    }).catch(error => { if (!disposed && restoreRequest === sourceRequest) showError(error); });
+  } else if (selection.file) void loadFile(selection.file);
 
   return () => {
     disposed = true; sourceRequest++; currentSource = null; loadRequest++; searchRequest++; tailMode = false;

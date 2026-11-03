@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 
 export type LogSource = { getFile(): Promise<File> };
+export type LogSelection = { source: LogSource | null; file: File | null };
 type PickerWindow = Window & { showOpenFilePicker?: (options: unknown) => Promise<LogSource[]> };
 
 /** A File from an input/drop is a snapshot; only a handle/path can be refreshed. */

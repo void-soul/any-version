@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { mountLogViewer } from "./logViewer/runtime";
 import { CSS } from "./logViewer/styles";
+import type { LogSelection } from "./logViewer/source";
 
 /**
  * 大文件日志查看器（纯前端 / 虚拟滚动）。
@@ -13,11 +14,12 @@ import { CSS } from "./logViewer/styles";
 export default function LogViewer() {
   const { t } = useTranslation();
   const rootRef = useRef<HTMLDivElement>(null);
+  const selection = useRef<LogSelection>({ source: null, file: null });
 
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
-    return mountLogViewer(root, t);
+    return mountLogViewer(root, t, selection.current);
   }, []);
 
   return (
