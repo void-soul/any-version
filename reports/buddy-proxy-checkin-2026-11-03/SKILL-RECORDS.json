@@ -1,0 +1,36 @@
+{
+  "scope": "approved Q-0673..Q-0677 only; local ignored skill assets updated, not a full upstream sync",
+  "files": [
+    {
+      "path": ".agents/skills/cockpit-buddy-sync/references/our-features.md",
+      "sha256": "282c54bf5545efeed20256beefa7f9fc13ba94067bf38859528fe09a257b9a7b"
+    },
+    {
+      "path": ".agents/skills/cockpit-buddy-sync/references/pitfalls.md",
+      "sha256": "a35157c62da4a718e3eb0c58771358350492542406ce5270ed08cce40f4b6da6"
+    },
+    {
+      "path": ".agents/skills/cockpit-buddy-sync/references/workdaddy.md",
+      "sha256": "0111c4b988d4ebef847506aae84efb209071f3071abaad20a59a084fac645fa6"
+    },
+    {
+      "path": ".agents/skills/cockpit-buddy-sync/references/workbuddy-manager.md",
+      "sha256": "5b7f3ccc3da4d2f77fcccf515a8a4379401ff4174e3070c634fc67c0274da4c5"
+    },
+    {
+      "path": ".agents/skills/cockpit-buddy-sync/sync-point.workdaddy.txt",
+      "sha256": "d7fc8d07a909a3c3bd87096e51b3e0fc9b7a8e7b48566d5cf16e2b537899e32d"
+    },
+    {
+      "path": ".agents/skills/cockpit-buddy-sync/sync-point.workbuddy-manager.txt",
+      "sha256": "ddd2aee2bced43e91b6dc9a65cbafb9efd39e607c7ce800066bf9cc6e9aa2c8b"
+    }
+  ],
+  "feature_rows": [
+    "| 14 | 签到（手动 + 自动） | api/checkin_execution.rs、checkin_commands.rs、auto_checkin/{cycle,config_updates}.rs | A daemon.js:4543 checkinClaims、4586最新缓存合并；D 0029 | 2026-11-03 Q-0675..0677：两入口按UID共享异步锁，批量force也保持3秒间隔；已签到/同日成功不推测加天数，inactive不写完成时间；UI只保存设置，周期CAS合并进度保留最新开关/时间窗。自动仍仅WorkBuddy，随机窗保留。固定签到域未改，真实账号调用未做 | ✅ 上述边界已验证；⚠ 域路由差异保留 | reports/buddy-proxy-checkin-2026-11-03/FINAL-REPORT.txt |",
+    "| 16 | 2API凭据热更新及刷新 | twoapi/{credentials,refresh,mod}.rs | D 0045刷新退避；A token-refresh并发纪律 | 2026-11-03 Q-0674：同Credentials串行并锁内重读；429尊重Retry-After（5分钟至6小时），临时失败5/15/60/300秒退避，明确吊销停止后台刷新；身份/凭据变化重置。写回失败保留已轮换token只重试保存，保留mtime/len保护及加密信封，更新响应有效期。状态错误可见且恢复只清同步错误。退避不跨应用进程重启持久化（同进程重启2API保留），真实WB不可验 | ✅ 隔离验证；真机未验证 | twoapi/refresh.rs、credentials.rs tests |",
+    "| D8 | 截断流/空流信号 | server/response.rs + stream_guard.rs | D 0014/0028：截断与空流明确失败，不假成功 | 2026-11-03 Q-0673补此前遗漏的强制流式→非流式聚合：截断、error帧、传输失败、只有角色/用量时返回502并写失败统计/日志；正常finish或DONE继续聚合。修复前3项失败，修复后通过。未扩改公共UTF-8/SSE解析器 | ✅ 聚合缺口补齐；其他流式沿用既有验证 |",
+    "| D12 | 签到节流与退避 | api/checkin.rs + auto_checkin/{planning,cycle}.rs；保留随机窗、账号间3秒间隔 | A要求10001明确已签到文案；D 0029指出10001也代表暂拒 | 2026-10-31：已签到/暂拒/活动结束/硬错分开，401/403优先；状态查询与签到保留HTTP/业务码，双端点错误不丢重试语义；5/15/60秒最多三次重试，耗尽或硬失败当日终止，手动可重试。自动任务仍仅WorkBuddy。Q-0582；2026-11-03 Q-0675补共享账号执行闸和force批量3秒间隔，保留5/15/60重试预算 | ✅ 本轮已验证 |",
+    "| D13 | 每日任务判据 | `is_plan_due` + `reschedule_missed_plans`（错过重排到窗口内） | `YYYY-MM-DD-HH` 去重 + 整点判据 + **错过即放弃**（不补跑）+ **无论成败都 `mark_ran`**（失败不每分钟重试刷屏）；`set_plan` 保留 `last_run` | 我们重排 = 可能当天补跑（我们**有意**保留，随机窗语义更宽）；但「失败每分钟重试」必须避免 | ⚠️ 错过重排有意不同；Q-0677已补设置/执行状态并发合并 |"
+  ]
+}

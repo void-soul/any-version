@@ -1,0 +1,47 @@
+反向代理与账号签到：批准批次最终报告
+日期：2026-11-03；基准9bd8bd9；用户在5项方案后明确“改吧”。
+
+一、结论
+批准的5项机制修复已完成，Q-0673..Q-0677已记录。274项定向原生隔离回归通过（新增18项），npx tsc --noEmit通过，架构1180源文件通过，Rust离线全目标检查通过（cargo-check.txt）。
+这不等于真实WorkBuddy/CodeBuddy CN账号、真实上游协议或完整桌面端验收通过；本轮没有真实刷新、签到、切号或聊天请求。
+
+二、改动及证据
+Q-0673 代理聚合完整性：上游强制流式、客户端要非流式时，补StreamProgress观测；截断、读取错误、error帧、非法JSON或只有角色/用量无完成内容时返回502，失败计数/请求日志/既有transient分类保持一致，不再留假成功。有效内容配finish或DONE正常聚合；既有stream_truncation_guard仍控制截断/空完成检查。proxy-before.txt为修改前3失败/1通过，native-tests.txt为修复后结果。合成reqwest HTTP/SSE响应覆盖，无真实外部上游。
+Q-0674 2API刷新：同Credentials实例异步闸覆盖网络往返和写入，锁内重新读取。429无论JSON/HTML均保留Retry-After，支持秒/HTTP日期，等待限制5分钟至6小时；其他临时失败5/15/60/300秒退避；invalid_grant、12153等明确失效停止后台重试，普通网关401不直接当吊销。身份、token或有效期变化重置策略。
+旋转token后写失败在内存保留结果，只重试保存；写回仍检查mtime/len并保留原加密信封。刷新响应expiresAt/expiresIn或JWT exp用于更新原expiresAt字段，避免刷新完仍被判临期。错误进入已有TwoApiPanel.lastError，恢复仅清同步错误，不清其他服务错误。
+测试包含8并发只刷新一次、退避边界、凭据变化、刷新中切号不覆盖、Windows写回失败后只保存、加密字段/到期时间及状态恢复。退避/待写token只在内存：同进程停止/启动2API复用对象保留，应用进程重启后不保留；不引入账号池禁用或持久化风控状态。
+Q-0675 签到共享执行保护：手动与自动按UID共享异步锁，覆盖请求和保存，等待后重读账号；取消等待可释放，其他账号不受该锁阻塞。全部批量包括force保留3秒间隔，单号手动无额外等待。锁机制有原生回归，批量调用点已检查；没有真实批量签到或Tauri命令窗口端到端测试。自动仍仅WorkBuddy，手动不扩既有平台支持。
+Q-0676 连续天数幂等：官方天数优先；already或同日已有成功记录不推测加1，只有新成功且无官方值时才加1。回查确认已签保留官方streak。inactive不是成功，不写账号完成状态、完成时间、推测天数或收益。测试覆盖已签、同日重复、官方覆盖和inactive；不重算历史账号数据。
+Q-0677 配置所有权：UI只保存enabled/start/end，忽略UI携带的旧执行计划；周期锁内重读并CAS合并自身变化状态。用户改设置后停止后续账号，在途成功仍可留痕，不能复活停用开关或覆盖新一天计划。保留随机窗和5/15/60重试预算。3项临时文件回归覆盖旧UI、停用/改窗、计划变化、损坏配置原值保持。
+运行时单元测试移至twoapi/runtime_tests.rs，保持原测试名字，满足每个源文件少于1000行的架构要求；不是删除测试或放宽规则。
+
+三、验证范围
+native-tests.txt：274 passed / 0 failed，分组proxy 195、Buddy API 32、自动签到24、2API凭据17、刷新策略3、状态巡查3。不叠加重复计数，没有跑完整1657项Rust集合。
+native-build.txt：cargo test --no-default-features --lib --locked --offline --no-run成功。保留既有编译警告，没有混改其他模块警告。
+typescript.txt：npx tsc --noEmit成功（编译器无诊断，文件记录命令及退出码）。architecture.txt：1180源文件通过。
+auth-inspection.json：复用技能inspect-client-auth.py的两项只读检查，关闭账号库扫描并抑制原始输出；不保存/打印UID、邮箱、令牌或密钥。未取得可读WorkBuddy会话；CN现有会话可读且含sessionState。后者仅为当前机器的既有状态，不是本次改动通过客户端验证的证据。
+QA-COMPLETENESS.json：5条四段内容完整；qa-format.txt仍为19条旧历史文件表问题，本轮未混改。qa.db只保留本地，不整库提交。
+本轮仅Rust实现/测试与文档改变，没有重新跑前轮487项前端测试或30模块浏览器截图；不可把前轮结果计成本轮新增验收。
+
+四、参考来源与适配边界
+A：E:/pro/other-sdk/buddy/WorkDaddy，2fd29e48，DAEMON_VERSION 1.2.68 / release-1.2.68-login-page-persona-switch。
+全量历史-S checkinClaims追到df71ec8（2026-09-08），-S checkinEndpointsForToken追到87d8692（2026-09-04）；参考daemon.js:4543在途合并、4559当日幂等、4586合并最新缓存，checkin-result.test.js三项纯逻辑参考测试通过。
+D：E:/pro/other-sdk/buddy/workbuddy-manager，aa7048a7，v2.11.9，47patch。已运行relearn.sh manager/workdaddy只读核对本地同步点；没有fetch或修改参考仓。
+实际吸收0014/0028的流失败语义、0029的批量错峰、0045的单账号刷新退避。0047明确封禁与既有AccountBanned一致，不新增池禁用；0039不引入换号。提示词/指纹改写、账号池调度、Root-Request-ID、/v3/config并发均未搬入；签到固定域保持本轮方案边界。
+技能our-features/pitfalls/workdaddy/workbuddy-manager及两个同步点已本地回写。该技能目录被Git忽略，未强制纳入整个技能；SKILL-RECORDS.json保存本轮范围、相关行及6文件SHA256。新同步点只是本轮观察到的HEAD，不代表全部增量已对齐；D9/D10/D11等未批准待办仍保留。
+
+五、仍未完整的验证与下一轮待办
+1. 真实WorkBuddy令牌刷新、客户端接受写回、重启恢复，以及2API普通对话/工具/纯思考/长上下文四类真机回归未做。
+2. 真实手动/自动签到、跨域端点可用性、后台长期运行及真实账号批量错峰未做；当前证明的是共享机制、合成响应及临时文件回归。
+3. 另发现公共SSE字节追加对跨chunk不完整UTF-8尾字节的处理风险（sse.rs::append_utf8_safe），以及多行data解析覆盖不足；这是本轮5项之外的待复现/方案项，没有夹带修改。不能据本报告声称整个代理解析层已深审完成。
+4. 2API刷新闸仅覆盖同Credentials实例；没有扩改Buddy账号库API刷新的整个跨子系统协调模型。成功响应若既无到期元数据又是不可解析的非JWT token，继续沿用原有文件到期判断，该上游形态尚未真机确认。
+
+六、复跑与提交
+在项目根目录执行：cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --lib --locked --offline proxy:: -- --test-threads=1
+其余过滤范围：commands::buddy::api::、commands::buddy::auto_checkin::、commands::buddy::twoapi::credentials::、commands::buddy::twoapi::refresh::，以及runtime_tests::sync_和runtime_tests::watcher_。不要使用--ignored触发真实上游测试来代替隔离验收。
+提交按代理、2API凭据、签到共享调用链三个实现范围及报告分别处理，签到提交同时追溯Q-0675/Q-0676/Q-0677。保留用户package.json/Cargo.toml/Cargo.lock/tauri.conf.json版本修改和无关报告；不push、不提交整份qa.db。
+
+实现提交（验收材料另提交）：
+3b0b45b fix: #Q-0675 Serialize check-ins and preserve daily metadata and live settings (#Q-0676 #Q-0677)
+f529ea2 fix: #Q-0674 Serialize 2API refreshes and preserve rotated credentials during backoff
+99bb2df fix: #Q-0673 Reject truncated or failed upstream stream aggregates

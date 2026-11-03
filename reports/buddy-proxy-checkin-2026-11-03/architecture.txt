@@ -1,0 +1,5 @@
+
+> tauri-app@2.9.5 check:architecture
+> node scripts/check-module-boundaries.mjs
+
+Architecture checks passed (1180 source files).

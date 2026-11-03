@@ -1,0 +1,14 @@
+{
+  "passed": 274,
+  "failed": 0,
+  "groups": {
+    "buddy_api": 32,
+    "auto_checkin": 24,
+    "twoapi_credentials": 17,
+    "twoapi_refresh": 3,
+    "twoapi_runtime": 3,
+    "proxy": 195
+  },
+  "real_account_requests": false,
+  "full_rust_suite": false
+}

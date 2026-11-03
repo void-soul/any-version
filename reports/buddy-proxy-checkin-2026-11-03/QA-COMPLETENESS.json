@@ -1,0 +1,57 @@
+{
+  "checked": 5,
+  "empty_fields": [],
+  "qa_db_committed": false,
+  "entries": [
+    {
+      "qid": "Q-0673",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 79,
+        "root_cause": 127,
+        "solution": 162,
+        "files": 152
+      }
+    },
+    {
+      "qid": "Q-0674",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 98,
+        "root_cause": 120,
+        "solution": 313,
+        "files": 373
+      }
+    },
+    {
+      "qid": "Q-0675",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 99,
+        "root_cause": 88,
+        "solution": 164,
+        "files": 354
+      }
+    },
+    {
+      "qid": "Q-0676",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 74,
+        "root_cause": 87,
+        "solution": 162,
+        "files": 238
+      }
+    },
+    {
+      "qid": "Q-0677",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 83,
+        "root_cause": 89,
+        "solution": 171,
+        "files": 249
+      }
+    }
+  ]
+}
