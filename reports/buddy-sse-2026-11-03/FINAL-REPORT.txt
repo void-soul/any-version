@@ -1,0 +1,30 @@
+SSE续修最终报告（2026-11-03，Q-0678/Q-0679/Q-0680）
+
+范围：用户批准的三项SSE修复，延续a07b397，不重复此前签到/刷新/30模块工作。
+
+已完成
+1. 按字节保留不完整UTF-8，完整行后解码；替换代理聚合、同协议观察、代理跨协议、AI聚合跨协议四处调用。旧append_utf8_safe/take_sse_block在产品中已无调用。
+2. CRLF/LF/裸CR按顺序定界，支持单首BOM、注释、多行data与空data字段；只移除冒号后的一个可选空格。原非流式聚合适配器继续接受合法完整JSON EOF尾；不完整UTF-8/JSON明确失败。这是既有兼容例外，不是声称完全遵循EventSource EOF丢弃规则。
+3. AI聚合跨协议接入完整性判断：截断、空流、断连、超时、非法JSON、error帧不再调用正常finish。关闭已打开块后输出协议错误；已发送的HTTP 200不会变成502。OpenAI错误后的DONE用于结束传输，不补正常finish_reason。正常finish/DONE保持一次协议收尾，DONE之后不消费垃圾。实际已用token仍记录。
+4. 同协议观察器继续原字节转发；UTF-8失败在yield错误前记失败计数，避免消费者停止轮询漏记。代理跨协议解码失败也不补正常结束。
+
+证据
+BEFORE.txt：原版4项复现均失败，含跨字符丢字、多行data、混合定界顺序、裸CR。
+parser-tests.txt：独立解析器4项通过。
+native-tests.txt：319项定向原生测试通过，0失败；包括本轮新增13项与此前代理、签到、凭据刷新回归，以及AI聚合策略测试。全库1670项中1351项未在此轮执行；未运行ignored测试。
+native-build.txt：cargo test --no-default-features --lib --locked --offline --no-run通过。
+cargo-check.txt：cargo check --no-default-features --all-targets --locked --offline通过；既有编译警告保留，未夹带清理。
+typescript.txt：npx tsc --noEmit通过。
+architecture.txt：1182个源文件检查通过。
+Q-0678..0680.txt：四段QA快照，数据库按条更新，不提交整库。
+
+参考与记录
+参考D workbuddy-manager：aa7048a7/v2.11.9/47patch，relearn manager确认无变化、工作区无修改。核对0014断流契约；不是47补丁全部同步。cockpit-buddy-sync机制表、pitfalls、D说明与局部同步点已本地回写，Git忽略资产未强制加入；哈希见SKILL-RECORDS.json。
+SSE规范：https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation
+
+验证边界与剩余工作
+全部新流测试使用内存响应体及合成分片，没有账号、鉴权、付费上游请求、真实桌面启动或硬件动作。之前签到真实账号、认证域、轮换token真实服务验证边界不变；本轮签到仅回归，不宣称真实签到成功。其他协议转换器组合及实际客户端消费未穷尽，本轮修复范围不等于所有SSE分支完成审计。
+30模块隔离UI验收及原生续验沿用原报告；其真实窗口/系统集成、WS/SSE命令链和硬件/账号边界仍按既有报告保留。本轮没有重新截图，不伪称覆盖新增真实业务场景。
+用户2.9.5版本修改、qa.db及历史project-review报告保留；精确本地提交，不push。
+
+修复提交：5cb1ef0（Q-0678、Q-0679、Q-0680）；证据另行精确提交。

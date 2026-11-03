@@ -1,0 +1,8 @@
+
+running 4 tests
+test tests::data_fields_keep_empty_lines_and_only_remove_one_optional_space ... ok
+test tests::undelimited_tail_is_exposed_only_for_explicit_caller_validation ... ok
+test tests::invalid_utf8_is_an_error_instead_of_silently_discarded_bytes ... ok
+test tests::unicode_and_mixed_line_endings_survive_every_split_point ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

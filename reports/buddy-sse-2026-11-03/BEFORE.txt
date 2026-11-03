@@ -1,0 +1,5 @@
+Baseline: a07b397, original production helper source compiled in a temporary Rust probe.
+utf8_split_preserved=false actual="data: {\"text\":\""
+multiline_data_joined=false actual="{\"text\":"
+earliest_event_boundary=false actual_block="data: first\r\n\r\ndata: second" remainder=""
+bare_cr_event_supported=false

@@ -1,0 +1,21 @@
+{
+  "files": [
+    {
+      "path": ".agents\\skills\\cockpit-buddy-sync\\references\\our-features.md",
+      "sha256": "9c1f5e28db64c87706d9865b28f426262763bc5482ab0b6f81123071d4e4e698"
+    },
+    {
+      "path": ".agents\\skills\\cockpit-buddy-sync\\references\\pitfalls.md",
+      "sha256": "63f496ce7458ca2c9f2b2c4cb161ae987f303668ff85e1418987ac3373a21b2d"
+    },
+    {
+      "path": ".agents\\skills\\cockpit-buddy-sync\\references\\workbuddy-manager.md",
+      "sha256": "6d71106142fb170e3d4d4e8e60b4cf1f9cfa661e0aea089a700a83bd443c8b10"
+    },
+    {
+      "path": ".agents\\skills\\cockpit-buddy-sync\\sync-point.workbuddy-manager.txt",
+      "sha256": "8237ecfea9ea41d32f37deeb83ed9a8f5264476f7102c4e3823fc7ccc3bd7998"
+    }
+  ],
+  "scope": "Q-0678..Q-0680 only; ignored skill assets updated locally, not full upstream sync"
+}
