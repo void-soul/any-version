@@ -1,0 +1,8 @@
+2026-11-03
+npx tsc --noEmit: exit 0
+npm run check:architecture: passed (1182 source files)
+Clipboard initialization native tests: 2 passed, 0 failed; see reports/clipboard-init-2026-11-03-tests.txt.
+Q-0681/Q-0682: native save dialog and hover UI not manually verified.
+Q-0683: fresh/open-existing database regression passed; affected PC original error unavailable.
+Q-0681..0683 remain solved pending verification, not marked fully verified.
+Q-0684: WontFix per explicit user decision; no screenshot implementation.
