@@ -31,12 +31,15 @@ const MAX_TEXT_FILE_BYTES: u64 = 64 * 1024 * 1024;
 pub async fn read_log_file(path: String) -> Result<tauri::ipc::Response, String> {
     if !crate::runtime_tasks::is_enabled("logViewer") { return Err("日志模块已停用".into()); }
     tauri::async_runtime::spawn_blocking(move || {
-        let file = fs::File::open(path).map_err(|e| format!("读取日志失败: {e}"))?;
-        let meta = file.metadata().map_err(|e| e.to_string())?;
-        if !meta.is_file() { return Err("请选择普通日志文件".into()); }
-        if meta.len() > 256 * 1024 * 1024 { return Err("logTooLarge".into()); }
-        read_bounded(file, 256 * 1024 * 1024).map(tauri::ipc::Response::new)
+        read_log_snapshot(Path::new(&path), 256 * 1024 * 1024).map(tauri::ipc::Response::new)
     }).await.map_err(|e| e.to_string())?
+}
+fn read_log_snapshot(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
+    let file = fs::File::open(path).map_err(|e| format!("读取日志失败: {e}"))?;
+    let meta = file.metadata().map_err(|e| e.to_string())?;
+    if !meta.is_file() { return Err("请选择普通日志文件".into()); }
+    if meta.len() > limit { return Err("logTooLarge".into()); }
+    read_bounded(file, limit)
 }
 fn read_bounded(mut reader: impl Read, limit: u64) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
@@ -482,6 +485,29 @@ fn percent_decode(s: &str) -> String {
 #[cfg(test)]
 mod bounded_text_tests {
     use super::*;
+    #[test]
+    fn log_snapshots_reopen_paths_and_reject_oversize_or_missing_files() {
+        use std::io::Write;
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("kira-log-snapshot-{}-{nonce}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let path = root.join("test.log");
+        fs::write(&path, b"one").unwrap();
+        assert_eq!(read_log_snapshot(&path, 10).unwrap(), b"one");
+        fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(b"two").unwrap();
+        assert_eq!(read_log_snapshot(&path, 10).unwrap(), b"onetwo");
+        fs::write(&path, b"same!!").unwrap();
+        assert_eq!(read_log_snapshot(&path, 10).unwrap(), b"same!!");
+        fs::write(&path, b"x").unwrap();
+        assert_eq!(read_log_snapshot(&path, 10).unwrap(), b"x");
+        fs::remove_file(&path).unwrap();
+        assert!(read_log_snapshot(&path, 10).is_err());
+        fs::write(&path, b"rotated").unwrap();
+        assert_eq!(read_log_snapshot(&path, 10).unwrap(), b"rotated");
+        assert_eq!(read_log_snapshot(&path, 3).unwrap_err(), "logTooLarge");
+        assert!(read_log_snapshot(&root, 10).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn reads_exact_budget_and_preserves_bom_decoding() {
         assert_eq!(read_bounded(std::io::Cursor::new(b"abc"), 3).unwrap(), b"abc");
