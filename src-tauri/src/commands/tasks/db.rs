@@ -200,6 +200,16 @@ where
     f(conn)
 }
 
+/// Keep a command's task, log, reference and move records in one commit.
+pub fn with_transaction<T>(f: impl FnOnce(&rusqlite::Connection) -> Result<T, String>) -> Result<T, String> {
+    with_conn(|conn| {
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let result = f(&tx)?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(result)
+    })
+}
+
 /// 当前时间戳（UTC，RFC3339 带时区）。
 /// 带时区偏移的 ISO 时间可被 `new Date(...)` 稳定解析，避免 naive datetime 在跨时区/换时区后语义漂移。
 pub fn now_ts() -> String {
@@ -213,10 +223,13 @@ pub fn today() -> String {
 
 /// 生成唯一 id。
 pub fn new_id(prefix: &str) -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     format!(
-        "{}_{}_{}",
+        "{}_{}_{}_{}",
         prefix,
         chrono::Local::now().format("%Y%m%d%H%M%S%3f"),
-        std::process::id()
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
     )
 }

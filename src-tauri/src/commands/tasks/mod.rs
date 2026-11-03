@@ -11,3 +11,6 @@ pub mod commands;
 pub mod migrate;
 
 pub use commands::*;
+
+#[cfg(test)]
+mod tests;

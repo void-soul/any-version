@@ -4,7 +4,7 @@ use rusqlite::params;
 
 use crate::commands::config::get_data_dir;
 
-use super::db::{new_id, now_ts, today, with_conn};
+use super::db::{new_id, now_ts, today, with_conn, with_transaction};
 use super::models::*;
 
 // ─── 内部工具 ───
@@ -321,7 +321,7 @@ pub fn tasks_create(input: CreateTaskInput) -> Result<TaskItem, String> {
 /// 更新任务字段（部分更新）。若包含 progress 变化，会写入转移记录。
 #[tauri::command]
 pub fn tasks_update(id: String, input: UpdateTaskInput) -> Result<TaskItem, String> {
-    with_conn(move |conn| {
+    with_transaction(move |conn| {
         let old = fetch_task(conn, &id)?;
 
         let title = input.title.unwrap_or(old.title.clone());
@@ -411,7 +411,7 @@ pub fn tasks_update(id: String, input: UpdateTaskInput) -> Result<TaskItem, Stri
 /// 可选同时写复盘日志；进度未满且指定 carryToDate 时，自动结转到该日期。
 #[tauri::command]
 pub fn tasks_set_progress(id: String, input: SetProgressInput) -> Result<TaskItem, String> {
-    with_conn(move |conn| {
+    with_transaction(move |conn| {
         let old = fetch_task(conn, &id)?;
         let new_progress = clamp_progress(input.progress);
 
@@ -482,7 +482,7 @@ pub fn tasks_set_progress(id: String, input: SetProgressInput) -> Result<TaskIte
 /// 转移任务到其它日期（结转/顺延）。
 #[tauri::command]
 pub fn tasks_move(id: String, input: MoveTaskInput) -> Result<TaskItem, String> {
-    with_conn(move |conn| {
+    with_transaction(move |conn| {
         let old = fetch_task(conn, &id)?;
         // Some(x) 表示前端显式指定了目标（x 为 None 即移入收集箱）；None 表示不改日期。
         let to_date = match input.to_date {
@@ -522,7 +522,7 @@ pub fn tasks_move(id: String, input: MoveTaskInput) -> Result<TaskItem, String> 
 #[tauri::command]
 pub fn tasks_carry_over(to_date: Option<String>) -> Result<i64, String> {
     let to_date = to_date.unwrap_or_else(today);
-    with_conn(move |conn| {
+    with_transaction(move |conn| {
         let mut stmt = conn
             .prepare(&format!(
                 "SELECT {} FROM tasks WHERE archived = 0 AND progress < 100 \
@@ -593,7 +593,7 @@ pub fn tasks_set_archived(id: String, archived: bool) -> Result<(), String> {
 /// 彻底删除任务（连带日志与转移记录）。
 #[tauri::command]
 pub fn tasks_delete(id: String) -> Result<(), String> {
-    with_conn(move |conn| {
+    with_transaction(move |conn| {
         // 删除父任务不删除子任务，子任务自动提升为顶层任务。
         conn.execute("UPDATE tasks SET parent_id = NULL, updated_at = ?1 WHERE parent_id = ?2", params![now_ts(), id])
             .map_err(|e| format!("整理子任务关系失败: {}", e))?;
@@ -612,7 +612,7 @@ pub fn tasks_delete(id: String) -> Result<(), String> {
 /// 追加一条复盘日志（不改变进度）。
 #[tauri::command]
 pub fn tasks_add_log(input: AddLogInput) -> Result<TaskLog, String> {
-    with_conn(move |conn| {
+    with_transaction(move |conn| {
         let task = fetch_task(conn, &input.task_id)?;
         let id = new_id("log");
         conn.execute(

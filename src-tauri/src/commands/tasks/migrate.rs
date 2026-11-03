@@ -78,14 +78,16 @@ pub fn migrate_mindmap_plans(conn: &Connection) -> Result<usize, String> {
     if db::get_meta(conn, MIGRATION_KEY)?.is_some() {
         return Ok(0);
     }
-    let created = match run(conn) {
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let created = match run(&tx) {
         Ok(count) => count,
         Err(e) => {
             eprintln!("[任务计划] 迁移思维导图旧计划失败（下次打开模块会重试）: {}", e);
             return Ok(0);
         }
     };
-    db::set_meta(conn, MIGRATION_KEY, &format!("{}/{}", db::today(), created))?;
+    db::set_meta(&tx, MIGRATION_KEY, &format!("{}/{}", db::today(), created))?;
+    tx.commit().map_err(|e| e.to_string())?;
     if created > 0 {
         eprintln!("[任务计划] 已从思维导图迁移 {} 条旧计划", created);
     }
