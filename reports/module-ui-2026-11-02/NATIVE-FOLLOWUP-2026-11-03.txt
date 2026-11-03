@@ -1,0 +1,30 @@
+30模块后续原生验收记录（Q-0670..Q-0672）
+日期：2026-11-03；承接7ef1371，不重复既有30模块浏览器验收。
+
+已完成
+1. 真实原生核心验收62项通过：persistence-native-tests.txt 46项，network-native-tests.txt 11项，http-native-tests.txt 5项。任务7项包含在46项中，不额外累加。全部运行当前生产代码的原生函数，事件收集使用回调；不是模拟IPC返回成功。
+2. 文本读写命令：独立子进程读取中文路径JSON并原子替换，父进程重新读取确认；实际文件只位于随机临时目录。Markdown防覆盖、日志快照、原子文件写入、存储恢复/WAL、环境备份校验、数据库设计文件保存/导出及临时SQLite逆向同时通过。这里的重启验证是测试进程/连接重开，不是完整桌面应用重启。
+3. 任务数据库：新增4项原生回归，连同原有迁移3项共7项通过。实际创建/更新、进度完成与重开、日志多引用、父子循环保护、显式null移入收集箱、归档筛选、删除提升子任务及清理引用、重开磁盘SQLite确认数据。没有打开或写入用户任务库，没有执行系统计划任务。
+4. TCP/UDP：本机127.0.0.1随机端口文本与HEX往返，空UDP包后同连接仍可收发；另测握手取消、队列容量、SSE分帧和任务释放。SSE这里是解析器测试，WS握手和SSE HTTP命令链仍未实测。
+5. HTTP：临时目录内真实本机请求、分段请求行、停止监听和半请求连接、端口复用、路径与junction防护共5项通过。没有暴露用户目录或局域网服务。
+
+新增发现与修复
+Q-0671：UDP读循环把零字节合法数据报当成EOF，导致读写任务关闭。仅保留I/O错误退出；测试回显端同步改正，以空包→文本→HEX确认同一会话可继续工作。沙箱初轮存在10013/超时，不能作为该产品缺陷的有效修复前复现；获准本机回环运行后的11项通过才作为验收证据。
+Q-0672：任务ID只到毫秒和PID，快速创建撞主键；原生修复前4096次只得到12个唯一值、双日志引用主键冲突。添加原子序号，不迁移/改写历史ID。
+任务多条SQL缺少事务，后步失败时进度/日志等已提交。修复前触发器注入转移失败后任务仍100%。六类多步命令统一事务；旧计划迁移数据与完成标记一起提交，失败回滚后重试不会重复导入。真实SQLite故障注入覆盖进度、编辑、移动、批量结转、日志引用、删除及迁移失败。
+
+隔离与边界
+cfg(test)基础数据根使用随机临时目录；本次使用已审阅的测试过滤，不运行整个1639项原生测试集合。
+没有启动已有kira.exe。启动路径会清理环境、初始化全局热键与剪贴板等，单改数据目录仍不足以隔离这些系统副作用；需要进一步建立可控桌面验收环境。
+本次没有改用户注册表/代理/账号/系统服务，没有读取用户剪贴板、真实文档、真实任务库或硬件。
+仍未完成：真实Tauri/WebView2 IPC和窗口、应用完整重启恢复、WS/SSE命令端到端、日志256MiB WebView压力、真实账号/安装/硬件/系统操作。完整30模块业务路径和全仓逐文件D1–D8审计仍未完成。
+本轮不重复跑浏览器30项或前端487项（仅Rust实现及测试改变）；前轮结果见FINAL-REPORT。架构检查1175源文件通过，原生测试构建通过。cargo check --all-targets --locked --offline通过，详见native-followup-cargo-check.txt。54条本轮相关QA四段完整；19条历史格式问题未混改。
+
+可复跑（项目根目录）
+cargo test --manifest-path src-tauri/Cargo.toml --lib --locked --offline commands::tasks:: -- --test-threads=1
+cargo test --manifest-path src-tauri/Cargo.toml --lib --locked --offline commands::file_io:: -- --test-threads=1
+cargo test --manifest-path src-tauri/Cargo.toml --lib --locked --offline commands::http_server:: -- --test-threads=1
+cargo test --manifest-path src-tauri/Cargo.toml --lib --locked --offline commands::wstool:: -- --test-threads=1
+网络/junction测试需要允许本机套接字与临时目录操作的运行环境。不要把环境权限拒绝记为产品失败。
+persistence-native-tests.txt记录同一测试二进制以多个精确模块前缀过滤的46项明细；task-persistence-before.txt保留真实修复前3项失败，task-persistence-tests.txt为7项通过结果。
+提交按Q-0671、Q-0672、Q-0670分别精确进行，不push；qa.db整库及用户版本修改不暂存。

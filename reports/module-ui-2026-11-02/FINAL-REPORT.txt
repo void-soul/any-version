@@ -2,6 +2,8 @@
 日期：2026-11-03（Asia/Shanghai）
 基准：16e6751；保留该提交及此前30模块定向修复、融合搜索改动，未覆盖或重复实施。
 
+续验更新：Q-0670..Q-0672原生62项通过，新增UDP空包和任务ID/事务修复。详见NATIVE-FOLLOWUP-2026-11-03.txt。以下构建/487前端/30浏览器计数保留为前一阶段结果，本轮没有重复运行前端验收。
+
 一、结论与验收口径
 交接列明的具体代码缺口已补修，30个实际组件的隔离宽屏/窄屏入口和30个具名点击用例通过。
 已查看各模块原图、交互图及最终概览；交接前4张“仅采集”截图没有被当作通过证据，现已重采并核对。
@@ -54,13 +56,13 @@
 | 18 | 图片Base64 / imageBase64 | Q-0639/Q-0666 | 转换页签、无效编码反馈、富文本提示 | 未走真实原生图片保存路径 |
 | 19 | 环境变量 / env | Q-0640/Q-0641 | 备份还原页与空备份列表 | 未备份/恢复真实注册表或写PATH |
 | 20 | 日志查看 / logViewer | Q-0642/Q-0664/Q-0666 | 新句柄快照、追加/截断/等长改写、错误恢复/暂停/Activity返回 | 真实Tauri窗口IPC链路未实测；原生临时文件读取已测 |
-| 21 | JSON浏览 / jsonBrowser | Q-0643/Q-0644/Q-0665 | 真实Monaco键盘输入及结构树 | 未读写用户JSON；超大图树以预算单元回归覆盖 |
+| 21 | JSON浏览 / jsonBrowser | Q-0643/Q-0644/Q-0665 | 真实Monaco键盘输入及结构树 | 临时中文JSON已跨测试进程读写；未读写用户JSON；WebView与超大图压力未测 |
 | 22 | Markdown / markdownReader | Q-0645/Q-0646 | 目录显示/隐藏 | 未保存真实用户文档或注册文件关联 |
 | 23 | 串口调试 / serial | Q-0647 | 模拟设备页签 | 无真实串口硬件；未启动原生模拟端口 |
-| 24 | 网络调试器 / wsDebugger | Q-0648/Q-0649 | TCP页签、主机/端口输入区 | 未连接真实WS/SSE/TCP/UDP目标 |
+| 24 | 网络调试器 / wsDebugger | Q-0648/Q-0649 | TCP页签、主机/端口输入区 | TCP/UDP本机原生回环通过；真实WebView及WS/SSE命令链未测 |
 | 25 | 音乐播放器 / music | Q-0650..0652 | 样例曲库与插件页 | 未实际播放、下载或安装音源插件 |
 | 26 | 收藏 / favorites | Q-0653/Q-0666 | 关键词→准确fav_list参数 | 未导入真实浏览器收藏或平台账号数据 |
-| 27 | 任务计划 / tasks | Q-0654 | 新建任务表单 | 未写真实任务数据库或执行系统任务 |
+| 27 | 任务计划 / tasks | Q-0654 | 新建任务表单 | 临时SQLite已测CRUD、重开、引用/父子及故障回滚；用户库与系统任务未操作 |
 | 28 | 设置 / settings | Q-0655 | 模拟更新检查及主题提示弹窗 | 未改变自启/托盘/真实升级与存储目录 |
 | 29 | Suno下载 / suno | Q-0656/Q-0657/Q-0668 | 解析失败反馈、请求仅提交一次 | 未访问真实Suno或下载真实音频 |
 | 30 | 数据库设计 / dbdesigner | Q-0658 | 新建设计、会话/校验契约与画布 | 未写用户设计文件或连接真实数据库 |
@@ -99,3 +101,6 @@ c90846a fix: #Q-0665 Render bounded JSON tree prefixes with lazy sibling travers
 fdc5e77 docs: #Q-0633 Restore implementation-specific solutions for Q-0633 through Q-0649
 9531064 fix: #Q-0664 Refresh log sources through bounded binary reads and display line counts
 2dd25e3 fix: #Q-0663 Preserve damaged RTSP configuration on load failure
+
+八、后续原生验收（Q-0670..Q-0672）
+62项通过及两处新增缺陷修复详见NATIVE-FOLLOWUP-2026-11-03.txt。任务ID增加原子序号、多步写入和旧计划迁移加入事务；UDP空报文不再被当EOF。架构1175源文件通过；真实桌面/账号/硬件边界继续保留。

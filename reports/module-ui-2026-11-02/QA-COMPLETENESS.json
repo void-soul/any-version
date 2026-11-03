@@ -1,7 +1,7 @@
 {
   "date": "2026-11-03",
-  "scope": "Q-0612 and Q-0620..Q-0669",
-  "checked": 51,
+  "scope": "Q-0612 and Q-0620..Q-0672",
+  "checked": 54,
   "empty_fields": [],
   "repaired_solutions": [
     "Q-0633",
@@ -533,6 +533,36 @@
         "root_cause": 71,
         "solution": 159,
         "files": 115
+      }
+    },
+    {
+      "qid": "Q-0670",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 74,
+        "root_cause": 82,
+        "solution": 212,
+        "files": 165
+      }
+    },
+    {
+      "qid": "Q-0671",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 85,
+        "root_cause": 69,
+        "solution": 138,
+        "files": 162
+      }
+    },
+    {
+      "qid": "Q-0672",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 121,
+        "root_cause": 92,
+        "solution": 217,
+        "files": 317
       }
     }
   ]

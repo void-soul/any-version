@@ -1,0 +1,763 @@
+warning: variable does not need to be mutable
+   --> E:\pro\my\any-version\crates\cert-deployment\src\reload_command.rs:117:9
+    |
+117 |     let mut builder = std::fs::DirBuilder::new();
+    |         ----^^^^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` on by default
+
+warning: variants `Linux` and `MacOs` are never constructed
+ --> E:\pro\my\any-version\crates\cert-deployment\src\reload_plan.rs:7:5
+  |
+5 | pub(crate) enum Platform {
+  |                 -------- variants in this enum
+6 |     Windows,
+7 |     Linux,
+  |     ^^^^^
+8 |     MacOs,
+  |     ^^^^^
+  |
+  = note: `Platform` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+  = note: `#[warn(dead_code)]` on by default
+
+warning: `cert-deployment` (lib) generated 2 warnings (run `cargo fix --lib -p cert-deployment` to apply 1 suggestion)
+    Checking kira v2.9.5 (E:\pro\my\any-version\src-tauri)
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\E:\pro\my\any-version\src-tauri\target\debug\incremental\tauri_app_lib-13254ncwfznjv\s-hnt0uoolwa-10wctc2-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\E:\pro\my\any-version\src-tauri\target\debug\incremental\tauri_app_lib-10ljv9sqcqrks\s-hnt0uoolxh-1jc15se-working`
+
+warning: unused import: `is_exe_in_path`
+   --> src\commands\cache.rs:459:37
+    |
+459 |     use super::utils::{expand_home, is_exe_in_path, resolve_detected_path};
+    |                                     ^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `super::*`
+ --> src\commands\node_manager\versions.rs:1:5
+  |
+1 | use super::*;
+  |     ^^^^^^^^
+
+warning: unused import: `super::*`
+ --> src\commands\launcher\file_search\drives.rs:1:5
+  |
+1 | use super::*;
+  |     ^^^^^^^^
+
+warning: unused import: `crate::proxy::types::UpstreamHeader`
+   --> src\commands\buddy\twoapi\mod.rs:108:9
+    |
+108 |     use crate::proxy::types::UpstreamHeader;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `checked_target`
+ --> src\commands\storage_migration.rs:7:34
+  |
+7 | use super::storage_maintenance::{checked_target, PendingOperation};
+  |                                  ^^^^^^^^^^^^^^
+
+warning: unused import: `output::*`
+  --> src\commands\music\player.rs:32:9
+   |
+32 | pub use output::*;
+   |         ^^^^^^^^^
+
+warning: unused import: `queue::*`
+  --> src\commands\music\player.rs:34:9
+   |
+34 | pub use queue::*;
+   |         ^^^^^^^^
+
+warning: unused import: `playback::*`
+  --> src\commands\music\player.rs:36:9
+   |
+36 | pub use playback::*;
+   |         ^^^^^^^^^^^
+
+warning: unused import: `snapshot::*`
+  --> src\commands\music\player.rs:38:9
+   |
+38 | pub use snapshot::*;
+   |         ^^^^^^^^^^^
+
+warning: unused import: `super::*`
+ --> src\commands\suno\storage.rs:1:5
+  |
+1 | use super::*;
+  |     ^^^^^^^^
+
+warning: unused import: `REQUEST_LOG_CAP`
+   --> src\proxy\server.rs:573:28
+    |
+573 |     store_proxy_text_with, REQUEST_LOG_CAP, RUNNING_CONFIGS,
+    |                            ^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands::ai::models::ModelEntry`
+   --> src\commands\ai\config.rs:514:13
+    |
+514 |         use crate::commands::ai::models::ModelEntry;
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `junction_target_skill`
+ --> src\commands\ai\skills\tests.rs:9:5
+  |
+9 |     junction_target_skill,
+  |     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::path::Path`
+  --> src\commands\ai\tool_config_custom\tests.rs:10:5
+   |
+10 | use std::path::Path;
+   |     ^^^^^^^^^^^^^^^
+
+warning: unused import: `super::*`
+   --> src\commands\picky\s3.rs:257:9
+    |
+257 |     use super::*;
+    |         ^^^^^^^^
+
+warning: unused import: `crate::commands::config::get_data_dir`
+ --> src\commands\api\db.rs:4:5
+  |
+4 | use crate::commands::config::get_data_dir;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+  --> src\commands\favorites\commands\checking.rs:64:9
+   |
+64 |     let mut emit = |result: &CheckResult, source: &str, message: Option<String>, done: bool| {
+   |         ----^^^^
+   |         |
+   |         help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` on by default
+
+warning: variable does not need to be mutable
+  --> src\commands\db_designer\ai\repair.rs:89:5
+   |
+89 |     mut doc: DbDesignDocument,
+   |     ----^^^
+   |     |
+   |     help: remove this `mut`
+
+warning: value assigned to `saved` is never read
+  --> src\commands\buddy\usage_commands.rs:50:21
+   |
+50 |                     saved = store::upsert_account(platform, saved)?;
+   |                     ^^^^^
+   |
+   = help: maybe it is overwritten before being read?
+   = note: `#[warn(unused_assignments)]` on by default
+
+warning: value assigned to `saved` is never read
+   --> src\commands\buddy\usage_commands.rs:104:21
+    |
+104 |                     saved = store::upsert_account(platform, saved)?;
+    |                     ^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: variable `acted` is assigned to, but never used
+  --> src\commands\buddy\auto_travel\cycle.rs:59:13
+   |
+59 |     let mut acted = false;
+   |             ^^^^^
+   |
+   = note: consider using `_acted` instead
+   = note: `#[warn(unused_variables)]` on by default
+
+warning: value assigned to `acted` is never read
+   --> src\commands\buddy\auto_travel\cycle.rs:201:21
+    |
+201 |                     acted = true;
+    |                     ^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: value assigned to `acted` is never read
+   --> src\commands\buddy\auto_travel\cycle.rs:230:25
+    |
+230 |                         acted = true;
+    |                         ^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: value assigned to `acted` is never read
+   --> src\commands\buddy\auto_travel\cycle.rs:279:13
+    |
+279 |             acted = true;
+    |             ^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: value assigned to `acted` is never read
+   --> src\commands\buddy\auto_travel\cycle.rs:312:25
+    |
+312 |                         acted = true;
+    |                         ^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: value assigned to `acted` is never read
+   --> src\commands\buddy\auto_travel\cycle.rs:339:29
+    |
+339 | ...                   acted = true;
+    |                       ^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: unused import: `base64::Engine`
+ --> src\commands\cert\credentials.rs:2:5
+  |
+2 | use base64::Engine as _;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `base64::Engine`
+ --> src\commands\cert\deploy_aliyun.rs:2:5
+  |
+2 | use base64::Engine as _;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `base64::Engine`
+ --> src\commands\cert\deploy_cloud.rs:2:5
+  |
+2 | use base64::Engine as _;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `base64::Engine`
+ --> src\commands\cert\validity.rs:2:5
+  |
+2 | use base64::Engine as _;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `base64::Engine`
+ --> src\commands\cert\details.rs:2:5
+  |
+2 | use base64::Engine as _;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `base64::Engine`
+ --> src\commands\cert\monitor.rs:2:5
+  |
+2 | use base64::Engine as _;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `base64::Engine`
+ --> src\commands\cert\notify.rs:2:5
+  |
+2 | use base64::Engine as _;
+  |     ^^^^^^^^^^^^^^
+
+warning: value assigned to `last_err` is never read
+   --> src\commands\ai\ledger.rs:145:17
+    |
+145 |                 last_err = format!("删除旧 {} 失败: {e}", path.display());
+    |                 ^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: unused variable: `p`
+   --> src\commands\ai\skills\project_install.rs:171:21
+    |
+171 |             .find(|(p, n)| **n == dir_name)
+    |                     ^ help: if this is intentional, prefix it with an underscore: `_p`
+
+warning: variable does not need to be mutable
+   --> src\commands\cert\deploy_ssh_transaction.rs:197:13
+    |
+197 |         let mut builder = std::fs::DirBuilder::new();
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `auth`
+   --> src\commands\ai\aggregate\tests.rs:536:15
+    |
+536 |     let (url, auth) =
+    |               ^^^^ help: if this is intentional, prefix it with an underscore: `_auth`
+
+warning: unused variable: `under_target`
+  --> src\commands\node_manager\tests.rs:84:9
+   |
+84 |     let under_target = |p: &std::path::Path| p.starts_with(repo.join("src-tauri").join("target"));
+   |         ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_under_target`
+
+warning: variable does not need to be mutable
+   --> src\commands\state_sync.rs:304:13
+    |
+304 |         let mut decoder = flate2::read::GzDecoder::new(data);
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `target_history`
+   --> src\commands\buddy\session_transfer\codebuddy\tests\merging.rs:254:9
+    |
+254 |     let target_history = target_account.join("history").join("workspace");
+    |         ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_target_history`
+
+warning: variable does not need to be mutable
+  --> src\commands\db_designer\patch.rs:89:28
+   |
+89 |     if let (Some(eb), Some(mut ib)) = (base.table.as_mut(), incoming.table.as_ref()) {
+   |                            ----^^
+   |                            |
+   |                            help: remove this `mut`
+
+warning: unused variable: `kind`
+   --> src\commands\favorites\db\categories.rs:245:5
+    |
+245 |     kind: &str,
+    |     ^^^^ help: if this is intentional, prefix it with an underscore: `_kind`
+
+warning: variable does not need to be mutable
+   --> src\proxy\responses\stream.rs:127:13
+    |
+127 |         let mut push_text = |events: &mut Vec<String>, text: &str, this: &mut Self| {
+    |             ----^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src\commands\db_designer\mod.rs:326:13
+    |
+326 |         let mut mk = |dialect: &str, def: &str| {
+    |             ----^^
+    |             |
+    |             help: remove this `mut`
+
+warning: type `candidates::AggCandidate` is more private than the item `filter_self_referential`
+   --> src\commands\ai\aggregate\candidates.rs:5:1
+    |
+5   | / pub fn filter_self_referential(
+6   | |     candidates: Vec<AggCandidate>,
+7   | |     aggregate_port: u16,
+8   | | ) -> (Vec<AggCandidate>, usize) {
+    | |_______________________________^ function `filter_self_referential` is reachable at visibility `pub`
+    |
+note: but type `candidates::AggCandidate` is only usable at visibility `pub(in crate::commands::ai::aggregate)`
+   --> src\commands\ai\aggregate\candidates.rs:191:1
+    |
+191 | pub(super) struct AggCandidate {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: `#[warn(private_interfaces)]` on by default
+
+warning: type `candidates::Outbound` is more private than the item `MemberAvailability::outbound`
+   --> src\commands\ai\aggregate\candidates.rs:112:5
+    |
+112 |     pub outbound: Option<Outbound>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ field `MemberAvailability::outbound` is reachable at visibility `pub`
+    |
+note: but type `candidates::Outbound` is only usable at visibility `pub(in crate::commands::ai::aggregate)`
+   --> src\commands\ai\aggregate\candidates.rs:172:1
+    |
+172 | pub(super) enum Outbound {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `candidates::Outbound` is more private than the item `candidates::build_candidate_url`
+   --> src\commands\ai\aggregate\candidates.rs:258:1
+    |
+258 | / pub fn build_candidate_url(
+259 | |     outbound: Outbound,
+260 | |     base: &str,
+261 | |     model: &str,
+262 | |     is_stream: bool,
+263 | |     include_v1: Option<bool>,
+264 | | ) -> (String, &'static str) {
+    | |___________________________^ function `candidates::build_candidate_url` is reachable at visibility `pub`
+    |
+note: but type `candidates::Outbound` is only usable at visibility `pub(in crate::commands::ai::aggregate)`
+   --> src\commands\ai\aggregate\candidates.rs:172:1
+    |
+172 | pub(super) enum Outbound {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `candidates::AggCandidate` is more private than the item `candidates::filter_self_referential`
+   --> src\commands\ai\aggregate\candidates.rs:5:1
+    |
+5   | / pub fn filter_self_referential(
+6   | |     candidates: Vec<AggCandidate>,
+7   | |     aggregate_port: u16,
+8   | | ) -> (Vec<AggCandidate>, usize) {
+    | |_______________________________^ function `candidates::filter_self_referential` is reachable at visibility `pub`
+    |
+note: but type `candidates::AggCandidate` is only usable at visibility `pub(in crate::commands::ai::aggregate)`
+   --> src\commands\ai\aggregate\candidates.rs:191:1
+    |
+191 | pub(super) struct AggCandidate {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: `#[warn(private_interfaces)]` on by default
+
+warning: function `parse_msix_version` is never used
+   --> src\commands\project\scanner.rs:939:4
+    |
+939 | fn parse_msix_version(stdout: &str) -> Option<String> {
+    |    ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: function `is_retryable` is never used
+  --> src\commands\ai\aggregate\health_policy.rs:33:15
+   |
+33 | pub(super) fn is_retryable(class: FailureClass) -> bool {
+   |               ^^^^^^^^^^^^
+
+warning: function `now_ms` is never used
+  --> src\commands\ai\affinity.rs:35:4
+   |
+35 | fn now_ms() -> u64 {
+   |    ^^^^^^
+
+warning: field `model` is never read
+  --> src\commands\ai\tool_config_extras\mod.rs:44:9
+   |
+32 | pub(crate) struct ExtrasCtx<'a> {
+   |                   --------- field in this struct
+...
+44 |     pub model: &'a str,
+   |         ^^^^^
+
+warning: field `display` is never read
+  --> src\commands\buddy\mod.rs:51:5
+   |
+49 | pub(crate) struct SwitchGuard {
+   |                   ----------- field in this struct
+50 |     platform: &'static str,
+51 |     display: String,
+   |     ^^^^^^^
+
+warning: function `root_targets` is never used
+   --> src\commands\buddy\client_process.rs:280:4
+    |
+280 | fn root_targets(pids: &[u32], parent_of: &dyn Fn(u32) -> Option<u32>) -> Vec<u32> {
+    |    ^^^^^^^^^^^^
+
+warning: function `run_taskkill` is never used
+   --> src\commands\buddy\client_process.rs:294:4
+    |
+294 | fn run_taskkill(args: &[&str]) -> Result<(), String> {
+    |    ^^^^^^^^^^^^
+
+warning: function `request_graceful_close` is never used
+   --> src\commands\buddy\client_process.rs:329:4
+    |
+329 | fn request_graceful_close(pid: u32) -> Result<(), String> {
+    |    ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `request_force_kill` is never used
+   --> src\commands\buddy\client_process.rs:341:4
+    |
+341 | fn request_force_kill(pid: u32) -> Result<(), String> {
+    |    ^^^^^^^^^^^^^^^^^^
+
+warning: function `wait_pids_exit` is never used
+   --> src\commands\buddy\client_process.rs:353:4
+    |
+353 | fn wait_pids_exit(pids: &[u32], timeout: Duration) -> bool {
+    |    ^^^^^^^^^^^^^^
+
+warning: function `close_running` is never used
+   --> src\commands\buddy\client_process.rs:394:8
+    |
+394 | pub fn close_running(platform: BuddyPlatform, timeout_secs: u64) -> Result<(), String> {
+    |        ^^^^^^^^^^^^^
+
+warning: function `write_account_to_default_client` is never used
+   --> src\commands\buddy\codebuddy_cn.rs:545:8
+    |
+545 | pub fn write_account_to_default_client(account: &BuddyAccount) -> Result<String, String> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `inject_secret_to_state_db` is never used
+   --> src\commands\buddy\crypto.rs:432:8
+    |
+432 | pub fn inject_secret_to_state_db(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `STREAK_TTL_READY` is never used
+  --> src\commands\buddy\growth.rs:54:7
+   |
+54 | const STREAK_TTL_READY: Duration = Duration::from_secs(300);
+   |       ^^^^^^^^^^^^^^^^
+
+warning: constant `STREAK_TTL_UNAVAILABLE` is never used
+  --> src\commands\buddy\growth.rs:55:7
+   |
+55 | const STREAK_TTL_UNAVAILABLE: Duration = Duration::from_secs(30);
+   |       ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `cache_invalidate` is never used
+   --> src\commands\buddy\growth.rs:688:15
+    |
+688 | pub(crate) fn cache_invalidate(account_id: &str) {
+    |               ^^^^^^^^^^^^^^^^
+
+warning: function `streak_cache_get` is never used
+   --> src\commands\buddy\growth.rs:697:4
+    |
+697 | fn streak_cache_get(key: &str) -> Option<GrowthStreak> {
+    |    ^^^^^^^^^^^^^^^^
+
+warning: function `streak_cache_put` is never used
+   --> src\commands\buddy\growth.rs:712:4
+    |
+712 | fn streak_cache_put(key: String, value: GrowthStreak) {
+    |    ^^^^^^^^^^^^^^^^
+
+warning: function `fetch_streak` is never used
+   --> src\commands\buddy\growth.rs:721:21
+    |
+721 | pub(crate) async fn fetch_streak(
+    |                     ^^^^^^^^^^^^
+
+warning: function `history_links_to` is never used
+  --> src\commands\buddy\session_transfer\codebuddy\shared_storage.rs:50:15
+   |
+50 | pub(super) fn history_links_to(account_root: &Path, shared_root: &Path) -> bool {
+   |               ^^^^^^^^^^^^^^^^
+
+warning: function `resolve_pending_conflict` is never used
+   --> src\commands\buddy\session_transfer\codebuddy\conflicts.rs:269:15
+    |
+269 | pub(super) fn resolve_pending_conflict(
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `AUTOSTART_ID` is never used
+   --> src\commands\buddy\twoapi\mod.rs:402:11
+    |
+402 | pub const AUTOSTART_ID: &str = "buddy2api";
+    |           ^^^^^^^^^^^^
+
+warning: methods `path` and `write_back_if_unchanged` are never used
+   --> src\commands\buddy\twoapi\credentials.rs:118:12
+    |
+109 | impl Credentials {
+    | ---------------- methods in this implementation
+...
+118 |     pub fn path(&self) -> &Path {
+    |            ^^^^
+...
+186 |     pub fn write_back_if_unchanged(
+    |            ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `CATALOG_TTL` is never used
+  --> src\commands\buddy\twoapi\upstream.rs:14:11
+   |
+14 | pub const CATALOG_TTL: Duration = Duration::from_secs(300);
+   |           ^^^^^^^^^^^
+
+warning: constant `FALLBACK_MODELS` is never used
+  --> src\commands\buddy\twoapi\upstream.rs:17:11
+   |
+17 | pub const FALLBACK_MODELS: &[&str] = &["hy3", "hy4-preview", "kimi-k3", "glm-5.3"];
+   |           ^^^^^^^^^^^^^^^
+
+warning: field `entry` is never read
+  --> src\commands\buddy\twoapi\upstream.rs:48:5
+   |
+47 | pub struct CatalogCache {
+   |            ------------ field in this struct
+48 |     entry: Option<(Instant, Vec<String>)>,
+   |     ^^^^^
+
+warning: methods `is_fresh`, `get`, `store`, and `clear` are never used
+  --> src\commands\buddy\twoapi\upstream.rs:52:12
+   |
+51 | impl CatalogCache {
+   | ----------------- methods in this implementation
+52 |     pub fn is_fresh(&self) -> bool {
+   |            ^^^^^^^^
+...
+59 |     pub fn get(&self) -> Option<Vec<String>> {
+   |            ^^^
+...
+64 |     pub fn store(&mut self, list: Vec<String>, at: Instant) -> bool {
+   |            ^^^^^
+...
+72 |     pub fn clear(&mut self) {
+   |            ^^^^^
+
+warning: function `is_safe_rel` is never used
+   --> src\commands\state_sync.rs:279:4
+    |
+279 | fn is_safe_rel(rel: &str) -> bool {
+    |    ^^^^^^^^^^^
+
+warning: constant `SHARED_OR_EPHEMERAL_MODULES` is never used
+  --> src\commands\storage_assets.rs:34:7
+   |
+34 | const SHARED_OR_EPHEMERAL_MODULES: &[&str] = &[
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `parse_outcome` is never used
+  --> src\commands\db_designer\ai\parse.rs:48:15
+   |
+48 | pub(super) fn parse_outcome(json: serde_json::Value) -> Result<AiOutcome, String> {
+   |               ^^^^^^^^^^^^^
+
+warning: function `s_is_quoted_type` is never used
+   --> src\commands\db_designer\reverse\ddl.rs:489:15
+    |
+489 | pub(super) fn s_is_quoted_type(_s: &str) -> bool {
+    |               ^^^^^^^^^^^^^^^^
+
+warning: method `as_str` is never used
+  --> src\commands\music\queue.rs:30:12
+   |
+29 | impl PlayMode {
+   | ------------- method in this implementation
+30 |     pub fn as_str(self) -> &'static str {
+   |            ^^^^^^
+
+warning: methods `mode`, `current_path`, and `set_mode` are never used
+   --> src\commands\music\queue.rs:169:12
+    |
+155 | impl PlayQueue {
+    | -------------- methods in this implementation
+...
+169 |     pub fn mode(&self) -> PlayMode {
+    |            ^^^^
+...
+178 |     pub fn current_path(&self) -> Option<&str> {
+    |            ^^^^^^^^^^^^
+...
+208 |     pub fn set_mode(&mut self, mode: PlayMode, current: Option<&str>) {
+    |            ^^^^^^^^
+
+warning: method `has_pending_content` is never used
+   --> src\proxy\inline_think.rs:213:19
+    |
+123 | impl InlineThinkSplitter {
+    | ------------------------ method in this implementation
+...
+213 |     pub(crate) fn has_pending_content(&self) -> bool {
+    |                   ^^^^^^^^^^^^^^^^^^^
+
+warning: field `model` is never read
+  --> src\commands\ai\tool_config_extras\mod.rs:44:9
+   |
+32 | pub(crate) struct ExtrasCtx<'a> {
+   |                   --------- field in this struct
+...
+44 |     pub model: &'a str,
+   |         ^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+
+warning: function `session_json_keeps_identity_fields_from_auth_raw` is never used
+   --> src\commands\buddy\codebuddy_cn.rs:688:8
+    |
+688 |     fn session_json_keeps_identity_fields_from_auth_raw() {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `0` is never read
+ --> src\commands\buddy\store\tests.rs:5:18
+  |
+5 | struct TestGuard(std::sync::MutexGuard<'static, ()>);
+  |        --------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |        |
+  |        field in this struct
+  |
+  = help: consider removing this field
+
+warning: method `path` is never used
+   --> src\commands\buddy\twoapi\credentials.rs:118:12
+    |
+109 | impl Credentials {
+    | ---------------- method in this implementation
+...
+118 |     pub fn path(&self) -> &Path {
+    |            ^^^^
+
+warning: method `clear` is never used
+  --> src\commands\buddy\twoapi\upstream.rs:72:12
+   |
+51 | impl CatalogCache {
+   | ----------------- method in this implementation
+...
+72 |     pub fn clear(&mut self) {
+   |            ^^^^^
+
+warning: unused `Result` that must be used
+   --> src\commands\node_manager\tests.rs:583:5
+    |
+583 |     std::fs::create_dir_all(&root);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+    = note: `#[warn(unused_must_use)]` on by default
+help: use `let _ = ...` to ignore the resulting value
+    |
+583 |     let _ = std::fs::create_dir_all(&root);
+    |     +++++++
+
+warning: unused `Result` that must be used
+   --> src\commands\node_manager\tests.rs:586:5
+    |
+586 |     std::fs::create_dir_all(&deps);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+586 |     let _ = std::fs::create_dir_all(&deps);
+    |     +++++++
+
+warning: unused `Result` that must be used
+   --> src\commands\node_manager\tests.rs:727:5
+    |
+727 |     std::fs::create_dir_all(&root);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+727 |     let _ = std::fs::create_dir_all(&root);
+    |     +++++++
+
+warning: unused `Result` that must be used
+   --> src\commands\node_manager\tests.rs:738:5
+    |
+738 |     std::fs::create_dir_all(&deps);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+738 |     let _ = std::fs::create_dir_all(&deps);
+    |     +++++++
+
+warning: `kira` (lib test) generated 73 warnings (47 duplicates) (run `cargo fix --lib -p kira --tests` to apply 6 suggestions)
+warning: `kira` (lib) generated 73 warnings (6 duplicates) (run `cargo fix --lib -p kira` to apply 17 suggestions)
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\E:\pro\my\any-version\src-tauri\target\debug\incremental\kira_dbd-3ht0ck4cnh7vo\s-hnt0v7k60f-0dmyz6x-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\E:\pro\my\any-version\src-tauri\target\debug\incremental\tasks_sql-3jeum7nout9th\s-hnt0v7k7je-1gu0sxo-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\E:\pro\my\any-version\src-tauri\target\debug\incremental\tasks_serde-2j7pq12tkdu39\s-hnt0v7k7ca-0xtdp6d-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\E:\pro\my\any-version\src-tauri\target\debug\incremental\kira-3d55hjy8aqm9z\s-hnt0v7kaq9-04nq9tw-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\E:\pro\my\any-version\src-tauri\target\debug\incremental\kira_dbd-29eivr2xt12pt\s-hnt0v7kexy-0dnc3fs-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\E:\pro\my\any-version\src-tauri\target\debug\incremental\kira-1s9bct0eg34co\s-hnt0v7ki50-1jzadxt-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\E:\pro\my\any-version\src-tauri\target\debug\incremental\markdown_links-1ce4irc6mvg7y\s-hnt0v7kl5t-15amimk-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\E:\pro\my\any-version\src-tauri\target\debug\incremental\qr_decode-34i6aqixfshf3\s-hnt0v7kndv-119sd5m-working`
+
+warning: hard linking files in the incremental compilation cache failed. copying files instead. consider moving the cache directory to a file system which supports hard linking in session dir `\\?\E:\pro\my\any-version\src-tauri\target\debug\incremental\api_smoke-14jzi5gmz6ack\s-hnt0v7kmnm-0rki3py-working`
+
+warning: `kira` (test "tasks_sql") generated 1 warning
+warning: `kira` (test "tasks_serde") generated 1 warning
+warning: `kira` (test "qr_decode") generated 1 warning
+warning: `kira` (bin "kira" test) generated 1 warning
+warning: `kira` (bin "kira-dbd" test) generated 1 warning
+warning: `kira` (bin "kira") generated 1 warning
+warning: `kira` (bin "kira-dbd") generated 1 warning
+warning: `kira` (test "markdown_links") generated 1 warning
+warning: `kira` (test "api_smoke") generated 1 warning
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 35.01s

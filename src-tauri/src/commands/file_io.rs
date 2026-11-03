@@ -486,6 +486,27 @@ fn percent_decode(s: &str) -> String {
 mod bounded_text_tests {
     use super::*;
     #[test]
+    fn text_commands_survive_a_fresh_process() {
+        const CHILD_PATH: &str = "KIRA_TEXT_ACCEPTANCE_CHILD_PATH";
+        if let Some(path) = std::env::var_os(CHILD_PATH) {
+            let path = PathBuf::from(path).to_string_lossy().into_owned();
+            assert_eq!(read_text_file(path.clone()).unwrap(), "{\"中文\":\"first\"}");
+            write_text_file(path, "{\"中文\":\"second\"}".into()).unwrap();
+            return;
+        }
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("kira-text-restart-{}-{nonce}", std::process::id()));
+        let path = root.join("中文.json");
+        write_text_file(path.to_string_lossy().into_owned(), "{\"中文\":\"first\"}".into()).unwrap();
+        let child = crate::commands::hidden_cmd::hidden_cmd(std::env::current_exe().unwrap())
+            .args(["--exact", "commands::file_io::bounded_text_tests::text_commands_survive_a_fresh_process"])
+            .env(CHILD_PATH, &path).output().unwrap();
+        assert!(child.status.success(), "{}\n{}", String::from_utf8_lossy(&child.stdout), String::from_utf8_lossy(&child.stderr));
+        assert_eq!(read_text_file(path.to_string_lossy().into_owned()).unwrap(), "{\"中文\":\"second\"}");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn log_snapshots_reopen_paths_and_reject_oversize_or_missing_files() {
         use std::io::Write;
         let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
