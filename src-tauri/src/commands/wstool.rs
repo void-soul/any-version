@@ -420,7 +420,8 @@ pub async fn net_connect_core(
                 let mut buf = [0u8; 65535];
                 loop {
                     match sock.recv_from(&mut buf).await {
-                        Ok((0, _)) | Err(_) => break,
+                        // UDP has no EOF: a zero-length datagram is valid.
+                        Err(_) => break,
                         Ok((n, from)) => {
                             let bytes = &buf[..n];
                             let kind = if std::str::from_utf8(bytes).is_ok() { "text" } else { "binary" };
@@ -577,7 +578,7 @@ mod net_echo_tests {
         let mut buf = [0u8; 65535];
         loop {
             match sock.recv_from(&mut buf).await {
-                Ok((0, _)) | Err(_) => break,
+                Err(_) => break,
                 Ok((n, from)) => {
                     let _ = sock.send_to(&buf[..n], from).await;
                 }
@@ -641,6 +642,11 @@ mod net_echo_tests {
         net_connect_core(emit.clone(), &state, "u1".into(), "udp".into(), "127.0.0.1".into(), port)
             .await
             .expect("UDP 连接失败");
+
+        // An empty UDP datagram is a message, not EOF. The same connection
+        // must still deliver subsequent text and binary datagrams.
+        net_send_core(&state, "u1".into(), String::new(), false).unwrap();
+        assert_eq!(wait_for(&rx, 3000), "");
 
         net_send_core(&state, "u1".into(), "hello-udp".into(), false).expect("UDP 发送失败");
         assert_eq!(wait_for(&rx, 3000), "hello-udp", "UDP 文本回显不一致");
