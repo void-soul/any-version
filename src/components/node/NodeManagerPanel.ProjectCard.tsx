@@ -62,6 +62,11 @@ export function ProjectCard({
 }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState("");
+  const alive = useRef(false);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copying = useRef(false);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; if (copyTimer.current) clearTimeout(copyTimer.current); }; }, []);
   const Icon = ICONS[project.icon] ?? Bot;
   // npx 模式：配置了 npxPackage，安装/升级/启动直接用 npm install --prefix / npx --prefix
   const isNpx = !!project.npxPackage?.trim();
@@ -391,13 +396,18 @@ export function ProjectCard({
             <div className="flex-1" />
             <button
               onClick={async () => {
+                if (copying.current) return;
+                copying.current = true;
                 try {
                   await navigator.clipboard.writeText(logs.join("\n"));
+                  if (!alive.current) return;
+                  setCopyError("");
                   setCopied(true);
-                  window.setTimeout(() => setCopied(false), 1500);
-                } catch {
-                  /* 剪贴板不可用时静默忽略 */
-                }
+                  if (copyTimer.current) clearTimeout(copyTimer.current);
+                  copyTimer.current = setTimeout(() => { if (alive.current) setCopied(false); }, 1500);
+                } catch (error) {
+                  if (alive.current) { setCopied(false); setCopyError(String(error)); }
+                } finally { copying.current = false; }
               }}
               className="flex items-center gap-1 px-1.5 py-0.5 rounded text-tiny text-slate-500 hover:text-slate-300 hover:bg-white/5 cursor-pointer transition-all"
               title={t("nodeproj.copyLogs")}
@@ -414,6 +424,7 @@ export function ProjectCard({
               {t("nodeproj.clearLogsBtn")}
             </button>
           </div>
+          {copyError && <p role="alert" className="ui-note-error px-2 py-1 text-caption break-words">{copyError}</p>}
           {logOpen && (
             <div
               className="mt-1 max-h-56 overflow-y-auto rounded-ctl bg-black/40 border border-white/5 p-2 font-mono text-tiny leading-relaxed"
