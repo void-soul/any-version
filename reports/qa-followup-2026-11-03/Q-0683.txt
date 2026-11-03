@@ -1,0 +1,16 @@
+## Q-0683 | 2026-11-03 | Bug Fix | 已解决待验证
+
+**现象/需求:** 用户反馈部分电脑剪贴板报manager或manage未调用，原始错误未留存。检查发现新库初始化在建表前查询clipboard_items导致失败，启动丢弃错误使ClipboardState未注册；需修复首次初始化顺序并验证新库与重开。
+
+**根因:** 发现确定的首次初始化缺陷：open_db在init_schema前执行clipboard_items明文迁移查询，新电脑无该表时返回错误；启动代码忽略错误，ClipboardState未app.manage，后续State参数无法获取。与用户模糊记忆相符，但没有原始错误，不能确认受影响机器唯一根因。
+
+**解决方案:** 将建表与旧表补列放入open_db，在历史迁移查询之前执行；去除调用方重复建表。启动初始化失败写tracing错误日志，不清空或重建历史库。新增空库含设置/附加格式表与真实临时文件重开幂等/原有行保留两项测试。cargo test --no-default-features --lib --locked --offline commands::clipboard::db::initialization_tests通过2项，架构1182与git diff --check通过。未在用户故障电脑复现，权限/数据库损坏等其他失败原因仍待日志确认。
+
+**涉及文件:**
+| File | Change |
+|------|--------|
+| src-tauri/src/commands/clipboard/db.rs | 初始化先建表再迁移，新增首次/重开测试 |
+| src-tauri/src/commands/clipboard/mod.rs | 去掉重复建表调用 |
+| src-tauri/src/lib.rs | 记录剪贴板初始化错误 |
+| reports/clipboard-init-2026-11-03-tests.txt | 定向测试原始证据 |
+---

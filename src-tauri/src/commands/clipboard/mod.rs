@@ -116,7 +116,6 @@ pub fn init_clipboard_state(app: &tauri::AppHandle) -> Result<(), String> {
 
     let db_path = dir.join("clipboard.db");
     let conn = db::open_db(&db_path).map_err(|e| e.to_string())?;
-    db::init_schema(&conn).map_err(|e| e.to_string())?;
     db::cleanup_orphan_images(&conn, &img_dir).map_err(|e| e.to_string())?;
 
     let state = ClipboardState {

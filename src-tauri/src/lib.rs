@@ -544,7 +544,9 @@ pub fn run() {
             // 注意：该快捷键只负责切换窗口显示状态，不拦截普通输入框按键。
             let _ = commands::launcher::db::init_db();
             // 剪贴板监控（启动器热键注册之后，便于复用其热键线程记录前台窗口）
-            let _ = commands::clipboard::init_clipboard_state(app.handle());
+            if let Err(error) = commands::clipboard::init_clipboard_state(app.handle()) {
+                tracing::error!("剪贴板初始化失败: {error}");
+            }
             // picky 启动同步：延迟数秒（等自启服务就绪、界面加载完成）后拉取云端一次，
             // 仅当已配置并启用云同步时执行，未配置则静默跳过。
             runtime_tasks::spawn_task("picky", "startup-sync", async move {

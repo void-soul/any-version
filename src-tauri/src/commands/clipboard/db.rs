@@ -38,6 +38,9 @@ pub fn open_db(path: &std::path::Path) -> Result<Connection, String> {
     let conn = Connection::open(path).map_err(|e| format!("打开剪贴板数据库失败: {}", e))?;
     conn.pragma_update(None, "journal_mode", "WAL")
         .map_err(|e| format!("设置 WAL 失败: {}", e))?;
+    // Fresh installations have no tables yet. Create/migrate the schema before
+    // querying historical content, otherwise ClipboardState is never managed.
+    init_schema(&conn)?;
     // 安全迁移：历史明文文本内容 → AES 加密（仅处理未加密行）
     let plain_rows: Vec<(i64, String)> = {
         let mut stmt = conn
@@ -573,4 +576,34 @@ pub fn delete_item_with_files(conn: &Connection, id: i64, data_dir: &std::path::
 /// 获取图片文件的绝对路径
 pub fn image_file_path(data_dir: &std::path::Path, rel: &str) -> PathBuf {
     data_dir.join(rel)
+}
+
+#[cfg(test)]
+mod initialization_tests {
+    use super::*;
+
+    #[test]
+    fn fresh_database_has_schema_before_content_migration() {
+        let conn = open_db(std::path::Path::new(":memory:")).unwrap();
+        assert_eq!(conn.query_row("SELECT count(*) FROM clipboard_items", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(conn.query_row("SELECT count(*) FROM clipboard_item_formats", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(load_settings(&conn).unwrap().max_items, ClipboardSettings::default().max_items);
+    }
+
+    #[test]
+    fn initialization_is_idempotent_and_preserves_existing_rows() {
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!("clipboard-init-{}-{nonce}.db", std::process::id()));
+        {
+            let conn = open_db(&path).unwrap();
+            conn.execute("INSERT INTO clipboard_items(kind, content, hash, created_at) VALUES('text', 'ENC_V2:fixture', 'fixture', 1)", []).unwrap();
+            init_schema(&conn).unwrap();
+        }
+        {
+            let conn = open_db(&path).unwrap();
+            let content: String = conn.query_row("SELECT content FROM clipboard_items", [], |r| r.get(0)).unwrap();
+            assert_eq!(content, "ENC_V2:fixture");
+        }
+        std::fs::remove_file(path).unwrap();
+    }
 }
