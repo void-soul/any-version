@@ -1,0 +1,17 @@
+## Q-0665 | 2026-11-03 | Bug Fix | 已验证
+
+**现象/需求:** JSON虚拟树在超多子节点触发截断标记后提前终止，已入栈的可显示子节点丢失；宽树入栈与深路径需按可见行预算限制内存和遍历。
+
+**根因:** **flattenTreeRows** 入栈时发现子节点超过预算就设置truncated，while条件随即退出，预算内已入栈子节点未渲染；宽树全量入栈及无限深路径增加内存。
+
+**解决方案:** 1. 提取 **JsonBrowser.tree.ts**，采用惰性迭代器深度优先遍历，未访问的兄弟节点不入栈；达到20万访问预算才截断，刚好填满预算不误报。
+2. 路径深度限制256，深层截断后继续处理已有兄弟，保留搜索强制展开与折叠规则。
+3. 宽数组10万节点、精确边界、深路径及搜索折叠3项回归通过，生产构建通过。
+
+**涉及文件:**
+| File | Change |
+|------|--------|
+| **src/components/SystemTools/JsonBrowser.tsx** | 使用提取的有界树遍历 |
+| **src/components/SystemTools/JsonBrowser.tree.ts** | 惰性DFS及行数/深度预算 |
+| **src/components/SystemTools/JsonBrowser.tree.test.ts** | 宽深边界与搜索折叠回归 |
+---

@@ -34,6 +34,8 @@ import {
   X,
 } from "lucide-react";
 
+import { flattenTreeRows } from "./JsonBrowser.tree";
+
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 type ViewMode = "tree" | "graph";
 
@@ -137,9 +139,6 @@ function sortJson(value: JsonValue): JsonValue {
 
 const TREE_ROW_HEIGHT = 22;
 const TREE_OVERSCAN = 10;
-/** 虚拟树最多拍平的行数：超过后截断并提示，避免展开超大数组时一次性占用过多内存。 */
-const MAX_FLAT_TREE_ROWS = 200_000;
-
 const SCALAR_VALUE_CLASS: Record<string, string> = {
   string: "text-emerald-300",
   number: "text-amber-300",
@@ -159,93 +158,6 @@ function displayChildCount(value: JsonValue): string {
     return String(count);
   }
   return "0";
-}
-
-type FlatTreeRow = {
-  path: string;
-  name: string;
-  value: JsonValue;
-  depth: number;
-  container: boolean;
-  collapsed: boolean;
-};
-
-/**
- * 迭代式拍平“当前可见”的树：
- * - 搜索时只保留匹配路径（含祖先），且强制展开；
- * - 折叠的容器整棵跳过；
- * - 大型文档默认折叠（依赖 expandedPaths 逐层展开）；
- * - 总行数超过 MAX_FLAT_TREE_ROWS 时截断（truncated=true）。
- */
-function flattenTreeRows(
-  value: JsonValue,
-  searchMatches: SearchMatches,
-  collapsed: Set<string>,
-  largeDocument: boolean,
-  expandedPaths: Set<string>,
-): { rows: FlatTreeRow[]; truncated: boolean } {
-  const rows: FlatTreeRow[] = [];
-  const searching = Boolean(searchMatches.query);
-  const stack: Array<{ path: string; name: string; value: JsonValue; depth: number }> = [
-    { path: "root", name: "root", value, depth: 0 },
-  ];
-  let truncated = false;
-
-  while (stack.length > 0 && !truncated) {
-    const current = stack.pop() as (typeof stack)[number];
-    if (searching && !searchMatches.paths.has(current.path)) continue;
-    const container = isContainer(current.value);
-    const collapsedHere =
-      container &&
-      !searching &&
-      (collapsed.has(current.path) ||
-        (largeDocument && current.depth > 0 && !expandedPaths.has(current.path)));
-    rows.push({
-      path: current.path,
-      name: current.name,
-      value: current.value,
-      depth: current.depth,
-      container,
-      collapsed: collapsedHere,
-    });
-    if (rows.length >= MAX_FLAT_TREE_ROWS) {
-      truncated = true;
-      break;
-    }
-    if (!container || collapsedHere) continue;
-    // 只展开当前还有预算的子元素：超大数组/对象不会一次性全部入栈。
-    const budget = MAX_FLAT_TREE_ROWS - rows.length;
-    const children = childEntriesBounded(current.value, budget + 1);
-    if (children.length > budget) truncated = true;
-    for (let index = children.length - 1; index >= 0; index -= 1) {
-      const [childName, child] = children[index];
-      stack.push({
-        path: current.path ? `${current.path}.${childName}` : childName,
-        name: childName,
-        value: child,
-        depth: current.depth + 1,
-      });
-    }
-  }
-  return { rows, truncated };
-}
-
-/** 取容器前 limit 个子元素（数组用下标，对象用 for..in，避免 Object.entries 全量拷贝）。 */
-function childEntriesBounded(value: JsonValue, limit: number): Array<[string, JsonValue]> {
-  const result: Array<[string, JsonValue]> = [];
-  if (Array.isArray(value)) {
-    const end = Math.min(value.length, limit);
-    for (let index = 0; index < end; index += 1) result.push([String(index), value[index]]);
-    return result;
-  }
-  if (typeof value === "object" && value !== null) {
-    for (const key in value) {
-      if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
-      result.push([key, value[key]]);
-      if (result.length >= limit) break;
-    }
-  }
-  return result;
 }
 
 function VirtualJsonTree({ value, searchMatches, collapsed, largeDocument, expandedPaths, onToggle, onCopy }: {
