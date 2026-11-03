@@ -7,11 +7,14 @@
 **解决方案:** 1. 提取 **JsonBrowser.tree.ts**，采用惰性迭代器深度优先遍历，未访问的兄弟节点不入栈；达到20万访问预算才截断，刚好填满预算不误报。
 2. 路径深度限制256，深层截断后继续处理已有兄弟，保留搜索强制展开与折叠规则。
 3. 宽数组10万节点、精确边界、深路径及搜索折叠3项回归通过，生产构建通过。
+4. 深审继续覆盖图形树、节点计数和worker搜索：图形树复用惰性遍历及1800节点/256层/8192路径字符预算，计数不全量物化兄弟；worker搜索限制20k匹配/2M路径字符/256层并准确标截断。补宽列表懒计数及宽深搜索回归，7项定向测试与构建通过。
 
 **涉及文件:**
 | File | Change |
 |------|--------|
-| **src/components/SystemTools/JsonBrowser.tsx** | 使用提取的有界树遍历 |
-| **src/components/SystemTools/JsonBrowser.tree.ts** | 惰性DFS及行数/深度预算 |
-| **src/components/SystemTools/JsonBrowser.tree.test.ts** | 宽深边界与搜索折叠回归 |
+| **src/components/SystemTools/JsonBrowser.tsx** | 有界树遍历及懒节点计数 |
+| **src/components/SystemTools/JsonBrowser.tree.ts** | 共享惰性子项、节点计数与树预算 |
+| **src/components/SystemTools/{JsonBrowser.tree.test.ts,jsonWorker.test.ts}** | 宽深边界回归 |
+| **src/components/SystemTools/jsonWorker.ts** | 有界搜索路径与懒遍历 |
+| **src/components/CanvasFlow.tsx** | 图形树复用有界遍历 |
 ---

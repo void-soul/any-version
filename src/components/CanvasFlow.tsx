@@ -31,6 +31,7 @@ import { treeLayout } from "../utils/treeLayout";
 import EdgeStyleSelect from "./shared/EdgeStyleSelect";
 import GraphLookPrefs from "./shared/GraphLookPrefs";
 import type { JsonValue, SearchMatches } from "./SystemTools/JsonBrowser";
+import { flattenTreeRows } from "./SystemTools/JsonBrowser.tree";
 
 type JsonGraphItem = {
   id: string;
@@ -80,12 +81,6 @@ function jsonType(value: JsonValue): string {
   if (value === null) return "null";
   if (Array.isArray(value)) return "array";
   return typeof value;
-}
-
-function jsonEntries(value: JsonValue): Array<[string, JsonValue]> {
-  if (Array.isArray(value)) return value.map((child, index) => [String(index), child]);
-  if (typeof value === "object" && value !== null) return Object.entries(value);
-  return [];
 }
 
 function isJsonContainer(value: JsonValue): boolean {
@@ -144,22 +139,15 @@ function JsonArrayTable({ value, path, onSelect }: { value: JsonValue[]; path: s
 
 const MAX_JSON_FLOW_ITEMS = 1800;
 
-function buildJsonItems(value: JsonValue): JsonGraphItem[] {
-  const result: JsonGraphItem[] = [];
-  const stack: Array<{ name: string; current: JsonValue; path: string; parentId: string | null; depth: number }> = [{ name: "root", current: value, path: "root", parentId: null, depth: 0 }];
-  while (stack.length > 0 && result.length < MAX_JSON_FLOW_ITEMS) {
-    const current = stack.pop() as (typeof stack)[number];
-    const id = current.path || "root";
-    result.push({ id, name: current.name, path: id, value: current.current, parentId: current.parentId, depth: current.depth });
-    if (isJsonContainer(current.current)) {
-      const children = jsonEntries(current.current);
-      for (let index = children.length - 1; index >= 0; index -= 1) {
-        const [childName, child] = children[index];
-        stack.push({ name: childName, current: child, path: `${current.path}.${childName}`, parentId: id, depth: current.depth + 1 });
-      }
-    }
-  }
-  return result;
+function buildJsonItems(value: JsonValue): { items: JsonGraphItem[]; truncated: boolean } {
+  const { rows, truncated } = flattenTreeRows(value, { query: "", paths: new Set(), directPaths: new Set() }, new Set(), false, new Set(), MAX_JSON_FLOW_ITEMS);
+  const ancestors: string[] = [];
+  const items = rows.map(row => {
+    const parentId = row.depth ? ancestors[row.depth - 1] : null;
+    ancestors[row.depth] = row.path;
+    return { id: row.path, name: row.name, path: row.path, value: row.value, parentId, depth: row.depth };
+  });
+  return { items, truncated };
 }
 
 function copyJsonValue(value: JsonValue): string {
@@ -268,8 +256,7 @@ function JsonFlowInner({ value, selectedPath, searchMatches, onSelectPath, onCop
   // 画布外观三滑块：与另两个画布共用算法与面板，偏好按 `jsonflow` 隔离
   const { prefs: lookPrefs, setHighlight: setHlBoost, setDim: setDimStrength, reset: resetLook } = useGraphHighlightPrefs("jsonflow");
   const { depth: hlDepth, setDepth: setHlDepth } = useGraphDepthPref("jsonflow");
-  const allItems = useMemo(() => buildJsonItems(value), [value]);
-  const graphTruncated = allItems.length >= MAX_JSON_FLOW_ITEMS;
+  const { items: allItems, truncated: graphTruncated } = useMemo(() => buildJsonItems(value), [value]);
   const previousCollapseToken = useRef(0);
   useEffect(() => {
     if (collapseAllToken === previousCollapseToken.current) return;

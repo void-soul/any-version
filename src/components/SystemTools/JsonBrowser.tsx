@@ -34,7 +34,7 @@ import {
   X,
 } from "lucide-react";
 
-import { flattenTreeRows } from "./JsonBrowser.tree";
+import { countJsonNodes, flattenTreeRows } from "./JsonBrowser.tree";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 type ViewMode = "tree" | "graph";
@@ -71,7 +71,8 @@ function parseJson(text: string): ParsedJson {
   if (!text.trim()) return { value: null, error: null, nodeCount: 0, nodeCountCapped: false };
   try {
     const value = JSON.parse(text) as JsonValue;
-    return { value, error: null, nodeCount: countNodes(value), nodeCountCapped: false };
+    const stats = countJsonNodes(value);
+    return { value, error: null, nodeCount: stats.count, nodeCountCapped: stats.capped };
   } catch (error) {
     return { value: null, error: error instanceof Error ? error.message : String(error), nodeCount: 0, nodeCountCapped: false };
   }
@@ -102,20 +103,6 @@ function containerSize(value: JsonValue): number {
   if (Array.isArray(value)) return value.length;
   if (typeof value === "object" && value !== null) return Object.keys(value).length;
   return 0;
-}
-
-function countNodes(value: JsonValue): number {
-  const stack: JsonValue[] = [value];
-  let count = 0;
-  while (stack.length > 0 && count < 2_000_000) {
-    const current = stack.pop() as JsonValue;
-    count += 1;
-    if (isContainer(current)) {
-      const children = entriesOf(current);
-      for (let index = children.length - 1; index >= 0; index -= 1) stack.push(children[index][1]);
-    }
-  }
-  return count;
 }
 
 function copyValue(value: JsonValue, pretty = true): string {
