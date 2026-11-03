@@ -55,7 +55,7 @@ pub(super) fn ensure_popup(app: &tauri::AppHandle) -> Result<tauri::WebviewWindo
         POPUP_LABEL,
         tauri::WebviewUrl::App("index.html?popup=file-search".into()),
     )
-    .title("文件搜索")
+    .title("融合搜索")
     .inner_size(POPUP_W, POPUP_H)
     .decorations(false)
     .transparent(true)

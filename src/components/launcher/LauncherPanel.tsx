@@ -25,7 +25,7 @@ import { LauncherUsageStats } from "./LauncherUsageStats";
 import { LauncherAggregateItems } from "./LauncherAggregateItems";
 import { LauncherCategorySidebar } from "./LauncherCategorySidebar";
 import { LauncherViewSettings } from "./LauncherViewSettings";
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { patchAppSettings } from "../../services/appSettings";
 import { Search, Plus, Check, ChevronRight, BarChart3, RefreshCw, Download, Upload } from "lucide-react";
 import { DndContext, DragOverlay } from "@dnd-kit/core";
@@ -43,14 +43,23 @@ import { Droppable } from "./LauncherPanel.Droppable";
 import { SortableItem } from "./LauncherPanel.SortableItem";
 import { ItemCardBody } from "./LauncherPanel.ItemCardBody";
 
-export default function LauncherPanel() {
+export default function LauncherPanel({ searchOnly = false, searchFocus = 0, onSearchClose }: {
+  searchOnly?: boolean; searchFocus?: number; onSearchClose?: () => void;
+} = {}) {
   const { t } = useTranslation();
 
-  // Search state (Figure 2: Unified Search)
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(searchOnly);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchSelectedIndex, setSearchSelectedIndex] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!searchOnly) return;
+    setIsSearchOpen(true);
+    const frame = window.requestAnimationFrame(() => {
+      searchInputRef.current?.focus(); searchInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [searchOnly, searchFocus]);
 
   // 视图设置面板开关
   const [viewSettingsOpen, setViewSettingsOpen] = useState(false);
@@ -312,6 +321,7 @@ export default function LauncherPanel() {
     openSearch,
     closeSearch,
   } = useLauncherSearch({
+    onCloseSearch: onSearchClose,
     classificationMap,
     searchQuery,
     webSources,
@@ -324,8 +334,6 @@ export default function LauncherPanel() {
   });
 
   const usageStats = useMemo(() => sortLauncherItemsByUsage(allItems), [allItems]);
-
-  // Keyboard shortcut listener (TEMPORARILY COMMENTED OUT FOR TESTING)
 
   // Close context menus on global click
   useLauncherMenuDismissal({

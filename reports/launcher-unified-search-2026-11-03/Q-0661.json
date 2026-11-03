@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0661",
+  "date": "2026-11-03",
+  "category": "Feature",
+  "status": "已验证",
+  "phenomenon": "搜索设置中的全局快捷键应呼出与启动页一致的融合搜索悬浮窗，复用现有窗口及热键而不继续打开旧纯文件搜索界面。",
+  "root_cause": "现有**file-search**热键及窗口仍挂载旧纯文件搜索，若仅增加设置就会出现主界面/悬浮窗功能不同；完整启动面板的分类热键待处理请求也不能由第二窗口消费。",
+  "solution": "1. FileSearchPopup改为复用LauncherPanel的搜索模式，删除重复的旧搜索UI和状态；保留原窗口ID、热键字段、呼出及隐藏命令。\n2. 搜索模式初始展开，重新呼出时聚焦/选中输入；关闭时隐藏当前悬浮窗，监听支持延迟注册清理及错误提示。\n3. 分类定位热键仅主窗口接收，避免悬浮窗消费主窗口待处理分类；窗口标题改为融合搜索。\n4. 生产构建、477项前端测试及1170文件架构检查通过；未验证真实OS全局快捷键注册和窗口唤起。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/FileSearchPopup.tsx** | 搜索来源布局/设置或共享悬浮窗及验证 |\n| **src/components/launcher/LauncherPanel.tsx** | 搜索来源布局/设置或共享悬浮窗及验证 |\n| **src/components/launcher/useLauncherSearch.tsx** | 搜索来源布局/设置或共享悬浮窗及验证 |\n| **src/components/launcher/useLauncherExecution.tsx** | 搜索来源布局/设置或共享悬浮窗及验证 |\n| **src/contracts/appSettings.ts** | 搜索来源布局/设置或共享悬浮窗及验证 |\n| **src-tauri/src/commands/launcher/file_search/popup.rs** | 搜索来源布局/设置或共享悬浮窗及验证 |\n",
+  "created_at": "2026-11-03 10:14:22",
+  "updated_at": "2026-11-03 10:18:03",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

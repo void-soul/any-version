@@ -1,4 +1,4 @@
-import { fileSearchRequest, type FileSearchScope } from "./fileSearchScope";
+import { fileSearchRequest, searchesFiles, searchesLauncher, webSearchUrl, type FileSearchScope } from "./fileSearchScope";
 import type { WebSearchSource } from "./types";
 import type { SearchQuickAction } from "./LauncherPanel.model";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
@@ -10,7 +10,8 @@ import { looksLikeUrl, normalizeUrl } from "./LauncherPanel.model";
 import type { Dispatch, SetStateAction, RefObject } from "react";
 
 /** Owns the LauncherSearch feature, independently of page rendering. */
-export function useLauncherSearch({ classificationMap, searchQuery, webSources, visibleItems, isSearchOpen, setIsSearchOpen, setSearchQuery, setSearchSelectedIndex, searchInputRef }: {
+export function useLauncherSearch({ onCloseSearch, classificationMap, searchQuery, webSources, visibleItems, isSearchOpen, setIsSearchOpen, setSearchQuery, setSearchSelectedIndex, searchInputRef }: {
+  onCloseSearch?: () => void;
   classificationMap: Map<number, Classification>;
   searchQuery: string;
   webSources: WebSearchSource[];
@@ -58,6 +59,14 @@ export function useLauncherSearch({ classificationMap, searchQuery, webSources, 
     const raw = searchQuery.trim();
     if (!raw) return [];
     const actions: SearchQuickAction[] = [];
+    if (fileScope.source?.startsWith("web:")) {
+      const source = webSources.find((item) => `web:${item.id}` === fileScope.source);
+      if (!source) return [];
+      return [{ key: `engine:${source.id}:${raw}`, kind: "engine", subtitle: source.url,
+        title: t("launcher.searchWithEngine", { engine: source.name, query: raw }),
+        url: webSearchUrl(source.url, raw) }];
+    }
+    if (fileScope.source && fileScope.source !== "all") return [];
     if (looksLikeUrl(raw)) {
       const url = normalizeUrl(raw);
       actions.push({
@@ -74,9 +83,7 @@ export function useLauncherSearch({ classificationMap, searchQuery, webSources, 
       const term = raw.slice(space + 1).trim();
       const source = webSources.find((s) => s.keyword.toLowerCase() === prefix);
       if (source && term) {
-        const url = source.url.includes("%s")
-          ? source.url.replace("%s", encodeURIComponent(term))
-          : `${source.url}${encodeURIComponent(term)}`;
+        const url = webSearchUrl(source.url, term);
         actions.push({
           key: `engine:${source.id}:${term}`,
           title: t("launcher.searchWithEngine", { engine: source.name, query: term }),
@@ -87,13 +94,13 @@ export function useLauncherSearch({ classificationMap, searchQuery, webSources, 
       }
     }
     return actions;
-  }, [searchQuery, webSources, t]);
+  }, [searchQuery, webSources, fileScope.source, t]);
 
 
   // Unified Search Filtering (Figure 2)
   // 支持：子串匹配（名称/目标/备注）+ 拼音首字母匹配（如 vsc → Visual Studio Code）
   const searchResults = useMemo(() => {
-    if (!searchQuery.trim()) return [];
+    if (!searchQuery.trim() || !searchesLauncher(fileScope)) return [];
     const q = searchQuery.trim().toLowerCase();
     return visibleItems.filter(
       (it) =>
@@ -102,13 +109,17 @@ export function useLauncherSearch({ classificationMap, searchQuery, webSources, 
           (it.data.target || "").toLowerCase().includes(q) ||
           matchPinyin(it.data.remark || "", q))
     );
-  }, [visibleItems, searchQuery, isExcludedFromSearch]);
+  }, [visibleItems, searchQuery, isExcludedFromSearch, fileScope.source]);
 
 
   // 全盘文件索引搜索（与启动项统一展示）：200ms 防抖 + 请求代次校验。
   // 未建立索引时后端直接返回空数组，不影响原有快捷方式搜索体验。
   useEffect(() => {
-    if (!isSearchOpen) {
+    if (!isSearchOpen || !searchesFiles(fileScope)) {
+      fileSearchReqRef.current++;
+      setFileHits([]);
+      setFileHitsQuery("");
+      setFileQueryError("");
       setFileSearchBusy(false);
       return;
     }
@@ -165,7 +176,7 @@ export function useLauncherSearch({ classificationMap, searchQuery, webSources, 
 
 
   // 只展示与当前关键词一致的结果（防抖期间不显示过期条目）
-  const effectiveFileHits = fileHitsQuery === fileRequest.key ? fileHits : [];
+  const effectiveFileHits = searchesFiles(fileScope) && fileHitsQuery === fileRequest.key ? fileHits : [];
 
 
   const searchTotal = searchQuickActions.length + searchResults.length + effectiveFileHits.length;
@@ -187,7 +198,8 @@ export function useLauncherSearch({ classificationMap, searchQuery, webSources, 
 
 
   const closeSearch = () => {
-    setIsSearchOpen(false);
+    if (onCloseSearch) onCloseSearch();
+    else setIsSearchOpen(false);
     setSearchQuery("");
   };
   return {

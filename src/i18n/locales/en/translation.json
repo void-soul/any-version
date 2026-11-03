@@ -712,8 +712,15 @@
     "confirmTitle": "Confirm Action"
   },
   "launcher": {
+    "searchSource": "Search source",
+    "sourceAll": "All",
+    "sourceLauncher": "Launcher items",
+    "sourceComputer": "Computer drives",
+    "sourceWeb": "Websites",
+    "searchSettings": "Search settings",
+    "searchPopupHotkey": "Search popup hotkey",
     "fileType": "File type",
-    "unifiedIndexHint": "Launcher items are ready to search. For files across drives, build a drive index using Index Manager here.",
+    "unifiedIndexHint": "Launcher items are ready to search. For files across drives, build a drive index in Search settings.",
     "usageStats": "Launch Stats",
     "usageStatsTitle": "View launch counts for all projects with icons",
     "usageStatsHint": "Sorted by launch count; click an item to launch it",

@@ -5,7 +5,7 @@ export interface AppSettings {
   selectionTranslateHotkey?: string; // 独立「划词翻译」热键：任意程序选中文本后按下 → 悬浮翻译
   mindmapQuickHotkey?: string; // 独立「思维导图节点速记」热键：呼出节点悬浮窗随手记录，默认 Shift+F3
   mindmapStickerHotkey?: string; // 独立「思维导图贴纸」热键：呼出贴纸悬浮窗，默认 Shift+F4
-  fileSearchHotkey?: string; // 独立「文件搜索」热键：呼出 Everything 式文件搜索悬浮窗，默认 Ctrl+Alt+Space
+  fileSearchHotkey?: string; // 搜索悬浮窗热键：呼出启动项/文件/网址融合搜索，默认 Ctrl+Alt+Space
   musicPlayPauseHotkey?: string; // 音乐播放器：播放/暂停（全局热键，托盘状态同样生效）
   musicPrevHotkey?: string; // 音乐播放器：上一首
   musicNextHotkey?: string; // 音乐播放器：下一首

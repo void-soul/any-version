@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0660",
+  "date": "2026-11-03",
+  "category": "Feature",
+  "status": "已验证",
+  "phenomenon": "融合搜索按截图调整：输入框左侧选全部/电脑盘符/启动项/网址来源，末尾选文件类型；简单设置包含索引管理及搜索悬浮窗快捷键。",
+  "root_cause": "**LauncherFileSearchTools**把来源/类型放在框外，网址通过前缀按钮选择；搜索钩子默认混查且没有来源约束，索引管理缺搜索快捷键设置。",
+  "solution": "1. 来源下拉置于输入框左侧，支持全部、启动项、全部盘符/单盘符及已配置的网址；类型下拉置于末尾，非文件来源时禁用。\n2. 移除框外来源按钮与筛选行，齿轮设置收纳索引管理及ShortcutRecorder，复用fileSearchHotkey字段和事务patch，保存失败保持原值。\n3. 按来源隔离启动项、文件查询及网页动作；选择网址后直接编码关键词生成该站搜索操作，选择本地来源不触发网页搜索。\n4. 477项前端测试、构建和1170文件架构检查通过；覆盖单输入框/来源选项、过滤边界与网址编码。未修改真实索引或系统热键，未做真实窗口目视验收。",
+  "files": "| File | Change |\n|------|--------|\n| **src/components/launcher/LauncherFileSearchTools.tsx** | 搜索来源布局/设置或共享悬浮窗及验证 |\n| **src/components/launcher/LauncherSearchOverlay.tsx** | 搜索来源布局/设置或共享悬浮窗及验证 |\n| **src/components/launcher/useLauncherSearch.tsx** | 搜索来源布局/设置或共享悬浮窗及验证 |\n| **src/components/launcher/fileSearchScope.ts** | 搜索来源布局/设置或共享悬浮窗及验证 |\n| **src/components/launcher/unifiedSearch.test.tsx** | 搜索来源布局/设置或共享悬浮窗及验证 |\n| **src/i18n/locales/zh/translation.json** | 搜索来源布局/设置或共享悬浮窗及验证 |\n| **src/i18n/locales/en/translation.json** | 搜索来源布局/设置或共享悬浮窗及验证 |\n",
+  "created_at": "2026-11-03 10:13:33",
+  "updated_at": "2026-11-03 10:18:02",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

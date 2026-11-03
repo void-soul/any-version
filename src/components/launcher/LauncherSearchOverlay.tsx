@@ -38,9 +38,10 @@ export function LauncherSearchOverlay({ searchInputRef, searchQuery, setSearchQu
   return (
 <div className="absolute inset-0 z-40 bg-surface-splash/80 backdrop-blur-md flex flex-col items-center p-6 animate-in fade-in zoom-in-95 duration-100">
             <div className="w-full max-w-[600px] h-full flex flex-col">
-              {/* Search Input Box */}
-              <div className="relative flex items-center mb-3">
-                <Search className="w-4 h-4 absolute left-3.5 text-[var(--module-accent)] pointer-events-none" />
+              <LauncherFileSearchTools scope={fileScope}
+                onScopeChange={(scope) => { setFileScope(scope); setSearchSelectedIndex(0); }}
+                onIndexChanged={refreshFiles} webSources={webSources}
+                input={
                 <input
                   ref={searchInputRef}
                   type="text"
@@ -87,39 +88,18 @@ export function LauncherSearchOverlay({ searchInputRef, searchQuery, setSearchQu
                     }
                   }}
                   placeholder={t("launcher.searchPlaceholder")}
-                  className="ui-input w-full h-10 pl-10 pr-10 placeholder-slate-500"
+                  className="w-full h-9 bg-transparent outline-none text-body text-slate-200 placeholder-slate-500"
                   aria-label={t("launcher.search")}
                 />
-                <button
+                }
+                closeButton={<button
                   onClick={closeSearch}
-                  className="absolute right-3 p-1 text-slate-400 hover:text-white rounded-ctl hover:bg-white/10 transition cursor-pointer"
+                  className="p-1 text-slate-400 hover:text-white rounded-ctl hover:bg-white/10 transition cursor-pointer shrink-0"
                   title={t("launcher.closeSearch")}
                 >
                   <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* 搜索引擎快捷入口（输入「关键词 + 空格 + 词」直接搜索） */}
-              <div className="flex flex-wrap items-center gap-1.5 mb-2 px-0.5">
-                {webSources.map((src) => (
-                  <button
-                    key={src.id}
-                    type="button"
-                    onClick={() => {
-                      setSearchQuery(`${src.keyword} `);
-                      setSearchSelectedIndex(0);
-                      searchInputRef.current?.focus();
-                    }}
-                    title={src.description || src.url}
-                    className="px-2 py-0.5 rounded-ctl text-tiny border border-white/10 bg-white/[0.03] text-slate-400 hover:text-white hover:border-[var(--module-accent-ring)] transition cursor-pointer"
-                  >
-                    <span className="font-mono text-[var(--module-accent)]">{src.keyword}</span>
-                    <span className="mx-1 opacity-40">·</span>
-                    <span>{src.name}</span>
-                  </button>
-                ))}
-              </div>
-              <LauncherFileSearchTools scope={fileScope} onScopeChange={(scope) => { setFileScope(scope); setSearchSelectedIndex(0); }} onIndexChanged={refreshFiles} />
+                </button>}
+              />
 
               {fileQueryError && <p role="alert" className="ui-note ui-note-error text-body px-3 py-2 mb-2 break-words">{fileQueryError}</p>}
 

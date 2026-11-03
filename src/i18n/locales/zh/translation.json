@@ -718,8 +718,15 @@
     "confirmTitle": "确认操作"
   },
   "launcher": {
+    "searchSource": "搜索来源",
+    "sourceAll": "全部",
+    "sourceLauncher": "启动项",
+    "sourceComputer": "电脑盘符",
+    "sourceWeb": "网址",
+    "searchSettings": "搜索设置",
+    "searchPopupHotkey": "呼出搜索悬浮窗的快捷键",
     "fileType": "文件类型",
-    "unifiedIndexHint": "启动项可直接搜索；全盘文件需先在此处的「索引管理」中为盘符建立索引。",
+    "unifiedIndexHint": "启动项可直接搜索；全盘文件需先在「搜索设置」中为盘符建立索引。",
     "usageStats": "启动统计",
     "usageStatsTitle": "查看各项目启动次数统计（含项目图标）",
     "usageStatsHint": "按启动次数从高到低排列，点击项目可直接启动",

@@ -58,6 +58,7 @@ export function useLauncherExecution({ loadData, showToast, classificationMap, s
 
   // 分类全局快捷键：后端唤起窗口后通知前端定位；面板重挂载时再取一次 pending 兜底
   useEffect(() => {
+    if (getCurrentWindow().label !== "main") return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     const setup = async () => {
