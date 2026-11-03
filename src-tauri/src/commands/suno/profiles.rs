@@ -60,10 +60,8 @@ pub async fn suno_parse_profile(url: String) -> Result<Vec<SunoSong>, String> {
         if !status.is_success() {
             return Err(format!("主页返回 HTTP {status}"));
         }
-        let html = resp
-            .text()
-            .await
-            .map_err(|e| format!("读取主页失败: {e}"))?;
+        let html = String::from_utf8(read_page_bytes(resp, 16 * 1024 * 1024).await?)
+            .map_err(|e| format!("主页不是有效UTF-8: {e}"))?;
         eprintln!("[Suno] 主页 HTML 大小 {} 字节", html.len());
         eprintln!("[Suno] 含 content_item: {}", html.contains("content_item"));
         eprintln!("[Suno] 含 media_urls: {}", html.contains("media_urls"));
@@ -86,6 +84,7 @@ pub async fn suno_parse_profile(url: String) -> Result<Vec<SunoSong>, String> {
                     let mut seen: std::collections::HashSet<String> =
                         songs.iter().map(|s| s.id.clone()).collect();
                     for song in paged {
+                        if songs.len() >= PAGE_MAX_ITEMS { break; }
                         if seen.insert(song.id.clone()) {
                             songs.push(song);
                         }

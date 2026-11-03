@@ -91,10 +91,8 @@ pub(super) async fn fetch_feed_page(
         }
         return Err(format!("拉取第 {cursor} 页返回 HTTP {status}"));
     }
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析第 {cursor} 页失败: {e}"))?;
+    let bytes = read_page_bytes(resp, 1024 * 1024).await?;
+    let json: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| format!("解析第 {cursor} 页失败: {e}"))?;
 
     let next_cursor = json
         .get("feed")
@@ -102,6 +100,7 @@ pub(super) async fn fetch_feed_page(
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    if next_cursor.len() > 1024 { return Err("分页游标超过长度限制".into()); }
 
     // items[].content_item 与主页 SSR 里的完全同构，直接复用同一个解析函数
     let songs = json
@@ -111,6 +110,7 @@ pub(super) async fn fetch_feed_page(
         .map(|items| {
             items
                 .iter()
+                .take(PAGE_SIZE)
                 .filter_map(|item| item.get("content_item"))
                 .filter_map(parse_content_item)
                 .collect::<Vec<_>>()
@@ -126,13 +126,30 @@ pub(super) async fn fetch_all_songs(
     target_user_id: &str,
 ) -> Result<Vec<SunoSong>, String> {
     let device_id = new_uuid_v4()?;
+    collect_pages(|cursor| {
+        let device_id = &device_id;
+        async move { fetch_feed_page(client, target_user_id, device_id, &cursor).await }
+    }).await
+}
+
+async fn collect_pages<F, Fut>(mut fetch: F) -> Result<Vec<SunoSong>, String>
+where F: FnMut(String) -> Fut,
+      Fut: std::future::Future<Output = Result<(Vec<SunoSong>, String), String>>,
+{
     let mut all: Vec<SunoSong> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut cursor = String::new();
+    let mut cursors = std::collections::HashSet::new();
 
-    loop {
-        let (songs, next) = fetch_feed_page(client, target_user_id, &device_id, &cursor).await?;
+    for _ in 0..PAGE_MAX_ITEMS / PAGE_SIZE {
+        if !cursors.insert(cursor.clone()) { break; }
+        let (songs, next) = match fetch(cursor).await {
+            Ok(page) => page,
+            Err(error) if all.is_empty() => return Err(error),
+            Err(error) => { eprintln!("[Suno] 分页中断，保留{}首: {error}", all.len()); break; }
+        };
         for song in songs {
+            if all.len() >= PAGE_MAX_ITEMS { break; }
             if seen.insert(song.id.clone()) {
                 all.push(song);
             }
@@ -143,4 +160,28 @@ pub(super) async fn fetch_all_songs(
         cursor = next;
     }
     Ok(all)
+}
+
+#[cfg(test)]
+mod pagination_tests {
+    use super::*;
+    fn song(id: &str) -> SunoSong { SunoSong { id: id.into(), title: id.into(), audio_url: "fixture".into(), image_url: None, play_count: 0, downloaded: false } }
+    #[tokio::test]
+    async fn repeated_cursors_and_duplicate_only_pages_terminate() {
+        let mut calls = 0;
+        let songs = collect_pages(|_| { calls += 1; std::future::ready(Ok((vec![song("a")], "same".into()))) }).await.unwrap();
+        assert_eq!(calls, 2); assert_eq!(songs.len(), 1);
+        calls = 0;
+        let songs = collect_pages(|_| { calls += 1; std::future::ready(Ok((vec![song("a")], calls.to_string()))) }).await.unwrap();
+        assert_eq!(calls, PAGE_MAX_ITEMS / PAGE_SIZE); assert_eq!(songs.len(), 1);
+    }
+    #[tokio::test]
+    async fn later_failures_preserve_results_and_total_budget_is_exact() {
+        let mut calls = 0;
+        let songs = collect_pages(|_| { calls += 1; std::future::ready(if calls == 1 { Ok((vec![song("a")], "next".into())) } else { Err("offline".into()) }) }).await.unwrap();
+        assert_eq!(songs.len(), 1);
+        assert!(collect_pages(|_| std::future::ready(Err("offline".into()))).await.is_err());
+        let songs = collect_pages(|_| std::future::ready(Ok(((0..PAGE_MAX_ITEMS + 1).map(|id| song(&id.to_string())).collect(), "".into())))).await.unwrap();
+        assert_eq!(songs.len(), PAGE_MAX_ITEMS);
+    }
 }

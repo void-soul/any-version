@@ -1,0 +1,18 @@
+## Q-0668 | 2026-11-03 | Bug Fix | 已验证
+
+**现象/需求:** Suno深审剩余解析路径：主页text和分页json响应无读取预算，分页依靠去重后歌曲总数停止，重复游标或不断返回重复歌曲会长期循环，且中途失败丢弃已获取分页结果。
+
+**根因:** **suno_parse_profile** 和 **fetch_feed_page** 直接text/json读取任意大小响应；**fetch_all_songs** 仅依赖去重结果达到2000首退出，重复游标或重复歌曲不会增长，并且?提前丢弃已拉取结果。
+
+**解决方案:** 1. 复用既有 **copy_limited**，主页16MiB、单分页1MiB流式有界读取；限制游标1024字节、每页20条、总量2000首。
+2. 分页记录已用游标且最多100页，重复游标或重复歌曲不会无限请求；第一页失败返回错误，之后失败保留已取得结果。SSR与分页合并同样守2000首上限。
+3. 新增重复游标、无限变化游标但重复歌曲、后页失败及精确总量预算隔离回归；Suno原生16项通过，没有访问真实平台。
+
+**涉及文件:**
+| File | Change |
+|------|--------|
+| **src-tauri/src/commands/suno/http.rs** | 有界响应读取复用流式预算 |
+| **src-tauri/src/commands/suno/feed.rs** | 游标/页数/总量边界及隔离测试 |
+| **src-tauri/src/commands/suno/profiles.rs** | 主页及合并预算 |
+| **src-tauri/src/commands/suno/parsing.rs** | SSR输入及歌曲总量预算 |
+---

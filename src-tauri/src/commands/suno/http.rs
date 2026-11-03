@@ -1,5 +1,13 @@
 use super::*;
 
+/// Bound decoded response bytes even when Content-Length is absent or compressed.
+pub(super) async fn read_page_bytes(response: reqwest::Response, limit: u64) -> Result<Vec<u8>, String> {
+    if response.content_length().is_some_and(|size| size > limit) { return Err(format!("响应超过大小限制（{limit} 字节）")); }
+    let mut bytes = Vec::new();
+    super::download_stream::copy_limited(response.bytes_stream(), &mut bytes, limit, || Ok(())).await?;
+    Ok(bytes)
+}
+
 /// 读 Windows 系统代理（mihomo 固定端口模式），返回 `http://127.0.0.1:port`。
 ///
 /// 项目全局的 `utils::get_http_client()` 没有启用 reqwest 的 `system-proxy` feature，

@@ -8,6 +8,7 @@ use super::*;
 /// 策略：先把 `\"` 反转义成 `"`，再用括号配对把每个 `content_item` 的 JSON 对象整段抠出来
 /// 交给 `serde_json` 解析——不依赖整页是合法 JSON（RSC 流不是）。
 pub fn parse_profile_html(html: &str) -> Result<Vec<SunoSong>, String> {
+    if html.len() > 16 * 1024 * 1024 { return Err("主页超过16MiB解析预算".into()); }
     // 反转义 JSON 引号：RSC payload 里的字符串是 `\"` 转义的
     let unescaped = html.replace("\\\"", "\"");
     let mut songs: Vec<SunoSong> = Vec::new();
@@ -15,6 +16,7 @@ pub fn parse_profile_html(html: &str) -> Result<Vec<SunoSong>, String> {
 
     let mut search_from = 0usize;
     while let Some(pos) = find_content_item_brace(&unescaped, search_from) {
+        if songs.len() >= PAGE_MAX_ITEMS { break; }
         let Some(obj) = extract_json_object(&unescaped, pos) else {
             search_from = pos + 1;
             continue;
