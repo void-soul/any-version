@@ -5639,7 +5639,7 @@
     "lineNo": "Line no.",
     "line": "line",
     "dropHint": "Drag a log file here",
-    "dropHint2": "or click \"Open file\" to pick one &nbsp;·&nbsp; supports 200MB+ files",
+    "dropHint2": "or click \"Open file\" to pick one  ·  supports 200MB+ files",
     "noFile": "No file open",
     "parsingOverlay": "Parsing file…",
     "fileTooLarge": "Log files must be 256 MiB or smaller.",

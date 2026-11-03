@@ -2,7 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
 import { btnPrimary, btnSecondary } from "./shared/Button";
 import { MAX_IMAGE_BYTES, MAX_IMAGE_BASE64_CHARS, parseImageBase64 } from "./imageBase64Data";
 import { theamedAlert, alertError } from "./shared/ThemedAlert";
@@ -249,7 +249,7 @@ export default function ImageBase64() {
                   <Upload className="w-6 h-6 text-[var(--module-accent)]" />
                 </div>
                 <div>
-                  <p className="text-body text-slate-300 font-medium">{t("imgbase64.dragHint")}</p>
+                  <p className="text-body text-slate-300 font-medium"><Trans i18nKey="imgbase64.dragHint" components={{ 1: <span className="text-[var(--module-accent)]" /> }} /></p>
                   <p className="text-tiny text-slate-500 mt-1">{t("imgbase64.formatsHint")}</p>
                 </div>
                 <div className="pt-2">

@@ -513,7 +513,7 @@ export default function BuddyPanel() {
       {tab === "accounts" && (
         <>
           <BuddyAccountSearch query={accountSearch.query} onChange={accountSearch.changeQuery} shown={accountSearch.visibleAccounts.length} total={accounts.length} />
-          <div className="flex items-center gap-2 px-4 py-1.5 border-b border-white/5 flex-shrink-0 text-tiny">
+          <div className="flex flex-wrap items-center gap-2 px-4 py-1.5 border-b border-white/5 flex-shrink-0 text-tiny whitespace-nowrap [&>button]:shrink-0 [&>select]:shrink-0">
             <span className="text-slate-500">
               {platformLoading
                 ? t("buddy.accountsLoading")

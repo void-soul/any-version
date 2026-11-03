@@ -1,0 +1,19 @@
+## Q-0666 | 2026-11-03 | Style | 已验证
+
+**现象/需求:** 隔离浏览器目视验收发现Buddy账号工具栏在800px窗口把按钮压成逐字换行，图片Base64拖入提示显示原始<1>标签，日志提示显示原始nbsp实体；需修正窄窗排版和可见文案。
+
+**根因:** Buddy、收藏及RTSP工具栏的flex子项可收缩并允许按钮内换行；图片提示用t读取含 **<1>** 的富文本，日志提示把HTML实体作为普通文本渲染。
+
+**解决方案:** 1. Buddy和收藏工具栏整项换行、子项不压缩且按钮文字不拆行，RTSP顶栏操作组不收缩。
+2. 图片拖入提示用 **Trans** 渲染强调片段，日志中英文提示改普通分隔符。
+3. 30模块1280/800px截图及目视检查后，对上述5模块重新截图，确认文字与排版修复且无pageerror或缺失IPC。生产构建通过。
+
+**涉及文件:**
+| File | Change |
+|------|--------|
+| **src/components/buddy/BuddyPanel.tsx** | 工具栏窄窗换行 |
+| **src/components/favorites/FavoritesPanel.tsx** | 顶栏整项换行 |
+| **src/components/SystemTools/RtspServer.tsx** | 顶栏操作组保宽 |
+| **src/components/ImageBase64.tsx** | 富文本提示正确渲染 |
+| **src/i18n/locales/{zh,en}/translation.json** | 移除可见HTML实体 |
+---

@@ -439,12 +439,12 @@ export default function FavoritesPanel() {
 
   return (
     <div className="h-full flex flex-col gap-2 p-3 text-slate-200">
-      {/* 顶部操作区：**一行放得下**才算整齐。
+      {/* 顶部操作区：宽窗口保持一行，窄窗口整组换行，避免把按钮文字挤断。
           按来源平铺「GitHub / 浏览器 / B站 / 知乎 / 工具」五组必然自动换行成两排
           且每加一个来源就多挤一格，所以收成两个菜单：
           导入（各来源 + 各自的密钥）与 归类（供应商 / 模型 + 开始归类）。
           跑着的导入会在菜单外露出「停止」，那是当下最该点的东西，不能藏进菜单。 */}
-      <div className="flex items-center gap-2 flex-nowrap min-w-0">
+      <div className="flex flex-wrap items-center gap-2 min-w-0 whitespace-nowrap [&>*]:shrink-0">
         <Menu
           label={
             <span className="relative" title={credLevel ? t("favorites.credExpiredHintShort") : undefined}>

@@ -32,7 +32,7 @@ export default function RtspServer() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 self-start md:self-auto">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 self-start md:self-auto whitespace-nowrap">
           <button
             onClick={handleAddInstance}
             className={btnPrimary}

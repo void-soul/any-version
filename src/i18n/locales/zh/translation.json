@@ -5639,7 +5639,7 @@
     "lineNo": "行号",
     "line": "行",
     "dropHint": "拖拽日志文件到此处",
-    "dropHint2": "或点击「打开文件」选择 &nbsp;·&nbsp; 支持 200MB+ 大文件",
+    "dropHint2": "或点击「打开文件」选择  ·  支持 200MB+ 大文件",
     "noFile": "未打开文件",
     "parsingOverlay": "正在解析文件…",
     "fileTooLarge": "日志文件不能超过 256 MiB。",
