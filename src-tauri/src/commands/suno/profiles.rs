@@ -4,6 +4,7 @@ use super::*;
 #[tauri::command]
 pub async fn suno_parse_profile(url: String) -> Result<Vec<SunoSong>, String> {
     crate::runtime_tasks::run_if_enabled("suno", async move {
+        tokio::time::timeout(std::time::Duration::from_secs(180), async move {
         let trimmed = url.trim();
         if !is_profile_url(trimmed) {
             return Err(
@@ -107,6 +108,7 @@ pub async fn suno_parse_profile(url: String) -> Result<Vec<SunoSong>, String> {
             songs.iter().filter(|s| s.downloaded).count()
         );
         Ok(songs)
+        }).await.map_err(|_| "主页解析超过180秒，请重试".to_string())?
     })
     .await
 }
