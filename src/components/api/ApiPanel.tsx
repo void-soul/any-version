@@ -35,6 +35,11 @@ import { MoveModuleModal } from "./ApiPanel.MoveModuleModal";
 export default function ApiPanel() {
   const { t } = useTranslation();
   const [projects, setProjects] = useState<ApiProject[]>([]);
+  const [initializationError, setInitializationError] = useState("");
+  const alive = useRef(false);
+  const projectRequest = useRef(0);
+  const initializing = useRef(false);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; projectRequest.current++; }; }, []);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [envs, setEnvs] = useState<ApiEnvironment[]>([]);
   const [activeEnvId, setActiveEnvId] = useState<string | null>(null);
@@ -201,14 +206,10 @@ export default function ApiPanel() {
     }
   }, [activeProjectId, activeEnvId, selectedId]);
 
-  // 初始化
-  useEffect(() => {
-    invoke("api_init").then(() => loadProjects());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const loadProjects = useCallback(async () => {
+    const request = ++projectRequest.current;
     const list = await invoke<ApiProject[]>("api_list_projects");
+    if (!alive.current || request !== projectRequest.current) return;
     setProjects(list);
     // 恢复上次选中的项目（若已被删除则落到第一个）
     const saved = (() => { try { return JSON.parse(localStorage.getItem(API_CTX_KEY) || "null"); } catch { return null; } })();
@@ -217,6 +218,20 @@ export default function ApiPanel() {
     else if (list.length > 0) setActiveProjectId(list[0].id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const initialize = useCallback(async () => {
+    if (initializing.current) return;
+    initializing.current = true;
+    try {
+      await invoke("api_init");
+      if (!alive.current) return;
+      await loadProjects();
+      if (alive.current) setInitializationError("");
+    } catch (error) {
+      if (alive.current) setInitializationError(String(error));
+    } finally { initializing.current = false; }
+  }, [loadProjects]);
+  useEffect(() => { void initialize(); }, [initialize]);
 
   // 切换项目：加载环境/模块/接口/预设
   useEffect(() => {
@@ -546,6 +561,7 @@ export default function ApiPanel() {
 
   return (
     <div className="h-full flex relative" style={{ ["--module-accent" as string]: "#06b6d4" }}>
+      {initializationError && <div role="alert" className="absolute left-2 right-2 top-2 z-40 ui-note-error p-3 flex items-center gap-3"><span className="min-w-0 flex-1 break-words">{initializationError}</span><button type="button" className={btnSecondary} onClick={() => void initialize()}>{t("common.refresh")}</button></div>}
       {/* 左侧栏（可拖动改宽度 / 收起） */}
       {!sidebarCollapsed && (
         <aside className="relative shrink-0 border-r border-white/10 bg-black/20 flex flex-col group/sb" style={{ width: sidebarW }}>

@@ -1,0 +1,15 @@
+## Q-0667 | 2026-11-03 | Bug Fix | 已验证
+
+**现象/需求:** API模块初始化api_init或项目列表读取失败会产生未处理Promise拒绝，页面无可见错误或重试入口；需捕获失败并避免旧初始化结果覆盖新状态。
+
+**根因:** **ApiPanel** 在effect中直接调用api_init.then(loadProjects)，没有catch；loadProjects异步回写也没有页面存活/请求代次门禁。
+
+**解决方案:** 1. 初始化增加同步互斥、catch和可见错误条，提供刷新重试，避免未处理Promise拒绝。
+2. 项目列表回写检查页面存活与请求代次，页面退出后旧结果失效。
+3. Playwright注入api_init失败，确认错误可见后清除故障并点击刷新，成功加载列表并打开新建项目表单；无pageerror，TypeScript检查和486项前端回归通过。
+
+**涉及文件:**
+| File | Change |
+|------|--------|
+| **src/components/api/ApiPanel.tsx** | 初始化失败反馈、重试与列表所有权 |
+---
