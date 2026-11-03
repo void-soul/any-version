@@ -26,6 +26,18 @@ pub fn decode_text_bytes(bytes: &[u8]) -> String {
 }
 
 const MAX_TEXT_FILE_BYTES: u64 = 64 * 1024 * 1024;
+/// Binary IPC avoids serializing hundreds of MiB as JSON numbers.
+#[tauri::command]
+pub async fn read_log_file(path: String) -> Result<tauri::ipc::Response, String> {
+    if !crate::runtime_tasks::is_enabled("logViewer") { return Err("日志模块已停用".into()); }
+    tauri::async_runtime::spawn_blocking(move || {
+        let file = fs::File::open(path).map_err(|e| format!("读取日志失败: {e}"))?;
+        let meta = file.metadata().map_err(|e| e.to_string())?;
+        if !meta.is_file() { return Err("请选择普通日志文件".into()); }
+        if meta.len() > 256 * 1024 * 1024 { return Err("logTooLarge".into()); }
+        read_bounded(file, 256 * 1024 * 1024).map(tauri::ipc::Response::new)
+    }).await.map_err(|e| e.to_string())?
+}
 fn read_bounded(mut reader: impl Read, limit: u64) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     reader.by_ref().take(limit + 1).read_to_end(&mut bytes).map_err(|e| format!("读取文件失败: {e}"))?;

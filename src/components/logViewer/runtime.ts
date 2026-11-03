@@ -1,5 +1,6 @@
 import { buildLogIndex, DEFAULT_LOG_LIMITS } from "./index";
 import type { TFunction } from "i18next";
+import { pickLogSource, sameLogBytes, type LogSource } from "./source";
 
 export function mountLogViewer(root: HTMLDivElement, t: TFunction) {
   const $ = <T extends HTMLElement = HTMLElement>(sel: string) =>
@@ -20,6 +21,8 @@ export function mountLogViewer(root: HTMLDivElement, t: TFunction) {
   let matchSet: Set<number> | null = null;
   let currentMatch = -1;
   let currentFile: File | null = null;
+  let currentSource: LogSource | null = null;
+  let sourceRequest = 0;
   let tailMode = false;
   let tailTimer: ReturnType<typeof setInterval> | null = null;
   let searchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -560,6 +563,7 @@ export function mountLogViewer(root: HTMLDivElement, t: TFunction) {
 
   // ---------- Tail ----------
   function toggleTail() {
+    if (!currentSource) { showError(new Error(t("logview.tailNeedsHandle"))); return; }
     tailMode = !tailMode;
     $("#lv-btnTail").classList.toggle("active", tailMode);
     $("#lv-btnTail").setAttribute("aria-pressed", String(tailMode));
@@ -575,15 +579,21 @@ export function mountLogViewer(root: HTMLDivElement, t: TFunction) {
     if (disposed || document.hidden || !currentFile || !tailMode || loadingFile || tailPending) return;
     tailPending = true;
     const request = loadRequest;
-    const file = currentFile;
+    const source = currentSource;
     try {
+      if (!source) return;
+      const file = await source.getFile();
+      if (disposed || request !== loadRequest || source !== currentSource || !tailMode) return;
+      if (file.size > DEFAULT_LOG_LIMITS.maxBytes) throw new Error("logTooLarge");
       const buf = await file.slice(0, DEFAULT_LOG_LIMITS.maxBytes + 1).arrayBuffer();
       if (disposed || request !== loadRequest || !tailMode) return;
-      if (bytes && buf.byteLength === bytes.length) return;
+      if (sameLogBytes(bytes, new Uint8Array(buf))) { $("#lv-error").style.display = "none"; return; }
       searchRequest++;
       // Reuse the already read bytes rather than reading the same file twice.
       const snapshot = { size: buf.byteLength, arrayBuffer: async () => buf } as File;
       if (!await indexFile(snapshot, request)) return;
+      currentFile = file;
+      $("#lv-error").style.display = "none";
       finishLoad(file.name, buf.byteLength, true);
       viewer.scrollTop = viewer.scrollHeight;
     } catch (error) { if (request === loadRequest) showError(error); }
@@ -601,7 +611,12 @@ export function mountLogViewer(root: HTMLDivElement, t: TFunction) {
     layout();
     render(true);
   };
-  const onFileChange = () => { void loadFile(fileInput.files?.[0]); fileInput.value = ""; };
+  const loadSnapshot = (file?: File) => {
+    sourceRequest++; currentSource = null;
+    if (tailMode) toggleTailOff();
+    void loadFile(file);
+  };
+  const onFileChange = () => { loadSnapshot(fileInput.files?.[0]); fileInput.value = ""; };
   const onDragOver = (e: DragEvent) => {
     e.preventDefault();
     dropzone.classList.add("dragover");
@@ -611,7 +626,7 @@ export function mountLogViewer(root: HTMLDivElement, t: TFunction) {
     e.preventDefault();
     dropzone.classList.remove("dragover");
     const file = e.dataTransfer?.files?.[0];
-    if (file) loadFile(file);
+    if (file) loadSnapshot(file);
   };
   const onKeyDown = (e: KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.key === "f") {
@@ -627,7 +642,28 @@ export function mountLogViewer(root: HTMLDivElement, t: TFunction) {
   };
 
   // 工具栏按钮
-  const onOpenClick = () => fileInput.click();
+  function toggleTailOff() {
+    tailMode = false;
+    if (tailTimer) clearInterval(tailTimer);
+    tailTimer = null;
+    $("#lv-btnTail").classList.remove("active");
+    $("#lv-btnTail").setAttribute("aria-pressed", "false");
+  }
+  const onOpenClick = async () => {
+    const request = ++sourceRequest;
+    try {
+      const source = await pickLogSource();
+      if (disposed || request !== sourceRequest) return;
+      if (source === undefined) { fileInput.click(); return; }
+      if (!source) return;
+      const file = await source.getFile();
+      if (disposed || request !== sourceRequest) return;
+      toggleTailOff(); currentSource = source;
+      await loadFile(file);
+    } catch (error) {
+      if (request === sourceRequest && !(error instanceof DOMException && error.name === "AbortError")) showError(error);
+    }
+  };
   const onGotoClick = () =>
     gotoLine(($("#lv-gotoInput") as HTMLInputElement).value);
   const onGotoKey = (e: KeyboardEvent) => {
@@ -659,7 +695,7 @@ export function mountLogViewer(root: HTMLDivElement, t: TFunction) {
   window.addEventListener("resize", onResize);
 
   return () => {
-    disposed = true; loadRequest++; searchRequest++; tailMode = false;
+    disposed = true; sourceRequest++; currentSource = null; loadRequest++; searchRequest++; tailMode = false;
     feedbackTimers.forEach((timer) => clearTimeout(timer)); feedbackTimers.clear();
     frameWaiters.forEach((resolve, frame) => { cancelAnimationFrame(frame); resolve(); }); frameWaiters.clear();
     if (renderFrame !== null) cancelAnimationFrame(renderFrame);

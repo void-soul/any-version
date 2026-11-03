@@ -5620,11 +5620,12 @@
     "traceTruncated": "输出过长，已截断"
   },
   "logview": {
+    "tailNeedsHandle": "请通过“打开文件”选择可刷新的文件；拖入或兼容模式打开的文件仅为快照。",
     "readFail": "读取失败: {{err}}",
     "parsingFile": "正在解析文件… {{pct}}%",
     "copyLine": "复制此行",
     "searching": "搜索中…",
-    "lines": "0 行",
+    "lines": "{{n}} 行",
     "title": "日志查看器",
     "openFile": "打开文件",
     "filterAll": "全部",

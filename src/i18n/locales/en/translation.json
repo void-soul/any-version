@@ -5620,11 +5620,12 @@
     "traceTruncated": "Output too long; truncated"
   },
   "logview": {
+    "tailNeedsHandle": "Use Open File to select a refreshable file. Dropped files and compatibility uploads are snapshots.",
     "readFail": "Failed to read: {{err}}",
     "parsingFile": "Parsing file… {{pct}}%",
     "copyLine": "Copy this line",
     "searching": "Searching…",
-    "lines": "0 lines",
+    "lines": "{{n}} lines",
     "title": "Log Viewer",
     "openFile": "Open file",
     "filterAll": "All",

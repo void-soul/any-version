@@ -88,7 +88,7 @@ export default function LogViewer() {
 
       <div className="lv-statusbar">
         <span id="lv-statusFile">{t("logview.noFile")}</span>
-        <span id="lv-statusLines">{t("logview.lines")}</span>
+        <span id="lv-statusLines">{t("logview.lines", { n: 0 })}</span>
         <span id="lv-statusErrors" className="lv-badge lv-badge-error">
           {t("logview.errorCount", { n: 0 })}
         </span>
