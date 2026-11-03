@@ -361,6 +361,9 @@ pub use travel::*;
 mod checkin;
 pub use checkin::*;
 
+mod checkin_execution;
+pub(crate) use checkin_execution::{claim_checkin, resolved_checkin_streak};
+
 #[cfg(test)]
 mod tests;
 

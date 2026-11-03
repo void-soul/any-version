@@ -45,7 +45,7 @@ pub const MISSED_PLAN_GRACE_MIN: i32 = 5;
 ///
 /// 上游对「同一秒内多个账号签到」会直接回 `500 {"code":10001,"msg":"签到失败，请稍后重试"}`
 /// （参考实现的事故记录：12 个账号里 3 个落在 3 秒窗口内 → 全部 500，而当天手动逐个点全部成功）。
-/// 只作用于**自动调度**；用户点「立即执行」（`force`）时不加等待，否则 N 个账号要干等 3N 秒。
+/// Applies to scheduled and manually requested batches; a single manual claim does not wait.
 pub const CHECKIN_ACCOUNT_GAP_SECS: u64 = 3;
 
 /// Three bounded retries after the initial attempt (seconds).
@@ -234,17 +234,15 @@ pub fn get_config_checked() -> Result<BuddyAutoCheckinConfig, String> {
 }
 
 pub fn save_config(config: &BuddyAutoCheckinConfig) -> Result<(), String> {
-    let result = save_config_without_wake(config);
+    let result = config_updates::save_settings(&get_config_file_path(), config);
     if result.is_ok() {
         wake_scheduler();
     }
     result
 }
 
-fn save_config_without_wake(config: &BuddyAutoCheckinConfig) -> Result<(), String> {
-    let _guard = lock_storage()?;
-    write_config_to_path(&get_config_file_path(), config)
-}
+mod config_updates;
+use config_updates::{same_settings, save_cycle_config};
 
 fn next_retry_delay(current: Duration) -> Duration {
     current.saturating_mul(2).min(MAX_RETRY_DELAY)

@@ -29,6 +29,7 @@ pub async fn run_auto_checkin_cycle_if_needed(
     let cross_day = needs_replan(&config, &accounts);
     let allow_generate =
         force || cross_day || current_minute >= parse_time_to_minutes(&config.start_time);
+    let plan_base = config.clone();
     let before_schedules = config.account_schedules.clone().unwrap_or_default();
     let mut schedule_changed = ensure_account_schedules(&mut config, &accounts, allow_generate);
     // 未进入重试/终止状态、且错过计划的账号→重排到窗口内的新随机时间，
@@ -40,12 +41,14 @@ pub async fn run_auto_checkin_cycle_if_needed(
     };
     schedule_changed |= rescheduled;
     if schedule_changed {
-        save_config_without_wake(&config)?;
+        config = save_cycle_config(&plan_base, &config)?;
         // 计划变更同步归档：旧日期收尾 + 今日计划时间
         archive_schedule_changes(&before_schedules, &config, &accounts);
         let _ = app.emit("buddy-auto-checkin-config-changed", ());
     }
 
+    if !same_settings(&plan_base, &config) { return Ok("waiting".into()); }
+    let execution_base = config.clone();
     let today_str = get_today_date_string();
     // 退避闸用的当前时刻（秒）。force（立即执行）不走它 —— 用户主动点就该马上跑。
     let now_epoch = Local::now().timestamp();
@@ -105,18 +108,21 @@ pub async fn run_auto_checkin_cycle_if_needed(
     }
     // 本轮失败的账号 + 该失败是否值得退避重试（4xx/登录态问题重试只是刷日志）
     let mut failed_ids: Vec<(String, bool)> = Vec::new();
-    // 自动调度时账号之间留间隔：上游对「同一秒多个账号签到」会回 500/10001。
-    // 「立即执行」（force）不加等待，否则 N 个账号要干等 3N 秒。
+    // Every batch is paced, including the manually requested full batch.
     let mut first_account = true;
 
     for account in target_accounts {
-        if !force && !first_account {
+        if !first_account {
             tokio::time::sleep(Duration::from_secs(CHECKIN_ACCOUNT_GAP_SECS)).await;
         }
         first_account = false;
         if !force && (get_today_date_string() != today_str || current_minute_of_day() > end_min) {
             break;
         }
+        let claimed = api::claim_checkin(platform, &account.id).await?;
+        let account = &claimed.0;
+        let _claim = claimed.1;
+        if !same_settings(&execution_base, &get_config_checked()?) { break; }
         let email_display = if !account.email.trim().is_empty() {
             account.email.clone()
         } else {
@@ -225,9 +231,7 @@ pub async fn run_auto_checkin_cycle_if_needed(
                     );
                 }
                 Ok(res) if res.success => {
-                    let streak = res
-                        .streak_days
-                        .unwrap_or_else(|| account.checkin_streak.saturating_add(1));
+                    let streak = api::resolved_checkin_streak(account, &res, Local::now().timestamp());
                     let reward = res.reward.clone().or_else(|| {
                         res.credit
                             .map(|credit| serde_json::json!({ "credit": credit }))
@@ -390,11 +394,11 @@ pub async fn run_auto_checkin_cycle_if_needed(
     );
 
     config.account_schedules = Some(new_schedules);
+    config = save_cycle_config(&execution_base, &config)?;
     if retry_moved {
         // 计划时间被挪动过 → 同步归档（日历与卡片都以归档为准）
         archive_schedule_changes(&retry_before_schedules, &config, &accounts);
     }
-    save_config_without_wake(&config)?;
 
     // 行为日志（平铺）：每账号一条
     action_log::append_action_logs(&entries)?;

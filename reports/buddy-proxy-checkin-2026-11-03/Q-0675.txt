@@ -1,0 +1,17 @@
+## Q-0675 | 2026-11-03 | Bug Fix | 已验证
+
+**现象/需求:** 用户批准账号签到执行保护：手动单号与自动批量未共用账号执行闸门，强制批量跳过3秒间隔；对齐WorkDaddy checkinClaims及D 0029，保持自动仅WorkBuddy且不触发真实签到。
+
+**根因:** 参考A daemon.js:4543 checkinClaims按UID保护在途签到，D 0029要求批量错峰；我方自动周期全局闸不覆盖手动单号，force批量还跳过3秒间隔。
+
+**解决方案:** 共享UID异步锁覆盖手动/自动的状态检查、请求及结果持久化，等待后重读账号，弱引用清理空闲锁；不同账号可独立执行。全部批量含force保留3秒间隔，单号手动不额外等待。回归同账号等待、不同账号独立、取消等待后锁释放；批次节流调用点代码检查通过。自动仍仅WorkBuddy，手动保留既有平台范围；未实际触发真实签到或批量账号请求。
+
+**涉及文件:**
+| File | Change |
+|------|--------|
+| src-tauri/src/commands/buddy/api.rs | 共享执行模块接入 |
+| src-tauri/src/commands/buddy/api/checkin_execution.rs | 账号级异步锁及测试 |
+| src-tauri/src/commands/buddy/checkin_commands.rs | 手动入口使用共享锁 |
+| src-tauri/src/commands/buddy/auto_checkin/cycle.rs | 自动入口使用共享锁及force错峰 |
+| src-tauri/src/commands/buddy/auto_checkin.rs | 更新错峰说明 |
+---

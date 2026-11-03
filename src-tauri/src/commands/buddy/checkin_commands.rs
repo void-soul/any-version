@@ -10,8 +10,7 @@ pub async fn buddy_checkin(
     account_id: String,
 ) -> Result<api::CheckinResponse, String> {
     let platform = platform_from_str(&platform)?;
-    let account = store::load_account(platform, &account_id)
-        .ok_or_else(|| format!("账号不存在: {}", account_id))?;
+    let (account, _claim) = api::claim_checkin(platform, &account_id).await?;
 
     let mut response = api::perform_checkin(
         &account.access_token,
@@ -42,6 +41,7 @@ pub async fn buddy_checkin(
             if status.today_checked_in {
                 response.success = true;
                 response.already = Some(true);
+                response.streak_days = Some(status.streak_days);
                 response.message = Some("今日已完成签到".to_string());
             }
         }
@@ -49,12 +49,11 @@ pub async fn buddy_checkin(
 
     let already = response.already == Some(true);
     let inactive = response.inactive == Some(true);
+    if inactive { response.success = false; }
 
     if response.success || inactive {
         let now = chrono::Utc::now().timestamp();
-        let streak = response
-            .streak_days
-            .unwrap_or_else(|| account.checkin_streak.saturating_add(1));
+        let streak = api::resolved_checkin_streak(&account, &response, now);
         let reward = response.reward.clone().or_else(|| {
             response
                 .credit
@@ -74,7 +73,7 @@ pub async fn buddy_checkin(
             account.email.clone()
         };
         let today = daily_history::today_string();
-        let credit = response.credit;
+        let credit = if inactive { None } else { response.credit };
         // 三种「无需重试」的终态：已签到 / 活动未开启 / 本次成功
         let (archive_status, log_status, fallback_message) = if inactive {
             (
@@ -100,13 +99,14 @@ pub async fn buddy_checkin(
             .clone()
             .filter(|text| !text.trim().is_empty())
             .unwrap_or_else(|| fallback_message.to_string());
-        let patch = daily_history::CheckinPatch::new()
-            .actual_time(daily_history::now_time_string())
+        let mut patch = daily_history::CheckinPatch::new()
             .status(archive_status)
             .source("kira")
             .credit(credit)
-            .streak(Some(streak))
             .message(Some(message.clone()));
+        if !inactive {
+            patch = patch.actual_time(daily_history::now_time_string()).streak(Some(streak));
+        }
         if let Err(err) = daily_history::upsert_checkin(&today, &account_id, &email, patch) {
             eprintln!("[Buddy] 手动签到写入归档失败({}): {}", account_id, err);
         }

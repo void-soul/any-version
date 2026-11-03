@@ -1,0 +1,15 @@
+## Q-0676 | 2026-11-03 | Bug Fix | 已验证
+
+**现象/需求:** 用户批准签到统计幂等修复：今日已签到响应缺streak时也走旧天数加1，活动未开启归档还带推测天数和实际完成时间；以官方状态优先，重复签到不增天数。
+
+**根因:** 参考A当日已确认成功走幂等返回；我方already也success=true，手动统一以旧checkin_streak+1兜底。inactive归档还填入完成时间及推测天数。
+
+**解决方案:** 提取共用streak解析：官方天数优先；already及同日已记成功不加1；只有新的成功且无官方天数才加1。状态回查确认已签时保留官方streak；inactive改为非成功，不更新账号完成状态、不补完成时间/天数/收益。新增幂等/同日/官方值/inactive纯逻辑回归，自动成功分支复用。未重算历史数据或对真实账号补签。
+
+**涉及文件:**
+| File | Change |
+|------|--------|
+| src-tauri/src/commands/buddy/api/checkin_execution.rs | 幂等连续天数规则及测试 |
+| src-tauri/src/commands/buddy/checkin_commands.rs | 手动三态及归档 |
+| src-tauri/src/commands/buddy/auto_checkin/cycle.rs | 自动分支复用幂等规则 |
+---
