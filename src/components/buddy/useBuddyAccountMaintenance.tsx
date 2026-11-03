@@ -1,6 +1,7 @@
 import type { BuddyPlatformScope } from "./platformScope";
 import { useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 import { selectRotationCandidate, type RotationAccount } from "./quota";
 import { accountCreditSegments, parseQuotaItems, summarizeQuota, type BuddyAccount, type BuddyAccountView } from "./BuddyPanel.model";
@@ -209,13 +210,15 @@ export function useBuddyAccountMaintenance({ platformScope, showMsg, accounts, c
     if (!lease.current()) return;
     if (ids.length === 0) return;
     try {
-      const json = await invoke<string>("buddy_export_accounts", { platform, accountIds: ids });
-      if (!lease.current()) return;
       const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const name = `${nameBase ?? platform}-accounts-${ts}.json`;
-      await invoke("file_io_save_text", { fileName: name, content: json });
+      const target = await saveDialog({ defaultPath: name, filters: [{ name: "JSON", extensions: ["json"] }] });
+      if (!target || !lease.current()) return;
+      const json = await invoke<string>("buddy_export_accounts", { platform, accountIds: ids });
       if (!lease.current()) return;
-      showMsg(true, t("buddy.exported", { name }));
+      await invoke("write_text_file", { path: target, content: json });
+      if (!lease.current()) return;
+      showMsg(true, t("buddy.exported", { name: target }));
     } catch (e) {
       if (!lease.current()) return;
       showMsg(false, String(e));
