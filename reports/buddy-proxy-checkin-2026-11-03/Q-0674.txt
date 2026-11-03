@@ -1,0 +1,17 @@
+## Q-0674 | 2026-11-03 | Bug Fix | 已验证
+
+**现象/需求:** 用户批准2API凭据刷新修复：ensure_fresh缺网络期间串行锁和刷新失败退避，巡查30秒固定重撞且只输出stderr；对齐参考D 0045单账号语义，保留切号防覆盖并将错误显示到现有面板。
+
+**根因:** 参考D 0045独立刷新退避和参考A网络刷新串行纪律，我方Credentials只有短期快照锁，巡查固定30秒失败重撞且不更新面板。刷新后到期元数据仍旧也会使下一轮继续刷新；旋转token后写入失败不应再使用旧refreshToken请求。
+
+**解决方案:** 同Credentials异步闸覆盖网络/持久化，锁内重读；429保留Retry-After（秒/HTTP日期，5分钟至6小时），其他临时失败5/15/60/300秒退避；明确invalid_grant/12153等停止自动重试，凭据变化重置。写回失败保留旋转token只重试保存；原CAS/加密信封保留，使用上游有效期/JWT exp更新原expiresAt。现有面板显示同步错误，恢复只清同步类错误；不引入账号池禁用。测试涵盖8并发仅一次刷新、背压、切号、写失败、加密格式、状态恢复。只读体检未找到WorkBuddy会话，真实刷新及原生客户端接受性未验；退避仅内存，应用进程重启重置（同进程停止/启动2API复用对象保留）。
+
+**涉及文件:**
+| File | Change |
+|------|--------|
+| src-tauri/src/commands/buddy/twoapi/credentials.rs | 异步串行、保存重试、有效期及隔离测试 |
+| src-tauri/src/commands/buddy/twoapi/refresh.rs | 刷新解码、Retry-After及退避策略 |
+| src-tauri/src/commands/buddy/twoapi/mod.rs | 面板错误及恢复 |
+| src-tauri/src/commands/buddy/twoapi/runtime_tests.rs | 提取运行时单测保持文件低于1000行 |
+| src-tauri/src/commands/buddy/api.rs | 复用有效期解码函数 |
+---

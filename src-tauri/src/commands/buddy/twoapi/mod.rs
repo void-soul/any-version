@@ -12,6 +12,7 @@
 pub(crate) mod atrest;
 pub(crate) mod credentials;
 pub(crate) mod upstream;
+mod refresh;
 
 use crate::proxy::types::{ProxyConfig, UpstreamHeader};
 
@@ -600,8 +601,16 @@ pub async fn on_account_switched() -> Result<bool, String> {
 pub fn note_sync_error(err: &str) {
     set_status(|s| {
         s.last_error = Some(format!(
-            "2API 凭据同步失败：{err}（服务仍在用旧账号的凭据，可尝试重启 2API）"
+            "2API 凭据同步失败：{err}（服务仍保留旧账号凭据，请按提示处理后重新同步账号）"
         ));
+    });
+}
+
+fn clear_sync_error() {
+    set_status(|state| {
+        if state.last_error.as_deref().is_some_and(|error| error.starts_with("2API 凭据同步失败：")) {
+            state.last_error = None;
+        }
     });
 }
 
@@ -652,10 +661,12 @@ fn start_credentials_watcher(
                 Ok(a) => a,
                 Err(e) => {
                     eprintln!("[2api] 巡查：读取/刷新凭据失败：{e}");
+                    note_sync_error(&e);
                     continue;
                 }
             };
             if !identity_changed(applied.as_ref(), &account.uid, &account.access_token) {
+                clear_sync_error();
                 continue;
             }
             // 每轮重新取端口：改端口会重启服务，写死启动时的端口会打空
@@ -678,47 +689,7 @@ fn start_credentials_watcher(
 }
 
 #[cfg(test)]
-mod runtime_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn updating_an_unregistered_port_is_a_noop() {
-        // 服务没在跑时（尚未启动/已停止）不应报错：下次启动会用最新凭据组装配置
-        let mut touched = false;
-        let ok = crate::proxy::server::update_running_config(59999, |_| touched = true).await;
-        assert!(!ok, "未注册的端口应返回 false");
-        assert!(!touched, "不应执行修改");
-    }
-
-    #[test]
-    fn watcher_applies_only_when_uid_or_token_moves() {
-        let prev = ("uid-a".to_string(), "tok-1".to_string());
-        assert!(identity_changed(None, "uid-a", "tok-1"), "首轮必须写进服务");
-        assert!(
-            !identity_changed(Some(&prev), "uid-a", "tok-1"),
-            "没变就别反复写（每 30s 一次的无谓重写）"
-        );
-        assert!(
-            identity_changed(Some(&prev), "uid-b", "tok-1"),
-            "客户端切号 → uid 变了，必须更新"
-        );
-        assert!(
-            identity_changed(Some(&prev), "uid-a", "tok-2"),
-            "token 刷新 → 同一个 uid 也要更新（否则长期运行会撞上过期 token）"
-        );
-    }
-
-    #[test]
-    fn sync_failure_reaches_the_panel_not_only_stderr() {
-        // 同步失败若只 eprintln，用户永远看不到：旧账号仍有效时请求照样 200，
-        // 只是额度记在别人头上
-        note_sync_error("读取登录态失败");
-        let err = status().last_error.unwrap_or_default();
-        assert!(err.contains("读取登录态失败"), "{err}");
-        assert!(err.contains("旧账号"), "要说清服务仍在用旧凭据：{err}");
-        set_status(|s| s.last_error = None);
-    }
-}
+mod runtime_tests;
 
     /// 端到端：真机起服务、打真请求。
     ///

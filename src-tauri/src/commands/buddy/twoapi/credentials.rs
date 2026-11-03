@@ -104,6 +104,13 @@ pub struct Credentials {
     path: PathBuf,
     secret: String,
     state: Mutex<Option<Snapshot>>,
+    refresh: tokio::sync::Mutex<RefreshState>,
+}
+
+#[derive(Default)]
+struct RefreshState {
+    policy: super::refresh::Policy,
+    pending: Option<(String, super::refresh::Tokens)>,
 }
 
 impl Credentials {
@@ -112,6 +119,7 @@ impl Credentials {
             path,
             secret,
             state: Mutex::new(None),
+            refresh: tokio::sync::Mutex::new(RefreshState::default()),
         }
     }
 
@@ -198,6 +206,10 @@ impl Credentials {
         access: &str,
         refresh: Option<&str>,
     ) -> Result<bool, String> {
+        self.write_refreshed_tokens(snap, access, refresh, None)
+    }
+
+    fn write_refreshed_tokens(&self, snap: &Snapshot, access: &str, refresh: Option<&str>, expires_at: Option<i64>) -> Result<bool, String> {
         let (mtime, len) = self.stamp();
         if mtime != snap.mtime || len != snap.len {
             return Ok(false);
@@ -207,6 +219,7 @@ impl Credentials {
         if let Some(token) = refresh {
             super::atrest::set_refresh_token(&mut raw, token, &self.secret)?;
         }
+        if let Some(expiry) = expires_at { raw["auth"]["expiresAt"] = serde_json::json!(expiry); }
         let tmp = self.path.with_extension("info.tmp");
         std::fs::write(&tmp, serde_json::to_string_pretty(&raw).unwrap())
             .map_err(|e| format!("写临时文件 {} 失败: {e}", tmp.display()))?;
@@ -230,81 +243,46 @@ impl Credentials {
     /// 写回走 mtime 保护：刷新在网络往返期间若 Buddy 切了号，就放弃写回，
     /// 避免用旧账号的刷新结果覆盖用户的切换。
     pub async fn ensure_fresh(&self) -> Result<Account, String> {
-        use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-        let account = self.current()?;
-        if !needs_refresh(account.expires_at_ms, now_ms(), REFRESH_SKEW_MS) {
-            return Ok(account);
-        }
-        eprintln!("[2api] token 即将过期（{}），正在刷新…", account.expires_at_ms);
+        self.ensure_fresh_with(super::refresh::fetch).await
+    }
+
+    async fn ensure_fresh_with<F, Fut>(&self, fetch: F) -> Result<Account, String>
+    where F: FnOnce(Account) -> Fut,
+        Fut: std::future::Future<Output = Result<super::refresh::Tokens, super::refresh::Failure>>,
+    {
+        use super::refresh::{identity, Failure};
+        let mut state = self.refresh.lock().await;
+        // Re-read after acquiring the async gate: another caller may have
+        // refreshed or the user may have switched accounts while we waited.
         let snapshot = self.snapshot()?;
-        let url = format!(
-            "{}/v2/plugin/auth/token/refresh",
-            super::upstream::BACKEND_BASE
-        );
-        let mut headers = HeaderMap::new();
-        let pairs: Vec<(String, String)> = vec![
-            (
-                "Authorization".to_string(),
-                format!("Bearer {}", account.access_token),
-            ),
-            ("X-User-Id".to_string(), account.uid.clone()),
-            ("X-Enterprise-Id".to_string(), account.enterprise_id.clone()),
-            ("X-Tenant-Id".to_string(), account.enterprise_id.clone()),
-            ("X-Domain".to_string(), account.domain.clone()),
-            ("X-Refresh-Token".to_string(), account.refresh_token.clone()),
-            (
-                "X-Auth-Refresh-Source".to_string(),
-                "plugin".to_string(),
-            ),
-            ("Content-Type".to_string(), "application/json".to_string()),
-        ];
-        for (name, value) in pairs {
-            let n: HeaderName = name
-                .parse()
-                .map_err(|_| format!("非法请求头名：{name}"))?;
-            let v: HeaderValue = value
-                .parse()
-                .map_err(|_| format!("请求头 {name} 的值非法"))?;
-            headers.insert(n, v);
+        let account = parse_account(&snapshot.raw, &self.secret)?;
+        let key = identity(&account);
+        state.policy.check(&key, std::time::Instant::now())?;
+        if !needs_refresh(account.expires_at_ms, now_ms(), REFRESH_SKEW_MS) { return Ok(account); }
+        let pending = state.pending.take().filter(|(identity, _)| identity == &key);
+        let tokens = match pending {
+            Some((_, tokens)) => tokens,
+            None => match fetch(account).await {
+                Ok(tokens) => tokens,
+                Err(failure) => {
+                    let current = self.current()?;
+                    if identity(&current) != key { *state = RefreshState::default(); return Ok(current); }
+                    state.policy.failed(&failure, std::time::Instant::now());
+                    return Err(failure.message);
+                }
+            },
+        };
+        match self.write_refreshed_tokens(&snapshot, &tokens.access, tokens.refresh.as_deref(), tokens.expires_at) {
+            Ok(_) => { *state = RefreshState::default(); self.current() }
+            Err(_) => {
+                // Retain rotated tokens: retry persistence, never refresh the
+                // old refreshToken again merely because writing failed.
+                state.pending = Some((key.clone(), tokens));
+                let failure = Failure::temporary("刷新凭据写回失败，请检查文件权限");
+                state.policy.failed(&failure, std::time::Instant::now());
+                Err(failure.message)
+            }
         }
-        let resp = reqwest::Client::new()
-            .post(&url)
-            .headers(headers)
-            .timeout(std::time::Duration::from_secs(20))
-            .send()
-            .await
-            .map_err(|e| format!("刷新 token 网络失败：{e}"))?;
-        let status = resp.status();
-        let body: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| format!("刷新响应不是 JSON：{e}"))?;
-        if !status.is_success() || body.get("code").and_then(|c| c.as_i64()) != Some(0) {
-            let msg = body
-                .get("msg")
-                .and_then(|m| m.as_str())
-                .unwrap_or("无原因");
-            return Err(format!("刷新 token 被拒（HTTP {status}）：{msg}"));
-        }
-        let data = body.get("data").cloned().unwrap_or(serde_json::Value::Null);
-        let new_access = data
-            .get("accessToken")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        if new_access.is_empty() {
-            return Err("刷新响应里没有 accessToken".to_string());
-        }
-        let new_refresh = data
-            .get("refreshToken")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
-        if self.write_back_tokens_if_unchanged(&snapshot, &new_access, new_refresh.as_deref())? {
-            eprintln!("[2api] token 已刷新并写回");
-        } else {
-            eprintln!("[2api] 刷新期间登录态被外部改动（Buddy 切号？），已放弃写回");
-        }
-        self.current()
     }
 }
 
@@ -369,6 +347,7 @@ mod tests {
                 "accessToken": access_token,
                 "refreshToken": "refresh-token",
                 "expiresAt": 4102444800000i64,
+                "refreshToken": "fixture-refresh",
                 "domain": "www.codebuddy.cn"
             },
             "account": { "uid": uid, "enterpriseId": "ent-1" }
@@ -380,6 +359,97 @@ mod tests {
     /// （真机上"同一秒内连切两次"实测能检测到，但测试不必依赖这一点）
     fn gap() {
         std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    fn expired_auth(path: &Path) {
+        write_auth(path, "uid-expired", json!("old"));
+        let mut raw: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        raw["auth"]["expiresAt"] = json!(1);
+        std::fs::write(path, raw.to_string()).unwrap();
+    }
+
+    fn refreshed_tokens() -> super::super::refresh::Tokens {
+        super::super::refresh::Tokens { access:"refreshed".into(), refresh:Some("rotated".into()), expires_at:Some(4102444800000) }
+    }
+
+    #[tokio::test]
+    async fn concurrent_refresh_rechecks_under_lock_and_persists_new_expiry() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let dir = temp_dir("refresh-serial"); let path = dir.join("auth.info"); expired_auth(&path);
+        let creds = Credentials::new(path.clone(), SECRET.into()); let calls = AtomicUsize::new(0);
+        let calls = &calls;
+        let results = futures_util::future::join_all((0..8).map(|_| creds.ensure_fresh_with(|account| async move {
+            assert_eq!(account.access_token, "old");
+            calls.fetch_add(1, Ordering::SeqCst);
+            tokio::task::yield_now().await;
+            Ok(refreshed_tokens())
+        }))).await;
+        for result in results { assert_eq!(result.unwrap().access_token, "refreshed"); }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(creds.current().unwrap().expires_at_ms, 4102444800000);
+        assert_eq!(creds.current().unwrap().refresh_token, "rotated");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn refresh_backoff_prevents_network_retries_and_new_credentials_reset_it() {
+        let dir = temp_dir("refresh-backoff"); let path = dir.join("auth.info"); expired_auth(&path);
+        let creds = Credentials::new(path.clone(), SECRET.into());
+        assert!(creds.ensure_fresh_with(|_| async { Err(super::super::refresh::Failure {
+            message:"limited".into(), terminal:false, wait:Some(std::time::Duration::from_secs(300))
+        }) }).await.is_err());
+        assert!(creds.ensure_fresh_with(|_| async { panic!("must not send while paused") }).await.is_err());
+        gap(); write_auth(&path, "uid-new", json!("new"));
+        assert_eq!(creds.ensure_fresh_with(|_| async { panic!("new account is still valid") }).await.unwrap().uid, "uid-new");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn refresh_in_flight_cannot_undo_an_external_account_switch() {
+        let dir = temp_dir("refresh-switch"); let path = dir.join("auth.info"); expired_auth(&path);
+        let creds = Credentials::new(path.clone(), SECRET.into());
+        let result = creds.ensure_fresh_with(|_| async {
+            write_auth(&path, "uid-switched", json!("switched"));
+            Ok(refreshed_tokens())
+        }).await.unwrap();
+        assert_eq!(result.uid, "uid-switched");
+        assert_eq!(creds.current().unwrap().access_token, "switched");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn failed_persistence_retries_rotated_tokens_without_another_refresh() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = temp_dir("refresh-pending"); let path = dir.join("auth.info"); expired_auth(&path);
+        let creds = Credentials::new(path.clone(), SECRET.into());
+        let held = std::sync::Mutex::new(None);
+        let error = creds.ensure_fresh_with(|_| async {
+            *held.lock().unwrap() = Some(std::fs::OpenOptions::new().read(true).share_mode(1).open(&path).unwrap());
+            Ok(refreshed_tokens())
+        }).await.unwrap_err();
+        assert!(error.contains("写回失败"));
+        drop(held.lock().unwrap().take());
+        creds.refresh.lock().await.policy = Default::default();
+        let result = creds.ensure_fresh_with(|_| async { panic!("must retry saved tokens, not send the old refreshToken") }).await.unwrap();
+        assert_eq!(result.refresh_token, "rotated");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn refreshed_expiry_preserves_encrypted_token_envelopes() {
+        let dir = temp_dir("refresh-encrypted"); let path = dir.join("auth.info"); expired_auth(&path);
+        let mut raw: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        raw["auth"]["accessToken"] = super::super::atrest::encrypt_field("old", SECRET).unwrap();
+        raw["auth"]["refreshToken"] = super::super::atrest::encrypt_field("old-refresh", SECRET).unwrap();
+        std::fs::write(&path, raw.to_string()).unwrap();
+        let creds = Credentials::new(path.clone(), SECRET.into());
+        assert_eq!(creds.ensure_fresh_with(|_| async { Ok(refreshed_tokens()) }).await.unwrap().access_token, "refreshed");
+        let written: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(written["auth"]["accessToken"].get("$wbEncrypted").is_some());
+        assert!(written["auth"]["refreshToken"].get("$wbEncrypted").is_some());
+        assert_eq!(written["auth"]["expiresAt"], json!(4102444800000i64));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

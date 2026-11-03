@@ -231,7 +231,7 @@ fn enterprise_usage_data(body: &Value) -> Option<&Value> {
         .or(Some(body))
 }
 
-fn token_expiry_at(data: &Value) -> Option<i64> {
+pub(crate) fn token_expiry_at(data: &Value) -> Option<i64> {
     let parse = |value: Option<&Value>| {
         value.and_then(|v| {
             v.as_i64()

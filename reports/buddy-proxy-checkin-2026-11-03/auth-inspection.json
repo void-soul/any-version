@@ -1,0 +1,15 @@
+{
+  "scope": "read-only existing client structure; no refresh, check-in, switch or write; account stores not scanned",
+  "workbuddy": {
+    "readable_session": false,
+    "encrypted_fields": null,
+    "has_expiry": false,
+    "has_session_state": false
+  },
+  "codebuddy_cn": {
+    "readable_session": true,
+    "encrypted_fields": false,
+    "has_expiry": true,
+    "has_session_state": true
+  }
+}
