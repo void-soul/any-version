@@ -1,0 +1,21 @@
+{
+  "qid": "Q-0662",
+  "date": "2026-11-03",
+  "category": "Feature",
+  "status": "已验证",
+  "phenomenon": "继续30模块审查：建立实际前端组件的隔离浏览器验收入口，使用用户授权的Playwright逐页截图/诊断，区分模拟契约缺失与产品UI问题。",
+  "root_cause": "原验收脚本使用全局 **main** 选择器，在思维导图匹配两个元素；泛化IPC空数组与未等懒加载造成无效截图。夹具未同步App主题/Activity行为，且共用上下文的虚拟时钟干扰Monaco性能计时。",
+  "solution": "1. 建立唯一 **fixture-root** 选择器，逐页独立异常记录，等待实际组件、初始化IPC及Monaco就绪；覆盖30页1280×800与800×900截图并逐项目视核对。\n2. 按实际类型补准确初始化及已测操作契约，未知命令明确失败；支持错误/延迟、事件和对话框注入，不访问真实Tauri或用户数据。夹具复用全局主题与React Activity，每个点击用例独立浏览器上下文，CSP与路由限制外网和其他本机端口。\n3. 30模块点击断言通过，覆盖表单/筛选/失败恢复、有数据服务卡片、日志真实新快照与挂起恢复、JSON编辑及RTSP损坏配置保留。保留调用参数快照和91张页面/交互证据；未执行真实硬件/账号/注册表/证书部署/系统服务控制。\n4. 补齐17条旧空方案，产品新缺口分别由Q-0663..Q-0669记录修复；最终报告区分隔离验证、原生临时数据测试和未验证的真实环境边界。",
+  "files": "| File | Change |\n|------|--------|\n| **reports/module-ui-2026-11-02/preview/** | 隔离入口、严格IPC与可复跑验收脚本 |\n| **reports/module-ui-2026-11-02/ui-evidence/** | 30模块截图、交互与调用证据 |\n| **reports/module-ui-2026-11-02/{PROGRESS.txt,FINAL-REPORT.txt,QA-COMPLETENESS.json}** | 准确状态、验证边界及QA完整性 |",
+  "created_at": "2026-11-03 10:31:43",
+  "updated_at": "2026-11-03 11:32:11",
+  "parent_qid": null,
+  "importance": 50,
+  "access_count": 0,
+  "last_access_at": null,
+  "tags": "[]",
+  "source_session": null,
+  "source_commit": null,
+  "archived": 0,
+  "needs_review": 0
+}

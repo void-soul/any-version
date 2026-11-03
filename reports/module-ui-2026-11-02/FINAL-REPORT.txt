@@ -1,0 +1,101 @@
+30模块深入检查、操作优化和UI统一：最终阶段报告
+日期：2026-11-03（Asia/Shanghai）
+基准：16e6751；保留该提交及此前30模块定向修复、融合搜索改动，未覆盖或重复实施。
+
+一、结论与验收口径
+交接列明的具体代码缺口已补修，30个实际组件的隔离宽屏/窄屏入口和30个具名点击用例通过。
+已查看各模块原图、交互图及最终概览；交接前4张“仅采集”截图没有被当作通过证据，现已重采并核对。
+这不等于30模块所有真实业务路径/全部原生集成都已验收。真实账号、硬件、系统操作及桌面窗口边界逐项列在下表。
+本报告承接既有定向源码检查并补交接待办，不冒称本轮重新完成全仓逐文件D1–D8审计或所有业务分支。
+
+二、本轮补修闭环
+1. Q-0662：外层fixture-root唯一选择器，逐页异常继续；等待懒加载、初始化IPC和Monaco就绪；严格命令契约替换泛化空数组，未知命令明确报错。主题和Activity行为与实际App对齐。
+2. Q-0663：RTSP核心配置结构、唯一ID、端口等预检；加载失败暂停自动保存，保留损坏原值并提示恢复。合法空列表不被默认实例替代。
+3. Q-0664：日志真实刷新来源。浏览器文件句柄每次getFile；原生路径每次重新打开，以256MiB有界二进制IPC读取，不把巨量字节序列化成JSON。追加、截断、轮换/重建、等长改写均覆盖；保留100万行/单行1MiB上限。
+   读取错误保留内容并可恢复；隐藏/停止跟随不再读取；Activity切页释放索引和定时器，返回重取新快照，跟随保持关闭。静态拖入/兼容上传明确提示其快照边界。中英文行数插值与初始0行均修复。
+4. Q-0665：JSON树提前截断修复，惰性遍历避免全量压入兄弟节点；结构树20万可见行，图形树1800节点，深度256、路径8192字符。计数和搜索同步限量；worker最多200万访问/2万匹配/200万路径字符。晚位置命中不会提前耗尽可见行预算。
+5. Q-0666：Buddy、RTSP、收藏窄窗工具栏整项换行，避免按钮逐字折行；Base64提示用Trans呈现，日志提示不再露出HTML实体。
+6. Q-0667：API初始化捕获错误、显示反馈并支持刷新重试，列表回写检查存活与请求代次。
+7. Q-0668：Suno主页16MiB、单页1MiB、游标1024字节；每页20条、最多100页/2000首；重复游标可终止，后页失败保留已得分页结果，解析总时限180秒。没有访问真实平台验证这些上游接口仍可用。
+8. Q-0669：服务卡片日志复制错误可见、可重试；同步互斥和卸载清理反馈计时器。
+9. QA修复：Q-0633..Q-0649共17条空solution按各自实际提交和PROGRESS补全，保留原状态及历史验证边界。不是统一模板补字，更没有提交整份qa.db。
+
+三、可复核验证
+- 生产构建：npm run build 通过；既有大chunk提示保留，没有增项目依赖。
+- 前端：487项测试 / 74文件通过。
+- 架构：1174个源文件通过。
+- 夹具及实际源类型：npx tsc --project reports/module-ui-2026-11-02/preview/tsconfig.json --noEmit 通过。
+- Rust：日志临时文件/有界读取3项、Suno16项隔离回归通过；cargo check --all-targets --locked --offline通过。没有宣称跑完全部Rust测试。
+- 浏览器：独立headless Edge，30/30入口诊断、60张宽窄图、30/30具名交互通过；另有1张RTSP损坏存储证据、10张目视概览。
+- 初始化诊断没有pageerror、console error或未配置IPC；点击用例没有未处理pageerror。故障注入产生的预期界面错误与日志被单独断言，不能解释成真实外部业务成功。
+- Q-0612及Q-0620..Q-0669共51条四段内容完整；qa_tool format仍为19条旧历史文件表问题（Q-0029等），本轮没有混改。
+
+四、逐模块覆盖与真实环境边界
+表中每项均完成1280×800和800×900入口截图/目视核对，及所列操作的浏览器断言。QA列同时指向此前实现依据。
+| 顺序 | 模块 | 源码定向修复依据 | 本轮隔离浏览器操作 | 尚未实测的边界 |
+|---|---|---|---|---|
+| 1 | 启动 / launcher | Q-0620/Q-0612/Q-0659..0661 | 添加启动项表单 | 真实启动、全局热键与悬浮窗未实测 |
+| 2 | Buddy / buddy | Q-0621 | 新增账号与Token入口 | 账号授权、切换、用量和2API未连接真实账号 |
+| 3 | SDK / sdk | Q-0622 | 类别与关键词筛选 | 真实SDK安装/切换/卸载未执行 |
+| 4 | AI / ai | Q-0623 | 预设选择与自定义Provider表单 | 真实供应商、工具安装、模型请求未执行 |
+| 5 | 思维导图 / mindmap | Q-0624 | 文件夹表单及空名禁提交 | 真实文档/AI探索/贴纸窗口未实测 |
+| 6 | API / api | Q-0625/Q-0667 | 初始化失败→刷新恢复→项目表单 | 未发送真实接口、单测或压测流量 |
+| 7 | 服务 / node | Q-0626/Q-0669 | 有数据卡片、模拟安装失败、日志事件及复制失败/恢复 | 没有真实安装、启停或结束进程 |
+| 8 | 资讯 / news | Q-0627 | 来源管理弹窗 | 真实RSS抓取及订阅保存未执行 |
+| 9 | 代理 / mihomo | Q-0628 | 设置弹窗与初始状态 | 未切换系统代理、TUN、真实核心或订阅 |
+| 10 | 证书 / cert | Q-0629 | 新建域名/证书内嵌表单 | 未签发/部署真实证书或启用监听 |
+| 11 | 剪贴板 / clipboard | Q-0630 | 设置弹窗及准确分页对象 | 未读取用户历史或修改系统监控状态 |
+| 12 | OTP / otp | Q-0631/Q-0632 | 添加令牌表单 | 未使用真实密钥/扫码/写系统剪贴板 |
+| 13 | 翻译 / translate | Q-0633/Q-0634 | 输入清空、无供应商时禁止发送 | 未请求真实翻译供应商 |
+| 14 | Picky / picky | Q-0635 | 新增收藏弹窗 | 未抓取真实网页或同步云端 |
+| 15 | 本地网络 / network | Q-0636 | 停止采样并显示开始采样入口 | 网卡及流量为模拟数据，未诊断真实网络 |
+| 16 | HTTP服务 / httpServer | Q-0637 | 空目录启动校验且无启动IPC | 未实际监听端口或暴露目录 |
+| 17 | RTSP服务 / rtspServer | Q-0638/Q-0663/Q-0666 | 添加实例；损坏配置错误可见、原值保持 | 未用摄像头/真实FFmpeg/MediaMTX推流 |
+| 18 | 图片Base64 / imageBase64 | Q-0639/Q-0666 | 转换页签、无效编码反馈、富文本提示 | 未走真实原生图片保存路径 |
+| 19 | 环境变量 / env | Q-0640/Q-0641 | 备份还原页与空备份列表 | 未备份/恢复真实注册表或写PATH |
+| 20 | 日志查看 / logViewer | Q-0642/Q-0664/Q-0666 | 新句柄快照、追加/截断/等长改写、错误恢复/暂停/Activity返回 | 真实Tauri窗口IPC链路未实测；原生临时文件读取已测 |
+| 21 | JSON浏览 / jsonBrowser | Q-0643/Q-0644/Q-0665 | 真实Monaco键盘输入及结构树 | 未读写用户JSON；超大图树以预算单元回归覆盖 |
+| 22 | Markdown / markdownReader | Q-0645/Q-0646 | 目录显示/隐藏 | 未保存真实用户文档或注册文件关联 |
+| 23 | 串口调试 / serial | Q-0647 | 模拟设备页签 | 无真实串口硬件；未启动原生模拟端口 |
+| 24 | 网络调试器 / wsDebugger | Q-0648/Q-0649 | TCP页签、主机/端口输入区 | 未连接真实WS/SSE/TCP/UDP目标 |
+| 25 | 音乐播放器 / music | Q-0650..0652 | 样例曲库与插件页 | 未实际播放、下载或安装音源插件 |
+| 26 | 收藏 / favorites | Q-0653/Q-0666 | 关键词→准确fav_list参数 | 未导入真实浏览器收藏或平台账号数据 |
+| 27 | 任务计划 / tasks | Q-0654 | 新建任务表单 | 未写真实任务数据库或执行系统任务 |
+| 28 | 设置 / settings | Q-0655 | 模拟更新检查及主题提示弹窗 | 未改变自启/托盘/真实升级与存储目录 |
+| 29 | Suno下载 / suno | Q-0656/Q-0657/Q-0668 | 解析失败反馈、请求仅提交一次 | 未访问真实Suno或下载真实音频 |
+| 30 | 数据库设计 / dbdesigner | Q-0658 | 新建设计、会话/校验契约与画布 | 未写用户设计文件或连接真实数据库 |
+
+五、源码深审边界与实现取舍
+- 本轮重点是交接真实缺口：文件来源及取消/恢复、持久化损坏保护、宽深遍历和搜索预算、响应/分页/总时限、异步错误及反馈所有权；没有用“只看最近diff”替代这些调用链追踪。
+- 日志每次刷新仍是有界快照读取和索引，不冒称增量tail或无内存开销；原生IPC端到端WebView2和256MiB实际大文件压力未实测。超限会报错保留已显示内容。
+- JSON超大/超深数据会截断并提示，不能声称展示任意大小文档的所有节点；索引/搜索预算各有明确上限。
+- Suno结果上限2000首；分页失败时保留已有结果/SSR回退，不保证真实主页全量歌曲。真实页面及接口变化不由模拟IPC证明。
+- 应用仍采用既有App.css/品牌主题与公共控件，没有另造主题或新增框架；业务机制、账号协议及用户保存的模块导航顺序不变。
+- 原有原生隔离测试依据见相应QA快照；本轮新跑的原生测试只按上面列出的19项及all-targets检查计数。
+
+六、证据与复跑
+- preview/README.txt：启动、类型检查、Playwright命令与隔离范围。
+- ui-evidence/smoke.json：逐页文本、初始化IPC、错误、缺失契约与宽度。
+- ui-evidence/interactions.json：逐项具名断言和调用参数快照。
+- ui-evidence/<id>.png、<id>-narrow.png、<id>-interaction.png，及rtspServer-corrupt.png。
+- ui-evidence/contact-*.png仅为目视概览，详细文字以原图为准。
+- final-build.txt、frontend-tests.txt、architecture.txt、final-cargo-check.txt、log-native-tests.txt、suno-native-tests.txt、qa-format.txt。
+- QA-COMPLETENESS.json：51条四段字段检查与17条修复清单。
+脚本早期曾出现夹具错误（两个main、错误分页类型、懒加载占位、共用上下文虚拟时钟影响Monaco）。这些均已修正，不算产品缺陷；最终JSON结果是修正后重跑，截图成功本身不被视为业务通过。
+
+七、提交与工作区保护
+本轮按问题精确提交，不push。用户既有package.json、Cargo.toml、Cargo.lock、tauri.conf.json版本差异保留；qa.db保留本地记录，不整库暂存；reports/project-review-2026-10-30.txt未改动。
+以下为16e6751之后的代码/QA修复提交，最终验收资料另以Q-0662提交：
+c33243d fix: #Q-0665 Preserve late JSON search hits within separate traversal and row budgets
+74d3094 fix: #Q-0664 Restore log sources after Activity suspension without stale viewer state
+19b4de8 fix: #Q-0669 Report service log copy failures and release feedback timers
+65fe03f fix: #Q-0668 Limit the total Suno profile parsing duration
+3adc7d0 fix: #Q-0667 Show API initialization failures and support guarded retries
+be1d950 fix: #Q-0668 Bound Suno parse responses and terminate repeated pagination
+a985bea test: #Q-0664 Verify fresh log snapshots against isolated temporary files
+583b590 fix: #Q-0665 Bound JSON graph and worker traversal without expanding sibling lists
+128387f fix: #Q-0666 Keep narrow toolbars readable and render translated hints correctly
+c90846a fix: #Q-0665 Render bounded JSON tree prefixes with lazy sibling traversal
+fdc5e77 docs: #Q-0633 Restore implementation-specific solutions for Q-0633 through Q-0649
+9531064 fix: #Q-0664 Refresh log sources through bounded binary reads and display line counts
+2dd25e3 fix: #Q-0663 Preserve damaged RTSP configuration on load failure

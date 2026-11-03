@@ -1,0 +1,539 @@
+{
+  "date": "2026-11-03",
+  "scope": "Q-0612 and Q-0620..Q-0669",
+  "checked": 51,
+  "empty_fields": [],
+  "repaired_solutions": [
+    "Q-0633",
+    "Q-0634",
+    "Q-0635",
+    "Q-0636",
+    "Q-0637",
+    "Q-0638",
+    "Q-0639",
+    "Q-0640",
+    "Q-0641",
+    "Q-0642",
+    "Q-0643",
+    "Q-0644",
+    "Q-0645",
+    "Q-0646",
+    "Q-0647",
+    "Q-0648",
+    "Q-0649"
+  ],
+  "historical_format_issues": 19,
+  "qa_db_committed": false,
+  "entries": [
+    {
+      "qid": "Q-0612",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 64,
+        "root_cause": 55,
+        "solution": 251,
+        "files": 353
+      }
+    },
+    {
+      "qid": "Q-0620",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 79,
+        "root_cause": 145,
+        "solution": 290,
+        "files": 219
+      }
+    },
+    {
+      "qid": "Q-0621",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 86,
+        "root_cause": 104,
+        "solution": 270,
+        "files": 422
+      }
+    },
+    {
+      "qid": "Q-0622",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 81,
+        "root_cause": 129,
+        "solution": 286,
+        "files": 302
+      }
+    },
+    {
+      "qid": "Q-0623",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 76,
+        "root_cause": 146,
+        "solution": 237,
+        "files": 217
+      }
+    },
+    {
+      "qid": "Q-0624",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 81,
+        "root_cause": 133,
+        "solution": 261,
+        "files": 406
+      }
+    },
+    {
+      "qid": "Q-0625",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 74,
+        "root_cause": 134,
+        "solution": 229,
+        "files": 277
+      }
+    },
+    {
+      "qid": "Q-0626",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 84,
+        "root_cause": 127,
+        "solution": 256,
+        "files": 375
+      }
+    },
+    {
+      "qid": "Q-0627",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 80,
+        "root_cause": 111,
+        "solution": 281,
+        "files": 300
+      }
+    },
+    {
+      "qid": "Q-0628",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 80,
+        "root_cause": 104,
+        "solution": 289,
+        "files": 236
+      }
+    },
+    {
+      "qid": "Q-0629",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 74,
+        "root_cause": 88,
+        "solution": 266,
+        "files": 382
+      }
+    },
+    {
+      "qid": "Q-0630",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 78,
+        "root_cause": 101,
+        "solution": 249,
+        "files": 216
+      }
+    },
+    {
+      "qid": "Q-0631",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 80,
+        "root_cause": 110,
+        "solution": 310,
+        "files": 273
+      }
+    },
+    {
+      "qid": "Q-0632",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 75,
+        "root_cause": 142,
+        "solution": 337,
+        "files": 512
+      }
+    },
+    {
+      "qid": "Q-0633",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 50,
+        "root_cause": 91,
+        "solution": 136,
+        "files": 100
+      }
+    },
+    {
+      "qid": "Q-0634",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 49,
+        "root_cause": 94,
+        "solution": 151,
+        "files": 230
+      }
+    },
+    {
+      "qid": "Q-0635",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 65,
+        "root_cause": 98,
+        "solution": 137,
+        "files": 427
+      }
+    },
+    {
+      "qid": "Q-0636",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 58,
+        "root_cause": 99,
+        "solution": 130,
+        "files": 359
+      }
+    },
+    {
+      "qid": "Q-0637",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 63,
+        "root_cause": 113,
+        "solution": 145,
+        "files": 96
+      }
+    },
+    {
+      "qid": "Q-0638",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 54,
+        "root_cause": 117,
+        "solution": 177,
+        "files": 325
+      }
+    },
+    {
+      "qid": "Q-0639",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 55,
+        "root_cause": 93,
+        "solution": 141,
+        "files": 431
+      }
+    },
+    {
+      "qid": "Q-0640",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 58,
+        "root_cause": 94,
+        "solution": 141,
+        "files": 197
+      }
+    },
+    {
+      "qid": "Q-0641",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 75,
+        "root_cause": 108,
+        "solution": 147,
+        "files": 224
+      }
+    },
+    {
+      "qid": "Q-0642",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 64,
+        "root_cause": 105,
+        "solution": 195,
+        "files": 479
+      }
+    },
+    {
+      "qid": "Q-0643",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 74,
+        "root_cause": 121,
+        "solution": 175,
+        "files": 556
+      }
+    },
+    {
+      "qid": "Q-0644",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 60,
+        "root_cause": 100,
+        "solution": 144,
+        "files": 101
+      }
+    },
+    {
+      "qid": "Q-0645",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 84,
+        "root_cause": 123,
+        "solution": 152,
+        "files": 997
+      }
+    },
+    {
+      "qid": "Q-0646",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 68,
+        "root_cause": 96,
+        "solution": 153,
+        "files": 539
+      }
+    },
+    {
+      "qid": "Q-0647",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 65,
+        "root_cause": 120,
+        "solution": 149,
+        "files": 620
+      }
+    },
+    {
+      "qid": "Q-0648",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 68,
+        "root_cause": 111,
+        "solution": 146,
+        "files": 525
+      }
+    },
+    {
+      "qid": "Q-0649",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 75,
+        "root_cause": 129,
+        "solution": 155,
+        "files": 301
+      }
+    },
+    {
+      "qid": "Q-0650",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 66,
+        "root_cause": 73,
+        "solution": 115,
+        "files": 102
+      }
+    },
+    {
+      "qid": "Q-0651",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 64,
+        "root_cause": 89,
+        "solution": 186,
+        "files": 101
+      }
+    },
+    {
+      "qid": "Q-0652",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 54,
+        "root_cause": 78,
+        "solution": 90,
+        "files": 104
+      }
+    },
+    {
+      "qid": "Q-0653",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 46,
+        "root_cause": 86,
+        "solution": 183,
+        "files": 246
+      }
+    },
+    {
+      "qid": "Q-0654",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 63,
+        "root_cause": 77,
+        "solution": 139,
+        "files": 174
+      }
+    },
+    {
+      "qid": "Q-0655",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 64,
+        "root_cause": 106,
+        "solution": 171,
+        "files": 171
+      }
+    },
+    {
+      "qid": "Q-0656",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 58,
+        "root_cause": 79,
+        "solution": 141,
+        "files": 98
+      }
+    },
+    {
+      "qid": "Q-0657",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 52,
+        "root_cause": 73,
+        "solution": 139,
+        "files": 224
+      }
+    },
+    {
+      "qid": "Q-0658",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 66,
+        "root_cause": 96,
+        "solution": 220,
+        "files": 695
+      }
+    },
+    {
+      "qid": "Q-0659",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 54,
+        "root_cause": 106,
+        "solution": 231,
+        "files": 589
+      }
+    },
+    {
+      "qid": "Q-0660",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 61,
+        "root_cause": 78,
+        "solution": 274,
+        "files": 551
+      }
+    },
+    {
+      "qid": "Q-0661",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 53,
+        "root_cause": 81,
+        "solution": 224,
+        "files": 464
+      }
+    },
+    {
+      "qid": "Q-0662",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 69,
+        "root_cause": 102,
+        "solution": 400,
+        "files": 277
+      }
+    },
+    {
+      "qid": "Q-0663",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 61,
+        "root_cause": 80,
+        "solution": 160,
+        "files": 296
+      }
+    },
+    {
+      "qid": "Q-0664",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 68,
+        "root_cause": 73,
+        "solution": 481,
+        "files": 334
+      }
+    },
+    {
+      "qid": "Q-0665",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 61,
+        "root_cause": 87,
+        "solution": 391,
+        "files": 375
+      }
+    },
+    {
+      "qid": "Q-0666",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 89,
+        "root_cause": 78,
+        "solution": 161,
+        "files": 324
+      }
+    },
+    {
+      "qid": "Q-0667",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 74,
+        "root_cause": 92,
+        "solution": 175,
+        "files": 94
+      }
+    },
+    {
+      "qid": "Q-0668",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 82,
+        "root_cause": 135,
+        "solution": 270,
+        "files": 276
+      }
+    },
+    {
+      "qid": "Q-0669",
+      "status": "已验证",
+      "field_lengths": {
+        "phenomenon": 61,
+        "root_cause": 71,
+        "solution": 159,
+        "files": 115
+      }
+    }
+  ]
+}

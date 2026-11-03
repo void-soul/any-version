@@ -1,0 +1,559 @@
+[
+  {
+    "id": "launcher",
+    "passed": true,
+    "calls": [
+      {
+        "command": "launcher_get_classifications"
+      },
+      {
+        "command": "launcher_get_all_items"
+      },
+      {
+        "command": "launcher_get_settings"
+      }
+    ]
+  },
+  {
+    "id": "buddy",
+    "passed": true,
+    "calls": [
+      {
+        "command": "buddy_list_session_conflicts",
+        "args": {
+          "platform": "codebuddy-cn"
+        }
+      },
+      {
+        "command": "buddy_get_expiry_columns"
+      },
+      {
+        "command": "buddy_list_accounts",
+        "args": {
+          "platform": "codebuddy-cn"
+        }
+      },
+      {
+        "command": "buddy_get_current_account_id",
+        "args": {
+          "platform": "codebuddy-cn"
+        }
+      },
+      {
+        "command": "buddy_get_paths",
+        "args": {
+          "platform": "codebuddy-cn"
+        }
+      },
+      {
+        "command": "buddy_get_account_view",
+        "args": {
+          "platform": "codebuddy-cn"
+        }
+      }
+    ]
+  },
+  {
+    "id": "sdk",
+    "passed": true,
+    "calls": [
+      {
+        "command": "project_get_github_token"
+      },
+      {
+        "command": "get_auto_start_services"
+      },
+      {
+        "command": "is_admin"
+      },
+      {
+        "command": "project_list_fast"
+      }
+    ]
+  },
+  {
+    "id": "ai",
+    "passed": true,
+    "calls": [
+      {
+        "command": "get_ai_config"
+      },
+      {
+        "command": "get_provider_presets"
+      },
+      {
+        "command": "get_provider_presets"
+      }
+    ]
+  },
+  {
+    "id": "mindmap",
+    "passed": true,
+    "calls": [
+      {
+        "command": "mm_list_documents",
+        "args": {
+          "folderId": null
+        }
+      },
+      {
+        "command": "mm_init"
+      },
+      {
+        "command": "get_ai_config"
+      },
+      {
+        "command": "mm_get_explorer_settings"
+      },
+      {
+        "command": "get_translate_config"
+      },
+      {
+        "command": "mm_list_documents",
+        "args": {
+          "folderId": null
+        }
+      },
+      {
+        "command": "mm_list_folders"
+      }
+    ]
+  },
+  {
+    "id": "api",
+    "passed": true,
+    "calls": [
+      {
+        "command": "api_init"
+      },
+      {
+        "command": "api_init"
+      },
+      {
+        "command": "api_list_projects"
+      }
+    ]
+  },
+  {
+    "id": "node",
+    "passed": true,
+    "calls": [
+      {
+        "command": "npm_list_projects"
+      },
+      {
+        "command": "npm_deps",
+        "args": {
+          "projectId": "fixture-service"
+        }
+      },
+      {
+        "command": "npm_status",
+        "args": {
+          "projectId": "fixture-service"
+        }
+      },
+      {
+        "command": "get_auto_start_services"
+      },
+      {
+        "command": "npm_install",
+        "args": {
+          "projectId": "fixture-service"
+        }
+      }
+    ]
+  },
+  {
+    "id": "news",
+    "passed": true,
+    "calls": [
+      {
+        "command": "get_rss_config"
+      }
+    ]
+  },
+  {
+    "id": "mihomo",
+    "passed": true,
+    "calls": [
+      {
+        "command": "mihomo_get_app_config"
+      },
+      {
+        "command": "mihomo_get_controled_config"
+      },
+      {
+        "command": "mihomo_get_state"
+      },
+      {
+        "command": "mihomo_controller_info"
+      },
+      {
+        "command": "mihomo_get_controled_config"
+      },
+      {
+        "command": "get_tray_menu_config"
+      },
+      {
+        "command": "get_auto_start_services"
+      }
+    ]
+  },
+  {
+    "id": "cert",
+    "passed": true,
+    "calls": [
+      {
+        "command": "cert_list"
+      },
+      {
+        "command": "credential_list"
+      },
+      {
+        "command": "deploy_node_list"
+      }
+    ]
+  },
+  {
+    "id": "clipboard",
+    "passed": true,
+    "calls": [
+      {
+        "command": "clipboard_get_items",
+        "args": {
+          "keyword": "",
+          "kind": "",
+          "pinnedOnly": false,
+          "limit": 100,
+          "offset": 0
+        }
+      },
+      {
+        "command": "clipboard_get_settings"
+      },
+      {
+        "command": "clipboard_get_ignored_apps"
+      }
+    ]
+  },
+  {
+    "id": "otp",
+    "passed": true,
+    "calls": [
+      {
+        "command": "otp_list"
+      },
+      {
+        "command": "otp_list_categories"
+      }
+    ]
+  },
+  {
+    "id": "translate",
+    "passed": true,
+    "calls": [
+      {
+        "command": "get_ai_config"
+      },
+      {
+        "command": "get_translate_config"
+      },
+      {
+        "command": "translate_history_list"
+      }
+    ]
+  },
+  {
+    "id": "picky",
+    "passed": true,
+    "calls": [
+      {
+        "command": "picky_get_state"
+      }
+    ]
+  },
+  {
+    "id": "network",
+    "passed": true,
+    "calls": [
+      {
+        "command": "net_adapters"
+      },
+      {
+        "command": "net_traffic"
+      }
+    ]
+  },
+  {
+    "id": "httpServer",
+    "passed": true,
+    "calls": [
+      {
+        "command": "get_running_http_servers"
+      }
+    ]
+  },
+  {
+    "id": "rtspServer",
+    "passed": true,
+    "calls": [
+      {
+        "command": "get_all_local_ips"
+      },
+      {
+        "command": "get_rtsp_camera_devices"
+      },
+      {
+        "command": "get_all_rtsp_server_statuses"
+      }
+    ]
+  },
+  {
+    "id": "imageBase64",
+    "passed": true,
+    "calls": []
+  },
+  {
+    "id": "env",
+    "passed": true,
+    "calls": [
+      {
+        "command": "is_admin"
+      },
+      {
+        "command": "get_path_directories"
+      },
+      {
+        "command": "list_env_backups"
+      }
+    ]
+  },
+  {
+    "id": "logViewer",
+    "passed": true,
+    "calls": []
+  },
+  {
+    "id": "jsonBrowser",
+    "passed": true,
+    "calls": []
+  },
+  {
+    "id": "markdownReader",
+    "passed": true,
+    "calls": [
+      {
+        "command": "markdown_assoc_status"
+      },
+      {
+        "command": "take_pending_markdown_files"
+      }
+    ]
+  },
+  {
+    "id": "serial",
+    "passed": true,
+    "calls": [
+      {
+        "command": "serial_list_ports"
+      }
+    ]
+  },
+  {
+    "id": "wsDebugger",
+    "passed": true,
+    "calls": []
+  },
+  {
+    "id": "music",
+    "passed": true,
+    "calls": [
+      {
+        "command": "music_plugin_list"
+      },
+      {
+        "command": "music_get_library"
+      },
+      {
+        "command": "music_get_settings"
+      },
+      {
+        "command": "music_list_presets"
+      },
+      {
+        "command": "music_get_state"
+      },
+      {
+        "command": "music_set_queue",
+        "args": {
+          "paths": [
+            "C:/fixture/music/sample.mp3"
+          ],
+          "mode": "sequence"
+        }
+      }
+    ]
+  },
+  {
+    "id": "favorites",
+    "passed": true,
+    "calls": [
+      {
+        "command": "fav_has_credential",
+        "args": {
+          "source": "bilibili"
+        }
+      },
+      {
+        "command": "fav_has_credential",
+        "args": {
+          "source": "zhihu-cookie"
+        }
+      },
+      {
+        "command": "fav_get_github_token"
+      },
+      {
+        "command": "get_ai_config"
+      },
+      {
+        "command": "fav_get_settings"
+      },
+      {
+        "command": "fav_list",
+        "args": {
+          "source": null,
+          "status": null,
+          "keyword": "fixture",
+          "sort": "favorited",
+          "favoritedSince": null,
+          "starredOnly": null,
+          "limit": 0
+        }
+      },
+      {
+        "command": "fav_stats"
+      },
+      {
+        "command": "fav_credential_status"
+      },
+      {
+        "command": "fav_list_deleted"
+      }
+    ]
+  },
+  {
+    "id": "tasks",
+    "passed": true,
+    "calls": [
+      {
+        "command": "tasks_init"
+      },
+      {
+        "command": "tasks_list_range",
+        "args": {
+          "start": "2026-10-26",
+          "end": "2026-12-06"
+        }
+      },
+      {
+        "command": "tasks_list_by_date",
+        "args": {
+          "date": null,
+          "includeArchived": false
+        }
+      }
+    ]
+  },
+  {
+    "id": "settings",
+    "passed": true,
+    "calls": [
+      {
+        "command": "get_config"
+      },
+      {
+        "command": "get_app_version"
+      },
+      {
+        "command": "get_appearance_config"
+      },
+      {
+        "command": "list_system_fonts"
+      },
+      {
+        "command": "get_tray_menu_config"
+      },
+      {
+        "command": "launcher_get_settings"
+      }
+    ]
+  },
+  {
+    "id": "suno",
+    "passed": true,
+    "calls": [
+      {
+        "command": "suno_list_profiles"
+      },
+      {
+        "command": "suno_parse_profile",
+        "args": {
+          "url": "https://suno.com/@fixture"
+        }
+      }
+    ]
+  },
+  {
+    "id": "dbdesigner",
+    "passed": true,
+    "calls": [
+      {
+        "command": "dbd_get_settings"
+      },
+      {
+        "command": "get_ai_config"
+      },
+      {
+        "command": "dbd_new_document",
+        "args": {
+          "name": "未命名设计",
+          "dialect": "mysql"
+        }
+      },
+      {
+        "command": "dbd_get_session_index"
+      },
+      {
+        "command": "dbd_get_chat",
+        "args": {
+          "id": "fixture-design"
+        }
+      },
+      {
+        "command": "dbd_upsert_session_entry",
+        "args": {
+          "id": "fixture-design",
+          "title": "未命名设计",
+          "path": ""
+        }
+      },
+      {
+        "command": "dbd_validate",
+        "args": {
+          "doc": {
+            "id": "fixture-design",
+            "name": "隔离设计",
+            "description": "",
+            "dialect": "mysql",
+            "commonFields": [],
+            "decisions": [],
+            "nodes": [],
+            "relations": []
+          }
+        }
+      }
+    ]
+  }
+]

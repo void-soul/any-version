@@ -1,0 +1,120 @@
+历史交接快照：本文件已续办。当前结论、完成项与真实环境边界见同目录FINAL-REPORT.txt和PROGRESS.txt。以下原文保留追溯，不能再把其“尚未/下一步”当成当前状态。
+
+交接：30模块深入检查、操作优化、UI统一与浏览器验收
+更新：2026-11-03（Asia/Shanghai）
+仓库：E:/pro/my/any-version
+分支：codex/audit-remediation-20261030
+
+一、用户当前目标与授权
+用户要求按截图的30模块顺序，逐个深入检查、优化操作、美化UI、统一风格。
+之前已做一轮定向修复，但没有完成全量深审和实际UI验收，不能说整个目标已经完成。
+用户看到PROGRESS里的“待补”后明确要求“继续完成”，并指出前端可用浏览器访问。
+本次已明确回复：“允许使用 Playwright 独立浏览器测试”。可使用Playwright，不再为此重复询问。
+用户现要求先交接，准备在新会话继续。此刻停止扩大修改，不代表任务完成。
+持续授权：每次编程改动按qa-log记录、检查、完善、提交；不要push。
+不能因skill一般性确认要求重复申请已有授权；不触碰真实账号/证书/服务/系统配置做破坏性测试。
+当前开发者规则不允许主动多agent，除非当前用户或适用AGENTS/skill明确要求；历史空闲agent不要擅自调用。
+
+二、技能与规则
+qa-log：E:/pro/skill/qa-log/SKILL.md（本会话一直采用该实际工具目录）；项目也有.agents/skills/qa-log。
+中文QA字段用Python subprocess stdin UTF-8 JSON；不要中文命令行参数或PowerShell文本管道。
+临时Python脚本放系统TEMP并同一次调用删除。QA JSON字段是solution，不是answer！
+QA快照输出到reports，不要整份stage qa.db（含大量其他会话历史）。
+code-audit：.agents/skills/code-audit/SKILL.md。定位已确认：本地桌面主体，网络模块补边界，无需重新问定位。
+范围src和对应src-tauri/src；排除第三方、构建物和真实用户数据。整个模块检查不能偷换成只审最近diff。
+ponytail技能本轮已读：复用现有机制，控制改动范围，不新增无必要框架/依赖。
+UI采用现有App.css令牌、shared/Button及shared/Modal，不能另造第二套主题。
+全局弹窗明确关闭规则：不靠背景/Escape关闭SharedModal。搜索面板本身的Escape是既有交互。
+
+三、已提交内容
+HEAD 16e6751：Q-0660/Q-0661 输入框左侧来源（全部/启动项/电脑盘符/网站）、右侧文件类型、齿轮设置（索引+搜索悬浮窗热键）；旧FileSearchPopup复用LauncherPanel的searchOnly模式，保留窗口ID及fileSearchHotkey字段。
+a71dd16：Q-0659 主搜索内嵌盘符/类型/索引管理与文件混合结果。
+4132a8f：Q-0658 数据库设计文件动作/脏文档保护、导出当前快照、原子/有界IO。
+更早各模块提交参见PROGRESS.txt及同目录Q-0612/Q-0620至Q-0658.json。
+最近自动验证：477项前端测试（72文件）、npm run build、架构1170文件通过。
+Rust最近逻辑修改的all-targets检查在Q-0658通过；Q-0661仅原生窗口标题字符串改动，没有新跑Rust检查。
+来源筛选/网页URL编码/单输入框混合渲染有回归；真实全局热键注册与窗口唤起未实测。
+
+四、工作区保护（务必先git status）
+历史未提交修改：package.json、src-tauri/Cargo.lock、src-tauri/Cargo.toml、src-tauri/tauri.conf.json（用户版本号2.9.3到2.9.5）；qa.db。
+历史未跟踪：reports/project-review-2026-10-30.txt（不要擅自改/提交）。
+本轮未提交验收工作：reports/module-ui-2026-11-02/preview/ 和 ui-evidence/。
+本交接文档/提示词以及追加的进度checkpoint也尚未提交。
+不要git add .，不要整份提交qa.db，不要覆盖用户版本修改。
+.git在沙箱里只读，git add/commit需require_escalated；之前auto-review都允许精确范围提交。
+
+五、浏览器工具与服务器现状
+当前本地隔离Vite服务：http://127.0.0.1:5196/
+页面：http://127.0.0.1:5196/reports/module-ui-2026-11-02/preview/index.html
+由exec session 87396启动，绑定127.0.0.1，未停止；新会话先检查端口，不要重复启动。
+启动命令：npx vite --config reports/module-ui-2026-11-02/preview/vite.config.mjs
+需要require_escalated，因为本环境沙箱连localhost也可能报10013/套接字访问不允许。
+用户现在也打开了in-app浏览器上述URL；可以重新发现连接。但继续用已授权的Playwright即可。
+历史CUA原生Edge因无法可靠确认当前URL强制终止过一次；不要重复尝试然后又中止任务。
+本轮iab最初不可用，open_in_codex曾queued，后来用户ambient UI显示已打开本地页。
+
+Playwright已从标准npm获取，无项目依赖改动：
+D:/any-versions/caches/npm/_npx/e41f203b7505f1fb/node_modules/playwright
+版本1.64.1。直接使用安装好的Edge channel，独立headless上下文，不使用用户profile。
+运行示例（需escalated）：
+$env:PLAYWRIGHT_MODULE='D:/any-versions/caches/npm/_npx/e41f203b7505f1fb/node_modules/playwright'
+node reports/module-ui-2026-11-02/preview/smoke.cjs
+如果缓存变化，npm config get cache，再rg --files该缓存/_npx -g package.json定位；不要把Playwright写入package.json。
+
+六、当前验收入口与第一轮结果（很重要：尚未验收通过）
+preview/main.tsx 引入实际moduleRegistry的30模块和实际App.css，保留截图顺序的模块下拉。
+preview/vite.config.mjs把所有@tauri-apps/*导向preview/tauri.ts，完全不连真实Tauri/用户数据库。
+preview/index.html的CSP和Playwright route禁止外网。页面中的动作均只走模拟IPC。
+preview/tauri.ts的模拟契约还很粗：有些泛化list返回[]，很多命令故意抛“隔离样例未配置”。
+不能把模拟契约错误当产品错误；也不能因为未抛pageerror就说业务通过。
+(window as any).__fixtureCalls暴露本次模拟调用，方便断言来源/参数/重复提交。
+可以完善模拟数据与错误/延迟控制，再逐项点击验收；不要只看空页面截图。
+
+Q-0662已创建，状态Pending，问题是建立隔离浏览器验收与诊断，尚未填写根因/方案/文件；下一QA应为Q-0663，先查询确认。
+第一次smoke命令exec session60495已结束exit1，finally已关闭该独立浏览器，不需杀用户Edge。
+失败原因是【验收脚本】page.locator('main').innerText()在思维导图页匹配到两个main，严格模式报错。
+首先修复选择器为外层fixture根的main（如'#root > div > main'或给外层添加data-testid），同样调整所有后续根查询。
+最好逐页try/catch写入结果，避免一页失败丢后面25项；DOM ready/延迟契约需明确等待，不能一味sleep。
+已生成launcher、buddy、sdk、ai共4张截图和smoke.json，存ui-evidence/。
+尚未人工查看这些截图，不能称4项已目视验收！
+launcher捕获1条错误：mock少了正确命令launcher_get_settings，当前fixture误写get_launcher_setting/get_app_settings。
+Buddy虽无pageerror，画面有“隔离样例未配置”错误，缺buddy_get_current_account_id/buddy_get_paths/buddy_get_account_view等契约。
+SDK同样有未配置project_get_github_token/get_auto_start_services/is_admin等；AI缺get_provider_presets。
+下一步逐个读实际类型补【准确的】初始化模拟返回，不要用万能Proxy伪造所有成功。
+
+七、模块顺序（不可丢）
+1启动launcher、2Buddy buddy、3 SDK sdk、4 AI ai、5思维导图mindmap、6 API api、7服务node、8资讯news、9代理mihomo、10证书cert、11剪贴板clipboard、12 OTP otp、13翻译translate、14 Picky picky、15本地网络network、16 HTTP服务httpServer、17 RTSP服务rtspServer、18图片Base64 imageBase64、19环境变量env、20日志logViewer、21 JSON jsonBrowser、22 Markdown markdownReader、23串口serial、24网络调试器wsDebugger、25音乐music、26收藏favorites、27任务tasks、28设置settings、29 Suno suno、30数据库设计dbdesigner。
+
+八、必须补完的真实缺口，不只是“缺验证”
+1. 日志跟随：src/components/logViewer/runtime.ts 的tailTick每3s重读同一个浏览器File快照；不能保证读到磁盘追加。
+   尚未修改！本轮只是阅读/讨论方案，没有实现。
+   建议浏览器使用File System Access handle.getFile每次取新快照；Tauri需原生可刷新文件来源（如有界二进制IPC读取+metadata），不要误把旧File快照轮询称为真实跟随。
+   应考虑追加、截断/轮换、同长度改写、超限、关闭/切页取消、读取异常恢复；不能每3s无界分配或JSON序列化巨量字节。
+   现有256MiB/100万行/单行1MiB资源预算保留；当前tail有overlap/hidden/loading保护。
+2. 日志行数翻译bug：logview.lines目前中英文固定字符串“0 行”/对应英文，runtime传入n却没有插值。LogViewer.tsx初始状态也应传n:0。
+3. QA记录完整性：Q-0633至Q-0649的JSON快照solution为空（之前误用JSON answer字段，CLI只认solution）。
+   必须根据各提交实际diff和PROGRESS细节准确补全，并导出新快照，不要凭空生成通用方案。
+   Q-0612/Q-0620..Q-0632以及Q-0650..Q-0661有solution。
+   qa_tool.py format只报19条历史文件表问题，不会检测这些空solution，不能只靠format说通过。
+4. JSON图树深层边界：原flattenTreeRows截断标记可能提前终止已push子节点；巨大兄弟节点/深路径遍历需核查，尚未修复/验证。
+5. RTSP本地配置损坏可能仍被默认值覆盖，之前只列可能残余，需核查证实，不要直接宣称bug已确认。
+6. 真实串口硬件、外部账号/平台、真实证书部署、OS注册表恢复和服务控制没有执行；尽量用隔离临时数据及仿真验证，对确需外部环境的项目明确记录验证边界。
+
+九、测试与代码注意
+npm run build约7秒；npx vitest run约3秒；npm run check:architecture禁止单文件>=1000行。
+LauncherPanel目前约996行，继续加逻辑要提取适当已有块，别突破门槛。
+Rust：cargo ... --manifest-path src-tauri/Cargo.toml --locked --offline。
+Cargo home：D:/any-versions/caches/cargo；重编/链接约30–60秒。
+本机socket、junction、taskkill测试曾被沙箱拒绝，必要时仅对隔离回归申请escalated；不运行真实用户服务。
+当前TypeScript7包没有旧typescript/lib/typescript.js JS编译API，不要再试这种AST提取。
+PowerShell rg文件通配符要用目录+ -g，不能把带*的路径直接传给rg。
+Playwright可导出宽屏/窄屏截图，随后用view_image查看实际图片；这次已获用户授权，不受先前CUA-only限制。
+
+十、建议新会话执行顺序
+A. 读本交接和git status，确认用户授权及Q-0662 Pending。
+B. 修验收脚本外层main选择器、逐页异常记录，补准确fixture契约。完成30页宽屏/窄屏截图及实际浏览器关键操作断言。
+C. 将发现分成fixture缺失、产品bug、视觉问题，逐项修复，按qa-log完整记录/验证/精确提交。
+D. 修日志行数与真实跟随；补JSON树/其他已列深层待办，逐模块继续深审，不把范围偷换成只审初轮diff。
+E. 补Q-0633..Q-0649方案并检查所有本轮记录四段完整；保留19条历史格式问题不混改。
+F. 重写PROGRESS中的当前表与过时状态，给每项明确实现/自动验证/浏览器验证/原生验证边界，生成最终报告。
+G. 不要提前结束或要求用户再说“继续”，除非真正外部阻塞。不能用一句“30模块完成”掩盖仍未完成的验收或业务检查。

@@ -1,0 +1,661 @@
+[
+  {
+    "id": "launcher",
+    "text": "📁\n快捷启动\n搜索\n检测\n清理无效\n收缩全部\n启动统计\n视图\n添加项目\nKiraBug▍\n新建分类\n\n当前分类暂无项目\n\n您可以直接将 .exe、文件夹、任意文件或快捷方式 拖入此处\n\n— 拖进来就行，摆放的活交给我\n\n添加项目\n新建子分组",
+    "errors": [],
+    "calls": [
+      {
+        "command": "launcher_get_classifications"
+      },
+      {
+        "command": "launcher_get_all_items"
+      },
+      {
+        "command": "launcher_get_settings"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "buddy",
+    "text": "🇨🇳\nCodeBuddy CN\n🟣\nWorkBuddy\n账号\n2API\n会话\n积分\n设置\n0 / 0 个账号\n0 个 CodeBuddy CN 账号\n最近使用\n剩余额度\n最早到期\n全选\n刷新\n导出\n导入\n删除\n导入 WorkBuddy\n新增账号\n加列\n\n暂无账号\n\n点击「从本机导入」读取当前登录账号，或通过「导入 JSON」恢复备份。\n\n新增账号",
+    "errors": [],
+    "calls": [
+      {
+        "command": "buddy_list_session_conflicts",
+        "args": {
+          "platform": "codebuddy-cn"
+        }
+      },
+      {
+        "command": "buddy_get_expiry_columns"
+      },
+      {
+        "command": "buddy_list_accounts",
+        "args": {
+          "platform": "codebuddy-cn"
+        }
+      },
+      {
+        "command": "buddy_get_current_account_id",
+        "args": {
+          "platform": "codebuddy-cn"
+        }
+      },
+      {
+        "command": "buddy_get_paths",
+        "args": {
+          "platform": "codebuddy-cn"
+        }
+      },
+      {
+        "command": "buddy_get_account_view",
+        "args": {
+          "platform": "codebuddy-cn"
+        }
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "sdk",
+    "text": "全部\n语言\n工具\n服务\n\n未找到匹配项目\n\n— 换个名字，或者清掉筛选条件\n\n请在左侧选择项目\n从列表中点击一个项目查看详情",
+    "errors": [],
+    "calls": [
+      {
+        "command": "project_get_github_token"
+      },
+      {
+        "command": "get_auto_start_services"
+      },
+      {
+        "command": "is_admin"
+      },
+      {
+        "command": "project_list_fast"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "ai",
+    "text": "模型\n聚合\n工具\n技能\nMCP\n协同\n助手\n用量\nAI 默认项目目录\n\nAI 生成 / 新建的项目默认落在此目录；留空则每次询问\n\n添加 Provider\n尚未配置任何 Provider",
+    "errors": [],
+    "calls": [
+      {
+        "command": "get_ai_config"
+      },
+      {
+        "command": "get_provider_presets"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "mindmap",
+    "text": "暂无文件夹，使用底部按钮新建\n暂无文档\n文件夹\n文档\n导入 JSON 文件\n导图设置\n\n新建或选择一个思维导图\n\n点左侧 + 新建空白导图，或通过 AI 从项目 / 需求文本自动生成\n\n— 开个头，剩下的慢慢来",
+    "errors": [],
+    "calls": [
+      {
+        "command": "mm_list_documents",
+        "args": {
+          "folderId": null
+        }
+      },
+      {
+        "command": "mm_init"
+      },
+      {
+        "command": "get_ai_config"
+      },
+      {
+        "command": "mm_get_explorer_settings"
+      },
+      {
+        "command": "get_translate_config"
+      },
+      {
+        "command": "mm_list_documents",
+        "args": {
+          "folderId": null
+        }
+      },
+      {
+        "command": "mm_list_folders"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "api",
+    "text": "选择项目\n\n这里还没有项目\n\n点上方「 + 」新建第一个\n\n— 从建一个项目开始\n\n选择左侧接口开始调试，或新建项目/接口\n\n支持 {{\"变量名\"}}、{{$guid}} 等随机变量 · 单测断言 · 并发压测 · Markdown 文档 · Postman 导入导出",
+    "errors": [],
+    "calls": [
+      {
+        "command": "api_init"
+      },
+      {
+        "command": "api_list_projects"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "node",
+    "text": "暂无已配置的项目（node-projects/目录下未发现定义）",
+    "errors": [],
+    "calls": [
+      {
+        "command": "npm_list_projects"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "news",
+    "text": "全部资讯\n我的收藏\n刷新\n配置源\n全部\n今天\n三天内\n本周\n自定义\n暂无资讯数据\n没有匹配到当前的日期过滤条件，或是当前订阅源中没有文章。您也可以点击右上角“配置源”添加其他 RSS 源。",
+    "errors": [],
+    "calls": [
+      {
+        "command": "get_rss_config"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "mihomo",
+    "text": "Mihomo 代理\n○ 已停止\n\n内置 Mihomo 核心：订阅、代理组、规则、覆写、TUN / DNS / 嗅探与流量统计。\n\n启动\n重启\n概览\n订阅\nSub-Store\n代理\n策略组\n二级代理\n规则\n连接\n日志\n流量\n资源\n覆写\n系统代理\n网络\nTUN\nDNS\n嗅探\nWi-Fi\n备份\n内核\n规则\n全局\n直连\n系统代理\n未开启\n虚拟网卡 (TUN)\n未开启\n0 B/s\n0 B/s\n连接\n-\nMihomo 内核\n未运行",
+    "errors": [],
+    "calls": [
+      {
+        "command": "mihomo_get_app_config"
+      },
+      {
+        "command": "mihomo_get_controled_config"
+      },
+      {
+        "command": "mihomo_get_state"
+      },
+      {
+        "command": "mihomo_controller_info"
+      },
+      {
+        "command": "mihomo_get_controled_config"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "cert",
+    "text": "域名列表\n部署方式\nDNS凭据\n证书监控\n通知渠道\n调度日志\n证书接收\n域名列表\n新建域名 / 证书\n域名\tCA\tDNS 插件\t验证方式\t到期\t状态\t部署方式\t操作\n暂无域名，点击「新建域名 / 证书」开始",
+    "errors": [],
+    "calls": [
+      {
+        "command": "cert_list"
+      },
+      {
+        "command": "credential_list"
+      },
+      {
+        "command": "deploy_node_list"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "clipboard",
+    "text": "剪贴板历史\n监控中\n\n0 条历史 · 单击设为活跃剪贴板，双击粘贴到之前的窗口\n\n清空\n设置\n搜索\n全部\n文本\n图片\n仅置顶\n\n这里的剪贴板历史暂时是空的\n\n复制点东西，历史会自动记在这儿\n\n— 来，先复制点东西",
+    "errors": [],
+    "calls": [
+      {
+        "command": "clipboard_get_items",
+        "args": {
+          "keyword": "",
+          "kind": "",
+          "pinnedOnly": false,
+          "limit": 100,
+          "offset": 0
+        }
+      },
+      {
+        "command": "clipboard_get_settings"
+      },
+      {
+        "command": "clipboard_get_ignored_apps"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "otp",
+    "text": "OTP 验证器\n0 个令牌\n扫码\n导入\n添加\n全部 (0)\n新建分类\n\n暂无令牌，点击「添加」或「导入」开始",
+    "errors": [],
+    "calls": [
+      {
+        "command": "otp_list"
+      },
+      {
+        "command": "otp_list_categories"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "translate",
+    "text": "翻译\n\n使用 AI 模块已配置的模型供应商，选中文本后按划词热键或手动输入翻译\n\n翻译模型\n原文\n清空\n译文\n中文\nEnglish\n日本語\n한국어\nFrançais\nDeutsch\nРусский\nEspañol\n译文将显示在这里\nCtrl+Enter 快速翻译\n翻译\n尚未在 AI 模块配置模型供应商（需有 API Key 且配置 OpenAI 兼容端点）。配置后即可使用翻译。",
+    "errors": [],
+    "calls": [
+      {
+        "command": "get_ai_config"
+      },
+      {
+        "command": "get_translate_config"
+      },
+      {
+        "command": "translate_history_list"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "picky",
+    "text": "Picky 收藏\n0 条\n同步\n添加收藏\n全部 (0)\n收藏中 (0)\n已归档 (0)\n\n还没有收藏，点击「添加收藏」开始，或从云端同步",
+    "errors": [],
+    "calls": [
+      {
+        "command": "picky_get_state"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "network",
+    "text": "本地网络\n网卡概览 · 实时流量 · 连接与诊断\n概览\n连接\n诊断\n端口\n网卡概览\n名称 / 地址 / 网关 / DNS 与实时速率\n暂停采样\n刷新网卡\n实时流量\n仅统计已连接网卡，每秒采样\n↓ 0 B/s\n↑ 0 B/s\n等待采样…\n1 B/s\n下行\n上行\n采样中\n\n未检测到网卡\n\n系统没有返回可用的网络适配器，可尝试重新刷新。\n\n刷新网卡",
+    "errors": [],
+    "calls": [
+      {
+        "command": "net_adapters"
+      },
+      {
+        "command": "net_traffic"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "httpServer",
+    "text": "静态 HTTP 服务\n\n选择本地任意文件夹并启动静态文件网页服务，方便本地调试或局域网预览文件（支持 CORS 与目录列表）。\n\n服务根目录\n服务端口\n允许局域网访问（将绑定 0.0.0.0，仅在信任的网络下开启，否则目录会被同网段其他设备访问）\n启动服务\n正在运行的服务 (0)\n暂无运行中的静态服务器，在上方选择目录以开始。",
+    "errors": [],
+    "calls": [
+      {
+        "command": "get_running_http_servers"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "rtspServer",
+    "text": "RTSP 视频流服务器\n\n内置 MediaMTX + FFmpeg，卡片支持点击折叠与展开，点击“启动推流”即可开启模拟服务。\n\n添加实例\n启动全部 (1)\nRTSP 节点 #1\n未启动 · 端口 8554\n测试画幅\n路径: /live\n·\n协议: TCP\n·\n编码: H264\n启动推流\n实例别名:\n复制配置到全部 (0)\n视频输入源\n测试画幅\n摄像头\n视频文件\n启用音频（AAC 44.1kHz）\n内置标准 SMPTE 测试色彩画幅与时间戳，零文件开销。\n网络与传输协议\nRTSP 端口号\n推流路径名\n传输层协议\nTCP 协议 (默认推荐/稳定)\nUDP 协议 (低延迟包冲刷)\n允许局域网访问 (0.0.0.0)\n视频编码与硬件加速\n视频编码格式\nH.264 / AVC (默认广兼容)\nH.265 / HEVC (高压缩比)\n分辨率\n默认原始分辨率\n4K UHD (3840×2160)\n2K QHD (2560×1440)\n1080P (1920×1080)\n720P (1280×720)\n480P (640×480)\n帧率 (FPS)\n测试画幅原生帧率，120 FPS 适合 4K 高压测\n编码器/硬件加速\nCPU 软件编码器 (libx264/libx265)\nNVIDIA NVENC 硬件显卡编码\nIntel QuickSync 集显核显硬件编码\nAMD AMF 显卡硬件编码\n流复制 (Copy / 不重新编码)\n码率 (Mbps)\n0=编码器自动 · 4K 建议 8-20 Mbps\nGOP (关键帧间隔)\n帧 · 低延迟用 15，高效率用 60+",
+    "errors": [],
+    "calls": [
+      {
+        "command": "get_all_local_ips"
+      },
+      {
+        "command": "get_rtsp_camera_devices"
+      },
+      {
+        "command": "get_all_rtsp_server_statuses"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "imageBase64",
+    "text": "图片 与 Base64 互转\n\n支持本地图片转为 Base64 DataURL，或将 Base64 字符串还原并保存为图片文件。\n\n图片 转 Base64\nBase64 转 图片\n图片文件源\n\n拖拽图片文件到此处，或 点击上传\n\n支持 PNG, JPG, GIF, WebP, SVG 等常见格式\n\n从系统目录选择\nBase64 编码结果",
+    "errors": [],
+    "calls": [],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "env",
+    "text": "环境变量\nPATH 排序管理与注册表备份还原\nPATH 变量\n备份还原\nPATH 环境变量管理与排列\n\n对系统的 PATH 物理顺序进行排序调整。排在越上方，其可执行程序（.exe/.cmd/.bat）的解析优先级越高。保存前将自动创建环境备份。\n\n刷新\n保存用户级变量\n保存全部\n当前未以管理员权限运行。您可以管理“用户级 PATH”，但保存“系统级 PATH”时可能会失败。\n用户级 (HKCU)\n系统级 (HKLM)\n用户级环境变量 PATH (HKEY_CURRENT_USER)\n0 条\n系统级环境变量 PATH (HKEY_LOCAL_MACHINE)\n0 条\n在左侧选择一个 PATH 条目查看其包含的可执行文件及冲突",
+    "errors": [],
+    "calls": [
+      {
+        "command": "is_admin"
+      },
+      {
+        "command": "get_path_directories"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "logViewer",
+    "text": "日志查看器\n打开文件\n自动跟随\n全部\n仅错误\n错误 + 警告\n仅普通\n▲\n▼\n跳至\n行\n📄\n拖拽日志文件到此处\n或点击「打开文件」选择 · 支持 200MB+ 大文件\n未打开文件\n0 行\n0 错误\n0 警告",
+    "errors": [],
+    "calls": [],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "jsonBrowser",
+    "text": "打开\n保存\n格式化\n压缩\n未命名.json\n源编辑器\n0 B · json\n1\n结构\n图形树\n输入有效 JSON 后显示结构树\n等待输入\n未命名.json\n0 B · 1 行",
+    "errors": [],
+    "calls": [],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "markdownReader",
+    "text": "打开文件\n打开目录\n新建文件\n重新加载\n隐藏目录\n文件关联\n文件列表\n打开文件后自动列出同目录\n尚未打开文档\n打开文件\n打开目录\n新建文件\n默认预览；点「编辑」进入编辑器（自动保存、撤销/重做、格式工具栏、分栏实时预览）。支持打开目录列出所有文件、新建 .md 文件。可在「文件关联」中把 .md 注册为系统打开方式。",
+    "errors": [],
+    "calls": [
+      {
+        "command": "markdown_assoc_status"
+      },
+      {
+        "command": "take_pending_markdown_files"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "serial",
+    "text": "串口调试器\n真实串口\n模拟设备\n未连接\n（无可用串口）\n波特率\n数据位\n8\n7\n6\n5\n校验\nNone\nEven\nOdd\n停止位\n1\n2\n流控\n无\n硬件 RTS/CTS\n软件 XON/XOFF\n连接\nRX 0 帧 · 0 B\nTX 0 帧 · 0 B\n↓ 0 B/s ↑ 0 B/s\n时间戳\n自动滚动\nHEX 视图\n暂停显示\n导出日志\n清空日志\n连接串口后，收发数据将显示在这里\nHEX\n行结束符\n不追加\n\\n (LF)\n\\r\\n (CRLF)\n\\r (CR)\n编码\nUTF-8\nGBK\n校验\n不追加\nCRC16 (Modbus)\nXOR 校验\nSUM 校验\n发送\n暂无发送历史\n逐行发完\nms\n定时循环",
+    "errors": [],
+    "calls": [
+      {
+        "command": "serial_list_ports"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "wsDebugger",
+    "text": "网络调试器\n未连接\n延迟\nWebSocket\nSSE\nTCP\nUDP\n暂无历史\n连接\n接收 0 · 0 B\n发送 0 · 0 B\n时长 00:00:00\n时间\n滚动\nHEX\n自动重连\n暂停\n导出\n清空日志\n暂无消息…",
+    "errors": [],
+    "calls": [],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "music",
+    "text": "曲库\n在线搜索\n插件\n导入文件夹\n重新扫描\nmusic\n共 1 首\n序号\t标题\t作者\t专辑\t时长\t操作\n1\t示例歌曲\t示例歌手\t隔离验收\t03:05\t\n00:00\n00:00\n\n未在播放",
+    "errors": [],
+    "calls": [
+      {
+        "command": "music_plugin_list"
+      },
+      {
+        "command": "music_get_library"
+      },
+      {
+        "command": "music_get_settings"
+      },
+      {
+        "command": "music_list_presets"
+      },
+      {
+        "command": "music_get_state"
+      },
+      {
+        "command": "music_set_queue",
+        "args": {
+          "paths": [
+            "C:/fixture/music/sample.mp3"
+          ],
+          "mode": "sequence"
+        }
+      },
+      {
+        "command": "music_get_state"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "favorites",
+    "text": "导入\n选择供应商\nAI 归类\n检测有效性\nAI 检索\n全部来源\n全部时间\n近 7 天\n近 30 天\n近一年\n新建分类\n整理类目\n全部分类\n0\n星标\n0\n\n还没有分类。导入后点「AI 归类」，或自己在条目上改标签。\n\n还没有收藏，先点「导入 GitHub star」\n\n— 看到好东西就丢进来，归类的活我来\n\n总数: 0\n未归类: 0\n只读：本模块不会取消 star、不会改你的收藏夹",
+    "errors": [],
+    "calls": [
+      {
+        "command": "fav_has_credential",
+        "args": {
+          "source": "bilibili"
+        }
+      },
+      {
+        "command": "fav_has_credential",
+        "args": {
+          "source": "zhihu-cookie"
+        }
+      },
+      {
+        "command": "fav_get_github_token"
+      },
+      {
+        "command": "get_ai_config"
+      },
+      {
+        "command": "fav_get_settings"
+      },
+      {
+        "command": "fav_list",
+        "args": {
+          "source": null,
+          "status": null,
+          "keyword": null,
+          "sort": "favorited",
+          "favoritedSince": null,
+          "starredOnly": null,
+          "limit": 0
+        }
+      },
+      {
+        "command": "fav_stats"
+      },
+      {
+        "command": "fav_credential_status"
+      },
+      {
+        "command": "fav_list_deleted"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "tasks",
+    "text": "任务计划\n2026 年 11 月\n今天\n复盘\n月\n周\n未排期 0\n新建任务\n一\n二\n三\n四\n五\n六\n日\n26\n27\n28\n29\n30\n31\n1\n11 月\n2\n今天\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n26\n27\n28\n29\n30\n1\n12 月\n2\n3\n4\n5\n6",
+    "errors": [],
+    "calls": [
+      {
+        "command": "tasks_init"
+      },
+      {
+        "command": "tasks_list_range",
+        "args": {
+          "start": "2026-10-26",
+          "end": "2026-12-06"
+        }
+      },
+      {
+        "command": "tasks_list_by_date",
+        "args": {
+          "date": null,
+          "includeArchived": false
+        }
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "settings",
+    "text": "Kira 工作目录说明\n数据目录 (DATA_DIR)\n\n自动派生的子目录\n\nSDK\nC:/fixture/kira\\sdk\nNode 服务\nC:/fixture/kira\\node-projects\n证书\nC:/fixture/kira\\certs\n缓存/数据库\nC:/fixture/kira asks.db、version_cache、backup 等\n保存配置\nKira\nv2.9.5\n\nKiraBug?▍\n\n版本检查与升级\n检查更新\n当前版本:\nv2.9.5\n\n点击「检查更新」查看是否有新版本可用。\n\n应用行为\n\n开机自启\n\n系统启动时自动运行 Kira，并静默驻留到系统托盘。Kira 始终以管理员身份运行，开机自启同样具备完整管理员能力。\n\n显示托盘右键菜单\n\n关闭后托盘图标不再弹出右键菜单；各模块的细分项在对应模块的设置弹窗中\n\n外观\n\n配置 Kira 的主题色与全局字体，改色即全局生效\n\n主题色\n\n#ff2d95\n恢复默认\n\n预设色盘一键切换，或在最右用取色器自定义。\n\n全局字体\n\n默认字体 (Inter / system-ui)\n导入字体\n\n背景底图纹理\n\n程序主界面底图的暗纹质感，即时生效。\n\n网格\n点阵\n扫描线\n极光\n纯色\n斜线\n十字\n纸张\n蜂窝\n电路\n波纹\n噪点\n暗角\n霓虹线\n\n界面语言\n\n切换界面语言，重启后完全生效。\n\n简体中文\nEnglish\n\n动效\n\n控制头像辉光闪烁、弹窗淡入等界面动效。系统被切成「最佳性能」或开了「减少动效」时，「跟随系统」会跟着关掉动画——想一直动就选「始终开启」。\n\n跟随系统\n始终开启\n\n列表密度\n\n紧凑会收窄列表行的上下留白，一屏能多看几条。目前先在音乐、收藏、项目三处生效。\n\n舒适\n紧凑\n\n模块管理\n\n所有模块地位平等。拖动排序、切换顶栏/更多、启用/禁用、录制快捷键，一站式配置。\n\n启动\n顶栏\n无\n资讯\n顶栏\n无\nSDK\n顶栏\n无\nAI\n顶栏\n无\n思维导图\n顶栏\n无\nAPI\n顶栏\n无\n服务\n顶栏\n无\n代理\n顶栏\n无\n证书\n顶栏\n无\n剪贴板\n顶栏\n无\nOTP\n更多\n无\n翻译\n顶栏\n无\nPicky\n更多\n无\nBuddy\n更多\n无\n设置\n固定\n无\n本地网络\n更多\n无\nHTTP 服务\n更多\n无\nRTSP 服务\n更多\n无\n图片 Base64\n更多\n无\n环境变量\n更多\n无\n日志查看\n更多\n无\nJSON 浏览\n更多\n无\nMarkdown\n更多\n无\n串口调试\n更多\n无\n网络调试器\n更多\n无\n音乐播放器\n更多\n无\n收藏\n更多\n无\nSuno 下载\n更多\n无\n任务计划\n更多\n无\n数据库设计\n更多\n无\n恢复默认顺序\n拖动手柄排序，配置即时生效\n数据备份\n\n全部配置与数据（含 picky 收藏与同步版本号）打包为一个压缩快照，全量导出 / 导入\n\n所有数据统一打包为一个压缩快照文件，不做任何勾选：config.json / 各数据库 / AI 配置与会话 / 技能 / MCP / 协作 / 翻译配置 / 启动器 / 任务 / OTP / 剪贴板（含图片）/ 证书凭据 / mihomo 代理配置 / 环境备份 / 自定义字体 / 思维导图 / API 接口平台 / Picky 收藏数据（含其云同步版本号 lastSyncAt）等。导入时整体恢复（会覆盖当前数据），请谨慎操作。\n全量导出\n导出快照\n\n选择存放位置后，把全部数据打包为一个 .gz 压缩文件（gzip，旧版明文 JSON 也能导入）。\n\n全量导入恢复\n选择快照并恢复\n\n⚠ 恢复会整体覆盖当前所有数据（含 picky 收藏与同步版本号），操作前建议先导出一次备份。",
+    "errors": [],
+    "calls": [
+      {
+        "command": "get_config"
+      },
+      {
+        "command": "get_app_version"
+      },
+      {
+        "command": "get_appearance_config"
+      },
+      {
+        "command": "list_system_fonts"
+      },
+      {
+        "command": "get_tray_menu_config"
+      },
+      {
+        "command": "launcher_get_settings"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "suno",
+    "text": "解析\n还没解析，粘贴主页 URL 后点「解析」",
+    "errors": [],
+    "calls": [
+      {
+        "command": "suno_list_profiles"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  },
+  {
+    "id": "dbdesigner",
+    "text": "文件\n导出\n添加\n公共字段\n逆向\n\n还没有打开设计\n\n新建一份，或打开项目里的 .dbdesign.json。设计就是一份 JSON 文件，可以随代码一起提交。\n\n新建",
+    "errors": [],
+    "calls": [
+      {
+        "command": "dbd_get_settings"
+      },
+      {
+        "command": "get_ai_config"
+      }
+    ],
+    "overflow": {
+      "width": 1280,
+      "viewport": 1280
+    },
+    "missing": []
+  }
+]
