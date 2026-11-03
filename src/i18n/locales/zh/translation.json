@@ -5291,6 +5291,7 @@
     "fromSender": "来自 {{name}}："
   },
   "rtsp": {
+    "configReadFail": "本地 RTSP 配置读取失败，已暂停自动保存并保留原始配置。请备份后修复配置再重新打开此页：{{err}}",
     "nodeTitle": "RTSP 节点 #{{n}}",
     "stopAllFail": "停止所有服务失败: {{err}}",
     "needCamera": "请选择摄像头设备",

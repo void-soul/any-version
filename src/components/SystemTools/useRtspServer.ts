@@ -4,7 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 import { alertError } from "../shared/ThemedAlert";
 import type { ConfirmRequest } from "../shared/ConfirmDialog";
-import { nextRtspPort, serializeRtspInstances } from "./RtspServer.state";
+import { nextRtspPort, parseRtspInstances, serializeRtspInstances } from "./RtspServer.state";
 import { DEFAULT_CONFIG, STORAGE_KEY, type CameraDevices, type RtspConfig, type RtspInstanceItem, type RtspServerStatus } from "./RtspServer.model";
 
 export function useRtspServer() {
@@ -20,6 +20,7 @@ export function useRtspServer() {
   const actions = useRef(new Set<string>());
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSaved = useRef<string | null>(null);
+  const storageError = useRef<string | null>(null);
   const beginAction = (id: string) => {
     if (actions.current.has("*") || actions.current.has(id) || (id === "*" && actions.current.size > 0)) return false;
     actions.current.add(id); pollGeneration.current++;
@@ -55,7 +56,7 @@ export function useRtspServer() {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
-        const parsed = JSON.parse(saved);
+        const parsed = parseRtspInstances(saved);
         if (Array.isArray(parsed)) {
           return parsed.map((item: any, idx: number) => {
             const id = item.id || `inst_${Date.now()}_${idx}`;
@@ -72,6 +73,7 @@ export function useRtspServer() {
         }
       }
     } catch (e) {
+      storageError.current = String(e);
       console.error("读取 RTSP 本地实例失败:", e);
     }
     const initId = "inst_default_8554";
@@ -92,6 +94,10 @@ export function useRtspServer() {
   // Persist only configuration changes; polling/status/log updates have identical snapshots.
   const savedConfig = serializeRtspInstances(instances);
   useEffect(() => {
+    if (storageError.current) {
+      setPanelError(t("rtsp.configReadFail", { err: storageError.current }));
+      return;
+    }
     if (lastSaved.current === savedConfig) return;
     try { localStorage.setItem(STORAGE_KEY, savedConfig); lastSaved.current = savedConfig; }
     catch (e) { setPanelError(String(e)); }

@@ -5291,6 +5291,7 @@
     "fromSender": "From {{name}}:"
   },
   "rtsp": {
+    "configReadFail": "Cannot read local RTSP configuration. Automatic saving is paused and the original is preserved. Back up and repair the configuration, then reopen this page: {{err}}",
     "nodeTitle": "RTSP Node #{{n}}",
     "stopAllFail": "Failed to stop all services: {{err}}",
     "needCamera": "Select a camera device",

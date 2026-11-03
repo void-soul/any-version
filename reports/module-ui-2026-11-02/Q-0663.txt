@@ -1,0 +1,18 @@
+## Q-0663 | 2026-11-03 | Bug Fix | 已验证
+
+**现象/需求:** RTSP本地实例配置损坏或结构非法时，初始化回退默认实例后自动持久化覆盖原始配置；应显示错误并保留原值，避免恢复证据丢失。
+
+**根因:** **useRtspServer** 捕获本地JSON解析异常后返回默认实例，持久化effect未区分加载失败和首次使用；合法JSON但非法结构也会进入回退路径。
+
+**解决方案:** 1. 增加 **parseRtspInstances** 校验实例列表、唯一ID、来源、端口、路径与折叠字段。
+2. 初始化失败记录错误并暂停本次页面生命周期的自动保存，原始localStorage值保留，界面提示备份修复后重开。
+3. 新增损坏JSON、非法结构、重复ID及合法空列表回归；3项定向测试和生产构建通过。
+
+**涉及文件:**
+| File | Change |
+|------|--------|
+| **src/components/SystemTools/RtspServer.state.ts** | 持久化配置解析校验 |
+| **src/components/SystemTools/RtspServer.state.test.ts** | 损坏与合法空列表回归 |
+| **src/components/SystemTools/useRtspServer.ts** | 错误可见并停止覆盖 |
+| **src/i18n/locales/{zh,en}/translation.json** | 恢复提示 |
+---
