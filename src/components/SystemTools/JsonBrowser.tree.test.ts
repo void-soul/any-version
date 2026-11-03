@@ -26,3 +26,9 @@ it("retains collapsed and searched tree behavior", () => {
   const matched = { ...search, query: "a", paths: new Set(["root", "root.a", "root.a.0"]) };
   expect(flattenTreeRows({ a: [1], b: 2 }, matched, new Set(["root.a"]), true, new Set()).rows.map(row => row.path)).toEqual(["root", "root.a", "root.a.0"]);
 });
+it("finds late search hits without spending the visible-row budget on skipped siblings", () => {
+  const matched = { ...search, query: "late", paths: new Set(["root", "root.249"]) };
+  const result = flattenTreeRows(Array(250).fill("late"), matched, new Set(), false, new Set(), 10);
+  expect(result.rows.map(row => row.path)).toEqual(["root", "root.249"]);
+  expect(result.truncated).toBe(false);
+});

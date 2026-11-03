@@ -33,10 +33,11 @@ export function flattenTreeRows(value: JsonValue, search: SearchMatches, collaps
   while (stack.length) {
     const next = stack[stack.length - 1].next();
     if (next.done) { stack.pop(); continue; }
-    if (++visited > maxRows) { truncated = true; break; }
+    if (++visited > (search.query ? 2_000_000 : maxRows)) { truncated = true; break; }
     const current = next.value;
     if (current.path.length > 8192) { truncated = true; continue; }
     if (search.query && !search.paths.has(current.path)) continue;
+    if (rows.length >= maxRows) { truncated = true; break; }
     const container = current.value !== null && typeof current.value === "object";
     const collapsedHere = container && !search.query && (collapsed.has(current.path) || (large && current.depth > 0 && !expanded.has(current.path)));
     rows.push({ ...current, container, collapsed: collapsedHere });
