@@ -128,7 +128,7 @@ pub(crate) fn diagnose_switch_landing(
 /// 切号写入后等客户端落定，再确认登录态确实是我们写的。
 ///
 /// 只在 `spawn_blocking` 的切号线程里调用，所以这里阻塞式 sleep 是安全的。
-fn confirm_switch_landed(platform: BuddyPlatform, expected_token: &str) -> Option<String> {
+fn confirm_switch_landed(platform: BuddyPlatform, expected_token: &str) -> Result<Option<String>, String> {
     std::thread::sleep(std::time::Duration::from_millis(400));
     let display = client_process::app_display_name(platform);
     let probe = match platform {
@@ -140,7 +140,20 @@ fn confirm_switch_landed(platform: BuddyPlatform, expected_token: &str) -> Optio
         BuddyPlatform::Workbuddy => workbuddy::logout_marker_present(),
         BuddyPlatform::CodebuddyCn => false,
     };
-    diagnose_switch_landing(probe, expected_token, display, logged_out)
+    classify_switch_landing(probe, expected_token, display, logged_out)
+}
+
+/// Ok(Some) means written but not confirmed, Err means observed failure.
+fn classify_switch_landing(probe: Result<Option<String>, String>, expected: &str, display: &str, logged_out: bool) -> Result<Option<String>, String> {
+    if !logged_out {
+        if let Err(error) = &probe {
+            return Ok(Some(format!("{display} 登录态已写入，但无法完成延时确认：{error}")));
+        }
+    }
+    match diagnose_switch_landing(probe, expected, display, logged_out) {
+        Some(error) => Err(error),
+        None => Ok(None),
+    }
 }
 
 // ─── 切换进度事件（前端展示：关闭 → 合并 → 写入 → 启动 → 完成） ───
@@ -402,4 +415,16 @@ pub fn release_runtime_resources() -> Result<(), String> {
     growth::release_runtime_resources();
     session_transfer::codebuddy::clear_workspace_path_cache();
     Ok(())
+}
+
+#[cfg(test)]
+mod landing_classification_tests {
+    use super::*;
+    #[test]
+    fn confirmed_unverified_and_observed_failure_are_distinct() {
+        assert_eq!(classify_switch_landing(Ok(Some("target".into())), "target", "fixture", false).unwrap(), None);
+        assert!(classify_switch_landing(Err("probe unavailable".into()), "target", "fixture", false).unwrap().unwrap().contains("无法完成延时确认"));
+        assert!(classify_switch_landing(Ok(Some("other".into())), "target", "fixture", false).is_err());
+        assert!(classify_switch_landing(Err("unavailable".into()), "target", "fixture", true).is_err());
+    }
 }

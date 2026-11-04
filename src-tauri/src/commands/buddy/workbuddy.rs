@@ -561,15 +561,7 @@ pub fn resolve_current_account_id(
     None
 }
 
-/// 公开：加载账号并切换
-pub fn switch_account(platform: BuddyPlatform, account_id: &str) -> Result<String, String> {
-    let account = store::load_account(platform, account_id)
-        .ok_or_else(|| format!("{} 账号不存在: {}", platform.as_str(), account_id))?;
-    let result = write_account_to_default_client(platform, &account)?;
-    // 更新 last_used
-    let mut updated = account;
-    updated.last_used = chrono::Utc::now().timestamp();
-    let _ = store::upsert_account(platform, updated);
+pub(crate) fn sync_twoapi_after_switch(platform: BuddyPlatform) {
     // 2API 与 Buddy 读同一个登录态文件：切号后立刻把新鉴权头热更新进正在运行的
     // 2API 服务，否则它会继续用旧账号的凭据（要等到 token 过期才暴露）。
     // 放后台任务：读凭据可能要调 WorkBuddy 的 Electron 取密钥，不能挡住切号 UI；
@@ -583,8 +575,10 @@ pub fn switch_account(platform: BuddyPlatform, account_id: &str) -> Result<Strin
             }
         });
     }
-    Ok(result)
 }
+
+mod prepared_switch;
+pub(crate) use prepared_switch::PreparedSwitch;
 
 mod encrypted_session;
 pub use encrypted_session::*;

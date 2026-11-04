@@ -541,79 +541,104 @@ pub(crate) fn read_session_access_token() -> Result<Option<String>, String> {
 #[path = "codebuddy_cn/switch_transaction.rs"]
 mod switch_transaction;
 
-/// 切换默认客户端到指定账号（写回 state.vscdb + 同步插件身份键）。
-pub fn write_account_to_default_client(account: &BuddyAccount) -> Result<String, String> {
-    write_account_with_confirmation(account, || None)
+pub(crate) struct PreparedSwitch {
+    data_root: PathBuf,
+    state_db: PathBuf,
+    db_key: String,
+    session_json: String,
+    buffer: String,
+    identity: switch_transaction::IdentityUpdate,
+}
+impl PreparedSwitch {
+    pub(crate) fn prepare(account: &BuddyAccount) -> Result<Self, String> {
+        if account.access_token.trim().is_empty() {
+            return Err("账号缺少 accessToken，已停止切号".into());
+        }
+        let state_db = default_state_db_path()
+            .ok_or_else(|| "无法定位默认 CodeBuddy CN state.vscdb 路径".to_string())?;
+        let data_root = default_data_dir().ok_or("无法定位 CodeBuddy CN 数据目录")?;
+        let db_key = secret_db_key();
+        let session_json = build_default_client_session_json(account);
+        // 身份键必须与令牌一起换：插件拿 genie.userId 去对账，只换令牌等于"换人不换名字"
+        let uid = account
+            .uid
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "账号 {} 缺少 uid，无法同步 CodeBuddy CN 身份键（genie.userId）",
+                    account.display_name()
+                )
+            })?;
+        let identity = switch_transaction::IdentityUpdate::prepare(&data_root, uid)?;
+        let encrypted = super::crypto::encrypt_secret_payload(
+            session_json.as_bytes(),
+            &data_root,
+            Platform::CodeBuddyCn,
+        )
+        .map_err(|e| friendly_inject_error(&e))?;
+        let buffer = serde_json::to_string(&serde_json::json!({
+            "type": "Buffer", "data": encrypted
+        }))
+        .map_err(|e| e.to_string())?;
+        Ok(Self {
+            data_root,
+            state_db,
+            db_key,
+            session_json,
+            buffer,
+            identity,
+        })
+    }
+    pub(crate) fn commit(self, confirm: impl FnOnce() -> Option<String>) -> Result<String, String> {
+        let Self {
+            data_root,
+            state_db,
+            db_key,
+            session_json,
+            buffer,
+            identity,
+        } = self;
+        if let Some(parent) = state_db.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("创建 globalStorage 目录失败: {e}"))?;
+        }
+        let committed =
+            switch_transaction::commit(&state_db, &db_key, &buffer, identity, |conn| {
+                let stored: String = conn
+                    .query_row(
+                        "SELECT value FROM ItemTable WHERE key = ?1",
+                        [&db_key],
+                        |row| row.get(0),
+                    )
+                    .map_err(|e| e.to_string())?;
+                if stored != buffer {
+                    return Err("CN secret verification failed".into());
+                }
+                let decoded = super::crypto::decode_secret_storage_value(
+                    &stored,
+                    &data_root,
+                    Platform::CodeBuddyCn,
+                )?;
+                if decoded != session_json {
+                    return Err("CN session verification failed".into());
+                }
+                Ok(())
+            })?;
+        if let Some(error) = confirm() {
+            return Err(committed.rollback(error));
+        }
+        if let Err(error) = committed.verify_target() {
+            return Err(committed.rollback(error));
+        }
+        Ok(format!(
+            "已写入 CodeBuddy CN 目标账号（{}）",
+            state_db.display()
+        ))
+    }
 }
 
-fn write_account_with_confirmation(
-    account: &BuddyAccount,
-    confirm: impl FnOnce() -> Option<String>,
-) -> Result<String, String> {
-    let state_db = default_state_db_path()
-        .ok_or_else(|| "无法定位默认 CodeBuddy CN state.vscdb 路径".to_string())?;
-    if let Some(parent) = state_db.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("创建 globalStorage 目录失败: {}", e))?;
-    }
-    let data_root = default_data_dir().ok_or("无法定位 CodeBuddy CN 数据目录")?;
-    let db_key = secret_db_key();
-    let session_json = build_default_client_session_json(account);
-    // 身份键必须与令牌一起换：插件拿 genie.userId 去对账，只换令牌等于"换人不换名字"
-    let uid = account
-        .uid
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| {
-            format!(
-                "账号 {} 缺少 uid，无法同步 CodeBuddy CN 身份键（genie.userId）",
-                account.display_name()
-            )
-        })?;
-    let identity = switch_transaction::IdentityUpdate::prepare(&data_root, uid)?;
-    let encrypted = super::crypto::encrypt_secret_payload(
-        session_json.as_bytes(), &data_root, Platform::CodeBuddyCn,
-    ).map_err(|e| friendly_inject_error(&e))?;
-    let buffer = serde_json::to_string(&serde_json::json!({
-        "type": "Buffer", "data": encrypted
-    })).map_err(|e| e.to_string())?;
-    let committed = switch_transaction::commit(&state_db, &db_key, &buffer, identity, |conn| {
-        let stored: String = conn.query_row(
-            "SELECT value FROM ItemTable WHERE key = ?1", [&db_key], |row| row.get(0),
-        ).map_err(|e| e.to_string())?;
-        if stored != buffer { return Err("CN secret verification failed".into()); }
-        let decoded = super::crypto::decode_secret_storage_value(
-            &stored, &data_root, Platform::CodeBuddyCn,
-        )?;
-        if decoded != session_json { return Err("CN session verification failed".into()); }
-        Ok(())
-    })?;
-    if let Some(error) = confirm() {
-        return Err(committed.rollback(error));
-    }
-    if let Err(error) = committed.verify_target() {
-        return Err(committed.rollback(error));
-    }
-    Ok(format!(
-        "已切换到 {}（{}）",
-        account.display_name(),
-        state_db.display()
-    ))
-}
-
-/// 公开：加载账号并切换
-pub fn switch_account(account_id: &str) -> Result<String, String> {
-    let account = store::load_account(BuddyPlatform::CodebuddyCn, account_id)
-        .ok_or_else(|| format!("CodeBuddy CN 账号不存在: {}", account_id))?;
-    let result = write_account_with_confirmation(&account, || {
-        super::confirm_switch_landed(BuddyPlatform::CodebuddyCn, &account.access_token)
-    })?;
-    let mut updated = account;
-    updated.last_used = chrono::Utc::now().timestamp();
-    let _ = store::upsert_account(BuddyPlatform::CodebuddyCn, updated);
-    Ok(result)
-}
 #[cfg(test)]
 mod tests {
     use super::*;

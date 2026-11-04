@@ -484,3 +484,36 @@ fn set_primary_rejects_unknown_account() {
 }
 
 mod regressions;
+
+#[test]
+fn switch_usage_patch_preserves_refreshed_credentials_and_other_metadata() {
+    let (_root, _guard) = test_root();
+    let platform = test_platform();
+    let snapshot = upsert_account(platform, sample_account("switch-patch", "switch-patch@example.com")).unwrap();
+    let mut refreshed = snapshot.clone();
+    refreshed.access_token = "rotated-access".into();
+    refreshed.refresh_token = Some("rotated-refresh".into());
+    refreshed.tags = Some(vec!["new-tag".into()]);
+    upsert_account(platform, refreshed).unwrap();
+    assert!(ensure_switch_snapshot_current(platform, &snapshot).is_err());
+    record_switch_usage(platform, &snapshot).unwrap();
+    let latest = load_account(platform, &snapshot.id).unwrap();
+    assert_eq!(latest.access_token, "rotated-access");
+    assert_eq!(latest.refresh_token.as_deref(), Some("rotated-refresh"));
+    assert_eq!(latest.tags, Some(vec!["new-tag".into()]));
+    let path = account_file_path(platform, &snapshot.id).unwrap();
+    fs::remove_file(&path).unwrap();
+    assert!(record_switch_usage(platform, &snapshot).is_err());
+    assert!(!path.exists(), "must not recreate an account deleted during switch");
+}
+
+#[test]
+fn damaged_current_mapping_is_reported_without_overwriting_it() {
+    let (_root, _guard) = test_root();
+    let path = current_state_path().unwrap();
+    let original = fs::read(&path).ok();
+    fs::write(&path, "{broken").unwrap();
+    assert!(set_current_account_id(test_platform(), Some("target")).is_err());
+    assert_eq!(fs::read_to_string(&path).unwrap(), "{broken");
+    match original { Some(bytes) => { fs::write(path, bytes).unwrap(); }, None => { fs::remove_file(path).unwrap(); } }
+}

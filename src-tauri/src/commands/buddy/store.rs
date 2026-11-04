@@ -109,6 +109,8 @@ pub fn load_account(platform: BuddyPlatform, account_id: &str) -> Option<BuddyAc
 }
 
 mod account_index;
+mod switch_usage;
+pub use switch_usage::{record_switch_usage, ensure_switch_snapshot_current};
 use account_index::{load_index, load_index_checked};
 mod identity;
 use identity::{matching_account_id, reliable_email, validate_account};
@@ -623,7 +625,12 @@ pub fn set_current_account_id(
     account_id: Option<&str>,
 ) -> Result<(), String> {
     let _lock = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut state = load_current_state();
+    let path = current_state_path()?;
+    let mut state: BuddyCurrentState = match fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| format!("当前账号映射损坏，已停止覆盖: {e}"))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => BuddyCurrentState::default(),
+        Err(error) => return Err(format!("读取当前账号映射失败: {error}")),
+    };
     match account_id.map(str::trim).filter(|v| !v.is_empty()) {
         Some(id) => {
             state

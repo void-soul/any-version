@@ -1,6 +1,6 @@
 use super::*;
 
-fn sample_account() -> BuddyAccount {
+pub(super) fn sample_account() -> BuddyAccount {
     BuddyAccount {
         id: "workbuddy_abc".to_string(),
         platform: "workbuddy".to_string(),

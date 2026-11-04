@@ -1,0 +1,18 @@
+{
+  "verification": "102 isolated native tests passed, 1 real-client test ignored; real account switching unverified",
+  "scope": "Q-0687/Q-0688 only; local ignored assets updated; global upstream pin unchanged",
+  "files": [
+    {
+      "path": ".agents\\skills\\cockpit-buddy-sync\\references\\our-features.md",
+      "sha256": "6c5793235aa03bddc95f9442005abc960d2954c314d122a8856c9e5e936ce2ea"
+    },
+    {
+      "path": ".agents\\skills\\cockpit-buddy-sync\\references\\pitfalls.md",
+      "sha256": "5165f65ba5f6a358ce71b2ac6b2e9f888b3ee0ded59bc2a7d24e1044a7dccac6"
+    },
+    {
+      "path": ".agents\\skills\\cockpit-buddy-sync\\references\\client-local-contract.md",
+      "sha256": "2eb636f8ddcc67ba570aa52e7fc51ac14aad99d4bf6c813fe5cf5b3f92ce43c8"
+    }
+  ]
+}

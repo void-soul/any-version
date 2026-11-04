@@ -137,18 +137,24 @@ pub async fn buddy_switch_account(
     account_id: String,
 ) -> Result<(String, Option<session_transfer::SessionTransferReport>), String> {
     let platform = platform_from_str(&platform)?;
-    let account = store::load_account(platform, &account_id)
-        .ok_or_else(|| format!("账号不存在: {}", account_id))?;
 
-    // 切换时序：检查客户端已退出 → 合并来源会话 → 写入登录态 → 重新启动。
+    // 切换时序：检查退出并预检 → 合并来源会话 → 写入登录态 → 确认并更新标记。
     // 各阶段通过 buddy-switch-progress 事件上报前端；合并统计随报告一并返回（前端渲染为文本）。
     tauri::async_runtime::spawn_blocking(move || {
         // 0) 占用切号互斥闸（连点两次 → 第二次立刻报错，不并行写登录态）
         let _guard = SwitchGuard::acquire(platform)?;
+        let account = store::load_account(platform, &account_id)
+            .ok_or_else(|| format!("账号不存在: {}", account_id))?;
         // 1) **只检查**客户端是否已退出：约定由用户自己关闭，程序不代关（更不会强杀），
         //    进程占用 db/会话目录，强关可能丢未落盘的会话。仍在运行 → 中止并提示手动退出。
         emit_switch_progress(Some(&app), platform, &account_id, "checking", 0, None);
         client_process::ensure_not_running(platform)?;
+
+        enum Prepared { Workbuddy(workbuddy::PreparedSwitch), Cn(codebuddy_cn::PreparedSwitch) }
+        let prepared = match platform {
+            BuddyPlatform::Workbuddy => Prepared::Workbuddy(workbuddy::PreparedSwitch::prepare(platform, &account)?),
+            BuddyPlatform::CodebuddyCn => Prepared::Cn(codebuddy_cn::PreparedSwitch::prepare(&account)?),
+        };
 
         // 2) 切换之前合并来源账号本地会话（合并进度在 session_transfer 内部上报）
         let transfer_report = session_transfer::transfer_on_switch(platform, &account, Some(&app))?;
@@ -171,26 +177,29 @@ pub async fn buddy_switch_account(
 
         // 3) 写入目标账号登录态
         emit_switch_progress(Some(&app), platform, &account_id, "writing", 0, None);
-        let message = match platform {
-            BuddyPlatform::Workbuddy => {
-                workbuddy::switch_account(platform, &account_id)?
+        store::ensure_switch_snapshot_current(platform, &account)?;
+        client_process::ensure_not_running(platform)?;
+        let mut warning = None;
+        let message = match prepared {
+            Prepared::Workbuddy(plan) => {
+                let message = plan.commit()?;
+                warning = confirm_switch_landed(platform, &account.access_token)?;
+                message
             }
-            BuddyPlatform::CodebuddyCn => codebuddy_cn::switch_account(&account_id)?,
+            Prepared::Cn(plan) => plan.commit(|| match confirm_switch_landed(platform, &account.access_token) {
+                Ok(result) => { warning = result; None }
+                Err(error) => Some(error),
+            })?,
         };
-        // 3.5) **延时复查**：等客户端落定后再确认登录态确实是我们写的。
-        //     客户端处在退出/启动窗口时会用缓存会话回写覆盖（真机 2026-10-17 踩过），
-        //     那种情况必须报错而不是返回成功 —— 静默成功比失败更糟。
-        // CN confirms while its committed snapshot is still available for guarded recovery.
-        if let Some(problem) = (platform != BuddyPlatform::CodebuddyCn)
-            .then(|| confirm_switch_landed(platform, &account.access_token)).flatten() {
-            eprintln!("[Buddy Switch] 切号未生效：{problem}");
-            return Err(problem);
+        // Confirmation completed against the same prepared account snapshot.
+        let mut warnings = warning.into_iter().collect::<Vec<_>>();
+        if let Err(error) = store::record_switch_usage(platform, &account) {
+            warnings.push(format!("登录态已写入，但使用时间保存失败：{error}"));
         }
-
-        // 复查通过才算切号成功，此时才持久化当前账号（复刻 provider_current_state）。
-        // 先写的话，复查失败返回 Err 时「当前账号」已经是新账号了 ——
-        // 刷新后面板会显示一个并未生效的当前账号。
-        let _ = store::set_current_account_id(platform, Some(&account_id));
+        if let Err(error) = store::set_current_account_id(platform, Some(&account_id)) {
+            warnings.push(format!("登录态已写入，但当前账号标记保存失败：{error}"));
+        }
+        workbuddy::sync_twoapi_after_switch(platform);
 
         // 4) 切换后**不自动启动客户端**（两个平台一致）。
         //    切换时客户端本来就必须是「已退出」状态（见上面 ensure_not_running），
@@ -208,6 +217,7 @@ pub async fn buddy_switch_account(
             eprintln!("[Buddy Switch] 认证域不匹配：{warning}");
             message = format!("{}\n注意：{}", message, warning);
         }
+        for warning in warnings { message.push_str(&format!("\n注意：{warning}")); }
         emit_switch_progress(Some(&app), platform, &account_id, "done", 0, None);
         Ok((message, transfer_report))
     })

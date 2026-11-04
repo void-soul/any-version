@@ -1,0 +1,22 @@
+## Q-0687 | 2026-11-04 | Bug Fix | 已解决待验证
+
+**现象/需求:** 用户批准Buddy切号续修：先预检密钥及目标会话再迁移，统一锁内账号快照，复查区分无法确认与失败，并仅更新切号元数据避免覆盖刷新凭据。
+
+**根因:** 切号在互斥锁外取账号，并在写回处再次加载，迁移和验证可能对应不同代凭据；迁移先于密钥/JSON/加密预检；复查环境错误被吞作成功；元数据整份upsert可能覆盖期间刷新凭据且错误被忽略。
+
+**解决方案:** 锁内加载单一快照；WorkBuddy/CN预先准备密钥、格式及目标加密内容再迁移，提交复用准备结果；迁移后复查进程与账号凭据代次，变化则停止写入。保留WorkBuddy文件哈希和写后整份内容/目标token校验，CN保留两资源提交及有条件恢复。区分已确认、无法确认警告、确定失败；确认后再触发2API同步。元数据锁内重读，只改last_used和索引时间；当前映射损坏停止覆盖；保存失败显示明确警告。新增预检/临时文件提交/外部代次、刷新保护、删除账号不复活、损坏映射、三态复查测试。跨会话迁移与登录文件不构成跨资源总事务，迁移后外部变化仍可能导致部分完成；真实双平台切号待验。 验证：最终源码102项定向原生测试通过、1项真实客户端测试跳过；Rust all-targets离线检查、1185源文件架构和差异检查通过。未关闭真实客户端、调用真实取钥或切换真实账号，保持已解决待验证。
+
+**涉及文件:**
+| File | Change |
+|------|--------|
+| src-tauri/src/commands/buddy/switch_commands.rs | 预检优先与单快照编排 |
+| src-tauri/src/commands/buddy/mod.rs | 复查三态及测试 |
+| src-tauri/src/commands/buddy/workbuddy.rs | 同步2API放到确认后 |
+| src-tauri/src/commands/buddy/workbuddy/prepared_switch.rs | WorkBuddy预检与准备代次提交及测试 |
+| src-tauri/src/commands/buddy/workbuddy/encrypted_session.rs | 删除重复的旧写入分支 |
+| src-tauri/src/commands/buddy/workbuddy/tests.rs | 共享合成账号fixture |
+| src-tauri/src/commands/buddy/codebuddy_cn.rs | CN准备与提交分离 |
+| src-tauri/src/commands/buddy/store.rs | 映射严格读取并导出局部更新 |
+| src-tauri/src/commands/buddy/store/switch_usage.rs | 凭据快照检查与仅更新时间 |
+| src-tauri/src/commands/buddy/store/tests.rs | 刷新保留与映射损坏测试 |
+---
