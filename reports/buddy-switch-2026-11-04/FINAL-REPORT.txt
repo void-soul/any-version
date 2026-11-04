@@ -1,0 +1,11 @@
+WorkBuddy切号修复（2026-11-04，Q-0685/Q-0686）
+
+Q-0685：已有加密文件分支不再把旧身份的加密字段路径用于目标身份。旧树解密并检查路径白名单后，按目标会话实际存在的官方字段加密，允许phoneNumber等可选字段缺失，同时覆盖新增可选字段及accounts/allAccounts新增项。未知旧加密字段或错误密钥拒绝覆盖，不复用旧账号手机号。保留原hash CAS和登出标记处理，并增加写后目标accessToken解密校验。
+Q-0686：at-rest取钥候选复用Buddy客户端路径解析（包含设置覆盖），保留显式override优先及环境变量、兼容路径回退/去重/有效文件过滤。失败提示改为Buddy设置。取不到官方密钥仍停止覆盖，不降级为明文。
+
+验证：cargo test --no-default-features --lib --locked --offline --no-run通过；43项WorkBuddy/atrest/client_process定向原生测试通过，1项真实客户端测试按标记跳过，1632项未选择。新增4项测试涵盖缺字段/新字段/数组/未知路径/错误密钥/配置候选。架构1182文件及git diff --check通过。证据见build.txt、tests.txt；QA四段快照见Q-0685.txt、Q-0686.txt。
+
+平台范围：WorkBuddy only；未修改CodeBuddy CN业务机制。
+没有调用真实loggerGet、修改真实登录文件、关闭或切换用户客户端。故障电脑安装位置、客户端版本和实际切号结果尚未验证，因此两条QA保持已解决待验证，不宣称真实切号通过。测试只使用合成账号、测试密钥及候选路径，不导出用户凭据。
+参考：cockpit-tools 3edfff63，复核官方字段编码和共享客户端路径取钥。relearn发现vscode_inject.rs增量属CN域，本轮未审核/移植，不推进全局同步点。局部技能记录本地已更新，未强制加入被忽略目录，SHA256见SKILL-RECORDS.json。
+保留用户已有提交，qa.db按条更新但不整库提交，不push。

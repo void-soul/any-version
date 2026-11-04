@@ -1,0 +1,18 @@
+{
+  "files": [
+    {
+      "sha256": "e31acb180b385396db969c1518245b8d1d29b6faed7d8a85775daa088d78421c",
+      "path": ".agents\\skills\\cockpit-buddy-sync\\references\\our-features.md"
+    },
+    {
+      "sha256": "76d0b0aa97ae9a5eda5c0ea62abf5a7c7ea3cdcd5e553eb1f2424a6e8a635d67",
+      "path": ".agents\\skills\\cockpit-buddy-sync\\references\\pitfalls.md"
+    },
+    {
+      "sha256": "665cf4bd7cc71382bf37005a931e282e4cf1536349ffa6e184a18063847d4cd5",
+      "path": ".agents\\skills\\cockpit-buddy-sync\\references\\client-local-contract.md"
+    }
+  ],
+  "reference": "cockpit-tools 3edfff63; CN vscode_inject delta not audited; global pin unchanged",
+  "scope": "Q-0685/Q-0686 WorkBuddy only; local ignored assets updated, not full upstream sync"
+}

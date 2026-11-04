@@ -20,13 +20,20 @@ process.stdout.write(b.loggerGet().toString('utf8'));";
 /// 只查 `%LOCALAPPDATA%\Programs\WorkBuddy` 会取不到密钥 →
 /// 所有对话 500 但 `/health` 等旁路全 200（2026-10-03 实测）。
 ///
-/// 顺序：显式 override → 环境变量 → 已知自定义安装位置 → 各平台默认位置。
+/// 顺序：显式 override → Buddy 客户端路径解析 → 环境变量 → 兼容位置 → 默认位置。
 pub fn electron_candidates() -> Vec<PathBuf> {
     electron_candidates_with(None)
 }
 
 /// 同 [`electron_candidates`]，但可显式指定首选路径（面板填的路径）。
 pub fn electron_candidates_with(override_path: Option<PathBuf>) -> Vec<PathBuf> {
+    electron_candidates_with_client(
+        override_path,
+        super::super::client_process::resolve_launch_path(super::super::models::BuddyPlatform::Workbuddy),
+    )
+}
+
+fn electron_candidates_with_client(override_path: Option<PathBuf>, client_path: Option<PathBuf>) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
     let mut push = |p: PathBuf| {
         if !out.contains(&p) {
@@ -34,6 +41,9 @@ pub fn electron_candidates_with(override_path: Option<PathBuf>) -> Vec<PathBuf> 
         }
     };
     if let Some(p) = override_path {
+        push(p);
+    }
+    if let Some(p) = client_path {
         push(p);
     }
     if let Some(p) = std::env::var_os(ELECTRON_PATH_ENV).map(PathBuf::from) {
@@ -96,7 +106,7 @@ fn fetch_key_payload_from(candidates: &[PathBuf]) -> Result<serde_json::Value, S
         }
     }
     let tried = if candidates.is_empty() {
-        "（没有候选路径 —— WorkBuddy 可能未安装）".to_string()
+        "（未找到可用的 WorkBuddy 可执行文件）".to_string()
     } else {
         candidates
             .iter()
@@ -106,7 +116,7 @@ fn fetch_key_payload_from(candidates: &[PathBuf]) -> Result<serde_json::Value, S
     };
     Err(format!(
         "无法获取 WorkBuddy at-rest 密钥（loggerGet）。已试路径：{tried}。\
-         若 WorkBuddy 装在其它位置，请在 2API 面板填写其可执行文件路径（也可设 {ELECTRON_PATH_ENV}）。"
+         请在 Buddy 设置中指定 WorkBuddy 可执行文件路径（也可设 {ELECTRON_PATH_ENV}）。"
     ))
 }
 
@@ -301,8 +311,8 @@ pub fn set_refresh_token(
 /// 递归解密整棵 JSON 里所有 `$wbEncrypted` 字段。
 ///
 /// 返回 `(明文树, 加密字段路径列表)`，路径形如 `auth.accessToken`、`accounts.0.token`。
-/// 切号写回时要用同一批路径**原样**重新加密 —— 少一个字段，那个字段就变成明文，
-/// WorkBuddy 客户端读到会报 integrity 错误甚至重置登录态。
+/// 同结构凭据更新可按路径重新加密；切换身份会改变可选字段和数组，必须先校验
+/// 已知路径，再按目标会话的官方字段清单加密，不能套用旧身份的路径。
 pub fn decrypt_tree_with_paths(
     value: &serde_json::Value,
     secret: &str,
@@ -550,6 +560,17 @@ mod tests {
         let exe = std::env::current_exe().expect("当前可执行文件必然存在");
         let cands = electron_candidates_with(Some(exe.clone()));
         assert_eq!(cands.first(), Some(&exe));
+    }
+
+    #[test]
+    fn configured_client_path_is_used_and_deduplicated() {
+        let exe = std::env::current_exe().unwrap();
+        let candidates = electron_candidates_with_client(None, Some(exe.clone()));
+        assert_eq!(candidates.first(), Some(&exe));
+        let candidates = electron_candidates_with_client(Some(exe.clone()), Some(exe.clone()));
+        assert_eq!(candidates.iter().filter(|path| **path == exe).count(), 1);
+        let candidates = electron_candidates_with_client(None, Some(exe.join("missing.exe")));
+        assert!(!candidates.contains(&exe.join("missing.exe")));
     }
 
     #[test]

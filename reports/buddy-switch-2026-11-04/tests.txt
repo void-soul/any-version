@@ -1,0 +1,48 @@
+
+running 44 tests
+test commands::buddy::client_process::tests::cn_binary_identity_prefers_product_metadata ... ok
+test commands::buddy::client_process::tests::name_candidates_match_expected_exes ... ok
+test commands::buddy::client_process::tests::resolve_launch_path_is_none_or_existing ... ok
+test commands::buddy::client_process::tests::root_targets_picks_electron_main_processes ... ok
+test commands::buddy::client_process::tests::running_pids_excludes_self ... ok
+test commands::buddy::client_process::tests::set_client_path_rejects_missing_file ... ok
+test commands::buddy::twoapi::atrest::tests::aad_frame_is_byte_exact ... ok
+test commands::buddy::twoapi::atrest::tests::aad_frame_uses_actual_key_id_length ... ok
+test commands::buddy::twoapi::atrest::tests::candidates_are_absolute_paths ... ok
+test commands::buddy::twoapi::atrest::tests::configured_client_path_is_used_and_deduplicated ... ok
+test commands::buddy::twoapi::atrest::tests::decrypt_rejects_garbage_envelope ... ok
+test commands::buddy::twoapi::atrest::tests::derive_algorithm_matches_python ... ok
+test commands::buddy::twoapi::atrest::tests::derive_key_shape_and_determinism ... ok
+test commands::buddy::twoapi::atrest::tests::encrypt_then_decrypt_roundtrips ... ok
+test commands::buddy::twoapi::atrest::tests::encrypt_tree_reports_paths_that_do_not_exist ... ok
+test commands::buddy::twoapi::atrest::tests::encrypt_uses_random_nonce_each_time ... ok
+test commands::buddy::twoapi::atrest::tests::envelope_shape_matches_python ... ok
+test commands::buddy::twoapi::atrest::tests::extract_secret_rejects_payload_without_key ... ok
+test commands::buddy::twoapi::atrest::tests::keyid_mismatch_reports_both_ids ... ok
+test commands::buddy::twoapi::atrest::tests::missing_key_payload_error_lists_tried_paths ... ok
+test commands::buddy::twoapi::atrest::tests::non_string_non_encrypted_field_yields_empty ... ok
+test commands::buddy::twoapi::atrest::tests::nonexistent_candidate_reports_its_path ... ok
+test commands::buddy::twoapi::atrest::tests::override_path_comes_first_and_survives_filtering ... ok
+test commands::buddy::twoapi::atrest::tests::plaintext_field_passes_through ... ok
+test commands::buddy::twoapi::atrest::tests::real_auth_file_decrypt_roundtrip ... ignored, 需要本机安装并登录 WorkBuddy
+test commands::buddy::twoapi::atrest::tests::roundtrip_preserves_unicode_and_long_text ... ok
+test commands::buddy::twoapi::atrest::tests::session_fields_are_encrypted_per_official_list ... ok
+test commands::buddy::twoapi::atrest::tests::session_fields_reject_double_encryption ... ok
+test commands::buddy::twoapi::atrest::tests::session_fields_roundtrip ... ok
+test commands::buddy::twoapi::atrest::tests::tree_decrypt_lists_paths_and_reencrypt_restores_shape ... ok
+test commands::buddy::twoapi::atrest::tests::tree_with_no_encrypted_fields_is_returned_as_is ... ok
+test commands::buddy::twoapi::atrest::tests::unsupported_suite_is_rejected ... ok
+test commands::buddy::twoapi::atrest::tests::wrong_secret_fails_to_decrypt ... ok
+test commands::buddy::workbuddy::tests::encrypted_wrapper_detection ... ok
+test commands::buddy::workbuddy::tests::jwt_sub_extraction ... ok
+test commands::buddy::workbuddy::tests::retire_marker_is_noop_when_marker_absent ... ok
+test commands::buddy::workbuddy::tests::retire_marker_keeps_marker_that_appeared_after_write ... ok
+test commands::buddy::workbuddy::tests::retire_marker_removes_stale_logout_marker_even_if_content_drifted ... ok
+test commands::buddy::workbuddy::tests::session_contains_official_fields_and_current_account ... ok
+test commands::buddy::workbuddy::tests::session_merges_existing_accounts_and_marks_others_not_login ... ok
+test commands::buddy::workbuddy::tests::switching_encrypted_session_uses_target_fields_not_old_paths ... ok
+test commands::buddy::workbuddy::tests::switching_rejects_unknown_encrypted_fields_and_wrong_keys ... ok
+test commands::buddy::workbuddy::tests::switching_seals_new_fields_and_new_array_entries ... ok
+test commands::buddy::workbuddy::tests::token_parts_extraction ... ok
+
+test result: ok. 43 passed; 0 failed; 1 ignored; 0 measured; 1632 filtered out; finished in 0.04s
