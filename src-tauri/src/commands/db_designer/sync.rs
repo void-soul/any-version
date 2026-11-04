@@ -191,7 +191,7 @@ mod tests {
             comment: String::new(),
             x: 0.0,
             y: 0.0,
-            table: Some(DbTableBody {
+            table: Some(DbTableBody { checks: Vec::new(),
                 fields,
                 indexes: Vec::new(),
             }),

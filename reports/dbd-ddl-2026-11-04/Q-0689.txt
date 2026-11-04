@@ -1,0 +1,20 @@
+## Q-0689 | 2026-11-04 | Bug Fix | 已解决待验证
+
+**现象/需求:** 用户提供MySQL DDL xiaozhi_coach_v1.sql，命名CHECK约束误判为索引导致解析自检失败，需保留CHECK表达式并支持保存/导出及字段重命名同步。
+
+**根因:** 命名CONSTRAINT分支把非外键约束统一送入索引解析器，将CHECK表达式当作索引列，模型也没有CHECK字段导致规则无法保存。
+
+**解决方案:** 增加兼容旧文档的table.checks（约束名/表达式），解析命名和匿名表级CHECK并从索引/字段分支排除，JSON序列化及三方言导出保留规则。字段重命名及导入规范化同步CHECK标识符，避免改字符串常量；同步前端类型及Rust构造器。用户原始文件解析64表/9条CHECK，导出再解析仍64表/9条，未修改原文件；新增合成CHECK/JSON保存/改名/再导入回归。现有轻量SQL解析器不等同完整数据库语义解析，未连接真实MySQL执行。 验证：数据库设计模块128项原生回归及用户文件1项显式测试通过；TypeScript和1186文件架构通过。界面交互和真实数据库执行未验。 Rust --all-targets --locked --offline检查通过，证据位于reports/dbd-ddl-2026-11-04。
+
+**涉及文件:**
+| File | Change |
+|------|--------|
+| src-tauri/src/commands/db_designer/models.rs | CHECK模型与向后兼容默认值 |
+| src-tauri/src/commands/db_designer/reverse/ddl.rs | 命名/匿名CHECK解析 |
+| src-tauri/src/commands/db_designer/check_constraints.rs | 表达式标识符与引号处理 |
+| src-tauri/src/commands/db_designer/store.rs | 改名/规范化同步表达式 |
+| src-tauri/src/commands/db_designer/export.rs | 保留约束导出 |
+| src-tauri/src/commands/db_designer/reverse/tests.rs | 合成与显式本地文件回归 |
+| src/components/dbdesigner/types.ts | 前端CHECK类型 |
+| src-tauri/src/commands/db_designer/ | 其余现有表体构造器显式补空checks |
+---

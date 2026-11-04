@@ -732,7 +732,7 @@ fn ai_output_passes_validation_after_normalizing() {
         kind: "table".into(),
         ..Default::default()
     };
-    parent.table = Some(super::super::models::DbTableBody {
+    parent.table = Some(super::super::models::DbTableBody { checks: Vec::new(),
         fields: vec![
             serde_json::from_value(serde_json::json!({
                 "name": "type_id", "type": { "base": "bigint" }, "pk": true, "autoIncrement": true
@@ -751,7 +751,7 @@ fn ai_output_passes_validation_after_normalizing() {
         kind: "table".into(),
         ..Default::default()
     };
-    child.table = Some(super::super::models::DbTableBody {
+    child.table = Some(super::super::models::DbTableBody { checks: Vec::new(),
             fields: vec![
                 serde_json::from_value(serde_json::json!({
                     "name": "article_id", "type": { "base": "bigint" }, "pk": true, "autoIncrement": true

@@ -165,7 +165,7 @@ pub fn reverse_sqlite(path: &str, name: &str) -> Result<DbDesignDocument, String
             comment: String::new(),
             x: (doc.nodes.len() % 4) as f64 * 280.0,
             y: (doc.nodes.len() / 4) as f64 * 240.0,
-            table: Some(DbTableBody { fields, indexes }),
+            table: Some(DbTableBody { checks: Vec::new(), fields, indexes }),
             view: None,
             ..Default::default()
         });

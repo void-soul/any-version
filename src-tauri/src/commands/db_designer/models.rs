@@ -266,6 +266,17 @@ pub struct DbTableBody {
     pub fields: Vec<DbField>,
     #[serde(default, deserialize_with = "de_vec")]
     pub indexes: Vec<DbIndex>,
+    #[serde(default, deserialize_with = "de_vec")]
+    pub checks: Vec<DbCheck>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DbCheck {
+    #[serde(default, deserialize_with = "de_text")]
+    pub name: String,
+    #[serde(deserialize_with = "de_text")]
+    pub expression: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]

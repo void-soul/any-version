@@ -51,7 +51,7 @@ pub fn reverse_ddl(text: &str, dialect: &str, name: &str) -> Result<DbDesignDocu
                 // 反推出来的位置只是「能看」的兜底；用户点「自动布局」会重排（见前端 layout.ts）
                 x: (doc.nodes.len() % 4) as f64 * 280.0,
                 y: (doc.nodes.len() / 4) as f64 * 240.0,
-                table: Some(DbTableBody { fields, indexes }),
+                table: Some(DbTableBody { checks: parse_checks(&body), fields, indexes }),
                 view: None,
                 ..Default::default()
             });
@@ -202,6 +202,7 @@ pub(super) fn parse_table_body(body: &str, _lower_hint: &str) -> (Vec<DbField>, 
             continue;
         }
         let low = item.to_lowercase();
+        if is_check_clause(item) { continue; }
         // `CONSTRAINT x FOREIGN KEY (...) REFERENCES ...` / `CONSTRAINT uk_x UNIQUE (...)`：
         // 去掉 CONSTRAINT 前缀后按索引/外键处理。**不能当列定义** —— 否则会造出
         // 一个名叫 "constraint" 的假字段（踩过：反推结果里凭空多一列）。
@@ -271,6 +272,29 @@ pub(super) fn parse_table_body(body: &str, _lower_hint: &str) -> (Vec<DbField>, 
         }
     }
     (fields, indexes)
+}
+
+fn is_check_clause(item: &str) -> bool {
+    let item = item.trim();
+    let rest = if item.to_lowercase().starts_with("constraint ") {
+        let rest = item["constraint".len()..].trim_start();
+        match first_ident(rest) {
+            Some(name) => rest[name.len() + if rest.starts_with(['`', '"', '[']) { 2 } else { 0 }..].trim_start(),
+            None => return false,
+        }
+    } else { item };
+    rest.to_lowercase().starts_with("check") && rest[5..].trim_start().starts_with('(')
+}
+
+fn parse_checks(body: &str) -> Vec<DbCheck> {
+    split_top_level(body, ',').into_iter().filter(|item| is_check_clause(item)).filter_map(|item| {
+        let open = item.find('(')?;
+        let close = item.rfind(')')?;
+        let name = if item.to_lowercase().starts_with("constraint ") {
+            unquote_ident(&first_ident(item["constraint".len()..].trim_start())?)
+        } else { String::new() };
+        Some(DbCheck { name, expression: item[open+1..close].trim().into() })
+    }).collect()
 }
 
 /// 索引/主键里的**列名**清洗：`col(10)` 长度后缀、`ASC`/`DESC` 排序方向、反引号。
@@ -462,13 +486,8 @@ pub(super) fn parse_column(item: &str) -> Option<DbField> {
         // 「字符串内容」。早先这里把引号剥了，于是 `DEFAULT 'new'` 存成 `new`，
         // 导出时拼出 `DEFAULT new` —— 语法错误；而校验也无从判断用户是「忘了加引号」
         // 还是「本来就该按字符串处理」。
-        let v = if after.starts_with('\'') {
-            // 找的是**结尾**那个引号：after[1..] 里再找一次，别拿开引号当结尾
-            after[1..]
-                .find('\'')
-                .map(|e| after[..1 + e + 1].to_string())
-        } else if after.starts_with('"') {
-            after[1..].find('"').map(|e| after[..1 + e + 1].to_string())
+        let v = if after.starts_with(['\'', '"']) {
+            quoted_literal_end(after).map(|end| after[..end].to_string())
         } else {
             after.split_whitespace().next().map(|x| x.to_string())
         };
@@ -484,6 +503,19 @@ pub(super) fn parse_column(item: &str) -> Option<DbField> {
         }
     }
     Some(f)
+}
+
+fn quoted_literal_end(value: &str) -> Option<usize> {
+    let quote = value.chars().next()?;
+    let mut chars = value.char_indices().skip(1).peekable();
+    while let Some((index, ch)) = chars.next() {
+        if ch == '\\' { chars.next(); }
+        else if ch == quote {
+            if chars.peek().is_some_and(|(_, next)| *next == quote) { chars.next(); }
+            else { return Some(index + ch.len_utf8()); }
+        }
+    }
+    None
 }
 
 pub(super) fn s_is_quoted_type(_s: &str) -> bool {

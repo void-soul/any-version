@@ -243,8 +243,18 @@ pub fn validate(doc: &DbDesignDocument) -> ValidationReport {
 
     // ── 索引名唯一 ──
     // MySQL 的索引名是**表内**唯一，PG / SQLite 是**全库**唯一（后者索引建在表外，更严格）。
-    // 所以按最严的口径（全库唯一）判重：重名时 MySQL 跨表可以活，PG / SQLite 直接
-    // `relation "idx_x" already exists` 建表失败。AI 很爱给不同表都写 idx_user 这类名字。
+    // 根据当前方言校验，不将其他方言的限制强加给 MySQL。
+    if doc.dialect == "mysql" {
+        for node in &doc.nodes {
+            let Some(table) = &node.table else { continue };
+            let mut names = std::collections::HashSet::new();
+            for index in &table.indexes {
+                if !index.name.trim().is_empty() && !names.insert(index.name.to_lowercase()) {
+                    r.errors.push(format!("表「{}」索引名「{}」重复：MySQL 索引名要求表内唯一", node.name, index.name));
+                }
+            }
+        }
+    } else {
     let mut seen_idx: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
     for n in &doc.nodes {
@@ -269,6 +279,7 @@ pub fn validate(doc: &DbDesignDocument) -> ValidationReport {
         }
     }
 
+    }
     // ── 关联 ──
     for rel in &doc.relations {
         if !RELATION_KINDS.contains(&rel.kind.as_str()) {
@@ -460,6 +471,9 @@ pub fn rename_field(
         }
     }
     // 索引里也引用字段名
+    for check in &mut table.checks {
+        check.expression = super::check_constraints::rewrite(&check.expression, Some((old, new)), None);
+    }
     for idx in table.indexes.iter_mut() {
         for f in idx.fields.iter_mut() {
             if f == old {
@@ -586,6 +600,13 @@ pub fn normalize_naming(doc: &mut DbDesignDocument) -> NormalizeReport {
         for n in doc.nodes.iter_mut() {
             if let Some(t) = n.table.as_mut() {
                 let nid = n.id.clone();
+                for (node_id, old, new) in &renames {
+                    if node_id == &nid {
+                        for check in &mut t.checks {
+                            check.expression = super::check_constraints::rewrite(&check.expression, Some((old, new)), None);
+                        }
+                    }
+                }
                 for f in t.fields.iter_mut() {
                     if let Some(new) = lookup(&nid, &f.name) {
                         f.name = new;

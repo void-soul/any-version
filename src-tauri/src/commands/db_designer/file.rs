@@ -168,7 +168,7 @@ mod tests {
             comment: "订单主表".to_string(),
             x: 0.0,
             y: 0.0,
-            table: Some(DbTableBody {
+            table: Some(DbTableBody { checks: Vec::new(),
                 fields: vec![DbField {
                     name: "order_id".to_string(),
                     r#type: DbLogicalType { base: "bigint".into(), ..Default::default() },

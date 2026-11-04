@@ -1,0 +1,14 @@
+## Q-0691 | 2026-11-04 | Bug Fix | 已解决待验证
+
+**现象/需求:** MySQL DDL不同表共用order_id索引名合法，自检却无条件套用PostgreSQL/SQLite全局索引名唯一规则；需按方言处理且保留表内重名检查。
+
+**根因:** validate虽知MySQL索引名仅表内唯一，仍无条件按PG/SQLite更严规则拒绝跨表同名索引。
+
+**解决方案:** MySQL按每张表检查索引名，不再拒绝不同表复用order_id；同表重名继续拒绝。PostgreSQL/SQLite保持当前单schema模型下的全局索引名检查。合成跨表MySQL通过、PG/SQLite拒绝以及MySQL表内拒绝均通过，用户文件导入自检通过。 验证：数据库设计模块128项原生回归及用户文件1项显式测试通过；TypeScript和1186文件架构通过。界面交互和真实数据库执行未验。 Rust --all-targets --locked --offline检查通过，证据位于reports/dbd-ddl-2026-11-04。
+
+**涉及文件:**
+| File | Change |
+|------|--------|
+| src-tauri/src/commands/db_designer/store.rs | 按方言检查索引名作用域 |
+| src-tauri/src/commands/db_designer/reverse/tests.rs | 三方言索引作用域回归 |
+---

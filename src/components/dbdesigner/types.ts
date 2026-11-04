@@ -39,6 +39,7 @@ export interface DbIndex {
 export interface DbTableBody {
   fields: DbField[];
   indexes?: DbIndex[];
+  checks?: { name: string; expression: string }[];
 }
 
 export interface DbViewBody {

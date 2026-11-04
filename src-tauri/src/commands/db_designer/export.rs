@@ -381,6 +381,11 @@ fn export_relational(doc: &DbDesignDocument, d: Dialect, opts: ExportOptions) ->
             lines.push(format!("  {} {} ({})", kw, quote(d, &idx.name), cols));
         }
 
+        for check in &body.checks {
+            let expression = super::check_constraints::rewrite(&check.expression, None, Some(if d == Dialect::MySql { '`' } else { '"' }));
+            let prefix = if check.name.is_empty() { String::new() } else { format!("CONSTRAINT {} ", quote(d, &check.name)) };
+            lines.push(format!("  {prefix}CHECK ({expression})"));
+        }
         // 外键：MySQL / SQLite 写在建表语句内，PG 用 ALTER（便于命名与后续增删）。
         // 方向约定：**外键建在 from 端**（from 是「多 / 子」端，引用 to 这个「一 / 父」端）。
         // 只挂在 from 上，否则父子表会各建一条外键（曾经两边都建，users 也被挂上 FK）。

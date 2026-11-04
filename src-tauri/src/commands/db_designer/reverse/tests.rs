@@ -233,3 +233,69 @@ fn sqlite_reverse_rejects_non_sqlite_files() {
     assert!(reverse_sqlite(&bad.to_string_lossy(), "x").is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn mysql_check_constraints_and_literal_comment_markers_survive_roundtrip() {
+    let sql = r#"
+        CREATE TABLE sports (
+            id BIGINT PRIMARY KEY,
+            theme_color VARCHAR(16) DEFAULT '#21685c',
+            sport_label VARCHAR(100) DEFAULT 'a--b/*c*/#d;it\'s,ok',
+            quantity INT,
+            CONSTRAINT sports_positive CHECK (`quantity` > 0),
+            CHECK (`id` > 0),
+            KEY order_id (id)
+        );
+        CREATE TABLE orders (id BIGINT PRIMARY KEY, KEY order_id (id));
+    "#;
+    let doc = reverse_ddl(sql, "mysql", "fixture").unwrap();
+    assert_eq!(doc.nodes.len(), 2);
+    let table = doc.nodes.iter().find(|node| node.name == "sports").unwrap().table.as_ref().unwrap();
+    assert_eq!(table.fields.iter().filter(|field| field.name == "sport_id").count(), 1);
+    assert_eq!(table.fields.iter().find(|field| field.name == "theme_color").unwrap().default.as_deref(), Some("'#21685c'"));
+    assert_eq!(table.checks.len(), 2);
+    assert_eq!(table.fields.iter().find(|field| field.name == "sport_label").unwrap().default.as_deref(), Some(r"'a--b/*c*/#d;it\'s,ok'"));
+    assert!(table.checks.iter().any(|check| check.name == "sports_positive" && check.expression == "`quantity` > 0"));
+    assert!(table.checks.iter().any(|check| check.expression == "`sport_id` > 0"));
+    assert_eq!(table.indexes.len(), 1, "CHECK must not become an index");
+    let saved = serde_json::to_string(&doc).unwrap();
+    let restored = serde_json::from_str(&saved).unwrap();
+    let exported = super::super::export::export_sql(&restored).unwrap();
+    assert!(exported.contains("CONSTRAINT `sports_positive` CHECK (`quantity` > 0)"));
+    let again = reverse_ddl(&exported, "mysql", "roundtrip").unwrap();
+    assert_eq!(again.nodes[0].table.as_ref().unwrap().checks, table.checks);
+    for dialect in ["postgres", "sqlite"] {
+        let mut other = doc.clone(); other.dialect = dialect.into();
+        assert!(validate(&other).errors.iter().any(|error| error.contains("全库唯一")));
+    }
+    let mut duplicate = doc;
+    let body = duplicate.nodes[0].table.as_mut().unwrap();
+    body.indexes.push(body.indexes[0].clone());
+    assert!(validate(&duplicate).errors.iter().any(|error| error.contains("表内唯一")));
+}
+
+#[test]
+fn check_renaming_preserves_literals_and_functions() {
+    let mut doc = reverse_ddl("CREATE TABLE items (id INT PRIMARY KEY, status VARCHAR(20), CHECK (status <> 'status' AND length(status) > 0));", "mysql", "fixture").unwrap();
+    let id = doc.nodes[0].id.clone();
+    let field = doc.nodes[0].table.as_ref().unwrap().fields.iter().find(|field| field.name.ends_with("_status")).unwrap().name.clone();
+    super::super::store::rename_field(&mut doc, &id, &field, "item_state").unwrap();
+    let expression = &doc.nodes[0].table.as_ref().unwrap().checks[0].expression;
+    assert_eq!(expression, "item_state <> 'status' AND length(item_state) > 0");
+}
+
+#[test]
+#[ignore = "requires an explicitly supplied local DDL; never reads a user's file by default"]
+fn local_mysql_ddl_fixture() {
+    let path = std::env::var("KIRA_DBD_DDL_FIXTURE").expect("explicit fixture path");
+    let text = std::fs::read_to_string(path).unwrap();
+    let doc = reverse_ddl(&text, "mysql", "local fixture").unwrap();
+    let checks: usize = doc.nodes.iter().filter_map(|node| node.table.as_ref()).map(|table| table.checks.len()).sum();
+    let exported = super::super::export::export_sql(&doc).unwrap();
+    let roundtrip = reverse_ddl(&exported, "mysql", "roundtrip").unwrap();
+    let roundtrip_checks: usize = roundtrip.nodes.iter().filter_map(|node| node.table.as_ref()).map(|table| table.checks.len()).sum();
+    assert_eq!(roundtrip.nodes.len(), doc.nodes.len());
+    assert_eq!(roundtrip_checks, checks);
+    assert!(checks > 0);
+    println!("tables/views={}, checks={}, exported_bytes={}, roundtrip=passed", doc.nodes.len(), checks, exported.len());
+}

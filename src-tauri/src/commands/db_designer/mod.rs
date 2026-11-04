@@ -15,6 +15,7 @@ pub mod reverse;
 pub mod settings;
 pub mod store;
 pub mod sync;
+mod check_constraints;
 
 #[cfg(test)]
 mod tests {
@@ -63,7 +64,7 @@ mod tests {
                     comment: "用户表".to_string(),
                     x: 0.0,
                     y: 0.0,
-                    table: Some(DbTableBody {
+                    table: Some(DbTableBody { checks: Vec::new(),
                         fields: vec![DbField {
                             pk: true,
                             auto_increment: true,
@@ -81,7 +82,7 @@ mod tests {
                     comment: "订单主表".to_string(),
                     x: 200.0,
                     y: 0.0,
-                    table: Some(DbTableBody {
+                    table: Some(DbTableBody { checks: Vec::new(),
                         fields: vec![
                             DbField { pk: true, auto_increment: true, ..field("order_id", "bigint") },
                             no,
@@ -631,7 +632,7 @@ fn normalize_skips_rename_when_target_name_taken() {
             comment: String::new(),
             x: 0.0,
             y: 200.0,
-            table: Some(DbTableBody {
+            table: Some(DbTableBody { checks: Vec::new(),
                 fields: vec![DbField { pk: true, auto_increment: true, ..field("tag_id", "bigint") }],
                 indexes: vec![],
             }),
@@ -699,7 +700,7 @@ fn normalize_skips_rename_when_target_name_taken() {
             comment: String::new(),
             x: 0.0,
             y: 0.0,
-            table: Some(DbTableBody {
+            table: Some(DbTableBody { checks: Vec::new(),
                 fields: vec![DbField {
                     name: "tag_id".to_string(),
                     r#type: DbLogicalType { base: "bigint".to_string(), ..Default::default() },

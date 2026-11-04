@@ -132,42 +132,29 @@ fn split_type_and_args(s: &str) -> (&str, Vec<String>) {
 
 /// 按顶层分隔符切字符串（忽略括号内与引号内的分隔符）
 fn split_top_level(s: &str, sep: char) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut depth = 0i32;
-    let mut cur = String::new();
-    let mut quote: Option<char> = None;
-    for ch in s.chars() {
-        match quote {
-            Some(q) => {
-                cur.push(ch);
-                if ch == q {
-                    quote = None;
-                }
+    let chars: Vec<char> = s.chars().collect();
+    let (mut out, mut cur, mut depth, mut quote, mut i) = (Vec::new(), String::new(), 0i32, None, 0);
+    while i < chars.len() {
+        let ch = chars[i];
+        cur.push(ch);
+        if let Some(q) = quote {
+            if ch == '\\' && i + 1 < chars.len() { i += 1; cur.push(chars[i]); }
+            else if ch == q {
+                if chars.get(i + 1) == Some(&q) { i += 1; cur.push(chars[i]); }
+                else { quote = None; }
             }
-            None => match ch {
-                '\'' | '"' | '`' => {
-                    quote = Some(ch);
-                    cur.push(ch);
-                }
-                '(' => {
-                    depth += 1;
-                    cur.push(ch);
-                }
-                ')' => {
-                    depth -= 1;
-                    cur.push(ch);
-                }
-                c if c == sep && depth == 0 => {
-                    out.push(cur.trim().to_string());
-                    cur = String::new();
-                }
-                _ => cur.push(ch),
-            },
+        } else {
+            match ch {
+                '\'' | '"' | '`' => quote = Some(ch),
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                c if c == sep && depth == 0 => { cur.pop(); out.push(cur.trim().to_string()); cur.clear(); }
+                _ => {}
+            }
         }
+        i += 1;
     }
-    if !cur.trim().is_empty() {
-        out.push(cur.trim().to_string());
-    }
+    if !cur.trim().is_empty() { out.push(cur.trim().to_string()); }
     out
 }
 
@@ -176,7 +163,20 @@ fn strip_comments(sql: &str) -> String {
     let mut out = String::new();
     let chars: Vec<char> = sql.chars().collect();
     let mut i = 0;
+    let mut quote = None;
     while i < chars.len() {
+        if let Some(q) = quote {
+            let ch = chars[i]; out.push(ch); i += 1;
+            if ch == '\\' && i < chars.len() { out.push(chars[i]); i += 1; }
+            else if ch == q {
+                if chars.get(i) == Some(&q) { out.push(q); i += 1; }
+                else { quote = None; }
+            }
+            continue;
+        }
+        if matches!(chars[i], '\'' | '"' | '`') {
+            quote = Some(chars[i]); out.push(chars[i]); i += 1; continue;
+        }
         // -- 行注释 / # 行注释（MySQL）
         if chars[i] == '-' && i + 1 < chars.len() && chars[i + 1] == '-' {
             while i < chars.len() && chars[i] != '\n' {

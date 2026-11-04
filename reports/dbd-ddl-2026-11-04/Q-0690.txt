@@ -1,0 +1,15 @@
+## Q-0690 | 2026-11-04 | Bug Fix | 已解决待验证
+
+**现象/需求:** 用户MySQL DDL sports表含默认颜色#21685c，注释清理未识别字符串把#当行注释截断，后续语句错位并制造重复sport_id；需修复引号/转义扫描。
+
+**根因:** strip_comments未跟踪引号，sports.theme_color默认值中的#被当作行注释，破坏字符串/语句边界并把后表字段混入sports，随后规范化制造重复sport_id。分隔器和默认值读取也不正确处理转义/双写引号。
+
+**解决方案:** 注释仅在引号外识别；顶层分隔和字符串默认值读取支持反斜杠转义及双写引号，保留#、--、/* */、逗号和分号等字符串内容。合成sports颜色和转义字符串用例通过，真实SQL原先的重复sport_id自检错误消失。 验证：数据库设计模块128项原生回归及用户文件1项显式测试通过；TypeScript和1186文件架构通过。界面交互和真实数据库执行未验。 Rust --all-targets --locked --offline检查通过，证据位于reports/dbd-ddl-2026-11-04。
+
+**涉及文件:**
+| File | Change |
+|------|--------|
+| src-tauri/src/commands/db_designer/reverse.rs | 引号感知注释与分隔 |
+| src-tauri/src/commands/db_designer/reverse/ddl.rs | 完整字符串默认值读取 |
+| src-tauri/src/commands/db_designer/reverse/tests.rs | 注释样式字面量回归 |
+---
