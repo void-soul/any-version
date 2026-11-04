@@ -528,8 +528,6 @@ export default function DbDesignerPanel() {
           <DbDocumentToolbar
             doc={doc}
             patchDoc={patchDoc}
-            edgeStyle={edgeStyle}
-            setEdgeStyle={setEdgeStyle}
             fieldRows={fieldRows}
             setFieldRows={setFieldRows}
             dirty={dirty}
@@ -714,6 +712,8 @@ export default function DbDesignerPanel() {
                   但展开后要一直能看见效果，所以不能塞进菜单里「打开→拖→关→看」。 */}
               <div className="pointer-events-auto absolute bottom-3 right-3 z-20">
                 <GraphLookPanel
+                  edgeStyle={edgeStyle}
+                  onEdgeStyle={setEdgeStyle}
                   highlight={lookPrefs.highlight}
                   dim={lookPrefs.dim}
                   depth={highlightDepth}

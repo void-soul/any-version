@@ -1,0 +1,15 @@
+## Q-0692 | 2026-11-04 | Style | 已解决待验证
+
+**现象/需求:** 数据库设计模块右上角的连线类型选择应收进画布视图设置/外观面板，保留原有曲线/折线/直线选项和偏好持久化，减少顶栏占用。
+
+**根因:** EdgeStyleSelect位于DbDocumentToolbar中独立占用顶栏位置，虽然是只影响画布的显示偏好，却未归入现有画布设置面板。
+
+**解决方案:** 将现有选择器移入右下角GraphLookPanel画布调整面板，增加可访问标签；从顶栏删除选择器与无用props。仍使用原useEdgeStyle状态与持久化逻辑，拖线预览继续随类型变化。TypeScript noEmit、1186源文件架构和git diff --check通过；未进行实际桌面目视验收。
+
+**涉及文件:**
+| File | Change |
+|------|--------|
+| src/components/dbdesigner/DbDocumentToolbar.tsx | 移除顶栏连线类型 |
+| src/components/dbdesigner/GraphLookPanel.tsx | 增加画布设置内的连线类型选项 |
+| src/components/dbdesigner/DbDesignerPanel.tsx | 将原偏好状态传给画布设置 |
+---

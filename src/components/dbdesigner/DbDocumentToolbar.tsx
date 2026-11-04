@@ -1,6 +1,5 @@
 import { useTranslation } from "react-i18next";
 import "@xyflow/react/dist/style.css";
-import EdgeStyleSelect from "../shared/EdgeStyleSelect";
 import { DIALECTS, FIELD_ROW_MODES, type FieldRowMode, type DbDesignDocument, type Dialect } from "./types";
 import { FIELD_ROWS_KEY } from "./DbDesignerPanel.model";
 import type { Dispatch, SetStateAction } from "react";
@@ -8,8 +7,6 @@ import type { Dispatch, SetStateAction } from "react";
 interface DbDocumentToolbarProps {
   doc: DbDesignDocument;
   patchDoc: (next: DbDesignDocument) => void;
-  edgeStyle: "bezier" | "smoothstep" | "straight";
-  setEdgeStyle: (next: "bezier" | "smoothstep" | "straight") => void;
   fieldRows: FieldRowMode;
   setFieldRows: Dispatch<SetStateAction<FieldRowMode>>;
   dirty: boolean;
@@ -17,7 +14,7 @@ interface DbDocumentToolbarProps {
 }
 
 /** Pure DbDocumentToolbar view; its owning panel retains side effects and state. */
-export function DbDocumentToolbar({ doc, patchDoc, edgeStyle, setEdgeStyle, fieldRows, setFieldRows, dirty, path }: DbDocumentToolbarProps) {
+export function DbDocumentToolbar({ doc, patchDoc, fieldRows, setFieldRows, dirty, path }: DbDocumentToolbarProps) {
   const { t } = useTranslation();
   return (
     <div className="ml-auto flex items-center gap-2 flex-wrap">
@@ -37,12 +34,6 @@ export function DbDocumentToolbar({ doc, patchDoc, edgeStyle, setEdgeStyle, fiel
           <option key={d} value={d}>{d}</option>
         ))}
       </select>
-      {/* 连线样式：只影响观感，不进设计文件；拖线时的实时预览也跟着换 */}
-      <EdgeStyleSelect
-        value={edgeStyle}
-        onChange={setEdgeStyle}
-        className="ui-input h-8 px-2 text-caption"
-      />
       {/* 节点卡片里显示哪些字段行：主键+外键（精简）/ 全部字段（展开，视图同时展开 SQL） */}
       <select
         value={fieldRows}

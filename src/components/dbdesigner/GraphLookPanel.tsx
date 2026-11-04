@@ -15,6 +15,8 @@
 import { useTranslation } from "react-i18next";
 import { LayoutGrid, Palette, Rows3 } from "lucide-react";
 import GraphLookPrefs from "../shared/GraphLookPrefs";
+import EdgeStyleSelect from "../shared/EdgeStyleSelect";
+import type { EdgeStyle } from "../../utils/graphEdgeStyle";
 import { LAYOUT_MODES, type LayoutMode } from "./layout";
 import type { HighlightDepth } from "./series";
 
@@ -49,6 +51,7 @@ export default function GraphLookPanel({
   layoutMode, onLayoutMode,
   onAutoLayout, onArrange, onAutoColor,
   arrangeDisabled,
+  edgeStyle, onEdgeStyle,
 }: {
   highlight: number;
   dim: number;
@@ -69,6 +72,8 @@ export default function GraphLookPanel({
   onArrange: () => void;
   onAutoColor: () => void;
   arrangeDisabled: boolean;
+  edgeStyle: EdgeStyle;
+  onEdgeStyle: (style: EdgeStyle) => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -84,6 +89,10 @@ export default function GraphLookPanel({
       maxDim={maxDim}
       extra={
         <>
+          <label className="mb-1.5 flex items-center justify-between gap-2 text-micro text-slate-400">
+            {t("common.edgeStyle")}
+            <EdgeStyleSelect value={edgeStyle} onChange={onEdgeStyle} className="ui-input min-w-0 px-1.5 py-1 text-micro" />
+          </label>
           {/* 布局方式：两种算法（放射 / 核心表左右分列）在这里切换。
               放在「布局整理」里而不是工具栏：它只对下面两个动作有意义。 */}
           <select
