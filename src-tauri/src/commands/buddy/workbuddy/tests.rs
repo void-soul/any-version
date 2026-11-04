@@ -170,3 +170,57 @@ fn retire_marker_keeps_marker_that_appeared_after_write() {
     assert!(marker.exists(), "不能吞掉客户端的登出动作");
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn switching_encrypted_session_uses_target_fields_not_old_paths() {
+    use super::super::twoapi::atrest;
+    let secret = "fixture-switch-secret";
+    let old = serde_json::json!({
+        "auth":{"accessToken":"old-token","refreshToken":"old-refresh"},
+        "account":{"uid":"old","phoneNumber":"old-phone","nickname":"Old"},
+        "accounts":[{"uid":"u123","phoneNumber":"stale-phone","nickname":"Old Alice"}],
+        "allAccounts":[{"uid":"u123","phoneNumber":"stale-phone"}],
+        "domain":"preserved"
+    });
+    let old = atrest::encrypt_session_fields(&old, secret).unwrap();
+    let target = sample_account();
+    let encrypted = encrypted_session::prepare_switched_session(&target, BuddyPlatform::Workbuddy, &old, secret).unwrap();
+    assert!(encrypted["account"].get("phoneNumber").is_none());
+    assert!(encrypted["accounts"][0].get("phoneNumber").is_none());
+    let (decoded, _) = atrest::decrypt_tree_with_paths(&encrypted, secret).unwrap();
+    assert_eq!(decoded["auth"]["accessToken"], "wb-token-1");
+    assert_eq!(decoded["account"]["uid"], "u123");
+    assert_eq!(decoded["domain"], "preserved");
+    assert_eq!(decoded["accounts"][0], decoded["account"]);
+    assert_eq!(decoded["allAccounts"][0], decoded["account"]);
+    assert_eq!(decoded["auth"]["refreshToken"], "wb-refresh-1");
+}
+
+#[test]
+fn switching_seals_new_fields_and_new_array_entries() {
+    use super::super::twoapi::atrest;
+    let secret = "fixture-switch-secret";
+    let old = atrest::encrypt_session_fields(&serde_json::json!({
+        "auth":{"accessToken":"old"}, "account":{"uid":"other"},
+        "accounts":[{"uid":"other","nickname":"Other"}],"allAccounts":[]
+    }), secret).unwrap();
+    let mut target = sample_account();
+    target.auth_raw = Some(serde_json::json!({"account":{"phoneNumber":"new-phone","departmentFullName":"New team"}}));
+    let encrypted = encrypted_session::prepare_switched_session(&target, BuddyPlatform::Workbuddy, &old, secret).unwrap();
+    for field in [&encrypted["account"]["phoneNumber"], &encrypted["accounts"][1]["phoneNumber"], &encrypted["allAccounts"][0]["phoneNumber"]] {
+        assert!(atrest::is_encrypted(field));
+        assert_eq!(atrest::decrypt_field(field, secret).unwrap(), "new-phone");
+    }
+    assert!(atrest::is_encrypted(&encrypted["auth"]["refreshToken"]));
+}
+
+#[test]
+fn switching_rejects_unknown_encrypted_fields_and_wrong_keys() {
+    use super::super::twoapi::atrest;
+    let secret = "fixture-switch-secret";
+    let old = atrest::encrypt_tree(&serde_json::json!({"unknown":"secret"}), &["unknown".into()], secret).unwrap();
+    let original = old.clone();
+    assert!(encrypted_session::prepare_switched_session(&sample_account(), BuddyPlatform::Workbuddy, &old, secret).unwrap_err().contains("未知加密字段"));
+    assert_eq!(old, original);
+    assert!(encrypted_session::prepare_switched_session(&sample_account(), BuddyPlatform::Workbuddy, &old, "wrong-key").is_err());
+}

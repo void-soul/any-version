@@ -195,11 +195,11 @@ pub(super) fn build_auth_session(
     serde_json::Value::Object(session)
 }
 
-/// 官方 5.6 加密格式的切号写回：解密 → 换目标账号 → 原样加密 → 原子写回。
+/// 官方 5.6 加密格式的切号写回：解密 → 换目标账号 → 按官方字段加密 → 原子写回。
 ///
 /// 三重保护，任一环节不满足就**不写**：
 /// 1. 拿不到官方密钥 → 拒绝（写明文会破坏登录态）
-/// 2. 重新加密时若某条路径在重建后的结构里不存在 → 拒绝（宁可切不了号）
+/// 2. 旧会话含未知加密字段 → 拒绝；目标会话按官方字段清单加密
 /// 3. 写回用 hash 比对（防切号期间被官方客户端改过）+ 写后校验加密包装仍在
 pub(super) fn write_encrypted_session(
     account: &BuddyAccount,
@@ -214,12 +214,7 @@ pub(super) fn write_encrypted_session(
     let secret = atrest::fetch_secret().map_err(|e| {
         format!("无法取得 WorkBuddy 官方加密密钥，已停止覆盖以避免破坏登录状态：{e}")
     })?;
-    // 1. 整棵解密，并记下哪些字段原本是加密的
-    let (plain_existing, paths) = atrest::decrypt_tree_with_paths(existing, &secret)?;
-    // 2. 用目标账号的凭据重建 session（沿用官方其余字段，如 domain / accounts / allAccounts）
-    let session = build_auth_session(account, platform, Some(&plain_existing));
-    // 3. 按原路径重新加密；路径失效会直接报错，不会写出半加密文件
-    let encrypted = atrest::encrypt_tree(&session, &paths, &secret)?;
+    let encrypted = prepare_switched_session(account, platform, existing, &secret)?;
     let content = serde_json::to_string_pretty(&encrypted)
         .map_err(|e| format!("序列化登录信息失败: {}", e))?;
     // 4. 原子写回（hash 比对防并发覆盖）
@@ -237,12 +232,42 @@ pub(super) fn write_encrypted_session(
                 .to_string(),
         );
     }
+    let token = written.get("auth").and_then(|auth| auth.get("accessToken"))
+        .ok_or("校验 WorkBuddy 登录信息失败，缺少 accessToken")?;
+    if atrest::decrypt_field(token, &secret)? != account.access_token {
+        return Err("校验 WorkBuddy 登录信息失败，未写入目标账号".into());
+    }
     retire_logout_marker(marker_path, marker_existed_before)?;
     Ok(format!(
-        "已切换到 {}（{}，官方加密字段已原样保留）",
+        "已切换到 {}（{}，已按官方字段加密）",
         account.display_name(),
         auth_file.display()
     ))
+}
+
+/// Old encrypted paths describe the old identity and array positions, not the
+/// new session. Reject unknown fields before rebuilding, then seal actual fields.
+pub(super) fn prepare_switched_session(
+    account: &BuddyAccount,
+    platform: BuddyPlatform,
+    existing: &serde_json::Value,
+    secret: &str,
+) -> Result<serde_json::Value, String> {
+    use super::super::twoapi::atrest;
+    let (plain, paths) = atrest::decrypt_tree_with_paths(existing, secret)?;
+    for path in paths {
+        let parts: Vec<_> = path.split('.').collect();
+        let known = match parts.as_slice() {
+            ["auth", field] => matches!(*field, "accessToken" | "refreshToken"),
+            ["account", field] => matches!(*field, "phoneNumber" | "departmentFullName" | "nickname"),
+            ["accounts" | "allAccounts", index, field] => index.parse::<usize>().is_ok()
+                && matches!(*field, "phoneNumber" | "departmentFullName" | "nickname"),
+            _ => false,
+        };
+        if !known { return Err("WorkBuddy 登录信息包含未知加密字段，已停止覆盖，请更新客户端适配".into()); }
+    }
+    let session = build_auth_session(account, platform, Some(&plain));
+    atrest::encrypt_session_fields(&session, secret)
 }
 
 /// 读取当前 WorkBuddy 登录文件里的 access token（延时复查用）。
