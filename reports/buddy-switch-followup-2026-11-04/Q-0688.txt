@@ -1,0 +1,14 @@
+## Q-0688 | 2026-11-04 | Bug Fix | 已解决待验证
+
+**现象/需求:** 用户批准WorkBuddy官方取钥子进程增加总超时、输出上限、退出清理与无敏感信息日志，避免切号长期持锁卡住。
+
+**根因:** 官方loggerGet使用同步Command.output等待退出和全部输出，无超时或输出预算，原始stderr/JSON错误可能进入日志；调用者可能在Tokio运行时内，直接嵌套阻塞runtime会panic。
+
+**解决方案:** 每个取钥子进程5秒覆盖退出与管道读取，stdout最多64KiB，失败/超时kill并回收；stdin与stderr关闭，清除NODE_OPTIONS，Windows隐藏控制台；错误只记路径和固定原因，不输出官方stderr、JSON正文或密钥。临时runtime运行于独立受控线程，兼容同步及Tokio调用。新增成功输出/异常退出脱敏/挂起超时/超大输出测试；多个候选逐个尝试，每个5秒，不承诺整批候选仅5秒。 验证：最终源码102项定向原生测试通过、1项真实客户端测试跳过；Rust all-targets离线检查、1185源文件架构和差异检查通过。未关闭真实客户端、调用真实取钥或切换真实账号，保持已解决待验证。
+
+**涉及文件:**
+| File | Change |
+|------|--------|
+| src-tauri/src/commands/buddy/twoapi/atrest.rs | 有界取钥与日志脱敏 |
+| src-tauri/src/commands/buddy/twoapi/atrest/key_command.rs | 子进程超时/清理/预算与合成测试 |
+---

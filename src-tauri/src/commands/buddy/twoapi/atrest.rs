@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+mod key_command;
 
 /// 手工指定 WorkBuddy 可执行文件（装在非默认位置时用；面板里填写的就是它）
 pub const ELECTRON_PATH_ENV: &str = "WORKBUDDY_ELECTRON_PATH";
@@ -81,28 +82,15 @@ fn electron_candidates_with_client(override_path: Option<PathBuf>, client_path: 
 /// 失败信息必须**列出试过的路径** —— 否则"服务正常但对话全 500"无从查起。
 fn fetch_key_payload_from(candidates: &[PathBuf]) -> Result<serde_json::Value, String> {
     for exe in candidates {
-        let out = Command::new(exe)
-            .env("ELECTRON_RUN_AS_NODE", "1")
-            .arg("-e")
-            .arg(LOGGERGET_JS)
-            .output();
-        match out {
-            Ok(o) if o.status.success() && !o.stdout.is_empty() => {
-                match serde_json::from_slice::<serde_json::Value>(&o.stdout) {
-                    Ok(v) => return Ok(v),
-                    Err(e) => eprintln!(
-                        "[2api] loggerGet 输出不是 JSON（{}）: {e}",
-                        exe.display()
-                    ),
-                }
-            }
-            Ok(o) => eprintln!(
-                "[2api] loggerGet 无有效输出: {} rc={:?} err={}",
-                exe.display(),
-                o.status.code(),
-                String::from_utf8_lossy(&o.stderr).trim()
-            ),
-            Err(e) => eprintln!("[2api] 调用 WorkBuddy 失败 {}: {e}", exe.display()),
+        let mut command = Command::new(exe);
+        command.env("ELECTRON_RUN_AS_NODE", "1").env_remove("NODE_OPTIONS")
+            .args(["-e", LOGGERGET_JS]);
+        match key_command::run(command, std::time::Duration::from_secs(5)) {
+            Ok(bytes) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
+                Ok(value) => return Ok(value),
+                Err(_) => eprintln!("[2api] 官方密钥输出格式无效: {}", exe.display()),
+            },
+            Err(error) => eprintln!("[2api] {}: {error}", exe.display()),
         }
     }
     let tried = if candidates.is_empty() {
