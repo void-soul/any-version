@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../utils/invokeOrReport";
 import { FavoriteDeletedDialog } from "./FavoriteDeletedDialog";
 import { FavoriteLibrarySummary } from "./FavoriteLibrarySummary";
 import { FavoriteTaskProgress } from "./FavoriteTaskProgress";
@@ -934,7 +935,7 @@ export default function FavoritesPanel() {
         onSaved={(configured) => {
           setZhihuCookieConfigured(configured);
           // 换了 Cookie 就把健康状态刷新一下：后端会把 status 重置为「未验证」
-          void refresh().catch(() => {});
+          void refresh().catch((e) => { reportInvokeError(e, "src/components/favorites/FavoritesPanel.tsx:937"); });
         }}
       />
 

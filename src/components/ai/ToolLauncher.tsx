@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../utils/invokeOrReport";
 import { ToolCacheDirectoryList } from "./ToolCacheDirectoryList";
 import { ToolCustomPathEditor } from "./ToolCustomPathEditor";
 import { ToolLastLaunchSummary } from "./ToolLastLaunchSummary";
@@ -246,7 +247,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
       if (event.payload.default_project_path) setProjectPath(event.payload.default_project_path);
       // 模型配置变更时重新加载
       if (event.payload.providers_changed) {
-        invoke<AiConfig>("get_ai_config").then(setConfig).catch(() => {});
+        invoke<AiConfig>("get_ai_config").then(setConfig).catch((e) => { reportInvokeError(e, "src/components/ai/ToolLauncher.tsx:249"); });
       }
     });
     return () => { unlisten.then(fn => fn()); };
@@ -332,7 +333,7 @@ export default function ToolLauncher({ onAskAssistant }: { onAskAssistant?: (que
           projectPath: (sessionMode === "resume" || sessionMode === "fork") && selectedSession ? selectedSession.project_path : projectPath,
           lastLaunchedAt: new Date().toISOString(),
         };
-        await invoke("save_last_launch_config", { toolId: selectedTool.id, config: lc }).catch(() => {});
+        await invoke("save_last_launch_config", { toolId: selectedTool.id, config: lc }).catch((e) => { reportInvokeError(e, "src/components/ai/ToolLauncher.tsx:335"); });
         setLastLaunchConfigs(prev => ({ ...prev, [selectedTool.id]: lc }));
       }
     } catch (e: any) {

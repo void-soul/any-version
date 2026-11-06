@@ -1,3 +1,5 @@
+import { reportInvokeError } from "../../utils/invokeOrReport";
+import { useVisibleInterval } from "../../utils/useVisibleInterval";
 // Buddy → 2API 选项卡：启停 / 三项自检 / 客户端接入 / 端点自检
 //
 // 后端是内嵌在 kira 主进程的 axum 服务（buddy/twoapi），协议转换复用 src-tauri/src/proxy。
@@ -56,12 +58,9 @@ export default function TwoApiPanel() {
       .catch(() => setStatus(null));
   }, []);
 
-  // 状态轮询：服务在跑时端口/账号/模型数会变（Buddy 切号后账号即时更新）
-  useEffect(() => {
-    refresh();
-    const id = window.setInterval(refresh, 2000);
-    return () => window.clearInterval(id);
-  }, [refresh]);
+  // 状态轮询：服务在跑时端口/账号/模型数会变（Buddy 切号后账号即时更新）。
+  // 页面不可见时暂停，回到前台立即对齐（AUDIT-015）。
+  useVisibleInterval(refresh, 2000);
 
   // ─── 请求日志 ───
   const [logs, setLogs] = useState<RequestLogEntry[]>([]);
@@ -70,15 +69,11 @@ export default function TwoApiPanel() {
   const refreshLogs = useCallback(() => {
     invoke<RequestLogEntry[]>("buddy2api_request_logs")
       .then(setLogs)
-      .catch(() => {});
+      .catch((e) => { reportInvokeError(e, "src/components/buddy/TwoApiPanel.tsx:73"); });
   }, []);
 
-  // 日志轮询（与状态轮询同频；请求日志是内存环形缓冲，轮询拿全量）
-  useEffect(() => {
-    refreshLogs();
-    const id = window.setInterval(refreshLogs, 2000);
-    return () => window.clearInterval(id);
-  }, [refreshLogs]);
+  // 日志轮询（与状态轮询同频；请求日志是内存环形缓冲，轮询拿全量）。
+  useVisibleInterval(refreshLogs, 2000);
 
   // 有新日志时滚到底部
   useEffect(() => {
@@ -97,7 +92,7 @@ export default function TwoApiPanel() {
   useEffect(() => {
     void invoke<string[]>("get_auto_start_services")
       .then((list) => setAutoStart((list || []).includes(AUTOSTART_ID)))
-      .catch(() => {});
+      .catch((e) => { reportInvokeError(e, "src/components/buddy/TwoApiPanel.tsx:100"); });
   }, []);
 
   const toggleAutoStart = async () => {

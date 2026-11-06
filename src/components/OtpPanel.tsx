@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../utils/invokeOrReport";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { theamedAlert, alertError } from "./shared/ThemedAlert";
 import { Plus, Search, Trash2, Pencil, KeyRound, Import, X, Loader2, ScanLine, Tag, Folder, FolderPlus } from "lucide-react";
@@ -77,7 +78,7 @@ export default function OtpPanel() {
       if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
       copyTimer.current = window.setTimeout(() => setCopiedId(null), 1500);
       // 更新复制统计
-      await invoke("otp_mark_copied", { id: token.id }).catch(() => {});
+      await invoke("otp_mark_copied", { id: token.id }).catch((e) => { reportInvokeError(e, "src/components/OtpPanel.tsx:80"); });
       load();
     } catch (e) {
       if (lifetime.current === owner) alertError(t("otp.copyFail", { err: String(e) }));

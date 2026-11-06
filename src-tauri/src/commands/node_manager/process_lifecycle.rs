@@ -6,7 +6,7 @@ use super::*;
 pub(super) static RUNNING_PIDS: Mutex<Option<HashMap<String, u32>>> = Mutex::new(None);
 
 pub(super) fn running_pids() -> std::sync::MutexGuard<'static, Option<HashMap<String, u32>>> {
-    RUNNING_PIDS.lock().unwrap()
+    RUNNING_PIDS.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 pub(super) fn record_pid(id: &str, pid: u32) {

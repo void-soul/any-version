@@ -60,19 +60,9 @@ pub(super) fn provider_include_v1(provider: &AiProvider, outbound: &str) -> Opti
 
 /// 生成本地代理的每次启动随机鉴权 token（32 字节加密随机 → hex）。
 /// 工具通过 env / 配置文件携带该 token 访问本地代理，真实上游 key 不再暴露给工具进程。
-pub(super) fn fresh_proxy_token() -> String {
-    let mut buf = [0u8; 32];
-    match getrandom::getrandom(&mut buf) {
-        Ok(()) => buf.iter().map(|b| format!("{:02x}", b)).collect(),
-        Err(_) => {
-            // OS RNG 不可用（几乎不发生）：回退时间戳+进程号组合
-            let ns = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0);
-            format!("tok_{}_{}", ns, std::process::id())
-        }
-    }
+/// RNG 失败时返回 Err，调用方必须放弃启动，不得回退到可预测值（AUDIT-004）。
+pub(super) fn fresh_proxy_token() -> Result<String, String> {
+    crate::commands::foundation::secure_random::fresh_proxy_token()
 }
 
 /// 为指定工具启动一个本地代理（按需、空闲端口、后台 spawn）。
@@ -119,7 +109,14 @@ pub(crate) async fn start_tool_proxy_with_collab(
     // 独立启动路径（非协同）启用每次启动的随机鉴权 token；协同房间代理保持原有
     // 总线 token 校验流程，不额外引入 per-start token 以免破坏已存活的委派工具。
     let auth_token = if collab_room_id.is_none() {
-        fresh_proxy_token()
+        match fresh_proxy_token() {
+            Ok(token) => token,
+            Err(error) => {
+                // RNG 不可用绝不回退弱 token：直接放弃启动并返回可见错误。
+                eprintln!("[proxy] ✗ 代理未启动: {error}");
+                return (0, None, String::new());
+            }
+        }
     } else {
         String::new()
     };
@@ -316,6 +313,9 @@ pub(crate) async fn start_tool_proxy_with_collab(
                         listen_port: port,
                         source: "ai".to_string(),
                         auth_token: auth_token.clone(),
+                        // 协同房间代理有独立 X-Collab-Token / hooks 校验，保持无 token；
+                        // 独立启动路径必须凭随机 token 访问。
+                        allow_unauthenticated: collab_room_id.is_some(),
                         inbound_protocols: inbound_protocols.clone(),
                         outbound_protocol: outbound_protocol.clone(),
                         conversion_mode,

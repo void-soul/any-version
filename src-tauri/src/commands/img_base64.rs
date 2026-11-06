@@ -2,8 +2,10 @@ use std::path::Path;
 
 use base64::Engine;
 use std::io::Read;
-const MAX_IMAGE_BYTES: usize = 16 * 1024 * 1024;
-const MAX_BASE64_CHARS: usize = ((MAX_IMAGE_BYTES + 2) / 3) * 4 + 256;
+/// 与前端 `src/components/imageBase64Data.ts` 一致（AUDIT-033）。
+const IMAGE_BASE64_MAX: usize =
+    crate::commands::foundation::defaults::sizes::IMAGE_BASE64_MAX as usize;
+const MAX_BASE64_CHARS: usize = ((IMAGE_BASE64_MAX + 2) / 3) * 4 + 256;
 
 fn encode_base64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
@@ -14,7 +16,7 @@ fn decode_base64(input: &str) -> Result<Vec<u8>, String> {
     if clean.is_empty() { return Err("Base64不能为空".into()); }
     if !clean.contains('=') { while clean.len() % 4 != 0 { clean.push('='); } }
     let bytes = base64::engine::general_purpose::STANDARD.decode(clean).map_err(|e| format!("Base64格式错误: {e}"))?;
-    if bytes.len() > MAX_IMAGE_BYTES { return Err("图片不能超过16 MiB".into()); }
+    if bytes.len() > IMAGE_BASE64_MAX { return Err("图片不能超过16 MiB".into()); }
     Ok(bytes)
 }
 
@@ -22,8 +24,8 @@ fn decode_base64(input: &str) -> Result<Vec<u8>, String> {
 pub fn image_to_base64(file_path: String) -> Result<String, String> {
     let file = std::fs::File::open(&file_path).map_err(|e| format!("读取图片文件失败: {e}"))?;
     let mut bytes = Vec::new();
-    file.take(MAX_IMAGE_BYTES as u64 + 1).read_to_end(&mut bytes).map_err(|e| format!("读取图片文件失败: {e}"))?;
-    if bytes.len() > MAX_IMAGE_BYTES { return Err("图片不能超过16 MiB".into()); }
+    file.take(IMAGE_BASE64_MAX as u64 + 1).read_to_end(&mut bytes).map_err(|e| format!("读取图片文件失败: {e}"))?;
+    if bytes.len() > IMAGE_BASE64_MAX { return Err("图片不能超过16 MiB".into()); }
     
     let path = Path::new(&file_path);
     let extension = path.extension().and_then(|s| s.to_str()).unwrap_or_default().to_ascii_lowercase();

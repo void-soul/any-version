@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../../utils/invokeOrReport";
 // 代理页 —— 1:1 复刻 clash-party src/renderer/src/pages/proxies.tsx 行为
 import { useEffect, useRef, useState } from "react";
 import { Zap, ChevronDown, ChevronUp, Search, Pin, LocateFixed, ArrowDownUp, RefreshCw, X, SlidersHorizontal } from "lucide-react";
@@ -90,7 +91,7 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
       setRefreshing(false);
     }
   };
-  const loadCfg = async () => { try { setCfg(await mihomoApi.getAppConfig()); } catch {} };
+  const loadCfg = async () => { try { setCfg(await mihomoApi.getAppConfig()); } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/ProxiesPanel.tsx:93"); } };
   const patchCfg = async (p: any) => { await mihomoApi.patchAppConfig(p); loadCfg(); };
 
   useEffect(() => {
@@ -98,7 +99,7 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
     if (running) {
       mihomoApi.getProfileConfig()
         .then((c: any) => { setProfiles(c?.items || []); setCurProfile(c?.current || ""); })
-        .catch(() => {});
+        .catch((e) => { reportInvokeError(e, "src/components/SystemTools/mihomo/ProxiesPanel.tsx:101"); });
       // 切换订阅后核心经 PATCH /configs 异步重载，需稍候再拉取；挂载时做「即时 + 两次延迟」刷新
       refresh();
       const t1 = setTimeout(refresh, 600);
@@ -120,7 +121,7 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
       mihomoApi
         .getProfileConfig()
         .then((c: any) => { setProfiles(c?.items || []); setCurProfile(c?.current || ""); })
-        .catch(() => {});
+        .catch((e) => { reportInvokeError(e, "src/components/SystemTools/mihomo/ProxiesPanel.tsx:123"); });
       refresh();
       setTimeout(refresh, 600);
       setTimeout(refresh, 1500);
@@ -169,7 +170,7 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
       return;
     }
     // 将选中的节点持久化为「一级代理」（供二级代理作为 dialer-proxy 前置）
-    try { await mihomoApi.selectProxy(proxy); } catch {}
+    try { await mihomoApi.selectProxy(proxy); } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/ProxiesPanel.tsx:177"); }
     if (autoClose) {
       // 复刻 clash-party：断开经由该组的旧连接
       try {
@@ -177,7 +178,7 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
         for (const c of res?.connections || []) {
           if ((c.chains || []).includes(group.name)) await closeConnection(c.id);
         }
-      } catch {}
+      } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/ProxiesPanel.tsx:187"); }
     }
     refreshTimer.current = setTimeout(refresh, 300);
   };
@@ -392,7 +393,7 @@ export default function ProxiesPanel({ running }: { running: boolean }) {
                     try {
                       await mihomoApi.changeCurrentProfile(p.id);
                       setTimeout(() => refresh(), 1200);
-                    } catch {}
+                    } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/ProxiesPanel.tsx:403"); }
                   }}
                 >
                   {p.name}

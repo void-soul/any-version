@@ -1,5 +1,5 @@
-import type { JsonValue, SearchMatches } from "./JsonBrowser";
-export type FlatTreeRow = { path: string; name: string; value: JsonValue; depth: number; container: boolean; collapsed: boolean };
+import type { JsonValue, SearchMatches, FlatTreeRow } from "../../contracts/jsonBrowser";
+export type { FlatTreeRow } from "../../contracts/jsonBrowser";
 type Entry = { path: string; name: string; value: JsonValue; depth: number };
 export function* jsonChildEntries(value: JsonValue): Generator<[string, JsonValue]> {
   if (Array.isArray(value)) {

@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../../utils/invokeOrReport";
 // 规则页 —— 1:1 复刻 clash-party src/renderer/src/pages/rules.tsx
 // （过滤持久化，匹配 payload/type/proxy；含规则集 provider 更新入口）
 import { useEffect, useMemo, useState } from "react";
@@ -248,7 +249,7 @@ export default function RulesPanel({ running }: { running: boolean; onNavigate?:
   // 当前订阅 id（规则覆写以订阅为维度存储）
   useEffect(() => {
     const load = () =>
-      mihomoApi.getProfileConfig().then((c: any) => setCurrent(c?.current || "")).catch(() => {});
+      mihomoApi.getProfileConfig().then((c: any) => setCurrent(c?.current || "")).catch((e) => { reportInvokeError(e, "src/components/SystemTools/mihomo/RulesPanel.tsx:251"); });
     load();
     window.addEventListener("mihomo:profile-changed", load);
     return () => window.removeEventListener("mihomo:profile-changed", load);

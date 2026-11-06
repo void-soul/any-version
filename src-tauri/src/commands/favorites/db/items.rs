@@ -190,24 +190,22 @@ pub fn select_for_check_multi(
     if sources.is_empty() {
         return Ok(Vec::new());
     }
-    let list = sources
-        .iter()
-        .map(|s| format!("'{}'", s.replace('\'', "''")))
-        .collect::<Vec<_>>()
-        .join(",");
+    // 用 json_each(?1) 绑定数组，避免把值拼进 SQL（AUDIT-027）。
+    // 拼串虽已转义，但一旦后续改动漏转义即成注入点，且无法复用 prepared statement。
+    let sources_json = serde_json::to_string(sources).map_err(|e| e.to_string())?;
     let sql = if all {
-        format!("SELECT id, source, title, url FROM favorite WHERE source IN ({list}) ORDER BY id LIMIT ?1")
+        "SELECT id, source, title, url FROM favorite
+         WHERE source IN (SELECT value FROM json_each(?1)) ORDER BY id LIMIT ?2"
     } else {
-        format!(
-            "SELECT id, source, title, url FROM favorite \
-             WHERE source IN ({list}) AND checked_at IS NULL ORDER BY id LIMIT ?1"
-        )
+        "SELECT id, source, title, url FROM favorite
+         WHERE source IN (SELECT value FROM json_each(?1)) AND checked_at IS NULL
+         ORDER BY id LIMIT ?2"
     };
     let mut statement = conn
-        .prepare(&sql)
+        .prepare(sql)
         .map_err(|e| format!("查询待探测条目失败: {}", e))?;
     let rows = statement
-        .query_map(rusqlite::params![limit as i64], |row| {
+        .query_map(rusqlite::params![sources_json, limit as i64], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
@@ -435,11 +433,28 @@ pub fn delete(conn: &mut Connection, id: i64) -> Result<bool, String> {
     let tx = conn
         .transaction()
         .map_err(|e| format!("开启删除事务失败: {}", e))?;
+    // 删除必须清掉所有子表行，否则正文缓存/旧标签/分类关联会永久变成孤儿行
+    // （AUDIT-022）：favorite_content 可达几十 KB，反复导入删除会持续膨胀数据库。
     tx.execute(
         "DELETE FROM favorite_item_category WHERE favorite_id = ?1",
         [id],
     )
     .map_err(|e| format!("删除分类关联失败: {}", e))?;
+    tx.execute("DELETE FROM favorite_content WHERE favorite_id = ?1", [id])
+        .map_err(|e| format!("删除正文缓存失败: {}", e))?;
+    // favorite_tag 只存在于尚未完成升级的老库（迁移成功后会 DROP），新库没有该表。
+    let has_legacy_tags: bool = tx
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='favorite_tag'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .map(|n| n > 0)
+        .map_err(|e| format!("检查旧标签表失败: {e}"))?;
+    if has_legacy_tags {
+        tx.execute("DELETE FROM favorite_tag WHERE favorite_id = ?1", [id])
+            .map_err(|e| format!("删除历史标签失败: {}", e))?;
+    }
     let removed = tx
         .execute("DELETE FROM favorite WHERE id = ?1", [id])
         .map_err(|e| format!("删除收藏条目失败: {}", e))?;

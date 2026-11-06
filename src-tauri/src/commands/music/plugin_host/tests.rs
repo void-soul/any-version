@@ -330,7 +330,7 @@ module.exports = {
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(plugins_root().join("_sandbox_probe.txt"));
     // 宿主里还缓存着这个测试插件，清掉免得影响后面的用例
-    *HOST.lock().unwrap() = None;
+    *HOST.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 /// 插件抛出的原始错误必须被翻成「是什么 + 怎么办」，否则用户看到的
@@ -404,7 +404,7 @@ module.exports = {
     assert!(error.contains("换一个音源"), "要给出下一步: {error}");
 
     let _ = std::fs::remove_file(&path);
-    *HOST.lock().unwrap() = None;
+    *HOST.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 /// 错误信息里要用**动作名**而不是方法名：用户看不懂 `mediaSource`。

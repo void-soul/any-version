@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../../utils/invokeOrReport";
 // 流量统计页 —— 1:1 复刻 clash-party src/renderer/src/pages/traffic.tsx
 // （1h/24h/7d/30d 时间范围 / 4 维度视图 / 汇总卡片 / 排行榜 / 趋势图 / 下钻明细 / 清空）
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -134,7 +135,7 @@ export default function TrafficPanel() {
         <button className={btnSec} title={t("traffic.clearStatsTip")} onClick={async () => {
           await trafficDb.clearAll();
           // 后端那份常驻采样也要一起清，否则「清空」后曲线还在
-          await invoke("mihomo_traffic_clear").catch(() => {});
+          await invoke("mihomo_traffic_clear").catch((e) => { reportInvokeError(e, "src/components/SystemTools/mihomo/TrafficPanel.tsx:137"); });
           load();
         }}>
           <Trash2 className="w-3.5 h-3.5 text-rose-300" />

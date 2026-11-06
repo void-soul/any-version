@@ -72,7 +72,11 @@ pub(super) fn sync_install_step(app: &AppHandle, sdk: &str, step: &str) {
             step: step.to_string(),
         },
     );
-    if let Some(entry) = get_active_downloads().lock().unwrap().get_mut(sdk) {
+    if let Some(entry) = get_active_downloads()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_mut(sdk)
+    {
         entry.active.step = step.to_string();
     }
 }
@@ -103,31 +107,40 @@ mod ownership_tests {
         let id = "qa-isolated-install-registration".to_string();
         let old = crate::commands::foundation::owned_process::Cancellation::default();
         let new = crate::commands::foundation::owned_process::Cancellation::default();
-        get_active_downloads().lock().unwrap().insert(
-            id.clone(),
-            ActiveInstallEntry {
-                active: ActiveInstall {
-                    sdk: id.clone(),
-                    version: "fake".into(),
-                    step: "test".into(),
-                    downloaded: 0,
-                    total: 0,
-                    pct: 0,
-                    speed_str: String::new(),
+        get_active_downloads()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                id.clone(),
+                ActiveInstallEntry {
+                    active: ActiveInstall {
+                        sdk: id.clone(),
+                        version: "fake".into(),
+                        step: "test".into(),
+                        downloaded: 0,
+                        total: 0,
+                        pct: 0,
+                        speed_str: String::new(),
+                    },
+                    abort_handle: None,
+                    cancellation: new.clone(),
                 },
-                abort_handle: None,
-                cancellation: new.clone(),
-            },
-        );
+            );
         drop(InstallRegistrationGuard {
             id: id.clone(),
             cancellation: old,
         });
-        assert!(get_active_downloads().lock().unwrap().contains_key(&id));
+        assert!(get_active_downloads()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&id));
         drop(InstallRegistrationGuard {
             id: id.clone(),
             cancellation: new,
         });
-        assert!(!get_active_downloads().lock().unwrap().contains_key(&id));
+        assert!(!get_active_downloads()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&id));
     }
 }

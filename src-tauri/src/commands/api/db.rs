@@ -348,3 +348,41 @@ pub fn endpoint_row(row: &rusqlite::Row) -> Result<super::models::ApiEndpoint, r
 /// 模块即接口文件夹，创建项目时不自动生成模块（由用户按需添加）。
 /// 保留此常量仅作占位说明。
 pub const DEFAULT_MODULES: &[&str] = &[];
+
+/// `endpoint_row` 用 `row.get(n)` 按位置取前 16 列，列名清单在 DDL 里另写一份
+/// （AUDIT-028）。这个测试把两份清单钉死：DDL 加列/换序后若不同步更新映射，
+/// SQLite 只会到运行期才报类型错误，测试会提前失败。
+#[cfg(test)]
+mod column_contract_tests {
+    use super::*;
+
+    const EXPECTED_FIRST_16: [&str; 16] = [
+        "id", "project_id", "module_id", "name", "method", "url", "headers",
+        "query_params", "path_params", "body", "body_type", "description",
+        "docs_md", "timeout_ms", "created_at", "updated_at",
+    ];
+
+    #[test]
+    fn ddl_column_order_matches_positional_row_mapping() {
+        // 用真实建表路径（含 add-column 迁移）取列清单，避免测试自己复制一份 DDL。
+        super::init_db().unwrap();
+        let names = super::with_db(|conn| {
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(api_endpoints)")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |r| r.get::<_, String>(1))
+                .map_err(|e| e.to_string())?
+                .filter_map(|r| r.ok())
+                .collect::<Vec<_>>();
+            Ok(rows)
+        })
+        .unwrap();
+        assert!(names.len() >= EXPECTED_FIRST_16.len());
+        assert_eq!(
+            &names[..EXPECTED_FIRST_16.len()],
+            &EXPECTED_FIRST_16,
+            "api_endpoints 前 16 列顺序与 endpoint_row 的 row.get(n) 不一致"
+        );
+    }
+}

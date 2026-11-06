@@ -1,4 +1,12 @@
 use super::*;
+use std::sync::Mutex;
+
+/// `status()` 是进程级全局状态，多个测试并发读写会互相清空 last_error
+/// （全量并发下偶发 FAILED，AUDIT-041 测试隔离）。
+static STATUS_LOCK: Mutex<()> = Mutex::new(());
+fn status_guard() -> std::sync::MutexGuard<'static, ()> {
+    STATUS_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 #[tokio::test]
 async fn updating_an_unregistered_port_is_a_noop() {
@@ -29,6 +37,7 @@ fn watcher_applies_only_when_uid_or_token_moves() {
 
 #[test]
 fn sync_failure_reaches_the_panel_not_only_stderr() {
+    let _guard = status_guard();
     // 同步失败若只 eprintln，用户永远看不到：旧账号仍有效时请求照样 200，
     // 只是额度记在别人头上
     note_sync_error("读取登录态失败");
@@ -40,6 +49,7 @@ fn sync_failure_reaches_the_panel_not_only_stderr() {
 
 #[test]
 fn sync_recovery_does_not_hide_unrelated_service_errors() {
+    let _guard = status_guard();
     note_sync_error("temporary failure");
     clear_sync_error();
     assert!(status().last_error.is_none());

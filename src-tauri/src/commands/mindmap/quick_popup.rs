@@ -170,7 +170,7 @@ fn capture_selection() {
     let slot = LAST_SELECTION.get_or_init(|| std::sync::Mutex::new(None));
     if let Some(txt) = selection {
         if !txt.is_empty() {
-            *slot.lock().unwrap() = Some(txt);
+            *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(txt);
         }
     }
     crate::exit_log!("[思维导图速记] 已捕获选区文本");
@@ -180,7 +180,7 @@ fn capture_selection() {
 #[tauri::command]
 pub fn take_mindmap_quick_selection() -> Option<String> {
     let slot = LAST_SELECTION.get_or_init(|| std::sync::Mutex::new(None));
-    slot.lock().unwrap().take()
+    slot.lock().unwrap_or_else(|e| e.into_inner()).take()
 }
 
 #[tauri::command]

@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../../utils/invokeOrReport";
 // 系统代理页 —— 1:1 复刻 clash-party src/renderer/src/pages/sysproxy.tsx
 // （代理主机 / 手动·PAC 模式 / UWP 工具 / PAC 脚本编辑 / bypass 列表编辑 / 保存即生效）
 import { useEffect, useState } from "react";
@@ -52,7 +53,7 @@ export default function SysproxyPanel() {
           bypass: Array.isArray(sp.bypass) ? sp.bypass : defaultBypass,
           pacScript: sp.pacScript || defaultPacScript,
         });
-      } catch {}
+      } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/SysproxyPanel.tsx:55"); }
     })();
   }, []);
 
@@ -84,7 +85,7 @@ export default function SysproxyPanel() {
       originSetValues({ ...values, enable: prev });
       setChanged(true);
       setMsg(t("sysproxy.setProxyFail", { err: String(e) }));
-      try { await mihomoApi.patchAppConfig({ sysProxy: { ...values, enable: false } }); } catch {}
+      try { await mihomoApi.patchAppConfig({ sysProxy: { ...values, enable: false } }); } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/SysproxyPanel.tsx:87"); }
     }
   };
 

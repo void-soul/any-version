@@ -6,7 +6,11 @@ pub(super) fn ensure_override_item(
     id: &str,
     name: &str,
 ) -> Result<OverrideItem, String> {
-    let mut cfg = state.override_config.lock().unwrap().clone();
+    let mut cfg = state
+        .override_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     if let Some(item) = cfg.items.iter().find(|i| i.id == id) {
         return Ok(item.clone());
     }
@@ -21,7 +25,10 @@ pub(super) fn ensure_override_item(
     };
     cfg.items.push(item.clone());
     save_override_config(&state.data_dir, &cfg).map_err(|e| e.to_string())?;
-    *state.override_config.lock().unwrap() = cfg;
+    *state
+        .override_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = cfg;
     Ok(item)
 }
 
@@ -30,7 +37,11 @@ pub(super) fn attach_override_to_current_profile(
     state: &MihomoInner,
     id: &str,
 ) -> Result<(), String> {
-    let mut cfg = state.profile_config.lock().unwrap().clone();
+    let mut cfg = state
+        .profile_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     let current_id = cfg.current.clone();
     let Some(item) = cfg.items.iter_mut().find(|i| i.id == current_id) else {
         return Err("当前配置不存在".into());
@@ -39,7 +50,10 @@ pub(super) fn attach_override_to_current_profile(
         item.override_ids.push(id.to_string());
     }
     save_profile_config(&state.data_dir, &cfg).map_err(|e| e.to_string())?;
-    *state.profile_config.lock().unwrap() = cfg;
+    *state
+        .profile_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = cfg;
     Ok(())
 }
 
@@ -47,7 +61,10 @@ pub(super) fn attach_override_to_current_profile(
 #[tauri::command]
 pub fn mihomo_get_group_editor(state: State<'_, MihomoState>) -> Result<Value, String> {
     let (item, overrides) = {
-        let pcfg = state.profile_config.lock().unwrap();
+        let pcfg = state
+            .profile_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let current_id = pcfg.current.clone();
         let item = pcfg
             .items
@@ -55,7 +72,15 @@ pub fn mihomo_get_group_editor(state: State<'_, MihomoState>) -> Result<Value, S
             .find(|i| i.id == current_id)
             .cloned()
             .ok_or_else(|| "当前配置不存在".to_string())?;
-        (item, state.override_config.lock().unwrap().items.clone())
+        (
+            item,
+            state
+                .override_config
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .items
+                .clone(),
+        )
     };
     crate::commands::mihomo::groups::editor_payload(&state.data_dir, &item, &overrides)
 }
@@ -93,18 +118,32 @@ pub async fn mihomo_clear_proxy_groups(
 ) -> Result<(), String> {
     let id = crate::commands::mihomo::groups::GROUPS_OVERRIDE_ID;
     {
-        let mut cfg = state.override_config.lock().unwrap().clone();
+        let mut cfg = state
+            .override_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         if let Some(pos) = cfg.items.iter().position(|i| i.id == id) {
             cfg.items.remove(pos);
             save_override_config(&state.data_dir, &cfg).map_err(|e| e.to_string())?;
-            *state.override_config.lock().unwrap() = cfg;
+            *state
+                .override_config
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = cfg;
         }
-        let mut pcfg = state.profile_config.lock().unwrap().clone();
+        let mut pcfg = state
+            .profile_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let current_id = pcfg.current.clone();
         if let Some(it) = pcfg.items.iter_mut().find(|i| i.id == current_id) {
             it.override_ids.retain(|o| o != id);
             save_profile_config(&state.data_dir, &pcfg).map_err(|e| e.to_string())?;
-            *state.profile_config.lock().unwrap() = pcfg;
+            *state
+                .profile_config
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = pcfg;
         }
     }
     reload_config(&app, Arc::clone(&*state)).await?;
@@ -183,18 +222,25 @@ pub async fn mihomo_set_ssid_rules(
     rules: Vec<crate::commands::mihomo::config::SsidRule>,
 ) -> Result<(), String> {
     {
-        let cfg = state.profile_config.lock().unwrap();
+        let cfg = state
+            .profile_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         for r in &rules {
             if !cfg.items.iter().any(|i| i.id == r.profile_id) {
                 return Err(format!("配置不存在: {}", r.profile_id));
             }
         }
     }
-    let mut app_config = state.app_config.lock().unwrap().clone();
+    let mut app_config = state
+        .app_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     app_config.ssid_switch_enabled = enabled;
     app_config.ssid_rules = rules;
     save_app_config(&state.data_dir, &app_config).map_err(|e| e.to_string())?;
-    *state.app_config.lock().unwrap() = app_config;
+    *state.app_config.lock().unwrap_or_else(|e| e.into_inner()) = app_config;
     emit_state(&app, &state);
     Ok(())
 }
@@ -216,7 +262,11 @@ pub fn mihomo_update_profile_schedule(
         crate::commands::mihomo::cron::CronExpr::parse(expr)
             .map_err(|e| format!("cron 表达式非法: {e}"))?;
     }
-    let mut cfg = state.profile_config.lock().unwrap().clone();
+    let mut cfg = state
+        .profile_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     let Some(item) = cfg.items.iter_mut().find(|i| i.id == id) else {
         return Err("配置不存在".into());
     };
@@ -226,7 +276,10 @@ pub fn mihomo_update_profile_schedule(
     }
     item.update_cron = cron;
     save_profile_config(&state.data_dir, &cfg).map_err(|e| e.to_string())?;
-    *state.profile_config.lock().unwrap() = cfg;
+    *state
+        .profile_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = cfg;
     Ok(())
 }
 
@@ -236,7 +289,7 @@ pub fn mihomo_update_profile_schedule(
 /// 用户手动切回别的配置也会被反复拽回去。
 pub(super) async fn apply_ssid_rules(app: &AppHandle, inner: &Arc<MihomoInner>) {
     let (enabled, rules, current) = {
-        let cfg = inner.app_config.lock().unwrap();
+        let cfg = inner.app_config.lock().unwrap_or_else(|e| e.into_inner());
         (
             cfg.ssid_switch_enabled,
             cfg.ssid_rules.clone(),

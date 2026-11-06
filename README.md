@@ -92,13 +92,13 @@ Windows 开发者聚合工具箱 —— 多 SDK 版本管理 · AI Agent 桌面�
 
 ### 从 Release 下载
 
-前往 [GitHub Releases](https://github.com/your-repo/any-version/releases) 页面下载最新版安装包。
+前往本仓库的 GitHub Releases 页面下载最新版安装包（或在仓库页面点击右侧 Releases）。
 
 ### 从源码构建
 
 ```bash
 # 克隆仓库
-git clone https://github.com/your-repo/any-version.git
+git clone <本仓库地址>
 cd any-version
 
 # 安装前端依赖
@@ -133,17 +133,16 @@ any-version/
 │   │   ├── tasks/                # 任务模块（今日/复盘/日历/收集箱/拖拽/提醒弹窗）
 │   │   ├── SystemTools/          # 系统工具（JSON 浏览 / Markdown 阅读 / Mihomo）
 │   │   ├── project/              # 项目管理
-│   │   ├── CacheManager.tsx      # 缓存管理
-│   │   ├── MirrorManager.tsx     # 镜像源切换
-│   │   ├── PkgManager.tsx        # 全局包管理
+│   │   ├── ai/ api/ buddy/ dbdesigner/ devtools/ favorites/ launcher/
+│   │   ├── logViewer/ mindmap/ music/ network/ node/ project/ suno/ tasks/
+│   │   ├── SystemTools/          # 系统工具（JSON 浏览 / Markdown 阅读 / Mihomo）
+│   │   ├── shared/               # 公共 Button / Modal / Toast
 │   │   ├── EnvBackupManager.tsx  # 环境变量备份/恢复
-│   │   ├── PathEnvManager.tsx    # PATH 环境变量
-│   │   ├── PortScanner.tsx       # 端口扫描
-│   │   ├── RssReader.tsx         # RSS 阅读
-│   │   ├── HttpServer.tsx        # HTTP 服务
-│   │   ├── SystemTools.tsx       # 系统工具入口
 │   │   ├── GlobalSettings.tsx    # 全局设置
+│   │   ├── HttpServer.tsx        # HTTP 服务
 │   │   └── ...
+│   ├── contracts/                # 跨模块共享的 TS 契约类型
+│   ├── utils/                    # 通用工具（错误上报、树遍历、可见性轮询等）
 │   ├── App.tsx                   # 主应用与页面路由
 │   └── main.tsx                  # 入口文件
 ├── src-tauri/                    # Tauri 后端（Rust）
@@ -157,13 +156,20 @@ any-version/
 │   │   └── ...
 │   ├── Cargo.toml                # Rust 依赖配置
 │   └── tauri.conf.json           # Tauri 应用配置
-├── projects.json                 # 运行时定义清单（各语言 SDK 配置）
-├── ai-tools/                     # AI 工具元数据
-├── projects/                     # 项目数据
-├── docs/                         # 文档（含 projects.json Schema 等）
+├── ai-tools/                     # AI 工具 / Provider / MCP 元数据
+├── projects/                     # 各语言 SDK 的运行时定义（按子目录拆分 JSON）
+├── node-projects/                # 可托管的 Node 服务清单
+├── crates/cert-deployment/       # 证书部署共享 Rust crate
+├── scripts/                      # 构建、契约/架构/格式检查脚本
+├── docs/contracts/               # 对外 HTTP 契约
+├── docs/audit/                   # 历次代码审计文档
 ├── dist/                         # 构建输出目录
 └── package.json                  # 前端依赖配置
 ```
+
+> 说明：旧版根目录的单个 `projects.json` 已拆分为 `projects/<sdk>/*.json`，
+> 由 `scripts/bundle-resources.mjs` 在构建前复制到 `src-tauri/_up_/projects/`。
+> 下文「projects 配置说明」指的是这个目录，而非根级单文件。
 
 ### 常用命令
 
@@ -175,7 +181,21 @@ any-version/
 | `pnpm tauri dev` | 启动 Tauri 开发模式 |
 | `pnpm tauri build` | 构建 Tauri 生产应用 |
 | `pnpm test` | 运行前端单元测试（vitest） |
+| `pnpm test:coverage` | 运行前端覆盖率闸（阈值见 `vitest.config.ts`） |
+| `pnpm check:architecture` | 模块边界架构闸 |
+| `pnpm check:contracts` | Rust serde ↔ TS 接口/IPC 入参契约闸 |
+| `pnpm check:catches` | 静默失败（空 catch）静态闸 |
+| `pnpm check:locks` | Rust 锁中毒静态闸 |
+| `pnpm check:rustfmt` | Rust 增量格式闸（存量白名单见 `scripts/rustfmt-baseline.txt`） |
+| `pnpm audit:deps` | 生产依赖漏洞扫描 |
 | `pnpm bump` | 自增应用版本号 |
+
+## 贡献与文档
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) — 开发环境、验证矩阵与提交约定
+- [docs/contracts/cert-receiver.md](docs/contracts/cert-receiver.md) — 证书接收端 HTTP 契约
+- [docs/adr/](docs/adr/) — 关键架构决策记录
+- [CHANGELOG.md](CHANGELOG.md) — 版本变更记录
 
 ## 📝 projects.json 配置说明
 

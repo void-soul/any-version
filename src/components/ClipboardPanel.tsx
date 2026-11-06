@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../utils/invokeOrReport";
 import { ClipboardImageCache } from "./clipboardImageCache";
 // 剪贴板历史面板（全宽紧凑列表 + 单行截断 + 固定行高虚拟滚动 + 触底加载）
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -84,7 +85,7 @@ function ImageThumb({ item }: { item: ClipboardItem }) {
         imageCache.set(item.id, d);
         if (alive) setSrc(d);
       })
-      .catch(() => {});
+      .catch((e) => { reportInvokeError(e, "src/components/ClipboardPanel.tsx:87"); });
     return () => {
       alive = false;
     };
@@ -117,7 +118,7 @@ function PreviewImage({ item }: { item: ClipboardItem }) {
     setZoom(false);
     invoke<string>("clipboard_get_image", { id: item.id, thumb: false })
       .then((d) => alive && setSrc(d))
-      .catch(() => {});
+      .catch((e) => { reportInvokeError(e, "src/components/ClipboardPanel.tsx:120"); });
     return () => {
       alive = false;
     };

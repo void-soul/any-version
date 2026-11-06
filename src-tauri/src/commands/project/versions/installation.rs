@@ -235,7 +235,11 @@ pub(super) async fn do_msix_install(
                 speed_str: speed_str.clone(),
             },
         );
-        if let Some(entry) = get_active_downloads().lock().unwrap().get_mut(&id_cap) {
+        if let Some(entry) = get_active_downloads()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(&id_cap)
+        {
             entry.active.downloaded = downloaded;
             entry.active.total = total;
             entry.active.pct = pct;
@@ -272,7 +276,11 @@ pub(super) async fn do_msix_install(
                     speed_str: speed_str.clone(),
                 },
             );
-            if let Some(entry) = get_active_downloads().lock().unwrap().get_mut(&id_cap) {
+            if let Some(entry) = get_active_downloads()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_mut(&id_cap)
+            {
                 entry.active.downloaded = downloaded;
                 entry.active.total = total;
                 entry.active.pct = pct;

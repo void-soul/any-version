@@ -25,19 +25,15 @@ pub fn clipboard_get_items(
     offset: Option<i64>,
 ) -> Result<serde_json::Value, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let items = db::query_items(
+    // 一次调用同时拿列表与总数：无关键词时走 SQL LIMIT/COUNT，
+    // 有关键词时只解密一遍全表（AUDIT-021）。
+    let (items, total) = db::query_page(
         &conn,
         keyword.as_deref().unwrap_or(""),
         kind.as_deref().unwrap_or(""),
         pinned_only.unwrap_or(false),
         limit.unwrap_or(DEFAULT_PAGE_SIZE).min(MAX_PAGE_SIZE),
         offset.unwrap_or(0).max(0),
-    )?;
-    let total = db::count_items(
-        &conn,
-        keyword.as_deref().unwrap_or(""),
-        kind.as_deref().unwrap_or(""),
-        pinned_only.unwrap_or(false),
     )?;
     Ok(serde_json::json!({ "items": items, "total": total }))
 }

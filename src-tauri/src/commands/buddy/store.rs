@@ -18,13 +18,13 @@ static TEST_DATA_ROOT: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 #[cfg(test)]
 pub(crate) fn set_test_data_root(path: PathBuf) {
-    *TEST_DATA_ROOT.lock().unwrap() = Some(path);
+    *TEST_DATA_ROOT.lock().unwrap_or_else(|e| e.into_inner()) = Some(path);
 }
 
 fn data_root() -> PathBuf {
     #[cfg(test)]
     {
-        if let Some(path) = TEST_DATA_ROOT.lock().unwrap().clone() {
+        if let Some(path) = TEST_DATA_ROOT.lock().unwrap_or_else(|e| e.into_inner()).clone() {
             return path;
         }
     }

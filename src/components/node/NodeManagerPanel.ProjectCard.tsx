@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../utils/invokeOrReport";
 import { useState, useEffect, useRef } from "react";
 import { Bot, Boxes, Package, Play, Square, Download, RefreshCw, ExternalLink, CheckCircle2, Loader2, GitBranch, Terminal, AlertTriangle, Copy, Eraser, Settings2, Trash2, Hammer, Sparkles } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -99,7 +100,7 @@ export function ProjectCard({
   useEffect(() => {
     void invoke<string[]>("get_auto_start_services")
       .then(list => setAutoStart(list.includes(autoStartId)))
-      .catch(() => {});
+      .catch((e) => { reportInvokeError(e, "src/components/node/NodeManagerPanel.ProjectCard.tsx:102"); });
   }, [autoStartId]);
   const toggleAutoStart = async () => {
     const next = !autoStart;

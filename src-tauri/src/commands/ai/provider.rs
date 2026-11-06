@@ -211,8 +211,11 @@ pub async fn test_model_connection(
 }
 // ─── 代理服务器 ───
 
+/// 手动启动本地代理。返回本次启动的鉴权 token（调用方需以
+/// `Authorization: Bearer <token>` / `x-api-key` / `x-goog-api-key` 携带）。
+/// 不返回 token 的旧调用方会收到 401，而不是让代理处于无鉴权状态。
 #[tauri::command]
-pub async fn start_proxy(port: u16) -> Result<(), String> {
+pub async fn start_proxy(port: u16) -> Result<String, String> {
     crate::runtime_tasks::require_enabled("ai")?;
     // 端口可被环境变量整体挪走（Windows 保留端口 / Hyper-V 排除区间场景），见 PROXY_PORT_ENV。
     let requested_port = port;
@@ -238,10 +241,15 @@ pub async fn start_proxy(port: u16) -> Result<(), String> {
     let outbound = outbound_protocol.clone();
     let conversion_mode = crate::proxy::types::derive_conversion_mode(&inbound, &outbound);
 
+    // 手动启动与 CLI 启动共用同一套随机 token 真源；空 token 会让鉴权中间件
+    // 直接放行，把用户真实的供应商 API Key 暴露给任意本机进程（AUDIT-002）。
+    let auth_token = crate::commands::foundation::secure_random::fresh_proxy_token()?;
+
     let proxy_config = crate::proxy::types::ProxyConfig {
         listen_address: "127.0.0.1".to_string(),
         listen_port: port,
-        auth_token: String::new(),
+        auth_token: auth_token.clone(),
+        allow_unauthenticated: false,
         inbound_protocols: vec![inbound],
         outbound_protocol: outbound,
         conversion_mode,
@@ -296,7 +304,7 @@ pub async fn start_proxy(port: u16) -> Result<(), String> {
     if !crate::runtime_tasks::spawn_task("ai",&format!("manual-proxy-{port}"),async move {
         if let Err(error)=crate::proxy::server::serve_proxy(proxy_config,listener).await {tracing::error!("代理服务退出: {error}");}
     }) {return Err("该代理已在运行或模块已禁用".into());}
-    Ok(())
+    Ok(auth_token)
 }
 
 #[cfg(test)]

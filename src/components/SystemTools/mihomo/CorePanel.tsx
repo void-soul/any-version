@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../../utils/invokeOrReport";
 // 内核设置页 —— 1:1 复刻 clash-party src/renderer/src/pages/mihomo.tsx（win32 分支）
 // （混合/Socks/HTTP 端口：数字+随机+启停+确认；外部控制器+校验；密钥生成/显隐；
 //   WebUI 面板选择/更新/打开；IPv6；允许局域网+允许/禁止网段；用户验证；
@@ -59,7 +60,7 @@ export default function CorePanel({ onCoreChanged }: { onCoreChanged?: () => voi
     mihomoApi
       .coreVariants()
       .then((v: any) => setVariants(Array.isArray(v?.items) ? v.items : []))
-      .catch(() => {});
+      .catch((e) => { reportInvokeError(e, "src/components/SystemTools/mihomo/CorePanel.tsx:62"); });
 
   const load = async () => {
     try {

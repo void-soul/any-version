@@ -110,6 +110,33 @@ fn resolve_request_path(root: &Path, raw: &str) -> Result<PathBuf, u16> {
     Ok(canonical)
 }
 
+/// 校验 HTTP `Host` 头，阻断 DNS rebinding。
+///
+/// 只放行本机回环写法与显式配置的允许值；任意攻击者控制的域名
+/// （即使 DNS 已解析到 127.0.0.1）一律拒绝。端口部分先剥离。
+fn host_is_allowed(host: &str, allowed: &[String]) -> bool {
+    let host = host.trim();
+    let host = if host.starts_with('[') {
+        // IPv6 字面量 [::1]:port
+        host.split(']')
+            .next()
+            .unwrap_or(host)
+            .trim_start_matches('[')
+    } else {
+        host.split(':').next().unwrap_or(host)
+    };
+    let lower = host.to_ascii_lowercase();
+    if matches!(lower.as_str(), "localhost" | "127.0.0.1" | "::1") {
+        return true;
+    }
+    // IP 字面量一律放行：局域网访问本来就按 IP 访问；DNS rebinding 依赖的是
+    // 攻击者控制的域名（解析到 127.0.0.1），域名一律不认。
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return true;
+    }
+    allowed.iter().any(|a| a.eq_ignore_ascii_case(host))
+}
+
 async fn respond_error(stream: &mut TcpStream, status: u16) {
     let reason = match status {
         400 => "Bad Request",
@@ -181,7 +208,6 @@ async fn serve_file(stream: &mut TcpStream, file_path: &Path, head_only: bool) {
         "HTTP/1.1 200 OK\r\n\
          Content-Type: {}\r\n\
          Content-Length: {}\r\n\
-         Access-Control-Allow-Origin: *\r\n\
          Connection: close\r\n\r\n",
         mime, file_len
     );
@@ -285,7 +311,6 @@ async fn serve_dir_list(stream: &mut TcpStream, dir: &Path, root: &Path, head_on
             "HTTP/1.1 200 OK\r\n\
              Content-Type: text/html; charset=utf-8\r\n\
              Content-Length: {}\r\n\
-             Access-Control-Allow-Origin: *\r\n\
              Connection: close\r\n\r\n",
             html.len()
         )
@@ -294,7 +319,6 @@ async fn serve_dir_list(stream: &mut TcpStream, dir: &Path, root: &Path, head_on
             "HTTP/1.1 200 OK\r\n\
              Content-Type: text/html; charset=utf-8\r\n\
              Content-Length: {}\r\n\
-             Access-Control-Allow-Origin: *\r\n\
              Connection: close\r\n\r\n\
              {}",
             html.len(),
@@ -306,8 +330,9 @@ async fn serve_dir_list(stream: &mut TcpStream, dir: &Path, root: &Path, head_on
 }
 
 async fn handle_connection(mut stream: TcpStream, root_dir: PathBuf) {
-    // TCP reads are fragments, not complete HTTP requests. Bound both the request
-    // line and time spent waiting for it to avoid incomplete-path interpretation.
+    // TCP reads are fragments, not complete HTTP requests. Read the full request
+    // head (until CRLFCRLF) so we can validate the Host header, with a hard size
+    // and time bound to avoid incomplete-path interpretation and slowloris.
     let mut request = Vec::new();
     let read_line = async {
         let mut buffer = [0; 1024];
@@ -317,11 +342,11 @@ async fn handle_connection(mut stream: TcpStream, root_dir: PathBuf) {
                 return Err(400);
             }
             request.extend_from_slice(&buffer[..n]);
-            if let Some(end) = request.windows(2).position(|w| w == b"\r\n") {
+            if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
                 if end > 8192 {
                     return Err(414);
                 }
-                request.truncate(end);
+                request.truncate(end + 4);
                 return Ok(());
             }
             if request.len() > 8192 {
@@ -361,6 +386,20 @@ async fn handle_connection(mut stream: TcpStream, root_dir: PathBuf) {
 
     let method = parts[0];
     let raw_path = parts[1];
+
+    // Host 白名单：阻断 DNS rebinding（攻击者域名解析到 127.0.0.1 后跨域读取共享目录）。
+    // 允许列表目前只有回环别名与 IP 字面量，局域网访问不受影响。
+    let host = lines
+        .clone()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("host").then_some(value)
+        })
+        .unwrap_or("");
+    if !host_is_allowed(host, &[]) {
+        respond_error(&mut stream, 403).await;
+        return;
+    }
 
     if method != "GET" && method != "HEAD" {
         let response =
@@ -403,7 +442,6 @@ async fn handle_connection(mut stream: TcpStream, root_dir: PathBuf) {
             "HTTP/1.1 404 Not Found\r\n\
              Content-Type: text/html; charset=utf-8\r\n\
              Content-Length: {}\r\n\
-             Access-Control-Allow-Origin: *\r\n\
              Connection: close\r\n\r\n\
              {}",
             response_body.len(),
@@ -549,6 +587,83 @@ mod tests {
         }
         assert_eq!(resolve_request_path(&root.0, "/%ZZ"), Err(400));
         assert_eq!(resolve_request_path(&root.0, "/%FF"), Err(400));
+    }
+
+    #[test]
+    fn host_allowlist_accepts_loopback_and_ip_but_rejects_domains() {
+        for host in [
+            "localhost",
+            "localhost:8080",
+            "127.0.0.1",
+            "127.0.0.1:8080",
+            "192.168.1.20:8080",
+            "[::1]:8080",
+        ] {
+            assert!(host_is_allowed(host, &[]), "应放行 {host}");
+        }
+        // DNS rebinding 的核心：攻击者域名解析到回环地址，仍应被拒绝。
+        for host in [
+            "evil.example.com",
+            "evil.example.com:8080",
+            "attacker.test",
+            "",
+        ] {
+            assert!(!host_is_allowed(host, &[]), "应拒绝 {host}");
+        }
+        assert!(host_is_allowed("my-host.local", &["my-host.local".into()]));
+    }
+
+    #[tokio::test]
+    async fn forged_host_is_rejected() {
+        let root = TestRoot::new();
+        std::fs::write(root.0.join("secret.txt"), "secret").unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let path = root.0.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            handle_connection(stream, path).await;
+        });
+        let mut client = TcpStream::connect(address).await.unwrap();
+        client
+            .write_all(b"GET /secret.txt HTTP/1.1\r\nHost: evil.example.com\r\nOrigin: https://evil.example.com\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).await.unwrap();
+        server.await.unwrap();
+        assert!(response.starts_with("HTTP/1.1 403"), "{response}");
+        assert!(!response.contains("secret"));
+        assert!(
+            !response.contains("Access-Control-Allow-Origin"),
+            "{response}"
+        );
+    }
+
+    #[tokio::test]
+    async fn responses_do_not_emit_wildcard_cors() {
+        let root = TestRoot::new();
+        std::fs::write(root.0.join("a.txt"), "data").unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let path = root.0.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            handle_connection(stream, path).await;
+        });
+        let mut client = TcpStream::connect(address).await.unwrap();
+        client
+            .write_all(b"GET /a.txt HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).await.unwrap();
+        server.await.unwrap();
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        assert!(
+            !response.contains("Access-Control-Allow-Origin"),
+            "{response}"
+        );
     }
 
     #[test]

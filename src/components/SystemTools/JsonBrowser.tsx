@@ -36,7 +36,9 @@ import {
 
 import { countJsonNodes, flattenTreeRows } from "./JsonBrowser.tree";
 
-export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+import type { JsonValue, SearchMatches } from "../../contracts/jsonBrowser";
+// 保持既有 import 路径可用（其它模块可能从本组件 re-import 这两个类型）。
+export type { JsonValue, SearchMatches } from "../../contracts/jsonBrowser";
 type ViewMode = "tree" | "graph";
 
 
@@ -47,12 +49,7 @@ type ParsedJson = {
   nodeCountCapped: boolean;
 };
 
-export type SearchMatches = {
-  query: string;
-  paths: Set<string>;
-  directPaths: Set<string>;
-  truncated?: boolean;
-};
+// SearchMatches 已下沉到 src/contracts/jsonBrowser.ts（AUDIT-051）。
 
 const EMPTY_SEARCH_MATCHES: SearchMatches = { query: "", paths: new Set<string>(), directPaths: new Set<string>() };
 

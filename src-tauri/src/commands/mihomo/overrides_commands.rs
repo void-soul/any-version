@@ -3,7 +3,11 @@ use super::*;
 // ---- Overrides ----
 #[tauri::command]
 pub fn mihomo_get_override_config(state: State<'_, MihomoState>) -> OverrideConfig {
-    state.override_config.lock().unwrap().clone()
+    state
+        .override_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
 }
 #[tauri::command]
 pub fn mihomo_set_override_config(
@@ -12,7 +16,10 @@ pub fn mihomo_set_override_config(
     cfg: OverrideConfig,
 ) -> Result<(), String> {
     save_override_config(&state.data_dir, &cfg).ok();
-    *state.override_config.lock().unwrap() = cfg;
+    *state
+        .override_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = cfg;
     emit_state(&app, &state);
     Ok(())
 }
@@ -24,7 +31,7 @@ pub fn mihomo_get_override_item(
     state
         .override_config
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .items
         .iter()
         .find(|i| i.id == id)
@@ -37,13 +44,20 @@ pub fn mihomo_add_override(
     state: State<'_, MihomoState>,
     item: OverrideItem,
 ) -> Result<(), String> {
-    let mut cfg = state.override_config.lock().unwrap().clone();
+    let mut cfg = state
+        .override_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     if cfg.items.iter().any(|i| i.id == item.id) {
         return Err("id 已存在".into());
     }
     cfg.items.push(item);
     save_override_config(&state.data_dir, &cfg).ok();
-    *state.override_config.lock().unwrap() = cfg;
+    *state
+        .override_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = cfg;
     emit_state(&app, &state);
     Ok(())
 }
@@ -53,10 +67,17 @@ pub fn mihomo_remove_override(
     state: State<'_, MihomoState>,
     id: String,
 ) -> Result<(), String> {
-    let mut cfg = state.override_config.lock().unwrap().clone();
+    let mut cfg = state
+        .override_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     cfg.items.retain(|i| i.id != id);
     save_override_config(&state.data_dir, &cfg).ok();
-    *state.override_config.lock().unwrap() = cfg;
+    *state
+        .override_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = cfg;
     emit_state(&app, &state);
     Ok(())
 }
@@ -66,20 +87,30 @@ pub fn mihomo_update_override(
     state: State<'_, MihomoState>,
     item: OverrideItem,
 ) -> Result<(), String> {
-    let mut cfg = state.override_config.lock().unwrap().clone();
+    let mut cfg = state
+        .override_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     if let Some(it) = cfg.items.iter_mut().find(|i| i.id == item.id) {
         *it = item;
     } else {
         cfg.items.push(item);
     }
     save_override_config(&state.data_dir, &cfg).ok();
-    *state.override_config.lock().unwrap() = cfg;
+    *state
+        .override_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = cfg;
     emit_state(&app, &state);
     Ok(())
 }
 #[tauri::command]
 pub fn mihomo_get_override(state: State<'_, MihomoState>, id: String) -> Result<String, String> {
-    let oc = state.override_config.lock().unwrap();
+    let oc = state
+        .override_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let item = oc
         .items
         .iter()
@@ -95,7 +126,10 @@ pub fn mihomo_set_override(
     content: String,
 ) -> Result<(), String> {
     {
-        let oc = state.override_config.lock().unwrap();
+        let oc = state
+            .override_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let item = oc
             .items
             .iter()

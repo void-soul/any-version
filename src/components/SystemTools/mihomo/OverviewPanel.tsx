@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../../utils/invokeOrReport";
 // 概览页 —— 1:1 复刻 clash-party 侧栏卡片区功能
 // （出站模式切换 rule/global/direct + 切换时可选断开全部连接；
 //   系统代理开关卡片；TUN 开关卡片；连接卡片：traffic WS 速率 + 迷你趋势；
@@ -29,7 +30,7 @@ export default function OverviewPanel({ info, running, onNavigate }: {
       setApp(a || {});
       setC(cc || {});
       setMode((cc as any)?.mode || "rule");
-    } catch {}
+    } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/OverviewPanel.tsx:32"); }
   };
   useEffect(() => { load(); }, [running]);
 

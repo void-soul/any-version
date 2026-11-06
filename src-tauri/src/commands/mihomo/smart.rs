@@ -256,7 +256,7 @@ function main(config) {
 
 /// 根据应用配置创建 / 更新 / 删除 Smart 覆写（对齐 manageSmartOverride）
 pub fn manage_smart_override(inner: &Arc<MihomoInner>) {
-    let app = inner.app_config.lock().unwrap().clone();
+    let app = inner.app_config.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let core = app
         .extra
         .get("core")
@@ -269,7 +269,7 @@ pub fn manage_smart_override(inner: &Arc<MihomoInner>) {
 
     let should_enable = enable_smart_core && enable_smart_override && core == "mihomo-smart";
 
-    let mut cfg = inner.override_config.lock().unwrap().clone();
+    let mut cfg = inner.override_config.lock().unwrap_or_else(|e| e.into_inner()).clone();
     if should_enable {
         let content = smart_override_template(
             get_bool("smartCoreUseLightGBM", false),
@@ -320,5 +320,5 @@ pub fn manage_smart_override(inner: &Arc<MihomoInner>) {
         ));
     }
     let _ = save_override_config(&inner.data_dir, &cfg);
-    *inner.override_config.lock().unwrap() = cfg;
+    *inner.override_config.lock().unwrap_or_else(|e| e.into_inner()) = cfg;
 }

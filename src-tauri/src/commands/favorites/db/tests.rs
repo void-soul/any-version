@@ -274,18 +274,36 @@ fn reimport_backfills_favorited_time_without_touching_known_values() {
 }
 
 #[test]
-fn schema_creates_all_three_tables() {
+fn schema_creates_all_tables_and_no_legacy_tag_table() {
     let conn = rusqlite::Connection::open_in_memory().unwrap();
     migrate(&conn).unwrap();
-    let count: i64 = conn
+    for table in [
+        "favorite",
+        "favorite_category",
+        "favorite_item_category",
+        "favorite_import_state",
+        "favorite_credential",
+        "favorite_deleted",
+        "favorite_content",
+    ] {
+        let exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                [table],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(exists, 1, "缺少表 {table}");
+    }
+    // 新库不再创建历史遗留表（AUDIT-023）。
+    let legacy: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' \
-                 AND name IN ('favorite','favorite_tag','favorite_import_state')",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='favorite_tag'",
             [],
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(count, 3);
+    assert_eq!(legacy, 0);
 }
 
 /// 建表必须幂等：命令层每次调用都会走到这里。
@@ -585,7 +603,15 @@ fn legacy_tags_are_migrated_into_category_tree() {
         )
         .unwrap();
     assert_eq!(linked, 2, "两个旧标签都要变成分类关联");
-    // 再迁移一次不能重复建
+    // 迁移成功后历史遗留表应被清理（AUDIT-023），再迁移一次不能重复建。
+    let legacy: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='favorite_tag'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(legacy, 0);
     migrate(&conn).unwrap();
     assert_eq!(list_category_tree(&conn).unwrap().len(), 2);
 }
@@ -844,17 +870,24 @@ fn set_tags_replaces_and_locks() {
     assert_eq!(row.tags, vec!["CLI".to_string()]);
 }
 
-/// 删本地条目要连标签一起删（不留孤儿行）。
+/// 删本地条目要连分类关联与正文缓存一起删（不留孤儿行，AUDIT-022）。
 #[test]
-fn delete_removes_tags_too() {
+fn delete_removes_child_rows_too() {
     let mut conn = seeded();
     set_tags(&conn, 1, &["CLI".to_string()]).unwrap();
+    conn.execute(
+        "INSERT INTO favorite_content (favorite_id, text, fetched_at) VALUES (1, 'body', 'now')",
+        [],
+    )
+    .unwrap();
     assert!(delete(&mut conn, 1).unwrap());
     assert!(!delete(&mut conn, 1).unwrap(), "删第二次应返回 false");
-    let left: i64 = conn
-        .query_row("SELECT COUNT(*) FROM favorite_tag", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(left, 0);
+    for table in ["favorite_item_category", "favorite_content"] {
+        let left: i64 = conn
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0, "{table} 不应残留孤儿行");
+    }
     assert_eq!(count_all(&conn).unwrap(), 1);
 }
 
@@ -935,9 +968,10 @@ fn stats_counts_unclassified_and_gone() {
     assert_eq!(after.tags, vec![("CLI".to_string(), 1)]);
 }
 
-/// 多标签：同一条目可挂多个标签，但完全相同的 (条目, 标签) 只能有一条。
+/// 多分类：同一条目可挂多个分类，但完全相同的关联只能有一条（对应新的
+/// `favorite_item_category`；历史 `favorite_tag` 表已不再创建，AUDIT-023）。
 #[test]
-fn tags_allow_multiple_labels_per_item() {
+fn categories_allow_multiple_links_per_item() {
     let conn = rusqlite::Connection::open_in_memory().unwrap();
     migrate(&conn).unwrap();
     conn.execute(
@@ -946,13 +980,15 @@ fn tags_allow_multiple_labels_per_item() {
         [],
     )
     .unwrap();
-    let tag = |t: &str| {
+    let first = create_category(&conn, "LLM", None, "manual").unwrap();
+    let second = create_category(&conn, "运维", None, "manual").unwrap();
+    let link = |category_id: i64| {
         conn.execute(
-            "INSERT INTO favorite_tag (favorite_id, tag) VALUES (1, ?1)",
-            [t],
+            "INSERT INTO favorite_item_category (favorite_id, category_id) VALUES (1, ?1)",
+            [category_id],
         )
     };
-    assert!(tag("LLM").is_ok());
-    assert!(tag("运维").is_ok(), "多标签必须允许同一条目挂第二个分类");
-    assert!(tag("LLM").is_err(), "同一标签不能重复挂");
+    assert!(link(first).is_ok());
+    assert!(link(second).is_ok(), "多分类必须允许同一条目挂第二个分类");
+    assert!(link(first).is_err(), "同一分类不能重复挂");
 }

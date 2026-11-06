@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../../utils/invokeOrReport";
 // mihomo 控制器 API 层 —— 1:1 复刻 clash-party src/main/core/mihomoApi.ts 的行为
 import { mihomoApi } from "../mihomoApi";
 
@@ -300,7 +301,7 @@ export function openMihomoWs(
       ws.onclose = () => {
         if (!closed) retry = setTimeout(connect, 2000);
       };
-      ws.onerror = () => { try { ws?.close(); } catch {} };
+      ws.onerror = () => { try { ws?.close(); } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/ctrl.ts:303"); } };
     } catch {
       if (!closed) retry = setTimeout(connect, 2000);
     }
@@ -310,7 +311,7 @@ export function openMihomoWs(
     close: () => {
       closed = true;
       if (retry) clearTimeout(retry);
-      try { ws?.close(); } catch {}
+      try { ws?.close(); } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/ctrl.ts:313"); }
     },
   };
 }

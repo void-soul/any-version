@@ -66,7 +66,7 @@ pub(super) const REQUEST_LOG_CAP: usize = 1000;
 
 /// 追加一条请求日志到内存缓冲。`source` 取自 `ProxyConfig.source`。
 pub fn push_request_log(source: &str, message: impl Into<String>) {
-    let mut q = REQUEST_LOG.lock().unwrap();
+    let mut q = REQUEST_LOG.lock().unwrap_or_else(|e| e.into_inner());
     if q.len() >= REQUEST_LOG_CAP {
         q.pop_front();
     }
@@ -81,7 +81,7 @@ pub fn push_request_log(source: &str, message: impl Into<String>) {
 pub fn get_request_logs(source_filter: &str) -> Vec<RequestLogEntry> {
     REQUEST_LOG
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .iter()
         .filter(|e| source_filter.is_empty() || e.source == source_filter)
         .cloned()
@@ -90,7 +90,10 @@ pub fn get_request_logs(source_filter: &str) -> Vec<RequestLogEntry> {
 
 /// 清空请求日志缓冲。
 pub fn clear_request_logs() {
-    REQUEST_LOG.lock().unwrap().clear();
+    REQUEST_LOG
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
 }
 
 /// 是否启用代理「完整日志」。
@@ -159,18 +162,31 @@ pub(super) async fn catch_all_handler(OriginalUri(uri): OriginalUri) -> impl Int
 /// 等数据路由必须携带正确 token（Authorization: Bearer / x-api-key / x-goog-api-key 三者
 /// 任一匹配即可，覆盖 Anthropic/OpenAI/Google 三种 SDK 的凭据注入习惯）。
 /// `/health` 与 `/collab/*`（有独立 X-Collab-Token 校验）免鉴权。
+/// 纯判定：某条请求是否可以绕过 token 校验。抽出来便于单测与审计。
+fn auth_is_bypassed(allow_unauthenticated: bool, path: &str) -> bool {
+    allow_unauthenticated
+        || path == "/health"
+        || crate::proxy::hooks::current().independently_authenticated(path)
+}
+
 pub(super) async fn require_proxy_token_mw(
     State(state): State<ProxyState>,
     req: Request,
     next: middleware::Next,
 ) -> Response {
     let path = req.uri().path().to_string();
-    let expected = state.config.read().await.auth_token.clone();
-    if expected.is_empty()
-        || path == "/health"
-        || crate::proxy::hooks::current().independently_authenticated(&path)
-    {
+    let config = state.config.read().await;
+    let expected = config.auth_token.clone();
+    let unauthenticated_allowed = config.allow_unauthenticated;
+    drop(config);
+    // 「空 token」不再是放行的隐式信号：必须由配置显式声明 allow_unauthenticated。
+    // 未显式声明且未配置 token 时按 401 处理（fail closed），避免上游 API Key 被冒用。
+    if auth_is_bypassed(unauthenticated_allowed, &path) {
         return next.run(req).await;
+    }
+    if expected.is_empty() {
+        log_proxy(&format!("✗ 鉴权失败: 未配置 token: {}", path));
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
     let headers = req.headers();
     let bearer = headers
@@ -221,21 +237,28 @@ pub(super) static COLLAB_MSG_ID: OnceLock<std::sync::Mutex<HashMap<String, Strin
 pub fn set_collab_msg_id(room_id: &str, tool_id: &str, msg_id: String) {
     let key = format!("{}::{}", room_id, tool_id);
     let map = COLLAB_MSG_ID.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
-    map.lock().unwrap().insert(key, msg_id);
+    map.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(key, msg_id);
 }
 
 /// collab dispatch_to_tool 结束时清除
 pub fn clear_collab_msg_id(room_id: &str, tool_id: &str) {
     let key = format!("{}::{}", room_id, tool_id);
     if let Some(map) = COLLAB_MSG_ID.get() {
-        map.lock().unwrap().remove(&key);
+        map.lock().unwrap_or_else(|e| e.into_inner()).remove(&key);
     }
 }
 
 /// 代理层运行时查询当前 msg_id（优先于 ProxyState 中的静态 msg_id）
 pub(super) fn get_collab_msg_id(room_id: &str, tool_id: &str) -> Option<String> {
     let key = format!("{}::{}", room_id, tool_id);
-    COLLAB_MSG_ID.get()?.lock().unwrap().get(&key).cloned()
+    COLLAB_MSG_ID
+        .get()?
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&key)
+        .cloned()
 }
 
 /// 代理层在响应完成时存储文本（使用当前 msg_id）
@@ -249,7 +272,7 @@ pub(super) fn store_proxy_text_for(state: &ProxyState, text: &str) {
 pub(super) fn store_proxy_text_with(room_id: &str, tool_id: &str, text: &str) {
     if let Some(msg_id) = get_collab_msg_id(room_id, tool_id) {
         let map_lock = PROXY_TEXT.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
-        let mut map = map_lock.lock().unwrap();
+        let mut map = map_lock.lock().unwrap_or_else(|e| e.into_inner());
         // 限制最大缓存容量 (最多保留 100 条未提取响应，超出自动淘汰最旧项，防内存泄漏)
         if map.len() >= 100 {
             if let Some(first_key) = map.keys().next().cloned() {
@@ -267,7 +290,11 @@ pub(super) fn store_proxy_text_with(room_id: &str, tool_id: &str, text: &str) {
 
 /// collab dispatch_to_tool 回退取用代理文本（取后删除）
 pub fn take_proxy_text(msg_id: &str) -> Option<String> {
-    PROXY_TEXT.get()?.lock().unwrap().remove(msg_id)
+    PROXY_TEXT
+        .get()?
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(msg_id)
 }
 
 /// 从入站协议形态的 SSE chunk 中提取文本增量
@@ -424,5 +451,45 @@ pub async fn update_running_config(port: u16, f: impl FnOnce(&mut ProxyConfig)) 
 pub fn unregister_running(port: u16) {
     if let Ok(mut guard) = RUNNING_CONFIGS.lock() {
         guard.retain(|(p, _)| *p != port);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proxy::types::ProxyConfig;
+
+    #[test]
+    fn empty_token_no_longer_implies_open_access() {
+        // 安全默认：未显式声明 allow_unauthenticated 时，数据路由必须走 token 校验。
+        let cfg = ProxyConfig::default();
+        assert!(!cfg.allow_unauthenticated);
+        assert!(!auth_is_bypassed(
+            cfg.allow_unauthenticated,
+            "/v1/chat/completions"
+        ));
+    }
+
+    #[test]
+    fn explicit_unauthenticated_and_health_are_allowed() {
+        let mut cfg = ProxyConfig::default();
+        assert!(auth_is_bypassed(true, "/v1/chat/completions"));
+        cfg.allow_unauthenticated = true;
+        assert!(auth_is_bypassed(
+            cfg.allow_unauthenticated,
+            "/v1/chat/completions"
+        ));
+        assert!(auth_is_bypassed(false, "/health"));
+    }
+
+    #[test]
+    fn secure_default_config_has_no_upstream_key_but_requires_token() {
+        let cfg = ProxyConfig::default();
+        assert!(cfg.auth_token.is_empty());
+        // 空 token + 未显式允许 => 中间件会 401，而不是放行。
+        assert!(!auth_is_bypassed(
+            cfg.allow_unauthenticated,
+            "/chat/completions"
+        ));
     }
 }

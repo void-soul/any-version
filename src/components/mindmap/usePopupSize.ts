@@ -1,3 +1,4 @@
+import { ignoreInvokeError } from "../../utils/invokeOrReport";
 // ════════════ 思维导图悬浮窗高度管理（节点速记 / 贴纸速记共用） ════════════
 // 两种模式：
 // - 自动（默认）：内容变化时窗口高度贴合「自然内容高度」。
@@ -62,7 +63,7 @@ export function usePopupSize(opts: PopupSizeOptions): PopupSizeApi {
       selfResizeRef.current = true;
       void getCurrentWindow()
         .setSize(new LogicalSize(window.innerWidth, clamped))
-        .catch(() => { /* 浏览器预览等无 Tauri 环境静默降级 */ })
+        .catch((e) => ignoreInvokeError(e, "浏览器预览等无 Tauri 环境静默降级"))
         .finally(() => { window.setTimeout(() => { selfResizeRef.current = false; }, 150); });
     } catch { /* 忽略 */ }
   }, [minH]);

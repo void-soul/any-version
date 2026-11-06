@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../utils/invokeOrReport";
 import { useMindmapHistory } from "./useMindmapHistory";
 import { useMindmapDocumentLibrary } from "./useMindmapDocumentLibrary";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -189,7 +190,7 @@ export default function MindmapPanel() {
           if (f) setFull(f);
         }
       } catch { /* 忽略恢复失败 */ }
-    }).catch(() => {});
+    }).catch((e) => { reportInvokeError(e, "src/components/mindmap/MindmapPanel.tsx:192"); });
     // AI 供应商/模型预填：优先导图自己「上次使用的模型」，其次全局默认 AI 模型
     // （翻译模块的默认），失效或未设置时回退第一个可用供应商。
     void Promise.all([

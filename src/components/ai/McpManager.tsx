@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../utils/invokeOrReport";
 import { McpManagedSourceEditor } from "./McpManagedSourceEditor";
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -96,7 +97,7 @@ export default function McpManager() {
   useEffect(() => {
     invoke<McpPreset[]>("get_mcp_presets")
       .then(setPresets)
-      .catch(() => {});
+      .catch((e) => { reportInvokeError(e, "src/components/ai/McpManager.tsx:99"); });
   }, []);
 
   const load = useCallback(async () => {

@@ -1,6 +1,16 @@
 use super::{commands::*, db};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
+use std::sync::Mutex;
+
+/// tasks 的测试共用一个全局 SQLite 连接，且 `failed_move_*` 会在该连接上
+/// 创建 TEMP TRIGGER 注入故障。不加串行锁时并发跑会让另一个测试撞上
+/// 「injected move failure」（AUDIT-041 测试隔离）。
+static DB_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+fn db_guard() -> std::sync::MutexGuard<'static, ()> {
+    DB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 fn input<T: DeserializeOwned>(value: Value) -> T {
     serde_json::from_value(value).unwrap()
@@ -16,6 +26,7 @@ fn burst_ids_are_unique_for_tasks_logs_and_references() {
 
 #[test]
 fn commands_persist_reopen_and_preserve_parent_log_relationships() {
+    let _guard = db_guard();
     let parent = tasks_create(input(json!({"title":"persistence parent"}))).unwrap();
     let child = tasks_create(input(json!({
         "title":"persistence child", "parentId":parent.id,
@@ -57,6 +68,7 @@ fn commands_persist_reopen_and_preserve_parent_log_relationships() {
 
 #[test]
 fn failed_move_and_reference_writes_roll_back_the_whole_command() {
+    let _guard = db_guard();
     let task = tasks_create(input(json!({"title":"rollback fixture","scheduledDate":"2026-11-01"}))).unwrap();
     db::with_conn(|conn| conn.execute_batch(
         "CREATE TEMP TRIGGER fail_move BEFORE INSERT ON task_moves BEGIN SELECT RAISE(FAIL, 'injected move failure'); END;"
@@ -93,6 +105,7 @@ fn failed_move_and_reference_writes_roll_back_the_whole_command() {
 
 #[test]
 fn legacy_migration_rolls_back_partial_import_and_retries_without_duplicates() {
+    let _guard = db_guard();
     let source = crate::commands::config::get_data_dir().join("mindmap.db");
     let conn = rusqlite::Connection::open(&source).unwrap();
     conn.execute_batch(

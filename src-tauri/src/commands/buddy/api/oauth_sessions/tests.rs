@@ -267,7 +267,12 @@ async fn releasing_module_discards_ready_credentials_and_invalidates_optional_sa
     assert!(sessions
         .state(BuddyPlatform::Workbuddy, "pending", now_timestamp())
         .is_err());
-    assert!(sessions.inner.lock().unwrap().pending.is_empty());
+    assert!(sessions
+        .inner
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .pending
+        .is_empty());
     begin(&sessions, "active");
     let result = sessions
         .finish(
@@ -286,6 +291,15 @@ async fn releasing_module_discards_ready_credentials_and_invalidates_optional_sa
         )
         .await;
     assert!(result.is_ok());
-    assert!(sessions.inner.lock().unwrap().completed.is_empty());
-    assert!(sessions.gates.lock().unwrap().is_empty());
+    assert!(sessions
+        .inner
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .completed
+        .is_empty());
+    assert!(sessions
+        .gates
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_empty());
 }

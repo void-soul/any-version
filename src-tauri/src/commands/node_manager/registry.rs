@@ -45,14 +45,14 @@ pub(super) static REGISTRY: Mutex<Option<Vec<NodeProjectDef>>> = Mutex::new(None
 /// 注意：空列表不做缓存，以便后续配置目录就绪后能重新加载。
 pub fn registry() -> Vec<NodeProjectDef> {
     {
-        let g = REGISTRY.lock().unwrap();
+        let g = REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(list) = g.as_ref() {
             return list.clone();
         }
     }
     let loaded = NodeProjectRegistry::load().all().to_vec();
     if !loaded.is_empty() {
-        let mut g = REGISTRY.lock().unwrap();
+        let mut g = REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
         *g = Some(loaded.clone());
     }
     loaded

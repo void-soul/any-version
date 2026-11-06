@@ -4,13 +4,26 @@ Read-only analysis. Two passes:
   pass 1  pair by type name (Rust struct <-> TS interface)
   pass 2  pair by command (Tauri command return type <-> TS invoke<T> generic)
 """
+import argparse
 import collections
 import os
 import re
+import sys
+from pathlib import Path
 
-ROOT = r"e:\pro\my\any-version"
+# 默认从脚本位置推导仓库根（scripts/ 的上一级），换机器/换检出目录都可用。
+# 可用 --root 显式覆盖；绝不能写死开发机绝对路径，否则 CI 上会静默扫错目录。
+DEFAULT_ROOT = Path(__file__).resolve().parents[1]
+ROOT = str(DEFAULT_ROOT)
 RS = os.path.join(ROOT, "src-tauri", "src")
 TS = os.path.join(ROOT, "src")
+
+
+def configure_root(root):
+    global ROOT, RS, TS
+    ROOT = str(Path(root).resolve())
+    RS = os.path.join(ROOT, "src-tauri", "src")
+    TS = os.path.join(ROOT, "src")
 
 
 def camel(n):
@@ -341,6 +354,17 @@ def norm(s):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Rust serde wire format vs TS interface audit")
+    parser.add_argument("--root", default=None,
+                        help="仓库根目录（默认：脚本所在 scripts/ 的上一级）")
+    parser.add_argument("--strict", action="store_true",
+                        help="CI 闸门模式：入参命名/结构体入参出现真实风格错配时以非零码退出")
+    args = parser.parse_args()
+    if args.root:
+        configure_root(args.root)
+    if not os.path.isdir(RS) or not os.path.isdir(TS):
+        parser.error("在 root=%s 下找不到 src-tauri/src 或 src，请用 --root 指定仓库根目录" % ROOT)
+
     rust = load_rust()
     ts = load_ts()
     cmds = load_cmds()
@@ -520,6 +544,22 @@ def main():
               % (r[0], r[1], r[2], coverage(r[10], r[9]) * 100,
                  r[10][:6] or "-"))
 
+    # ---- CI 闸门 ----
+    # 只把「入参命名/结构体入参的真实风格错配」当硬错误。pass1/pass2 的
+    # MIXED / NO-OVERLAP 与低覆盖率 OK 项存在已知伪报（同名不同类型、前端字段投影、
+    # DDL 解析测试夹具等），仅作报告，不阻断构建。
+    hard = [r for r in rows3 if r[1] == "MISMATCH"]
+    hard += [r for r in rows4 if r[3] == "MISMATCH"]
+    print()
+    print("===== gate =====")
+    print("  root=%s" % ROOT)
+    print("  hard mismatches: %d" % len(hard))
+    if args.strict and hard:
+        print("  FAIL: 契约风格错配，详见上面 pass3/pass4 明细")
+        return 1
+    print("  %s" % ("PASS (strict)" if args.strict else "report only (use --strict to gate)"))
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

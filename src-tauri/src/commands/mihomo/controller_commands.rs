@@ -223,8 +223,11 @@ pub async fn mihomo_patch_config(
 #[tauri::command]
 pub async fn mihomo_hot_reload_config(state: State<'_, MihomoState>) -> Result<(), String> {
     let (diff, current) = {
-        let app_config = state.app_config.lock().unwrap();
-        let profile = state.profile_config.lock().unwrap();
+        let app_config = state.app_config.lock().unwrap_or_else(|e| e.into_inner());
+        let profile = state
+            .profile_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         (app_config.diff_work_dir, profile.current.clone())
     };
     let path = core_work_config_path(&state.data_dir, diff, &current);
@@ -255,13 +258,17 @@ pub async fn mihomo_select_proxy(
     name: String,
 ) -> Result<(), String> {
     let need_reload = {
-        let cfg = state.app_config.lock().unwrap();
+        let cfg = state.app_config.lock().unwrap_or_else(|e| e.into_inner());
         cfg.secondary_active_id.is_some() && !cfg.secondary_proxies.is_empty()
     };
-    let mut app_config = state.app_config.lock().unwrap().clone();
+    let mut app_config = state
+        .app_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     app_config.default_proxy = Some(name);
     save_app_config(&state.data_dir, &app_config).ok();
-    *state.app_config.lock().unwrap() = app_config;
+    *state.app_config.lock().unwrap_or_else(|e| e.into_inner()) = app_config;
     emit_state(&app, &state);
     // 已启用二级代理时，切换一级代理需重新生成配置让 dialer-proxy 跟随新的一级节点
     if need_reload && !state.stop_flag.load(Ordering::SeqCst) {
@@ -275,10 +282,14 @@ pub async fn mihomo_set_tun(
     state: State<'_, MihomoState>,
     enable: bool,
 ) -> Result<(), String> {
-    let mut app_config = state.app_config.lock().unwrap().clone();
+    let mut app_config = state
+        .app_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     app_config.tun_enabled = enable;
     save_app_config(&state.data_dir, &app_config).ok();
-    *state.app_config.lock().unwrap() = app_config;
+    *state.app_config.lock().unwrap_or_else(|e| e.into_inner()) = app_config;
     emit_state(&app, &state);
     reload_config(&app, Arc::clone(&*state)).await
 }
@@ -325,10 +336,14 @@ pub async fn mihomo_set_sys_proxy(
     enable: bool,
 ) -> Result<(), String> {
     set_sys_proxy(&state, enable)?;
-    let mut app_config = state.app_config.lock().unwrap().clone();
+    let mut app_config = state
+        .app_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     app_config.sys_proxy_enable = enable;
     save_app_config(&state.data_dir, &app_config).ok();
-    *state.app_config.lock().unwrap() = app_config;
+    *state.app_config.lock().unwrap_or_else(|e| e.into_inner()) = app_config;
     emit_state(&app, &state);
     Ok(())
 }

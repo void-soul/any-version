@@ -136,7 +136,7 @@ pub(super) fn emit_console_url(app: &tauri::AppHandle, project_id: &str, url: &s
 pub(super) static CONSOLE_URLS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
 pub(super) fn console_urls() -> std::sync::MutexGuard<'static, Option<HashMap<String, String>>> {
-    CONSOLE_URLS.lock().unwrap()
+    CONSOLE_URLS.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// 单锁内完成「与已捕获值比较 + 覆盖记录」，返回是否发生变化。

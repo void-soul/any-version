@@ -269,111 +269,134 @@ pub fn save_settings(conn: &Connection, s: &ClipboardSettings) -> Result<(), Str
     Ok(())
 }
 
-/// 查询历史列表（支持关键词/类型/置顶过滤）
+/// 组装可下推到 SQL 的过滤条件（kind 白名单 + 置顶，均为常量，无注入面）。
+fn item_filter(kind: &str, pinned_only: bool) -> String {
+    let mut sql = String::from(" WHERE 1=1");
+    match kind {
+        "text" => sql.push_str(" AND kind='text'"),
+        "image" => sql.push_str(" AND kind='image'"),
+        _ => {}
+    }
+    if pinned_only {
+        sql.push_str(" AND pinned=1");
+    }
+    sql
+}
+
+const ITEM_COLUMNS: &str = "id, kind, content, image_path, thumb_path, width, height,
+                COALESCE(source_app,''), pinned, created_at, COALESCE(formats,'')";
+
+fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipboardItem> {
+    let formats_raw: String = row.get(10)?;
+    Ok(ClipboardItem {
+        id: row.get(0)?,
+        kind: row.get(1)?,
+        content: row.get::<_, Option<String>>(2)?.map(decrypt_content),
+        image_path: row.get(3)?,
+        thumb_path: row.get(4)?,
+        width: row.get(5)?,
+        height: row.get(6)?,
+        source_app: row.get(7)?,
+        pinned: row.get::<_, i64>(8)? != 0,
+        created_at: row.get(9)?,
+        formats: parse_formats(&formats_raw),
+    })
+}
+
+/// 查询历史列表与总数（一次调用完成，AUDIT-021）。
+///
+/// - **无关键词（最常见）**：`COUNT(*)` 与 `LIMIT/OFFSET` 全部下推 SQL，
+///   只解密当前页的行，不再整表取回、不再逐行解密两次。
+/// - **有关键词**：`content` 是 AES 加密的，无法走 SQL LIKE；此时仍需全表
+///   扫描，但**只扫描并解密一次**，同时算出总数与当前页，避免旧实现里
+///   `query_items` + `count_items` 各解密一遍的翻倍开销。
+///   明文摘要列/FTS5 会泄露剪贴板敏感内容，故不引入。
 #[allow(clippy::too_many_arguments)]
-pub fn query_items(
+pub fn query_page(
     conn: &Connection,
     keyword: &str,
     kind: &str,
     pinned_only: bool,
     limit: i64,
     offset: i64,
-) -> Result<Vec<ClipboardItem>, String> {
-    let mut sql = String::from(
-        "SELECT id, kind, content, image_path, thumb_path, width, height,
-                COALESCE(source_app,''), pinned, created_at, COALESCE(formats,'')
-         FROM clipboard_items WHERE 1=1",
-    );
-    match kind {
-        "text" => sql.push_str(" AND kind='text'"),
-        "image" => sql.push_str(" AND kind='image'"),
-        _ => {}
-    }
-    if pinned_only {
-        sql.push_str(" AND pinned=1");
-    }
-    // 置顶在前，其余按时间倒序。关键词在内存中过滤（content 已加密，不能走 SQL LIKE）。
-    sql.push_str(" ORDER BY pinned DESC, created_at DESC");
+) -> Result<(Vec<ClipboardItem>, i64), String> {
+    let filter = item_filter(kind, pinned_only);
+    let kw = keyword.trim().to_lowercase();
+    let limit = limit.max(0);
+    let offset = offset.max(0);
 
+    if kw.is_empty() {
+        let total: i64 = conn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM clipboard_items{filter}"),
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("统计剪贴板历史失败: {e}"))?;
+        let sql = format!(
+            "SELECT {ITEM_COLUMNS} FROM clipboard_items{filter}
+             ORDER BY pinned DESC, created_at DESC LIMIT ?1 OFFSET ?2"
+        );
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| format!("查询剪贴板历史失败: {e}"))?;
+        let rows = stmt
+            .query_map(params![limit, offset], row_to_item)
+            .map_err(|e| format!("读取剪贴板历史失败: {e}"))?;
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row.map_err(|e| format!("读取剪贴板历史失败: {e}"))?);
+        }
+        return Ok((items, total));
+    }
+
+    // 关键词路径：单次扫描，边解密边累计总数与当前页；不在内存里保留全量结果。
+    let sql = format!(
+        "SELECT {ITEM_COLUMNS} FROM clipboard_items{filter}
+         ORDER BY pinned DESC, created_at DESC"
+    );
     let mut stmt = conn
         .prepare(&sql)
-        .map_err(|e| format!("查询剪贴板历史失败: {}", e))?;
+        .map_err(|e| format!("搜索剪贴板历史失败: {e}"))?;
     let rows = stmt
-        .query_map([], |row| {
-            let formats_raw: String = row.get(10)?;
-            Ok(ClipboardItem {
-                id: row.get(0)?,
-                kind: row.get(1)?,
-                content: row.get::<_, Option<String>>(2)?.map(decrypt_content),
-                image_path: row.get(3)?,
-                thumb_path: row.get(4)?,
-                width: row.get(5)?,
-                height: row.get(6)?,
-                source_app: row.get(7)?,
-                pinned: row.get::<_, i64>(8)? != 0,
-                created_at: row.get(9)?,
-                formats: parse_formats(&formats_raw),
-            })
-        })
-        .map_err(|e| format!("读取剪贴板历史失败: {}", e))?;
-
-    let kw = keyword.trim().to_lowercase();
-    let mut items: Vec<ClipboardItem> = rows
-        .filter_map(|r| r.ok())
-        .filter(|it| {
-            if kw.is_empty() {
-                return true;
-            }
-            it.content
-                .as_deref()
-                .map(|c| c.to_lowercase().contains(&kw))
-                .unwrap_or(false)
-        })
-        .collect();
-    // 内存分页（上限由 max_items 设置约束，历史量有界）
-    let start = offset.max(0) as usize;
-    if start >= items.len() {
-        items.clear();
-    } else {
-        let end = (start + limit.max(0) as usize).min(items.len());
-        items = items[start..end].to_vec();
+        .query_map([], row_to_item)
+        .map_err(|e| format!("搜索剪贴板历史失败: {e}"))?;
+    let mut total: i64 = 0;
+    let mut items: Vec<ClipboardItem> = Vec::new();
+    for row in rows {
+        let item = row.map_err(|e| format!("搜索剪贴板历史失败: {e}"))?;
+        let matches = item
+            .content
+            .as_deref()
+            .map(|c| c.to_lowercase().contains(&kw))
+            .unwrap_or(false);
+        if !matches {
+            continue;
+        }
+        if total >= offset && (items.len() as i64) < limit {
+            items.push(item);
+        }
+        total += 1;
     }
-    Ok(items)
+    Ok((items, total))
 }
 
-/// 查询总数
+/// 统计总数（无关键词时走 `SELECT COUNT(*)`；有关键词时由 `query_page` 覆盖）。
+/// 保留此入口供仅需要计数的调用方使用，语义与旧版一致。
 pub fn count_items(conn: &Connection, keyword: &str, kind: &str, pinned_only: bool) -> Result<i64, String> {
-    let mut sql = String::from("SELECT id, kind, content FROM clipboard_items WHERE 1=1");
-    match kind {
-        "text" => sql.push_str(" AND kind='text'"),
-        "image" => sql.push_str(" AND kind='image'"),
-        _ => {}
+    if keyword.trim().is_empty() {
+        let filter = item_filter(kind, pinned_only);
+        return conn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM clipboard_items{filter}"),
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("统计剪贴板历史失败: {e}"));
     }
-    if pinned_only {
-        sql.push_str(" AND pinned=1");
-    }
-
-    let mut stmt = conn
-        .prepare(&sql)
-        .map_err(|e| format!("统计剪贴板历史失败: {}", e))?;
-    let kw = keyword.trim().to_lowercase();
-    let count = stmt
-        .query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?)))
-        .map_err(|e| format!("统计剪贴板历史失败: {}", e))?
-        .filter_map(|r| r.ok())
-        .filter(|(kind, content)| {
-            if kw.is_empty() {
-                return true;
-            }
-            if kind != "text" {
-                return false;
-            }
-            decrypt_content(content.clone().unwrap_or_default())
-                .to_lowercase()
-                .contains(&kw)
-        })
-        .count();
-    Ok(count as i64)
+    // 有关键词：复用单次扫描路径，避免再写一遍解密逻辑。
+    let (_, total) = query_page(conn, keyword, kind, pinned_only, 0, 0)?;
+    Ok(total)
 }
 
 /// 按 id 查询单条
@@ -581,6 +604,78 @@ pub fn image_file_path(data_dir: &std::path::Path, rel: &str) -> PathBuf {
 #[cfg(test)]
 mod initialization_tests {
     use super::*;
+
+    /// 构造不依赖加密密钥的明文历史行（decrypt_content 对非 ENC_V2 前缀原样返回）。
+    fn seed(conn: &Connection, n: i64) {
+        for i in 0..n {
+            conn.execute(
+                "INSERT INTO clipboard_items(kind, content, hash, created_at, pinned)
+                 VALUES('text', ?1, ?2, ?3, 0)",
+                params![format!("entry-{i} keyword-{i}"), format!("hash-{i}"), 1000 + i],
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn empty_keyword_pushes_limit_and_count_into_sql() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        seed(&conn, 25);
+
+        let (page, total) = query_page(&conn, "", "", false, 10, 0).unwrap();
+        assert_eq!(total, 25);
+        assert_eq!(page.len(), 10);
+        // created_at DESC：最新的是 entry-24
+        assert_eq!(page[0].content.as_deref(), Some("entry-24 keyword-24"));
+
+        let (page2, total2) = query_page(&conn, "", "", false, 10, 20).unwrap();
+        assert_eq!(total2, 25);
+        assert_eq!(page2.len(), 5);
+        assert_eq!(page2[0].content.as_deref(), Some("entry-4 keyword-4"));
+
+        let (empty, _) = query_page(&conn, "", "", false, 10, 999).unwrap();
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn keyword_search_returns_matching_page_and_exact_total() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        seed(&conn, 25);
+        // 只有 3 条含 "keyword-1" 的子串（1、10..19 命中 11 条，这里改用精确串）
+        let (page, total) = query_page(&conn, "keyword-7", "", false, 2, 0).unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].content.as_deref(), Some("entry-7 keyword-7"));
+
+        let (page2, total2) = query_page(&conn, "entry-1", "", false, 5, 0).unwrap();
+        assert_eq!(total2, 11); // entry-1, entry-10..entry-19
+        assert_eq!(page2.len(), 5);
+
+        let (none, total3) = query_page(&conn, "不存在的关键词", "", false, 10, 0).unwrap();
+        assert_eq!(total3, 0);
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn kind_and_pinned_filters_are_pushed_to_sql() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        seed(&conn, 10);
+        conn.execute(
+            "INSERT INTO clipboard_items(kind, content, hash, created_at, pinned)
+             VALUES('image', NULL, 'img', 9999, 1)",
+            [],
+        )
+        .unwrap();
+        let (_, text_total) = query_page(&conn, "", "text", false, 5, 0).unwrap();
+        assert_eq!(text_total, 10);
+        let (pinned, pinned_total) = query_page(&conn, "", "", true, 5, 0).unwrap();
+        assert_eq!(pinned_total, 1);
+        assert_eq!(pinned[0].kind, "image");
+        assert_eq!(count_items(&conn, "", "text", false).unwrap(), 10);
+    }
 
     #[test]
     fn fresh_database_has_schema_before_content_migration() {

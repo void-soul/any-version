@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../../utils/invokeOrReport";
 // 资源页 —— 1:1 复刻 clash-party src/renderer/src/pages/resources.tsx
 // （GeoData：4 个 geox-url 编辑+确认 / db·dat 模式 / 自动更新+间隔 / 立即更新；
 //   代理集合 provider：全部更新/单个更新/订阅信息/复制链接；规则集合 provider 同理）
@@ -39,12 +40,12 @@ export default function ResourcesPanel({ running }: { running: boolean }) {
       setC(cc || {});
       const g = { ...DEFAULT_GEOX, ...((cc || {})["geox-url"] || {}) };
       setInputs({ geoip: g.geoip, geosite: g.geosite, mmdb: g.mmdb, asn: g.asn });
-    } catch {}
+    } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/ResourcesPanel.tsx:42"); }
     if (running) {
       try {
         const [p, r] = await Promise.all([apiProxyProviders(), apiRuleProviders()]);
         setPp(p); setRp(r);
-      } catch {}
+      } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/ResourcesPanel.tsx:47"); }
     }
   };
   useEffect(() => { load(); }, [running]);

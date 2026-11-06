@@ -25,13 +25,13 @@ pub fn unix_to_local_str(secs: i64) -> Option<String> {
     })
 }
 
-/// RFC3339（GitHub 的 `starred_at` 形如 `2021-01-01T00:00:00Z`）→ 本地时间字符串。
+/// RFC3339（GitHub 的 `starred_at` 形如 `2021-01-01T00:00:00Z`）→ UTC RFC3339。
+///
+/// 旧实现把平台给的 UTC 时间转成**本地无时区字符串**，与同表 `created_at`
+/// （本地首次入库时间）语义混在一起；跨时区同步与 DST 会让排序和按日聚合错位
+/// （AUDIT-025）。统一用 UTC，展示层再按用户时区格式化。
 pub fn rfc3339_to_local_str(value: &str) -> Option<String> {
-    chrono::DateTime::parse_from_rfc3339(value).ok().map(|dt| {
-        dt.with_timezone(&chrono::Local)
-            .format("%Y-%m-%dT%H:%M:%S")
-            .to_string()
-    })
+    crate::commands::foundation::time::parse_to_utc_rfc3339(value)
 }
 
 /// 打开/初始化全局连接（不持有锁；由调用方在锁内调用）。
@@ -40,12 +40,31 @@ fn init_connection() -> Result<Connection, String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建数据目录失败: {}", e))?;
     }
-    let conn = Connection::open(&path).map_err(|e| format!("打开收藏库失败: {}", e))?;
+    let mut conn = Connection::open(&path).map_err(|e| format!("打开收藏库失败: {}", e))?;
     conn.pragma_update(None, "journal_mode", "WAL")
         .map_err(|e| format!("设置 WAL 模式失败: {}", e))?;
+    // 开启外键约束：删除父行时由数据库兜底级联，避免任何遗漏的调用点再产生孤儿行
+    // （AUDIT-022）。必须在建表前开启（PRAGMA 对已建立的表不回溯）。
+    conn.pragma_update(None, "foreign_keys", "ON")
+        .map_err(|e| format!("启用外键约束失败: {}", e))?;
     conn.busy_timeout(std::time::Duration::from_secs(5))
         .map_err(|e| format!("设置收藏库超时失败: {}", e))?;
-    migrate(&conn)?;
+    // 版本化迁移：整批 DDL + 补列 + 旧标签迁移包在同一个事务里，
+    // 任一步失败整体回滚且错误上抛（AUDIT-024 / 047）。
+    use crate::commands::foundation::migrate::{ensure_schema, Step};
+    let steps = [Step {
+        version: 1,
+        name: "favorites-core-schema",
+        run: |tx| migrate(tx),
+    }];
+    ensure_schema(&mut conn, &steps)?;
+    // 一次性清理历史遗留的孤儿行（旧版本删除逻辑没有清子表）。
+    conn.execute_batch(
+        "DELETE FROM favorite_content WHERE favorite_id NOT IN (SELECT id FROM favorite);
+         DELETE FROM favorite_item_category WHERE favorite_id NOT IN (SELECT id FROM favorite);
+         DELETE FROM favorite_tag WHERE favorite_id NOT IN (SELECT id FROM favorite);",
+    )
+    .map_err(|e| format!("清理收藏孤儿数据失败: {}", e))?;
     Ok(conn)
 }
 

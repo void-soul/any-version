@@ -3,7 +3,9 @@ use super::*;
 /// 取消正在进行的安装（中止下载/解压任务，RAII guard 自动清理临时文件）
 #[tauri::command]
 pub fn project_cancel_install(id: String) -> Result<(), String> {
-    let map = get_active_downloads().lock().unwrap();
+    let map = get_active_downloads()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     if let Some(active) = map.get(&id) {
         active.cancellation.cancel();
         if let Some(handle) = &active.abort_handle {
@@ -20,7 +22,7 @@ pub fn project_cancel_install(id: String) -> Result<(), String> {
 pub fn project_get_active_installs() -> Vec<ActiveInstall> {
     get_active_downloads()
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .values()
         .map(|e| e.active.clone())
         .collect()

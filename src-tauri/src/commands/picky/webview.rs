@@ -177,7 +177,7 @@ pub(super) async fn fetch_meta_via_webview(
         let send = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
         let send2 = send.clone();
         if w.eval_with_callback("document.readyState", move |s| {
-            if let Some(t) = send2.lock().unwrap().take() {
+            if let Some(t) = send2.lock().unwrap_or_else(|e| e.into_inner()).take() {
                 let _ = t.send(s);
             }
         })
@@ -213,7 +213,7 @@ pub(super) async fn fetch_meta_via_webview(
     let send = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
     let send2 = send.clone();
     if w.eval_with_callback(WEBVIEW_EXTRACT_JS, move |s| {
-        if let Some(t) = send2.lock().unwrap().take() {
+        if let Some(t) = send2.lock().unwrap_or_else(|e| e.into_inner()).take() {
             let _ = t.send(s);
         }
     })

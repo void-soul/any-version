@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../utils/invokeOrReport";
 
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
@@ -38,7 +39,7 @@ export default function ProjectListPanel({
   useEffect(() => {
     invoke<string>("project_get_github_token")
       .then((v) => setTokenSet(!!v))
-      .catch(() => {});
+      .catch((e) => { reportInvokeError(e, "src/components/project/ProjectListPanel.tsx:41"); });
   }, []);
 
   const filtered = projects.filter((p) => {

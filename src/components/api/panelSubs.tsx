@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../utils/invokeOrReport";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
@@ -275,7 +276,7 @@ export function ImportModal({ projectId, modules, onClose, onImported }: {
           setAiModelId(list[0].models[0]?.id ?? list[0].active_model_id ?? "");
         }
       })
-      .catch(() => {});
+      .catch((e) => { reportInvokeError(e, "src/components/api/panelSubs.tsx:278"); });
   }, []);
 
   const pickDir = async () => {

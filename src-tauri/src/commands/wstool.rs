@@ -524,8 +524,19 @@ pub async fn sse_connect(
     let task = tokio::spawn(async move {
         let mut parser = sse_buffer::SseBuffer::new(1024 * 1024);
         let mut reason: Option<String> = None;
-        while let Some(chunk) = byte_stream.next().await {
-            match chunk {
+        // SSE 不设总超时（合法长连接可以持续数小时），但必须有 idle 超时，
+        // 否则对端静默断开会让任务与会话永久挂住（AUDIT-031）。
+        const SSE_IDLE: std::time::Duration = std::time::Duration::from_secs(90);
+        loop {
+            let next = match tokio::time::timeout(SSE_IDLE, byte_stream.next()).await {
+                Ok(Some(chunk)) => chunk,
+                Ok(None) => break,
+                Err(_) => {
+                    reason = Some("SSE 空闲超时：90 秒未收到数据".into());
+                    break;
+                }
+            };
+            match next {
                 Ok(bytes) => {
                     if let Err(error) = parser.feed(&bytes, |raw| {
                         let _ = app_task.emit("sstool://event", serde_json::json!({ "id": id_task, "raw": raw }));
@@ -702,12 +713,12 @@ mod net_echo_tests {
             owned_connect(&owner, "pending".into(), std::future::pending::<Result<(), String>>()).await
         });
         tokio::time::timeout(Duration::from_secs(1), async {
-            while !state.pending.lock().unwrap().contains_key("pending") { tokio::task::yield_now().await; }
+            while !state.pending.lock().unwrap_or_else(|e| e.into_inner()).contains_key("pending") { tokio::task::yield_now().await; }
         }).await.unwrap();
         wstool_disconnect_core(&state, "pending".into()).unwrap();
         let result = tokio::time::timeout(Duration::from_secs(1), task).await.unwrap().unwrap();
         assert!(result.unwrap_err().contains("取消"));
-        assert!(state.pending.lock().unwrap().is_empty());
+        assert!(state.pending.lock().unwrap_or_else(|e| e.into_inner()).is_empty());
     }
 
 }

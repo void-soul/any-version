@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../utils/invokeOrReport";
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -196,7 +197,7 @@ export default function TranslatePopup() {
     // 这样即使后端在页面挂载前已经发过 loading/结果事件，也能通过快照恢复。
     getCurrentWebview()
       .setFocus()
-      .catch(() => {});
+      .catch((e) => { reportInvokeError(e, "src/components/TranslatePopup.tsx:199"); });
 
     const setup = async () => {
       try {

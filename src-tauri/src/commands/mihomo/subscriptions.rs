@@ -179,10 +179,17 @@ pub async fn mihomo_import_subscription(
         updated_at: Some(now_secs()),
     };
     {
-        let mut cfg = state.profile_config.lock().unwrap().clone();
+        let mut cfg = state
+            .profile_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         cfg.items.push(item.clone());
         save_profile_config(&state.data_dir, &cfg).ok();
-        *state.profile_config.lock().unwrap() = cfg;
+        *state
+            .profile_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = cfg;
     }
     write_profile_content(&state.data_dir, &item, &text).map_err(|e| e.to_string())?;
     emit_state(&app, &state);
@@ -229,10 +236,17 @@ pub fn mihomo_import_file(
         updated_at: Some(now_secs()),
     };
     {
-        let mut cfg = state.profile_config.lock().unwrap().clone();
+        let mut cfg = state
+            .profile_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         cfg.items.push(item.clone());
         save_profile_config(&state.data_dir, &cfg).ok();
-        *state.profile_config.lock().unwrap() = cfg;
+        *state
+            .profile_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = cfg;
     }
     write_profile_content(&state.data_dir, &item, &text).map_err(|e| e.to_string())?;
     emit_state(&app, &state);
@@ -257,7 +271,10 @@ pub async fn mihomo_update_subscription(
     id: String,
 ) -> Result<ProfileItem, String> {
     let item = {
-        let cfg = state.profile_config.lock().unwrap();
+        let cfg = state
+            .profile_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         cfg.items.iter().find(|i| i.id == id).cloned()
     }
     .ok_or("配置不存在")?;
@@ -313,7 +330,10 @@ pub async fn mihomo_update_subscription(
     updated.updated_at = Some(now_secs());
     write_profile_content(&state.data_dir, &updated, &processed).map_err(|e| e.to_string())?;
     {
-        let mut cfg = state.profile_config.lock().unwrap();
+        let mut cfg = state
+            .profile_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(it) = cfg.items.iter_mut().find(|i| i.id == id) {
             *it = updated.clone();
         }
@@ -330,7 +350,10 @@ pub fn mihomo_get_profile_status(
     id: String,
 ) -> Result<Value, String> {
     let item = {
-        let cfg = state.profile_config.lock().unwrap();
+        let cfg = state
+            .profile_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         cfg.items.iter().find(|i| i.id == id).cloned()
     };
     let content = match item {

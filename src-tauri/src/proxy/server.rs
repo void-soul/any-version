@@ -565,6 +565,7 @@ mod tests {
 mod connection;
 mod lifecycle;
 mod observability;
+pub mod request_id;
 pub use lifecycle::wait_for_stopped_proxies;
 use observability::{
     catch_all_handler, emit_proxy_event, extract_inbound_delta_text, extract_inbound_full_text,

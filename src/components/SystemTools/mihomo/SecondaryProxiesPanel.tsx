@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../../utils/invokeOrReport";
 // 二级代理页 —— 管理多个家庭 socks5 二级代理，选择启用哪个连接
 // 链路：网络请求 → 一级代理（在「代理」页选中） → 二级代理（本页启用） → 目标
 // 界面与「代理」页统一：网格列数可调、选中绿色背景+绿色边框、支持测速
@@ -37,8 +38,8 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
       try {
         const pc = await mihomoApi.getProfileConfig();
         setProfileId(pc?.current_profile || "");
-      } catch {}
-    } catch {}
+      } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/SecondaryProxiesPanel.tsx:40"); }
+    } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/SecondaryProxiesPanel.tsx:41"); }
   };
   useEffect(() => { load(); }, [running]);
 
@@ -48,7 +49,7 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
     try {
       const d: any = await ctrlGet("/proxies");
       setLive(d?.proxies || {});
-    } catch {}
+    } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/SecondaryProxiesPanel.tsx:51"); }
   };
   useEffect(() => {
     fetchLive();
@@ -105,7 +106,7 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
     setTesting(Object.fromEntries(items.map((s) => [s.id, true])));
     try {
       await Promise.all(items.map((s) =>
-        proxyDelay(nodeName(s), delayUrl, delayTimeout).catch(() => {}).then(() => fetchLive())
+        proxyDelay(nodeName(s), delayUrl, delayTimeout).catch((e) => { reportInvokeError(e, "src/components/SystemTools/mihomo/SecondaryProxiesPanel.tsx:108"); }).then(() => fetchLive())
       ));
     } finally {
       setTesting({});
@@ -118,7 +119,7 @@ export default function SecondaryProxiesPanel({ running }: { running: boolean })
     setTesting((t) => ({ ...t, [s.id]: true }));
     try {
       await proxyDelay(nodeName(s), delayUrl, delayTimeout);
-    } catch {}
+    } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/SecondaryProxiesPanel.tsx:126"); }
     setTesting((t) => ({ ...t, [s.id]: false }));
     fetchLive();
   };

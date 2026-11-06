@@ -21,8 +21,7 @@ fn substore_dir(state: &State<'_, MihomoState>) -> PathBuf {
 fn cfg_u16(state: &State<'_, MihomoState>, key: &str, def: u16) -> u16 {
     state
         .app_config
-        .lock()
-        .unwrap()
+        .lock().unwrap_or_else(|e| e.into_inner())
         .extra
         .get(key)
         .and_then(|v| v.as_u64())
@@ -32,8 +31,7 @@ fn cfg_u16(state: &State<'_, MihomoState>, key: &str, def: u16) -> u16 {
 fn cfg_bool(state: &State<'_, MihomoState>, key: &str, def: bool) -> bool {
     state
         .app_config
-        .lock()
-        .unwrap()
+        .lock().unwrap_or_else(|e| e.into_inner())
         .extra
         .get(key)
         .and_then(|v| v.as_bool())
@@ -46,8 +44,7 @@ pub async fn mihomo_substore_download(state: State<'_, MihomoState>) -> Result<S
     let dir = substore_dir(&state);
     let pref = state
         .app_config
-        .lock()
-        .unwrap()
+        .lock().unwrap_or_else(|e| e.into_inner())
         .extra
         .get("githubProxy")
         .and_then(|v| v.as_str())
@@ -110,7 +107,7 @@ pub fn mihomo_substore_start(state: State<'_, MihomoState>) -> Result<Value, Str
     mihomo_substore_stop()?;
     let port = cfg_u16(&state, "subStoreBackendPort", 38324);
     let use_proxy = cfg_bool(&state, "useProxyInSubStore", false);
-    let mixed = state.app_config.lock().unwrap().mixed_port;
+    let mixed = state.app_config.lock().unwrap_or_else(|e| e.into_inner()).mixed_port;
     let data_path = dir.join("data");
     std::fs::create_dir_all(&data_path).ok();
 
@@ -131,7 +128,7 @@ pub fn mihomo_substore_start(state: State<'_, MihomoState>) -> Result<Value, Str
     }
     let child = crate::commands::hidden_cmd::spawn_breakaway_fallback(cmd)
         .map_err(|e| format!("启动 Sub-Store 失败（需要 node）: {e}"))?;
-    *BACKEND.lock().unwrap() = Some(child);
+    *BACKEND.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
 
     // 静态前端服务
     let fport = cfg_u16(&state, "subStoreFrontendPort", 38325);
@@ -148,7 +145,7 @@ pub fn mihomo_substore_start(state: State<'_, MihomoState>) -> Result<Value, Str
 
 #[tauri::command]
 pub fn mihomo_substore_stop() -> Result<(), String> {
-    if let Some(mut c) = BACKEND.lock().unwrap().take() {
+    if let Some(mut c) = BACKEND.lock().unwrap_or_else(|e| e.into_inner()).take() {
         let _ = c.kill();
     }
     Ok(())
@@ -158,8 +155,7 @@ pub fn mihomo_substore_stop() -> Result<(), String> {
 pub fn mihomo_substore_status(state: State<'_, MihomoState>) -> Value {
     let dir = substore_dir(&state);
     let running = BACKEND
-        .lock()
-        .unwrap()
+        .lock().unwrap_or_else(|e| e.into_inner())
         .as_mut()
         .map(|c| matches!(c.try_wait(), Ok(None)))
         .unwrap_or(false);

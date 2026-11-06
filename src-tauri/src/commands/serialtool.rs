@@ -693,7 +693,7 @@ mod tests {
         assert!(owns_session(Some("new"), Some("new")));
         assert!(!owns_session(Some("new"), Some("old")));
         let state = SimState::default();
-        *state.session_id.lock().unwrap() = Some("new".into());
+        *state.session_id.lock().unwrap_or_else(|e| e.into_inner()) = Some("new".into());
         state.active.store(true, Ordering::Release);
         let before = state.generation.load(Ordering::Acquire);
         assert!(!stop_sim_inner(&state, Some("old")));
@@ -706,10 +706,10 @@ mod tests {
     async fn stop_aborts_queued_simulation_payloads() {
         let state = SimState::default();
         let task = tokio::spawn(std::future::pending::<()>());
-        state.pending.lock().unwrap().push(task.abort_handle());
+        state.pending.lock().unwrap_or_else(|e| e.into_inner()).push(task.abort_handle());
         stop_sim_inner(&state, None);
         assert!(task.await.unwrap_err().is_cancelled());
-        assert!(state.pending.lock().unwrap().is_empty());
+        assert!(state.pending.lock().unwrap_or_else(|e| e.into_inner()).is_empty());
     }
     #[test]
     fn oversized_send_and_rule_sets_are_rejected() {

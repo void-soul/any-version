@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../utils/invokeOrReport";
 // Mihomo 代理管理（功能对齐 clash-party，外观沿用 SystemTools 风格：Tailwind + emerald + glass-panel）
 import { useState, useEffect, useRef } from "react";
 import { alertError } from "../shared/ThemedAlert";
@@ -138,7 +139,7 @@ export default function Mihomo() {
   };
   const refreshInfo = async () => {
     const owner = epoch.current;
-    try { const next = await mihomoApi.controllerInfo(); if (epoch.current === owner) setInfo(next); } catch {}
+    try { const next = await mihomoApi.controllerInfo(); if (epoch.current === owner) setInfo(next); } catch (e) { reportInvokeError(e, "src/components/SystemTools/Mihomo.tsx:141"); }
   };
   const refreshAll = async () => {
     const owner = epoch.current;
@@ -146,13 +147,21 @@ export default function Mihomo() {
     try {
       const c = await mihomoApi.getControled();
       if (epoch.current === owner && c?.["log-level"]) setLogLevel(c["log-level"]);
-    } catch {}
+    } catch (e) { reportInvokeError(e, "src/components/SystemTools/Mihomo.tsx:149"); }
   };
 
   useEffect(() => {
     refreshAll();
-    const t = setInterval(refreshState, 3000);
-    return () => { clearInterval(t); epoch.current++; };
+    // 页面不可见时暂停轮询，回到前台立即对齐（AUDIT-015）。
+    const run = () => { if (!document.hidden) void refreshState(); };
+    const t = setInterval(run, 3000);
+    const onVisibility = () => { if (!document.hidden) run(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onVisibility);
+      epoch.current++;
+    };
   }, []);
 
   const running = !!state?.running;

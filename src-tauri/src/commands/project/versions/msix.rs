@@ -136,7 +136,11 @@ pub(super) async fn do_install(
                 },
             );
             // 同步写入内存状态，供前端挂载时查询恢复进度条
-            if let Some(entry) = get_active_downloads().lock().unwrap().get_mut(&id_cap) {
+            if let Some(entry) = get_active_downloads()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_mut(&id_cap)
+            {
                 entry.active.downloaded = downloaded;
                 entry.active.total = total;
                 entry.active.pct = pct;

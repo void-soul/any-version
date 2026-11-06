@@ -23,14 +23,12 @@ import { Send, Plus, Trash2, Save, ChevronRight, FlaskConical, Gauge, BookOpen, 
 import type { ApiProject, ApiEnvironment, ApiModule, ApiEndpoint, KeyValueItem, PresetHeaderSet, UnitTest, UnitTestRunOutput, LoadTestConfig, LoadTestRun, ApiHistoryEntry } from "./types";
 import { METHODS, defaultAuthorization, defaultSettings } from "./types";
 import { emptyEndpoint, fmtTime, prettyJson, KvEditor, AuthPanel, SettingsPanel, VarInput } from "./panelParts";
-import { PresetHeadersModal, EnvModal, ProjectModal, ModuleModal } from "./panelModals";
 import VexEmptyState from "../VexEmptyState";
-import { UnitTestsPanel, DocsPanel, ImportModal } from "./panelSubs";
+import { UnitTestsPanel, DocsPanel } from "./panelSubs";
 import { RunnerPanel } from "./panelRunner";
-import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { theamedAlert } from "../shared/ThemedAlert";
 import { API_CTX_KEY } from "./ApiPanel.model";
-import { MoveModuleModal } from "./ApiPanel.MoveModuleModal";
+import { ApiPanelModals } from "./ApiPanel.Modals";
 
 export default function ApiPanel() {
   const { t } = useTranslation();
@@ -905,95 +903,39 @@ export default function ApiPanel() {
         </div>
       )}
 
-      {envModal && activeProjectId && (
-        <EnvModal
-          projectId={activeProjectId}
-          envs={envs}
-          activeEnvId={activeEnvId}
-          onClose={() => setEnvModal(false)}
-          onChanged={async () => {
-            const envList = await invoke<ApiEnvironment[]>("api_list_environments", { projectId: activeProjectId });
-            setEnvs(envList);
-            const project = (await invoke<ApiProject[]>("api_list_projects")).find((p) => p.id === activeProjectId);
-            setActiveEnvId(project?.active_env_id ?? envList[0]?.id ?? null);
-          }}
-        />
-      )}
-
-      {presetModal && activeProjectId && (
-        <PresetHeadersModal
-          projectId={activeProjectId}
-          sets={presetSets}
-          onClose={() => setPresetModal(false)}
-          onChanged={async () => {
-            const list = await invoke<PresetHeaderSet[]>("api_list_preset_headers", { projectId: activeProjectId });
-            setPresetSets(list);
-          }}
-        />
-      )}
-
-      {importModal && activeProjectId && (
-        <ImportModal
-          projectId={activeProjectId}
-          modules={modules}
-          onClose={() => setImportModal(false)}
-          onImported={async (endpointId?: string) => {
-            setImportModal(false);
-            await refreshEndpoints();
-            const [modList, envList, presetList] = await Promise.all([
-              invoke<ApiModule[]>("api_list_modules", { projectId: activeProjectId }),
-              invoke<ApiEnvironment[]>("api_list_environments", { projectId: activeProjectId }),
-              invoke<PresetHeaderSet[]>("api_list_preset_headers", { projectId: activeProjectId }),
-            ]);
-            setModules(modList);
-            setEnvs(envList);
-            setPresetSets(presetList);
-            // cURL 导入后直接选中新接口
-            if (endpointId) setSelectedId(endpointId);
-          }}
-        />
-      )}
-
-      {projectModal.open && (
-        <ProjectModal
-          project={projectModal.project}
-          initialSection={tplFocusSection}
-          onClose={() => {
-            setTplFocusSection(null);
-            setProjectModal({ open: false, project: null });
-          }}
-          onSave={saveProjectModal}
-        />
-      )}
-
-      {moduleModal.open && (
-        <ModuleModal
-          module={moduleModal.module}
-          onClose={() => setModuleModal({ open: false, module: null })}
-          onSave={saveModuleModal}
-        />
-      )}
-
-      {confirm && (
-        <ConfirmDialog
-          open
-          title={confirm.title}
-          desc={confirm.message}
-          danger={confirm.danger}
-          confirmText={confirm.confirmText}
-          onConfirm={() => { const fn = confirm.onConfirm; setConfirm(null); fn(); }}
-          onCancel={() => setConfirm(null)}
-        />
-      )}
-
-      {moveModule && (
-        <MoveModuleModal
-          module={moveModule}
-          modules={modules}
-          onClose={() => setMoveModule(null)}
-          onMoved={doMoveModule}
-        />
-      )}
+      {/* 弹窗集合已抽到 ApiPanel.Modals.tsx（AUDIT-049 职责拆分） */}
+      <ApiPanelModals
+        activeProjectId={activeProjectId}
+        envs={envs}
+        activeEnvId={activeEnvId}
+        setEnvs={setEnvs}
+        setActiveEnvId={setActiveEnvId}
+        modules={modules}
+        setModules={setModules}
+        presetSets={presetSets}
+        setPresetSets={setPresetSets}
+        setSelectedId={setSelectedId}
+        refreshEndpoints={refreshEndpoints}
+        envModal={envModal}
+        setEnvModal={setEnvModal}
+        presetModal={presetModal}
+        setPresetModal={setPresetModal}
+        importModal={importModal}
+        setImportModal={setImportModal}
+        projectModal={projectModal}
+        setProjectModal={setProjectModal}
+        tplFocusSection={tplFocusSection}
+        setTplFocusSection={setTplFocusSection}
+        saveProjectModal={saveProjectModal}
+        moduleModal={moduleModal}
+        setModuleModal={setModuleModal}
+        saveModuleModal={saveModuleModal}
+        confirm={confirm}
+        setConfirm={setConfirm}
+        moveModule={moveModule}
+        setMoveModule={setMoveModule}
+        doMoveModule={doMoveModule}
+      />
     </div>
   );
 }

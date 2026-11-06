@@ -27,7 +27,12 @@ pub async fn mihomo_set_rule_str(
     }
     let p = rule_override_path(&state.data_dir, &id);
     atomic_write(&p, &content).map_err(|e| format!("写入规则覆写失败: {e}"))?;
-    let current = state.profile_config.lock().unwrap().current.clone();
+    let current = state
+        .profile_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .current
+        .clone();
     if current == id {
         reload_config(&app, Arc::clone(&*state)).await?;
     }
@@ -78,7 +83,12 @@ pub async fn mihomo_set_rule_override(
     let content = serde_yaml::to_string(&yaml_value).map_err(|e| format!("生成 YAML 失败: {e}"))?;
     let p = rule_override_path(&state.data_dir, &id);
     atomic_write(&p, &content).map_err(|e| format!("写入规则覆写失败: {e}"))?;
-    let current = state.profile_config.lock().unwrap().current.clone();
+    let current = state
+        .profile_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .current
+        .clone();
     if current == id {
         reload_config(&app, Arc::clone(&*state)).await?;
     }
@@ -106,7 +116,13 @@ pub fn mihomo_convert_mrs_ruleset(
     input_path: String,
     output_path: String,
 ) -> Result<String, String> {
-    let core = resolve_core_path(&state.app_config.lock().unwrap().clone());
+    let core = resolve_core_path(
+        &state
+            .app_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone(),
+    );
     if !core.exists() {
         return Err("未找到 mihomo 内核".into());
     }

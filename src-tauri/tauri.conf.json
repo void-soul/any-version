@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; connect-src 'self' ipc: http://ipc.localhost http: https: ws: wss:; font-src 'self' data:; media-src 'self' blob: http: https:; frame-src 'self' http: https:; object-src 'none'; base-uri 'none'"
+      "csp": "default-src 'self'; script-src 'self' 'sha256-i+v8c7e6luEeUPRC43fzR5iAbLjc4+sBzErw5JKDaTQ=' 'sha256-m/YGmBgK5giHJ1/gT4ESI/OtuRavmzvVIEdOYKpYuos='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; connect-src 'self' ipc: http://ipc.localhost http: https: ws: wss:; font-src 'self' data:; media-src 'self' blob: http: https:; frame-src 'self'; object-src 'none'; base-uri 'none'"
     }
   },
   "bundle": {

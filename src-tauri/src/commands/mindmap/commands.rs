@@ -46,7 +46,7 @@ fn cancel_registry() -> &'static CancelRegistry {
 }
 
 fn ai_cancel_flag(run_id: &str) -> CancelFlag {
-    let mut g = cancel_registry().lock().unwrap();
+    let mut g = cancel_registry().lock().unwrap_or_else(|e| e.into_inner());
     g.entry(run_id.to_string())
         .or_insert_with(|| std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)))
         .clone()
@@ -54,7 +54,10 @@ fn ai_cancel_flag(run_id: &str) -> CancelFlag {
 
 /// 运行结束后从同一个注册表移除该 run_id 的 flag（新导入会重新创建干净标志）。
 fn ai_drop_flag(run_id: &str) {
-    cancel_registry().lock().unwrap().remove(run_id);
+    cancel_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(run_id);
 }
 
 /// Dropping a module-cancelled future must also release its run-local registries.
@@ -114,13 +117,17 @@ fn ask_registry() -> &'static AskRegistry {
 fn ask_register(run_id: &str, tx: AskSender) {
     ask_registry()
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .insert(run_id.to_string(), tx);
 }
 
 /// 用户回填询问答案（mm_ai_answer 调用）。无等待中的询问时返回 Err。
 fn ask_send_answer(run_id: &str, answer: serde_json::Value) -> Result<(), String> {
-    match ask_registry().lock().unwrap().remove(run_id) {
+    match ask_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(run_id)
+    {
         Some(tx) => tx.send(answer).map_err(|_| "询问已结束".into()),
         None => Err("当前没有等待中的询问".into()),
     }
@@ -128,7 +135,11 @@ fn ask_send_answer(run_id: &str, answer: serde_json::Value) -> Result<(), String
 
 /// 取消时解除等待中的询问（mm_ai_cancel 调用，尽力而为）。
 fn ask_send_cancel(run_id: &str) {
-    if let Some(tx) = ask_registry().lock().unwrap().remove(run_id) {
+    if let Some(tx) = ask_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(run_id)
+    {
         let _ = tx.send(serde_json::Value::Null);
     }
 }

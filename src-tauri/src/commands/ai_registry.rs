@@ -584,12 +584,12 @@ static REGISTRY: RwLock<Option<&'static AiToolRegistry>> = RwLock::new(None);
 /// 获取全局注册表单例（首次调用时从磁盘加载）
 pub fn registry() -> &'static AiToolRegistry {
     {
-        let r = REGISTRY.read().unwrap();
+        let r = REGISTRY.read().unwrap_or_else(|e| e.into_inner());
         if let Some(reg) = *r {
             return reg;
         }
     }
-    let mut w = REGISTRY.write().unwrap();
+    let mut w = REGISTRY.write().unwrap_or_else(|e| e.into_inner());
     if w.is_none() {
         let reg = Box::leak(Box::new(AiToolRegistry::load()));
         *w = Some(reg);
@@ -600,7 +600,7 @@ pub fn registry() -> &'static AiToolRegistry {
 /// 强制重新加载（用于开发时热重载）
 /// 写入最新的注册表，获取最新的实例
 pub fn reload_registry() -> &'static AiToolRegistry {
-    let mut w = REGISTRY.write().unwrap();
+    let mut w = REGISTRY.write().unwrap_or_else(|e| e.into_inner());
     let reg = Box::leak(Box::new(AiToolRegistry::load()));
     *w = Some(reg);
     reg
@@ -617,29 +617,6 @@ pub fn reload_ai_registry() -> Result<usize, String> {
 }
 
 /// Tauri 命令：修改某工具的归类（写回 ai-tools/<id>/config.json 的 category 字段并热重载）
-#[tauri::command]
-pub fn update_tool_category(tool_id: String, category: String) -> Result<(), String> {
-    if tool_id.is_empty() {
-        return Err("工具 id 不能为空".to_string());
-    }
-    let dir = AiToolRegistry::find_registry_dir();
-    let config_path = dir.join(&tool_id).join("config.json");
-    if !config_path.exists() {
-        return Err(format!("工具 {} 的 config.json 不存在", tool_id));
-    }
-
-    let raw = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
-    let mut config: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-    if let Some(obj) = config.as_object_mut() {
-        obj.insert("category".to_string(), serde_json::Value::String(category));
-    }
-    let data = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
-    fs::write(&config_path, data).map_err(|e| e.to_string())?;
-
-    let _ = reload_ai_registry();
-    Ok(())
-}
-
 mod models;
 pub use models::*;
 #[cfg(test)]

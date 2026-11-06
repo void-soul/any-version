@@ -263,7 +263,7 @@ mod tests {
         assert!(!spawn_task(owner, "new", async {}));
         assert!(registry()
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .tasks
             .contains_key(&(other.into(), "poll".into())));
         enable(owner);

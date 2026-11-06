@@ -89,7 +89,7 @@ fn exe_version(path: &Path) -> Option<String> {
 /// 列出各内核变体的就绪状态与版本（内核由程序预置，不联网安装）
 #[tauri::command]
 pub fn mihomo_core_variants(state: State<'_, MihomoState>) -> Value {
-    let app_config = state.app_config.lock().unwrap().clone();
+    let app_config = state.app_config.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let dir = core_dir(&app_config);
     let mut arr = Vec::new();
     for v in ["mihomo", "mihomo-alpha", "mihomo-smart"] {
@@ -108,14 +108,14 @@ pub fn mihomo_core_variants(state: State<'_, MihomoState>) -> Value {
 #[tauri::command]
 pub async fn mihomo_download_ui(state: State<'_, MihomoState>) -> Result<String, String> {
     let (pref, url, dir) = {
-        let app = state.app_config.lock().unwrap();
+        let app = state.app_config.lock().unwrap_or_else(|e| e.into_inner());
         let pref = app
             .extra
             .get("githubProxy")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let ctl = state.controled_config.lock().unwrap();
+        let ctl = state.controled_config.lock().unwrap_or_else(|e| e.into_inner());
         let url = ctl
             .get("external-ui-url")
             .and_then(|v| v.as_str())

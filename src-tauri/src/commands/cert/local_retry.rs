@@ -32,7 +32,7 @@ fn report_queue_error(app: &tauri::AppHandle, message: String) {
     app.state::<CertScheduler>()
         .state
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .push_log(SchedulerLogEntry {
             at: Utc::now().to_rfc3339(),
             cert_id: String::new(),
@@ -122,7 +122,7 @@ pub(super) async fn retry_local_deployments(app: &tauri::AppHandle, attempted_is
         app.state::<CertScheduler>()
             .state
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .push_log(SchedulerLogEntry {
                 at: Utc::now().to_rfc3339(),
                 cert_id: cert.id,

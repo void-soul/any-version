@@ -160,7 +160,7 @@ mod tests {
             loop {
                 let found = RUNNING_CONFIGS
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .iter()
                     .find(|(p, _)| *p == port)
                     .map(|(_, config)| config.clone());
@@ -198,7 +198,7 @@ mod tests {
         assert!(handle.read().await.upstream_api_key.is_empty());
         assert!(!RUNNING_CONFIGS
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .iter()
             .any(|(p, _)| *p == port));
         assert!(tokio::net::TcpListener::bind(("127.0.0.1", port))
@@ -219,6 +219,9 @@ mod tests {
             listen_port: port,
             upstream_base_url: format!("http://127.0.0.1:{upstream_port}"),
             upstream_api_key: "synthetic-key".into(),
+            // 本例验证的是 owner abort 的请求取消链路，不是鉴权；
+            // 显式声明无鉴权（新安全默认下必须写明，否则会被 401 拦截）。
+            allow_unauthenticated: true,
             ..Default::default()
         };
         let proxy = tokio::spawn(serve_proxy(config, listener));

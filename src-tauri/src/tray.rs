@@ -459,7 +459,7 @@ fn handle_extra_menu(app: &AppHandle, id: &str) {
                 Some(s) => s.inner().clone(),
                 None => return,
             };
-            let running = state.child.lock().unwrap().is_some();
+            let running = state.child.lock().unwrap_or_else(|e| e.into_inner()).is_some();
             let r = if running {
                 crate::commands::mihomo::manager::stop_core(&state);
                 Ok(())

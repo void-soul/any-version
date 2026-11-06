@@ -1,3 +1,4 @@
+import { reportInvokeError } from "./utils/invokeOrReport";
 import { useState, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { Activity } from "react";
 import { createPortal } from "react-dom";
@@ -262,7 +263,7 @@ export default function App() {
 
   // 当前激活模块变化时上报后端，供模块专属热键做「显示/隐藏」切换判定
   useEffect(() => {
-    emit("launcher-active-page", activePage).catch(() => {});
+    emit("launcher-active-page", activePage).catch((e) => { reportInvokeError(e, "src/App.tsx:265"); });
   }, [activePage]);
 
   // 路径归一化（去掉首尾空白与末尾斜杠），用于判断数据目录是否变化

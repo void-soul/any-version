@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../../utils/invokeOrReport";
 // 订阅页（对齐 clash-party profiles.tsx + profile-item + edit-info-modal）
 import { useEffect, useMemo, useRef, useState } from "react";
 import { alertError } from "../../shared/ThemedAlert";
@@ -115,7 +116,7 @@ export default function SubscriptionsPanel({
       try {
         const r = await mihomoApi.api("GET", "/subscriptions");
         if (alive && r && typeof r === "object") setLiveSubs(r);
-      } catch {}
+      } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/SubscriptionsPanel.tsx:118"); }
     };
     fetchLive();
     const t = setInterval(fetchLive, 30_000);
@@ -146,7 +147,7 @@ export default function SubscriptionsPanel({
         if (ac && typeof ac.current_profile === "string" && ac.current_profile) {
           cur = ac.current_profile;
         }
-      } catch {}
+      } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/SubscriptionsPanel.tsx:149"); }
       setCfg({ current: cur, items: c.items || [] });
       const o = await mihomoApi.getOverrideConfig().catch(() => ({ items: [] }));
       setOverrides(o?.items || []);
@@ -154,7 +155,7 @@ export default function SubscriptionsPanel({
       const st: Record<string, any> = {};
       await Promise.all(
         (c.items || []).map(async (it: ProfileItem) => {
-          try { st[it.id] = await mihomoApi.getProfileStatus(it.id); } catch {}
+          try { st[it.id] = await mihomoApi.getProfileStatus(it.id); } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/SubscriptionsPanel.tsx:157"); }
         })
       );
       setStatus(st);
@@ -228,7 +229,7 @@ export default function SubscriptionsPanel({
   };
 
   const pasteUrl = async () => {
-    try { setUrl((await navigator.clipboard.readText()).trim()); } catch {}
+    try { setUrl((await navigator.clipboard.readText()).trim()); } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/SubscriptionsPanel.tsx:231"); }
   };
 
   const doOpenFile = async () => {
@@ -310,7 +311,7 @@ export default function SubscriptionsPanel({
         fail++;
       }
     }
-    try { await mihomoApi.updateRuntimeConfig(); } catch {}
+    try { await mihomoApi.updateRuntimeConfig(); } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/SubscriptionsPanel.tsx:313"); }
     await load();
     setBusy("");
     flash(t("subs.updateAllDone", { ok, fail }));
@@ -355,7 +356,7 @@ export default function SubscriptionsPanel({
     if (j < 0 || j >= items.length) return;
     [items[idx], items[j]] = [items[j], items[idx]];
     setCfg({ ...cfg, items });
-    try { await mihomoApi.setProfileConfig({ ...cfg, items }); } catch {}
+    try { await mihomoApi.setProfileConfig({ ...cfg, items }); } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/SubscriptionsPanel.tsx:358"); }
   };
 
   const openEditFile = async (it: ProfileItem) => {

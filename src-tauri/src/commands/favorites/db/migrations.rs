@@ -1,6 +1,9 @@
 use super::*;
 
-/// 建表（幂等）。三张表：条目、标签（多标签）、导入进度。
+/// 建表（幂等）。共 8 张表：
+/// 条目 `favorite` / 分类树 `favorite_category` / 条目分类关联 `favorite_item_category` /
+/// 导入进度 `favorite_import_state` / 凭据 `favorite_credential` /
+/// 删除墓碑 `favorite_deleted` / 正文缓存 `favorite_content` / 旧标签 `favorite_tag`（仅旧库升级用）。
 pub fn migrate(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         r#"
@@ -29,16 +32,9 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
         CREATE INDEX IF NOT EXISTS idx_favorite_status       ON favorite(status);
         CREATE INDEX IF NOT EXISTS idx_favorite_ai_locked    ON favorite(ai_locked);
 
-        -- 多标签：一个条目可以同时属于多个分类，不设「主分类」。
-        -- 历史遗留：分类改成树（favorite_category）后由 favorite_item_category 接管，
-        -- 这张表只用于一次性迁移，之后不再写入。
-        CREATE TABLE IF NOT EXISTS favorite_tag (
-            favorite_id INTEGER NOT NULL,
-            tag         TEXT    NOT NULL,
-            PRIMARY KEY (favorite_id, tag)
-        );
-        CREATE INDEX IF NOT EXISTS idx_favorite_tag_tag ON favorite_tag(tag);
-
+        -- 注意：`favorite_tag` 是历史遗留表，只存在于老库中用于一次性迁移；
+        -- 新库**不再创建**（AUDIT-023）。migrate_tags_to_categories 会按表是否存在
+        -- 判断是否需要迁移，成功后 DROP 该表。
         -- 多级分类树（操作逻辑对齐启动模块的 launcher_classification）
         CREATE TABLE IF NOT EXISTS favorite_category (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -186,27 +182,39 @@ pub fn migrate(conn: &Connection) -> Result<(), String> {
 /// 幂等：只要分类树里已经有东西就认为搬过了（新库自然是空的，也走不到插入）。
 /// 旧标签全部建成**顶层**分类——老数据里没有层级信息，硬猜父子关系只会猜错。
 pub(super) fn migrate_tags_to_categories(conn: &Connection) -> Result<(), String> {
+    // 新库没有 favorite_tag 表；老库迁移完成后也已 DROP。
+    let has_tag_table: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='favorite_tag'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .map(|n| n > 0)
+        .map_err(|e| format!("检查旧标签表失败: {e}"))?;
+    if !has_tag_table {
+        return Ok(());
+    }
+
     let existing: i64 = conn
         .query_row("SELECT COUNT(*) FROM favorite_category", [], |r| r.get(0))
-        .unwrap_or(0);
+        .map_err(|e| format!("读取分类树失败: {e}"))?;
     if existing > 0 {
+        // 分类树已由用户建好，旧标签不再有意义，直接清理遗留表。
+        conn.execute_batch("DROP TABLE IF EXISTS favorite_tag;")
+            .map_err(|e| format!("清理旧标签表失败: {e}"))?;
         return Ok(());
     }
-    let Ok(mut stmt) = conn.prepare("SELECT favorite_id, tag FROM favorite_tag") else {
-        return Ok(());
-    };
-    let rows = match stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))) {
-        Ok(r) => r,
-        Err(_) => return Ok(()),
-    };
+
+    // 所有失败均向上传递，绝不 `return Ok(())` 假装迁移成功（AUDIT-047）。
+    let mut stmt = conn
+        .prepare("SELECT favorite_id, tag FROM favorite_tag")
+        .map_err(|e| format!("读取旧标签失败: {e}"))?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+        .map_err(|e| format!("读取旧标签失败: {e}"))?;
     let mut pairs: Vec<(i64, String)> = Vec::new();
     for row in rows {
-        if let Ok(p) = row {
-            pairs.push(p);
-        }
-    }
-    if pairs.is_empty() {
-        return Ok(());
+        pairs.push(row.map_err(|e| format!("读取旧标签行失败: {e}"))?);
     }
     for (favorite_id, tag) in pairs {
         let category_id = resolve_category_by_name(conn, &tag)?;
@@ -216,7 +224,10 @@ pub(super) fn migrate_tags_to_categories(conn: &Connection) -> Result<(), String
         )
         .map_err(|e| format!("迁移旧分类标签失败: {e}"))?;
     }
-    eprintln!("[favorites] 旧标签已迁移为分类树");
+    // 迁移成功（或旧表为空）后移除遗留表，避免每次启动重复扫描（AUDIT-023）。
+    conn.execute_batch("DROP TABLE IF EXISTS favorite_tag;")
+        .map_err(|e| format!("清理旧标签表失败: {e}"))?;
+    eprintln!("[favorites] 旧标签已迁移为分类树，遗留表已清理");
     Ok(())
 }
 

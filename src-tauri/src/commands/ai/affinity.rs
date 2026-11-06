@@ -496,7 +496,7 @@ mod tests {
         for i in 0..(MAX_STICKS + 10) {
             record(&format!("{key}-{i}"), "a::m", Some(9999), now + i as u64);
         }
-        let guard = sticks().lock().unwrap();
+        let guard = sticks().lock().unwrap_or_else(|e| e.into_inner());
         assert!(guard.len() <= MAX_STICKS, "超量后应淘汰，实际 {}", guard.len());
         drop(guard);
         // TTL 过期后读不到。

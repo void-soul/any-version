@@ -358,6 +358,12 @@ pub fn run() {
             if let Ok(res_dir) = app.path().resource_dir() {
                 crate::commands::utils::set_resource_dir(res_dir);
             }
+            // 启动期最小断言：项目配置缺失时发事件 + 写 exit_log，让 SDK 页
+            // 显示可操作提示，而不是静默呈现空白列表（AUDIT-042）。
+            if let Err(error) = commands::project::registry::assert_registry_loaded() {
+                exit_log::exit_log(&format!("项目配置加载失败: {error}"));
+                let _ = app.emit("registry-load-failed", serde_json::json!({ "message": error }));
+            }
             tray::build_tray(app.handle())?;
             // 系统「打开方式」/ 命令行带 .md 启动：先入队，前端 Markdown 模块挂载后取走
             {
@@ -397,10 +403,14 @@ pub fn run() {
             let config_clone = crate::commands::config::load_config();
             // 一次性清理：RTSP 媒体服务不再支持开机自启，移除历史配置中可能残留的 "rtsp"
             if config_clone.auto_start_services.contains("rtsp") {
-                let _ = crate::commands::config::mutate_config(|c| {
+                // 写回失败必须留痕：静默忽略会让历史 rtsp 配置每启动重试一次且无人知晓
+                // （AUDIT-019）。
+                if let Err(e) = crate::commands::config::mutate_config(|c| {
                     c.auto_start_services.remove("rtsp");
                     Ok(())
-                });
+                }) {
+                    exit_log::exit_log(&format!("清理历史 RTSP 自启配置失败: {e}"));
+                }
             }
             tauri::async_runtime::spawn(async move {
                 let auto_start_services = config_clone.auto_start_services.clone();

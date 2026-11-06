@@ -425,7 +425,11 @@ pub fn credential_delete(id: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn cert_scheduler_status(state: tauri::State<CertScheduler>) -> SchedulerState {
-    state.state.lock().unwrap().clone()
+    state
+        .state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
 }
 
 #[tauri::command]
@@ -434,7 +438,7 @@ pub fn cert_scheduler_set(
     interval_minutes: Option<u64>,
     state: tauri::State<CertScheduler>,
 ) {
-    let mut s = state.state.lock().unwrap();
+    let mut s = state.state.lock().unwrap_or_else(|e| e.into_inner());
     s.enabled = enabled;
     if let Some(i) = interval_minutes {
         s.interval_minutes = i.max(1);

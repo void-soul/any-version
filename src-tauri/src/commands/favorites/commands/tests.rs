@@ -162,6 +162,12 @@ fn dropping_pending_task_releases_its_own_registries() {
         std::future::pending::<()>().await;
     };
     drop(pending);
-    assert_eq!(*running.lock().unwrap(), ["other"]);
-    assert_eq!(*cancelled.lock().unwrap(), ["other"]);
+    assert_eq!(
+        *running.lock().unwrap_or_else(|e| e.into_inner()),
+        ["other"]
+    );
+    assert_eq!(
+        *cancelled.lock().unwrap_or_else(|e| e.into_inner()),
+        ["other"]
+    );
 }

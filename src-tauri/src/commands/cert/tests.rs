@@ -116,6 +116,24 @@ fn windows_base_url_normalization() {
     );
 }
 
+#[test]
+fn baota_bare_host_defaults_to_https() {
+    // request_token 由 api_sk 派生，裸主机名补 http 会让凭据走明文（AUDIT-005）。
+    assert_eq!(baota_base_url("panel.example.com"), "https://panel.example.com");
+    assert_eq!(baota_base_url("panel.example.com:8888/"), "https://panel.example.com:8888");
+    assert_eq!(baota_base_url("  panel.example.com  "), "https://panel.example.com");
+    // 用户显式指定的 scheme 一律尊重（自签/内网面板）。
+    assert_eq!(baota_base_url("http://127.0.0.1:8888"), "http://127.0.0.1:8888");
+    assert_eq!(baota_base_url("https://panel.example.com/"), "https://panel.example.com");
+    assert_eq!(baota_base_url(""), "");
+}
+
+#[test]
+fn shared_base_url_keeps_legacy_http_default_for_other_panels() {
+    // 1Panel / 群晖 / OSS 仍用 http_base_url，语义保持不变。
+    assert_eq!(http_base_url("192.168.1.5:8080"), "http://192.168.1.5:8080");
+}
+
 /// 阿里云 RPC 签名：参数按字典序、RFC3986 编码、POST + `/` 参与签名。
 /// 期望值由独立实现计算，防止百分号编码或排序被改坏。
 #[test]

@@ -1,3 +1,5 @@
+import { reportInvokeError } from "../../utils/invokeOrReport";
+import { MAX_TREE_DEPTH } from "../../utils/treeTraversal";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import "@xyflow/react/dist/style.css";
@@ -46,7 +48,7 @@ export function useMindmapDocumentLibrary({ setFull, flash }: {
   const [confirmState, setConfirmState] = useState<{ title: string; message: string; action: () => void } | null>(null);
 
   const refreshFolders = useCallback(async () => {
-    try { setFolders(await mmApi.listFolders()); } catch {}
+    try { setFolders(await mmApi.listFolders()); } catch (e) { reportInvokeError(e, "src/components/mindmap/useMindmapDocumentLibrary.tsx:49"); }
   }, []);
 
   const createDoc = useCallback(async (name: string, desc: string, folderId: string | null) => {
@@ -108,7 +110,7 @@ export function useMindmapDocumentLibrary({ setFull, flash }: {
   }, [editingFolder, folderName, flash, refreshFolders]);
 
   const loadDocs = useCallback(async () => {
-    try { setDocs(await mmApi.list(activeFolderId)); } catch {}
+    try { setDocs(await mmApi.list(activeFolderId)); } catch (e) { reportInvokeError(e, "src/components/mindmap/useMindmapDocumentLibrary.tsx:111"); }
   }, [activeFolderId]);
 
   const deleteFolder = useCallback((id: string, name: string) => {
@@ -230,10 +232,22 @@ export function useMindmapDocumentLibrary({ setFull, flash }: {
     });
   }, []);
 
-  // 递归渲染文件夹树：每个文件夹既是拖源（可整理到任意目录/根），也是落点（接收文档与文件夹）
-  const renderFolderNodes = (nodes: FolderNode[], depth: number): React.ReactNode => {
+  // 递归渲染文件夹树：每个文件夹既是拖源（可整理到任意目录/根），也是落点（接收文档与文件夹）。
+  // 深度上限 + 当前路径 id 去重：外部导入/改库可能形成环或超深链，无保护会栈溢出白屏
+  // （AUDIT-044）。超过上限时渲染一行折叠提示而不是继续下钻。
+  const renderFolderNodes = (
+    nodes: FolderNode[],
+    depth: number,
+    pathIds: ReadonlySet<string> = new Set(),
+  ): React.ReactNode => {
+    if (depth >= MAX_TREE_DEPTH) {
+      return <div className="px-2 py-1 text-micro text-slate-500">…层级过深，已折叠</div>;
+    }
     return nodes.map((node) => {
       const f = node.folder;
+      if (pathIds.has(f.id)) return null; // 断开环
+      const nextPath = new Set(pathIds);
+      nextPath.add(f.id);
       const over = dragOverFolderId === f.id;
       const open = !collapsedFolders.has(f.id);
       const hasChildren = node.children.length > 0;
@@ -264,7 +278,7 @@ export function useMindmapDocumentLibrary({ setFull, flash }: {
             <button type="button" className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-red-400/50 opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto hover:bg-red-400/10 hover:text-red-300"
               onClick={() => deleteFolder(f.id, f.name)} title={t("mindmap.deleteFolder")}><Trash2 className="h-3 w-3" /></button>
           </div>
-          {open && renderFolderNodes(node.children, depth + 1)}
+          {open && renderFolderNodes(node.children, depth + 1, nextPath)}
         </div>
       );
     });

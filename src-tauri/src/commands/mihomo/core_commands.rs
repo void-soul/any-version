@@ -18,7 +18,11 @@ pub(super) async fn mihomo_api_call(
     url: &str,
     body: Option<Value>,
 ) -> Result<String, String> {
-    let app_config = state.app_config.lock().unwrap().clone();
+    let app_config = state
+        .app_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     mihomo_api_raw(&app_config, method, url, body).await
 }
 // 用 async 让它跑在工作线程而非主线程，避免任何意外阻塞冻结整个界面
@@ -42,7 +46,7 @@ pub fn mihomo_clear_warnings(app: AppHandle, state: State<'_, MihomoState>) -> R
 
 #[tauri::command]
 pub fn mihomo_controller_info(state: State<'_, MihomoState>) -> Value {
-    let app = state.app_config.lock().unwrap();
+    let app = state.app_config.lock().unwrap_or_else(|e| e.into_inner());
     serde_json::json!({
         "port": app.controller_port,
         "secret": app.secret,
@@ -53,7 +57,11 @@ pub fn mihomo_controller_info(state: State<'_, MihomoState>) -> Value {
 #[tauri::command]
 pub async fn mihomo_start(app: AppHandle, state: State<'_, MihomoState>) -> Result<(), String> {
     launch_core(&app, Arc::clone(&*state)).await?;
-    let need_proxy = state.app_config.lock().unwrap().sys_proxy_enable;
+    let need_proxy = state
+        .app_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .sys_proxy_enable;
     if need_proxy {
         set_sys_proxy(&state, true)?;
     }
@@ -65,7 +73,11 @@ pub async fn mihomo_start(app: AppHandle, state: State<'_, MihomoState>) -> Resu
 #[tauri::command]
 pub async fn mihomo_stop(app: AppHandle, state: State<'_, MihomoState>) -> Result<(), String> {
     stop_core(&state);
-    let need_proxy = state.app_config.lock().unwrap().sys_proxy_enable;
+    let need_proxy = state
+        .app_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .sys_proxy_enable;
     if need_proxy {
         set_sys_proxy(&state, false)?;
     }
@@ -86,10 +98,14 @@ pub fn mihomo_set_core_path(
     state: State<'_, MihomoState>,
     path: Option<String>,
 ) -> Result<(), String> {
-    let mut app_config = state.app_config.lock().unwrap().clone();
+    let mut app_config = state
+        .app_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     app_config.core_path = path;
     save_app_config(&state.data_dir, &app_config).map_err(|e| e.to_string())?;
-    *state.app_config.lock().unwrap() = app_config;
+    *state.app_config.lock().unwrap_or_else(|e| e.into_inner()) = app_config;
     refresh_core_version(&state);
     emit_state(&app, &state);
     Ok(())
@@ -110,7 +126,11 @@ pub async fn mihomo_close_all_connections(state: State<'_, MihomoState>) -> Resu
 // ---- AppConfig ----
 #[tauri::command]
 pub fn mihomo_get_app_config(state: State<'_, MihomoState>) -> AppConfig {
-    state.app_config.lock().unwrap().clone()
+    state
+        .app_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
 }
 #[tauri::command]
 pub fn mihomo_patch_app_config(
@@ -118,9 +138,12 @@ pub fn mihomo_patch_app_config(
     state: State<'_, MihomoState>,
     patch: Value,
 ) -> Result<AppConfig, String> {
-    let new_cfg = patch_struct(&*state.app_config.lock().unwrap(), &patch)?;
+    let new_cfg = patch_struct(
+        &*state.app_config.lock().unwrap_or_else(|e| e.into_inner()),
+        &patch,
+    )?;
     save_app_config(&state.data_dir, &new_cfg).ok();
-    *state.app_config.lock().unwrap() = new_cfg.clone();
+    *state.app_config.lock().unwrap_or_else(|e| e.into_inner()) = new_cfg.clone();
     emit_state(&app, &state);
     Ok(new_cfg)
 }
@@ -134,11 +157,15 @@ pub async fn mihomo_save_secondary_proxies(
     items: Vec<crate::commands::mihomo::config::SecondaryProxy>,
     active_id: Option<String>,
 ) -> Result<(), String> {
-    let mut app_config = state.app_config.lock().unwrap().clone();
+    let mut app_config = state
+        .app_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     app_config.secondary_proxies = items;
     app_config.secondary_active_id = active_id;
     save_app_config(&state.data_dir, &app_config).map_err(|e| e.to_string())?;
-    *state.app_config.lock().unwrap() = app_config;
+    *state.app_config.lock().unwrap_or_else(|e| e.into_inner()) = app_config;
     if !state.stop_flag.load(Ordering::SeqCst) {
         reload_config(&app, Arc::clone(&*state)).await?;
     }
@@ -149,7 +176,11 @@ pub async fn mihomo_save_secondary_proxies(
 // ---- ControledMihomoConfig ----
 #[tauri::command]
 pub fn mihomo_get_controled_config(state: State<'_, MihomoState>) -> Value {
-    state.controled_config.lock().unwrap().clone()
+    state
+        .controled_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
 }
 #[tauri::command]
 pub fn mihomo_patch_controled_config(
@@ -157,10 +188,17 @@ pub fn mihomo_patch_controled_config(
     state: State<'_, MihomoState>,
     patch: Value,
 ) -> Result<Value, String> {
-    let mut cur = state.controled_config.lock().unwrap().clone();
+    let mut cur = state
+        .controled_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     deep_merge(&mut cur, &patch);
     save_controled(&state.data_dir, &cur).ok();
-    *state.controled_config.lock().unwrap() = cur.clone();
+    *state
+        .controled_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = cur.clone();
     emit_state(&app, &state);
     Ok(cur)
 }
@@ -168,7 +206,11 @@ pub fn mihomo_patch_controled_config(
 // ---- 运行配置 ----
 #[tauri::command]
 pub fn mihomo_get_runtime_config(state: State<'_, MihomoState>) -> String {
-    state.runtime_config_str.lock().unwrap().clone()
+    state
+        .runtime_config_str
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
 }
 #[tauri::command]
 pub async fn mihomo_update_runtime_config(

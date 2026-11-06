@@ -7,6 +7,10 @@ use std::io::Write;
 
 pub mod path_templates;
 pub mod owned_process;
+pub mod secure_random;
+pub mod migrate;
+pub mod time;
+pub mod defaults;
 
 /// Truncate by byte budget while preserving a valid UTF-8 character boundary.
 pub fn truncate_utf8(text: &str, max_bytes: usize) -> &str {

@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../utils/invokeOrReport";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
@@ -58,7 +59,7 @@ export default function InstallAgentPanel({ seed }: { seed?: string } = {}) {
           setModelId(usable[0].active_model_id || usable[0].models[0]?.id || "");
         }
       })
-      .catch(() => {});
+      .catch((e) => { reportInvokeError(e, "src/components/ai/InstallAgentPanel.tsx:61"); });
   }, []);
 
   // 后端每推一步就追加一行：装工具动辄几十秒，不能让用户盯着转圈猜

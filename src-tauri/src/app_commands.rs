@@ -3,6 +3,8 @@ use crate::{commands, tray};
 
 pub(crate) fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     let dispatch: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+        // 启动期项目配置健康状态（AUDIT-042）：SDK 页据此显示可操作提示。
+        commands::project::registry::project_registry_status,
         // ---- 开发者工具模块（串口/网络/数据库） ----
         commands::serialtool::serial_list_ports,
         commands::serialtool::serial_open,

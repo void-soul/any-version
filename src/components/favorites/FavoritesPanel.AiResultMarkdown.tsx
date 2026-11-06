@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../utils/invokeOrReport";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useTranslation } from "react-i18next";
 import { parseAiResultLine } from "./aiResult";
@@ -23,7 +24,7 @@ export function AiResultMarkdown({ text }: { text: string }) {
               <div key={i} className="flex items-start gap-1.5 text-caption">
                 <span className="text-slate-600 mt-[3px]">•</span>
                 <button
-                  onClick={() => { void openUrl(parsed.url).catch(() => {}); }}
+                  onClick={() => { void openUrl(parsed.url).catch((e) => { reportInvokeError(e, "src/components/favorites/FavoritesPanel.AiResultMarkdown.tsx:26"); }); }}
                   className="ui-link cursor-pointer text-left"
                   title={parsed.url}
                 >

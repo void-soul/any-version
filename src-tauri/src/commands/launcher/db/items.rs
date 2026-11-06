@@ -255,21 +255,56 @@ pub fn save_item(item: &Item) -> Result<i64, String> {
     })
 }
 
+/// 单次批量插入的上限（AUDIT-029）：防止绕过前端直接调用 IPC 传入超大 Vec，
+/// 在单个写事务里长期持锁导致启动项搜索/热键/托盘全卡住。
+pub const MAX_BATCH_ITEMS: usize = 500;
+
+/// 每个分类只在**批量开始时**查一次 `MAX(sort_order)`，之后按内存计数递增，
+/// 避免循环内 N+1 查询（AUDIT-029）。
+fn seed_sort_orders(
+    tx: &rusqlite::Transaction<'_>,
+    items: &[Item],
+) -> Result<std::collections::HashMap<i64, i32>, String> {
+    let mut seeds = std::collections::HashMap::new();
+    for id in items.iter().map(|i| i.classification_id) {
+        if seeds.contains_key(&id) {
+            continue;
+        }
+        let max_order: i32 = tx
+            .query_row(
+                "SELECT COALESCE(MAX(sort_order), 0) FROM launcher_item WHERE classification_id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        seeds.insert(id, max_order);
+    }
+    Ok(seeds)
+}
+
 pub fn batch_add_items(items: Vec<Item>) -> Result<Vec<i64>, String> {
+    if items.is_empty() {
+        return Ok(Vec::new());
+    }
+    if items.len() > MAX_BATCH_ITEMS {
+        return Err(format!(
+            "一次最多添加 {} 个启动项，请分批提交（本次 {} 个）",
+            MAX_BATCH_ITEMS,
+            items.len()
+        ));
+    }
     with_conn(|conn| {
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         let now = Local::now().to_rfc3339();
-        let mut inserted_ids = Vec::new();
+        let mut sort_orders = seed_sort_orders(&tx, &items)?;
+        let mut inserted_ids = Vec::with_capacity(items.len());
 
         for item in items {
-            let max_order: i32 = tx.query_row(
-                "SELECT COALESCE(MAX(sort_order), 0) FROM launcher_item WHERE classification_id = ?1",
-                params![item.classification_id],
-                |row| row.get(0)
-            ).unwrap_or(0);
+            let next = sort_orders.entry(item.classification_id).or_insert(0);
+            *next += 1;
+            let sort_order = *next;
 
-            let data = item.data.clone();
-            let data_json = serde_json::to_string(&data).unwrap_or_else(|_| "{}".to_string());
+            let data_json = serde_json::to_string(&item.data).unwrap_or_else(|_| "{}".to_string());
 
             tx.execute(
                 r#"
@@ -283,7 +318,7 @@ pub fn batch_add_items(items: Vec<Item>) -> Result<Vec<i64>, String> {
                     data_json,
                     item.shortcut_key,
                     if item.global_shortcut_key { 1 } else { 0 },
-                    max_order + 1,
+                    sort_order,
                     item.data.open_number,
                     item.data.last_open,
                     now,

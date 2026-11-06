@@ -158,7 +158,14 @@ pub(super) async fn try_candidate(
             }
             optimizers::apply_optimizers(&mut built, outbound, proxy_cfg);
             optimizers::apply_preventive_rectifiers(&mut built, outbound, proxy_cfg);
-            crate::proxy::reasoning_effort::apply(inbound, outbound, body, &mut built, model, &candidate.base_url);
+            crate::proxy::reasoning_effort::apply(
+                inbound,
+                outbound,
+                body,
+                &mut built,
+                model,
+                &candidate.base_url,
+            );
             built
         }
     };
@@ -377,7 +384,14 @@ pub(super) fn stream_cross_protocol(
     started: std::time::Instant,
     idle_timeout: std::time::Duration,
 ) -> Result<Response, CandidateError> {
-    Ok(cross_protocol_response(Some(state.app.clone()), candidate.clone(), inbound, resp, started, idle_timeout))
+    Ok(cross_protocol_response(
+        Some(state.app.clone()),
+        candidate.clone(),
+        inbound,
+        resp,
+        started,
+        idle_timeout,
+    ))
 }
 
 fn cross_protocol_response(

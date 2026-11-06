@@ -66,7 +66,11 @@ async fn cookie_get(cookie: &str, url: &str, referer: &str) -> Result<(u16, Stri
         .await
         .map_err(|e| format!("直连知乎失败: {}", e))?;
     let status = resp.status().as_u16();
-    let body = resp.text().await.unwrap_or_default();
+    // 读取中断不等于「空响应」：保留原因，避免上层把网络故障误判为解析失败。
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| format!("读取知乎响应体失败: {e}"))?;
     Ok((status, body))
 }
 

@@ -53,23 +53,58 @@ fn sanitize_project_cmds(def: &mut ProjectDef) {
 }
 
 static REGISTRY_CACHE: RwLock<Option<Vec<ProjectDef>>> = RwLock::new(None);
+/// 最近一次加载失败原因（AUDIT-042）：供 IPC 查询与启动期断言使用。
+static REGISTRY_ERROR: RwLock<Option<String>> = RwLock::new(None);
+
+/// 前端查询项目配置健康状态：返回 (是否加载成功, 错误说明)。
+#[tauri::command]
+pub fn project_registry_status() -> (bool, String) {
+    registry_status()
+}
+
+/// 项目配置加载状态。返回给前端 SDK 页，避免「空白列表但没有任何提示」。
+pub fn registry_status() -> (bool, String) {
+    let err = REGISTRY_ERROR.read().unwrap_or_else(|e| e.into_inner());
+    match &*err {
+        Some(message) => (false, message.clone()),
+        None => (true, String::new()),
+    }
+}
+
+/// 启动期最小断言：配置不可用时给出明确错误，而不是静默启动成空列表。
+pub fn assert_registry_loaded() -> Result<(), String> {
+    let list = registry();
+    if list.is_empty() {
+        return Err("项目配置未找到或全部无法解析，请重新安装或检查安装目录".into());
+    }
+    Ok(())
+}
 
 pub fn registry() -> Vec<ProjectDef> {
     {
-        let read_guard = REGISTRY_CACHE.read().unwrap();
+        let read_guard = REGISTRY_CACHE.read().unwrap_or_else(|e| e.into_inner());
         if let Some(ref list) = *read_guard {
             return list.clone();
         }
     }
 
     let list = load_registry();
-    let mut write_guard = REGISTRY_CACHE.write().unwrap();
+    if list.is_empty() {
+        let message =
+            "[registry] 未找到 projects 配置（projects/ 目录与 projects.json 均不存在或为空）"
+                .to_string();
+        crate::exit_log!("{message}");
+        *REGISTRY_ERROR.write().unwrap_or_else(|e| e.into_inner()) = Some(message);
+    } else {
+        *REGISTRY_ERROR.write().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+    let mut write_guard = REGISTRY_CACHE.write().unwrap_or_else(|e| e.into_inner());
     *write_guard = Some(list.clone());
     list
 }
 
 pub fn clear_registry_cache() {
-    let mut write_guard = REGISTRY_CACHE.write().unwrap();
+    let mut write_guard = REGISTRY_CACHE.write().unwrap_or_else(|e| e.into_inner());
     *write_guard = None;
 }
 

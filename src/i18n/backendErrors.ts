@@ -11,6 +11,8 @@
 
 /// 静态错误：完整中文串 → 英文。未收录的中文串原样返回（zh 已是中文）。
 const STATIC_ERRORS: Record<string, string> = {
+  // 模块停用闸的拒绝信息（AUDIT-034）：英文界面下不能再显示中文。
+  "该模块已禁用，请先在设置中启用": "This module is disabled. Enable it in Settings first",
   "AES 密文太短": "AES ciphertext too short",
   "读取默认图标失败": "Failed to read the default icon",
   "AI 工具缓存只能迁移到非 C 盘（例如 D:\\...），禁止直接指向 C 盘目录": "The AI tool cache can only be migrated to a non-C drive (e.g. D:\\...); targeting a C-drive directory is not allowed",

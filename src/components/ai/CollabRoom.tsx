@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../utils/invokeOrReport";
 import { useCollabRoomActions } from "./useCollabRoomActions";
 import { CollabToolPicker } from "./CollabToolPicker";
 import { CollabRoomTasks } from "./CollabRoomTasks";
@@ -745,7 +746,7 @@ export default function CollabRoom() {
                     prompt={promptMap[m.id]}
                     proxy={proxyMap[m.id]}
                     onRespond={(response) => {
-                      invoke("collab_respond_prompt", { msgId: m.id, response }).catch(() => {});
+                      invoke("collab_respond_prompt", { msgId: m.id, response }).catch((e) => { reportInvokeError(e, "src/components/ai/CollabRoom.tsx:748"); });
                       setPromptMap((prev) => {
                         const next = { ...prev };
                         delete next[m.id];

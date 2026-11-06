@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../utils/invokeOrReport";
 import { ProviderModelParameters } from "./ProviderModelParameters";
 import { ProviderProtocolFields } from "./ProviderProtocolFields";
 import { ProviderDetailsDialog } from "./ProviderDetailsDialog";
@@ -489,7 +490,7 @@ export default function ModelConfig() {
       <div className="flex items-center gap-2">
         <button onClick={() => {
           // 打开前重新拉取预设：「本地聚合」的端口取自聚合页设置，可能已改动
-          void invoke<Preset[]>("get_provider_presets").then(list => setPresets(list)).catch(() => {});
+          void invoke<Preset[]>("get_provider_presets").then(list => setPresets(list)).catch((e) => { reportInvokeError(e, "src/components/ai/ModelConfig.tsx:492"); });
           setPresetSearch("");
           setPresetCategory("all");
           setShowPresetPicker(true);

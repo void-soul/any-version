@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../utils/invokeOrReport";
 import { MarkdownCreateDialog } from "./MarkdownCreateDialog";
 import { MarkdownDocumentTabs } from "./MarkdownDocumentTabs";
 import { MarkdownAssociationBanner } from "./MarkdownAssociationBanner";
@@ -246,7 +247,7 @@ export default function MarkdownReader() {
     listen("markdown-open-file", () => { void drain(); }).then((fn) => {
       if (alive) unlisten = fn;
       else fn();
-    }).catch(() => {});
+    }).catch((e) => { reportInvokeError(e, "src/components/SystemTools/MarkdownReader.tsx:249"); });
     return () => {
       alive = false;
       unlisten?.();

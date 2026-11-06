@@ -425,11 +425,11 @@ mod tests {
         let creds = Credentials::new(path.clone(), SECRET.into());
         let held = std::sync::Mutex::new(None);
         let error = creds.ensure_fresh_with(|_| async {
-            *held.lock().unwrap() = Some(std::fs::OpenOptions::new().read(true).share_mode(1).open(&path).unwrap());
+            *held.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::fs::OpenOptions::new().read(true).share_mode(1).open(&path).unwrap());
             Ok(refreshed_tokens())
         }).await.unwrap_err();
         assert!(error.contains("写回失败"));
-        drop(held.lock().unwrap().take());
+        drop(held.lock().unwrap_or_else(|e| e.into_inner()).take());
         creds.refresh.lock().await.policy = Default::default();
         let result = creds.ensure_fresh_with(|_| async { panic!("must retry saved tokens, not send the old refreshToken") }).await.unwrap();
         assert_eq!(result.refresh_token, "rotated");

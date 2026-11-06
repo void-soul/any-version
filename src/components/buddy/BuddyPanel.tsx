@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../utils/invokeOrReport";
 import { BuddyAccountName } from "./BuddyAccountName";
 import { buddyAccountDisplayName } from "./accountDisplayName";
 import { BuddyAccountSearch, useBuddyAccountSearch } from "./BuddyAccountSearch";
@@ -280,22 +281,22 @@ export default function BuddyPanel() {
       if (!active()) return;
       void invoke<BuddyCheckinTasksView>("buddy_auto_checkin_tasks")
         .then(value => { if (active()) setAutoTasks(value); })
-        .catch(() => {});
+        .catch((e) => { reportInvokeError(e, "src/components/buddy/BuddyPanel.tsx:283"); });
     };
     const refreshTravel = () => {
       if (!active()) return;
       void invoke<BuddyAutoTravelConfig>("buddy_auto_travel_get_config")
         .then(value => { if (active()) setTravelConfig(value); })
-        .catch(() => {});
+        .catch((e) => { reportInvokeError(e, "src/components/buddy/BuddyPanel.tsx:289"); });
       void invoke<BuddyTravelTasksView>("buddy_auto_travel_tasks")
         .then(value => { if (active()) setTravelTasks(value); })
-        .catch(() => {});
+        .catch((e) => { reportInvokeError(e, "src/components/buddy/BuddyPanel.tsx:292"); });
     };
     const setup = async () => {
       await retain(
         listen("buddy-action-logs-changed", () => {
           if (!active()) return;
-          void invoke<BuddyActionLogEntry[]>("buddy_get_action_logs").then(value => { if (active()) setActionLogs(value); }).catch(() => {});
+          void invoke<BuddyActionLogEntry[]>("buddy_get_action_logs").then(value => { if (active()) setActionLogs(value); }).catch((e) => { reportInvokeError(e, "src/components/buddy/BuddyPanel.tsx:298"); });
           refreshTasks();
           // 有新的签到/派出行事件 → 刷新日历（当天格子与明细）
           void loadCalendar(calendarMonth);
@@ -307,7 +308,7 @@ export default function BuddyPanel() {
           if (!active()) return;
           void invoke<BuddyAutoCheckinConfig>("buddy_auto_checkin_get_config")
             .then(value => { if (active()) setAutoConfig(value); })
-            .catch(() => {});
+            .catch((e) => { reportInvokeError(e, "src/components/buddy/BuddyPanel.tsx:310"); });
           refreshTasks();
         })
       );

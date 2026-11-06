@@ -30,10 +30,16 @@ impl Drop for SyncRunningGuard<'_> {
         self.0.store(false, Ordering::SeqCst);
     }
 }
+/// 固定任务名：`runtime_tasks::spawn_task` 按 (module, name) 去重。
+/// 旧实现每次生成唯一名，绕过了去重，连续变更会堆出 N 个睡眠任务与 N 条
+/// Registry 记录并争抢 LAST_CHANGE 锁（AUDIT-013）。
 pub(super) fn owned_task_name(prefix: &str) -> String {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    format!("{prefix}-{}", NEXT.fetch_add(1, Ordering::Relaxed))
+    prefix.to_string()
 }
+
+/// 防抖代次：新变更到来时递增，旧任务醒来发现代次已变就立即退出，
+/// 不依赖「取消旧任务」（任务由 Registry 统一管理）。
+pub(super) static SYNC_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// 内容变更后调用：记录变更时间并安排一次防抖同步。
 /// 连续变更只触发一次同步（距最后一次变更 3 秒后才执行）。
@@ -42,38 +48,58 @@ pub fn schedule_auto_sync() {
         return;
     }
     *LAST_CHANGE.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
-    crate::runtime_tasks::spawn_task("picky", &owned_task_name("auto-sync"), async {
-        tokio::time::sleep(AUTO_SYNC_DEBOUNCE).await;
-        // 防抖：睡眠期间有新变更则放弃本次，由最新变更的任务接手
-        let should = LAST_CHANGE
-            .lock()
-            .unwrap()
-            .is_some_and(|t| t.elapsed() >= AUTO_SYNC_DEBOUNCE);
-        if !should {
-            return;
-        }
-        if SYNC_RUNNING.swap(true, Ordering::SeqCst) {
-            // 已有同步在跑：置位待补同步，由运行中的同步结束后接手，
-            // 避免本任务提前返回后该变更从此被漏掉。
-            PENDING_RESYNC.store(true, Ordering::SeqCst);
-            return;
-        }
-        let running = SyncRunningGuard(&SYNC_RUNNING);
-        let sync_started = Instant::now();
-        if let Err(e) = picky_sync_now().await {
-            crate::exit_log::exit_log(&format!("[picky-sync] 自动同步失败（稍后手动同步）: {}", e));
-        }
-        drop(running);
-        // 同步期间又产生了新变更（防抖任务置位或变更时间晚于同步开始）→ 再调度一轮
-        let has_new = PENDING_RESYNC.swap(false, Ordering::SeqCst)
-            || LAST_CHANGE
-                .lock()
-                .unwrap()
-                .is_some_and(|t| t > sync_started);
-        if has_new {
-            schedule_auto_sync();
+    SYNC_EPOCH.fetch_add(1, Ordering::SeqCst);
+
+    // 固定任务名：连续变更复用同一个防抖任务，只更新 LAST_CHANGE；
+    // 任务内部循环等待「最后一次变更后静默 3 秒」，天然合并所有变更（AUDIT-013）。
+    let task_name = owned_task_name("auto-sync");
+    let spawned = crate::runtime_tasks::spawn_task("picky", &task_name, async {
+        // 上限防止异常情况下永久循环。
+        for _ in 0..64 {
+            // 等到静默期结束：期间若有新变更，LAST_CHANGE 被刷新，继续等。
+            loop {
+                tokio::time::sleep(AUTO_SYNC_DEBOUNCE).await;
+                let quiet = LAST_CHANGE
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .is_some_and(|t| t.elapsed() >= AUTO_SYNC_DEBOUNCE);
+                if quiet {
+                    break;
+                }
+            }
+            if SYNC_RUNNING.swap(true, Ordering::SeqCst) {
+                // 其它同步（如手动同步）正在跑：等它结束，下一轮重新判断。
+                PENDING_RESYNC.store(true, Ordering::SeqCst);
+                continue;
+            }
+            let running = SyncRunningGuard(&SYNC_RUNNING);
+            let sync_started = Instant::now();
+            if let Err(e) = picky_sync_now().await {
+                crate::exit_log::exit_log(&format!(
+                    "[picky-sync] 自动同步失败（稍后手动同步）: {e}"
+                ));
+            }
+            drop(running);
+            // 同步期间又产生新变更 → 在本任务内再走一轮，不递归 spawn
+            // （自己仍在 Registry 中，递归调用会被同名去重挡掉导致漏同步）。
+            let has_new = PENDING_RESYNC.swap(false, Ordering::SeqCst)
+                || LAST_CHANGE
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .is_some_and(|t| t > sync_started);
+            if !has_new {
+                LAST_CHANGE.lock().unwrap_or_else(|e| e.into_inner()).take();
+                break;
+            }
         }
     });
+    // spawn 返回 false 说明已有同名防抖任务在跑——这是预期的去重，不是错误；
+    // 它会读到刚更新的 LAST_CHANGE 并继续等待。只有模块被停用才算异常。
+    if !spawned && !crate::runtime_tasks::is_enabled("picky") {
+        crate::exit_log::exit_log(
+            "[picky-sync] 模块已停用，自动同步未登记；本次变更将在重新启用后由下次变更触发",
+        );
+    }
 }
 
 /// 启动/退出时调用：仅当已配置并启用云同步时执行一次同步（静默忽略未配置）。

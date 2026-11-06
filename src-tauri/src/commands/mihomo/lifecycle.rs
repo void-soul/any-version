@@ -72,7 +72,10 @@ pub fn init_state() -> MihomoState {
 pub(super) async fn auto_update_profiles(app: &AppHandle, inner: &Arc<MihomoInner>) {
     let now = now_secs();
     let (items, current) = {
-        let cfg = inner.profile_config.lock().unwrap();
+        let cfg = inner
+            .profile_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         (cfg.items.clone(), cfg.current.clone())
     };
     for item in items {
@@ -86,7 +89,7 @@ pub(super) async fn auto_update_profiles(app: &AppHandle, inner: &Arc<MihomoInne
         let by_cron = cron_hit_now(item.update_cron.as_deref());
         if by_cron {
             let key = minute_key();
-            let mut last = inner.auto_last.lock().unwrap();
+            let mut last = inner.auto_last.lock().unwrap_or_else(|e| e.into_inner());
             let slot = format!("profile:{}", item.id);
             if last.get(&slot).copied() == Some(key) {
                 continue;
@@ -145,7 +148,10 @@ pub(super) async fn auto_update_profiles(app: &AppHandle, inner: &Arc<MihomoInne
             continue;
         }
         {
-            let mut cfg = inner.profile_config.lock().unwrap();
+            let mut cfg = inner
+                .profile_config
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if let Some(it) = cfg.items.iter_mut().find(|i| i.id == updated.id) {
                 *it = updated.clone();
             }
@@ -185,7 +191,7 @@ pub fn start_scheduler(_app: AppHandle, inner: Arc<MihomoInner>) {
         let refresh_on_start = inner
             .app_config
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .auto_update_profile_on_start;
         if refresh_on_start {
             eprintln!("[mihomo] 启动即刷新订阅");
@@ -213,7 +219,7 @@ pub fn start_scheduler(_app: AppHandle, inner: Arc<MihomoInner>) {
                 }
                 if cron_hit_now(s.cron.as_deref()) {
                     let key = minute_key();
-                    let mut last = inner.auto_last.lock().unwrap();
+                    let mut last = inner.auto_last.lock().unwrap_or_else(|e| e.into_inner());
                     if last.get(&s.id).copied() == Some(key) {
                         continue;
                     }
@@ -224,7 +230,7 @@ pub fn start_scheduler(_app: AppHandle, inner: Arc<MihomoInner>) {
                 let last = inner
                     .auto_last
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .get(&s.id)
                     .copied()
                     .unwrap_or(0);
@@ -238,7 +244,7 @@ pub fn start_scheduler(_app: AppHandle, inner: Arc<MihomoInner>) {
                 }
                 if cron_hit_now(r.cron.as_deref()) {
                     let key = minute_key();
-                    let mut last = inner.auto_last.lock().unwrap();
+                    let mut last = inner.auto_last.lock().unwrap_or_else(|e| e.into_inner());
                     if last.get(&r.id).copied() == Some(key) {
                         continue;
                     }
@@ -249,7 +255,7 @@ pub fn start_scheduler(_app: AppHandle, inner: Arc<MihomoInner>) {
                 let last = inner
                     .auto_last
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .get(&r.id)
                     .copied()
                     .unwrap_or(0);
@@ -257,9 +263,17 @@ pub fn start_scheduler(_app: AppHandle, inner: Arc<MihomoInner>) {
                     to_update.push(r.id.clone());
                 }
             }
-            let app_config = inner.app_config.lock().unwrap().clone();
+            let app_config = inner
+                .app_config
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
             for id in to_update {
-                inner.auto_last.lock().unwrap().insert(id.clone(), now);
+                inner
+                    .auto_last
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(id.clone(), now);
                 let _ = mihomo_api_raw(
                     &app_config,
                     reqwest::Method::PUT,
@@ -289,7 +303,7 @@ pub fn kill_on_exit(inner: &MihomoInner) {
     // 立即让 Guard 离开作用域释放锁，否则后续 set_sys_proxy 内部再次 lock 会死锁，
     // 导致 ExitRequested 回调卡死、托盘"退出"无响应（仅在开启了代理自动关闭时触发）。
     let auto_close = {
-        let g = inner.app_config.lock().unwrap();
+        let g = inner.app_config.lock().unwrap_or_else(|e| e.into_inner());
         g.auto_close_proxy
     };
     crate::exit_log::exit_log(&format!("cleanup: auto_close_proxy={}", auto_close));

@@ -37,7 +37,7 @@ pub(super) static TEST_ROOT: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 #[cfg(test)]
 pub(super) fn set_test_root(root: PathBuf) {
-    *TEST_ROOT.lock().unwrap() = Some(root);
+    *TEST_ROOT.lock().unwrap_or_else(|e| e.into_inner()) = Some(root);
 }
 
 /// 写入型测试的全局串行锁。
@@ -75,7 +75,7 @@ pub(in crate::commands::music) fn shared_test_root() -> PathBuf {
 pub fn plugins_root() -> PathBuf {
     #[cfg(test)]
     {
-        if let Some(root) = TEST_ROOT.lock().unwrap().clone() {
+        if let Some(root) = TEST_ROOT.lock().unwrap_or_else(|e| e.into_inner()).clone() {
             return root.join("plugins");
         }
     }

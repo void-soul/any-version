@@ -190,9 +190,9 @@ pub fn port_in_use(port: u16) -> bool {
 /// 因此托盘 `build_mihomo_item` 与状态视图 `build_state_view` 均应复用本函数。
 pub fn is_core_running(inner: &crate::commands::mihomo::MihomoInner) -> bool {
     // 锁顺序与 launch_core 保持一致（先 app_config 后 child），避免跨锁顺序反转。
-    let mixed_port = inner.app_config.lock().unwrap().mixed_port;
+    let mixed_port = inner.app_config.lock().unwrap_or_else(|e| e.into_inner()).mixed_port;
     let has_child = {
-        let g = inner.child.lock().unwrap();
+        let g = inner.child.lock().unwrap_or_else(|e| e.into_inner());
         g.as_ref().map(|c| c.id() > 0).unwrap_or(false)
             && !inner.stop_flag.load(std::sync::atomic::Ordering::SeqCst)
     };
@@ -309,7 +309,7 @@ pub fn start_watchdog(app: AppHandle, inner: Arc<MihomoInner>) {
                 break;
             }
             let alive = {
-                let mut g = inner.child.lock().unwrap();
+                let mut g = inner.child.lock().unwrap_or_else(|e| e.into_inner());
                 match g.as_mut() {
                     Some(c) => match c.try_wait() {
                         Ok(Some(_)) => {
@@ -325,7 +325,7 @@ pub fn start_watchdog(app: AppHandle, inner: Arc<MihomoInner>) {
                     None => false,
                 }
             };
-            if !alive && inner.app_config.lock().unwrap().keep_profile_alive {
+            if !alive && inner.app_config.lock().unwrap_or_else(|e| e.into_inner()).keep_profile_alive {
                 let n = RESTART_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
                 if n > MAX_AUTO_RESTART {
                     eprintln!(
@@ -358,10 +358,10 @@ pub fn start_watchdog(app: AppHandle, inner: Arc<MihomoInner>) {
 pub async fn launch_core(app: &AppHandle, inner: Arc<MihomoInner>) -> Result<(), String> {
     // 自动启动/重复启动时：先判断核心是否已在运行，已在运行则直接跳过，
     // 避免"启动时才报错"。幂等：已在运行就不重复拉起，也不视为错误。
-    let app_config = inner.app_config.lock().unwrap().clone();
+    let app_config = inner.app_config.lock().unwrap_or_else(|e| e.into_inner()).clone();
     // 优先按子进程句柄判定（本应用拉起的核心，最准确）；
     let has_child = {
-        let g = inner.child.lock().unwrap();
+        let g = inner.child.lock().unwrap_or_else(|e| e.into_inner());
         g.as_ref().map(|c| c.id() > 0).unwrap_or(false) && !inner.stop_flag.load(Ordering::SeqCst)
     };
     // 兜底：混合端口被监听（核心可能由外部/上次会话遗留运行）
@@ -382,9 +382,9 @@ pub async fn launch_core(app: &AppHandle, inner: Arc<MihomoInner>) -> Result<(),
     // 按当前内核变体创建/移除 Smart 覆写（对齐 clash-party startCore 内的 manageSmartOverride）
     super::smart::manage_smart_override(&inner);
 
-    let app_config = inner.app_config.lock().unwrap().clone();
-    let controled = inner.controled_config.lock().unwrap().clone();
-    let overrides = inner.override_config.lock().unwrap().clone();
+    let app_config = inner.app_config.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let controled = inner.controled_config.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let overrides = inner.override_config.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let profile = inner.current_profile();
 
     let cfg = generate_runtime_config(
@@ -399,7 +399,7 @@ pub async fn launch_core(app: &AppHandle, inner: Arc<MihomoInner>) -> Result<(),
     std::fs::create_dir_all(&work_dir).map_err(|e| e.to_string())?;
     let cfg_path = work_dir.join("config.yaml");
     atomic_write(&cfg_path, &cfg.core).map_err(|e| e.to_string())?;
-    *inner.runtime_config_str.lock().unwrap() = cfg.runtime;
+    *inner.runtime_config_str.lock().unwrap_or_else(|e| e.into_inner()) = cfg.runtime;
 
     // F8 修复：持锁跨越 kill→spawn（kill_child 内部已持锁，此处不再释放后再 spawn）
     kill_child(&inner);
@@ -444,7 +444,7 @@ pub async fn launch_core(app: &AppHandle, inner: Arc<MihomoInner>) -> Result<(),
         .stderr(Stdio::piped());
 
     // 每次启动清空上一轮的运行期告警（TUN 权限类告警由状态视图实时计算）
-    inner.runtime_warnings.lock().unwrap().clear();
+    inner.runtime_warnings.lock().unwrap_or_else(|e| e.into_inner()).clear();
     if app_config.tun_enabled && !is_admin() {
         eprintln!("[mihomo] TUN 已开启但当前非管理员，可能无法创建虚拟网卡（请以管理员身份运行）");
     }
@@ -479,7 +479,7 @@ pub async fn launch_core(app: &AppHandle, inner: Arc<MihomoInner>) -> Result<(),
     let mut ready = false;
     while std::time::Instant::now() < deadline {
         {
-            let mut g = inner.child.lock().unwrap();
+            let mut g = inner.child.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(c) = g.as_mut() {
                 if let Ok(Some(status)) = c.try_wait() {
                     *g = None;
@@ -518,9 +518,9 @@ pub async fn launch_core(app: &AppHandle, inner: Arc<MihomoInner>) -> Result<(),
 /// 重新加载配置：用 PUT /configs?force=true 让核心重载整套配置（proxies/rules/providers/dns），
 /// 失败则回退重启核心进程
 pub async fn reload_config(app: &AppHandle, inner: Arc<MihomoInner>) -> Result<(), String> {
-    let app_config = inner.app_config.lock().unwrap().clone();
-    let controled = inner.controled_config.lock().unwrap().clone();
-    let overrides = inner.override_config.lock().unwrap().clone();
+    let app_config = inner.app_config.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let controled = inner.controled_config.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let overrides = inner.override_config.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let profile = inner.current_profile();
 
     let cfg = generate_runtime_config(
@@ -534,7 +534,7 @@ pub async fn reload_config(app: &AppHandle, inner: Arc<MihomoInner>) -> Result<(
     std::fs::create_dir_all(&work_dir).map_err(|e| e.to_string())?;
     let cfg_path = work_dir.join("config.yaml");
     atomic_write(&cfg_path, &cfg.core).map_err(|e| e.to_string())?;
-    *inner.runtime_config_str.lock().unwrap() = cfg.runtime;
+    *inner.runtime_config_str.lock().unwrap_or_else(|e| e.into_inner()) = cfg.runtime;
 
     // 真正重载整套配置（proxies / rules / providers / dns）。
     // 注意：mihomo 的 PATCH /configs 只接受 mode/port/allow-lan 等小字段、不认 path，
@@ -626,7 +626,7 @@ fn start_pac_server(script: String, port: u16) {
 static PAC_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn set_sys_proxy(inner: &MihomoInner, enable: bool) -> Result<(), String> {
-    let app = inner.app_config.lock().unwrap();
+    let app = inner.app_config.lock().unwrap_or_else(|e| e.into_inner());
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let key = hkcu
         .open_subkey_with_flags(

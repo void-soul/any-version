@@ -121,8 +121,10 @@ pub async fn start_aggregate_service(app: tauri::AppHandle) -> Result<AggregateS
         }
     })
     .ok_or("聚合服务已在运行或模块已禁用")?;
-    *AGGREGATE.get_or_init(|| Mutex::new(None)).lock().unwrap() =
-        Some(AggregateEntry { port, handle });
+    *AGGREGATE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = Some(AggregateEntry { port, handle });
 
     // 记下真实候选数，供状态查询返回（以前恒为 0）
     AGG_CANDIDATE_COUNT.store(candidates.len(), Ordering::Relaxed);

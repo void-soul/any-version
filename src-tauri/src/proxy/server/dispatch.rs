@@ -218,7 +218,12 @@ pub(super) async fn process_request(
     );
 
     if !status.is_success() {
-        let mut error_body = upstream_resp.text().await.unwrap_or_default();
+        // 读取失败时用可识别的占位而非空串：空串会被 classify 判成未知错误，
+        // 丢失「上游已返回 4xx/5xx 但响应体读取中断」这一关键事实（AUDIT-018）。
+        let mut error_body = upstream_resp.text().await.unwrap_or_else(|e| {
+            log_proxy(&format!("✗ 读取上游错误响应体失败: {e}"));
+            format!("{{\"error\":{{\"message\":\"upstream error body unreadable: {e}\"}}}}")
+        });
         let mut kind = upstream_error::classify(status.as_u16(), &error_body);
         let mut err_label = upstream_error::label(kind, status.as_u16(), &error_body);
         log_proxy(&format!(
@@ -298,7 +303,10 @@ pub(super) async fn process_request(
                         }
                         Ok(alt_resp) => {
                             status = alt_resp.status();
-                            error_body = alt_resp.text().await.unwrap_or_default();
+                            error_body = alt_resp.text().await.unwrap_or_else(|e| {
+                                log_proxy(&format!("✗ 读取回退上游错误响应体失败: {e}"));
+                                format!("{{\"error\":{{\"message\":\"fallback error body unreadable: {e}\"}}}}")
+                            });
                             kind = upstream_error::classify(status.as_u16(), &error_body);
                             // 回退路径上的 11102 只说明「这条路没这个模型」，不是模型真不存在：
                             // 既不能对外宣称模型不可用，也不值得再整流/再回退。

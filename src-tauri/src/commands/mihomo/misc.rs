@@ -39,7 +39,7 @@ pub fn mihomo_restart_as_admin(app: AppHandle) -> Result<(), String> {
 /// TUN 运行条件自检
 #[tauri::command]
 pub fn mihomo_check_tun_permissions(state: State<'_, MihomoState>) -> Value {
-    let app_config = state.app_config.lock().unwrap().clone();
+    let app_config = state.app_config.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let core = crate::commands::mihomo::manager::resolve_core_path(&app_config);
     let wintun = core
         .parent()
@@ -67,7 +67,7 @@ pub async fn mihomo_hot_reload(
 /// 生成代理环境变量命令串（cmd / powershell / bash）
 #[tauri::command]
 pub fn mihomo_copy_env(state: State<'_, MihomoState>, kind: String) -> String {
-    let port = state.app_config.lock().unwrap().mixed_port;
+    let port = state.app_config.lock().unwrap_or_else(|e| e.into_inner()).mixed_port;
     let host = format!("127.0.0.1:{port}");
     match kind.as_str() {
         "cmd" => format!(
@@ -91,7 +91,7 @@ pub fn mihomo_clear_logs(state: State<'_, MihomoState>) -> Result<(), String> {
 /// 打开 mihomo 数据目录 / 内核目录 / 日志文件
 #[tauri::command]
 pub fn mihomo_open_path(state: State<'_, MihomoState>, kind: String) -> Result<(), String> {
-    let app_config = state.app_config.lock().unwrap().clone();
+    let app_config = state.app_config.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let target = match kind.as_str() {
         "core" => crate::commands::mihomo::manager::core_dir(&app_config),
         "log" => state.log_file.clone(),
@@ -118,8 +118,7 @@ pub fn mihomo_open_path(state: State<'_, MihomoState>, kind: String) -> Result<(
 pub fn mihomo_cleanup_logs(state: State<'_, MihomoState>) -> Result<u32, String> {
     let days = state
         .app_config
-        .lock()
-        .unwrap()
+        .lock().unwrap_or_else(|e| e.into_inner())
         .extra
         .get("maxLogDays")
         .and_then(|v| v.as_u64())

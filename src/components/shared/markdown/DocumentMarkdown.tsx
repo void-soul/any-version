@@ -1,3 +1,4 @@
+import { ignoreInvokeError } from "../../../utils/invokeOrReport";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
@@ -155,7 +156,7 @@ export const DocumentMarkdown = memo(function DocumentMarkdown({ content }: { co
   };
 
   const openLocal = (path: string) => {
-    void openPath(path).catch(() => { /* 浏览器预览无 Tauri 后端时静默 */ });
+    void openPath(path).catch((e) => ignoreInvokeError(e, "浏览器预览无 Tauri 后端时静默"));
   };
 
   const heading = (level: number, cls: string) => {

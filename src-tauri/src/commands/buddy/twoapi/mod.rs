@@ -139,6 +139,9 @@ pub fn build_proxy_config(port: u16, account: &credentials::Account) -> ProxyCon
     cfg.force_upstream_stream = true;
     // 请求日志来源标识：2API 服务（Buddy/2API 面板按它过滤展示）
     cfg.source = "2api".to_string();
+    // 2API 是本机工具链通过固定端口直连的既有服务，历史上不设入站 token，
+    // 显式声明无鉴权以保持兼容；真实上游凭据仍在 upstream_headers 里，不暴露给调用方。
+    cfg.allow_unauthenticated = true;
     // 用量记账的两个维度：不填的话代理层记进空 tool_id，跟其它 AI 调用混成一团、
     // 在用量面板里看不出 2API 花了多少。填了之后请求数 / 成功失败 / token / 缓存 /
     // 耗时都会按 `buddy2api` 归档，2API 面板与 AI 用量面板都能直接查。

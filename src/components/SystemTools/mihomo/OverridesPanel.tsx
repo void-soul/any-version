@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../../utils/invokeOrReport";
 // 覆写页 —— 1:1 复刻 clash-party src/renderer/src/pages/override.tsx
 // （URL 导入(剪贴板粘贴) / 打开本地文件 / 新建 YAML·JS / 卡片：远程更新+编辑信息+
 //   编辑文件+执行日志(js)+删除 / 双击编辑文件 / 排序(上下移替代拖拽) / global 标识）
@@ -36,7 +37,7 @@ export default function OverridesPanel() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const refresh = async () => {
-    try { setItems(((await mihomoApi.getOverrideConfig())?.items) || []); } catch {}
+    try { setItems(((await mihomoApi.getOverrideConfig())?.items) || []); } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/OverridesPanel.tsx:39"); }
   };
   useEffect(() => { refresh(); }, []);
 
@@ -125,7 +126,7 @@ export default function OverridesPanel() {
           <button
             className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer"
             title={t("overrides.paste")}
-            onClick={() => navigator.clipboard.readText().then(setUrl).catch(() => {})}
+            onClick={() => navigator.clipboard.readText().then(setUrl).catch((e) => { reportInvokeError(e, "src/components/SystemTools/mihomo/OverridesPanel.tsx:128"); })}
           >
             <ClipboardPaste className="w-3.5 h-3.5" />
           </button>

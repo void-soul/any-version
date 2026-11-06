@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../utils/invokeOrReport";
 import { useProjectDetection } from "./useProjectDetection";
 import { ProjectTraySettings } from "./ProjectTraySettings";
 import { ProjectIdentityHeader } from "./ProjectIdentityHeader";
@@ -45,7 +46,7 @@ export default function ProjectDetailPanel({
     setShowMenuConfig(false);
     invoke<string[]>("get_auto_start_services")
       .then((list) => setAutoStartServices(list || []))
-      .catch(() => {});
+      .catch((e) => { reportInvokeError(e, "src/components/project/ProjectDetailPanel.tsx:48"); });
   }, [pid]);
 
   useEffect(() => {
@@ -110,7 +111,7 @@ export default function ProjectDetailPanel({
               : null,
         });
       })
-      .catch(() => {});
+      .catch((e) => { reportInvokeError(e, "src/components/project/ProjectDetailPanel.tsx:113"); });
     return () => {
       alive = false;
     };

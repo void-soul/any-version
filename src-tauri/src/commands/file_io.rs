@@ -25,7 +25,7 @@ pub fn decode_text_bytes(bytes: &[u8]) -> String {
     cow.into_owned()
 }
 
-const MAX_TEXT_FILE_BYTES: u64 = 64 * 1024 * 1024;
+const TEXT_FILE_MAX: u64 = crate::commands::foundation::defaults::sizes::TEXT_FILE_MAX;
 /// Binary IPC avoids serializing hundreds of MiB as JSON numbers.
 #[tauri::command]
 pub async fn read_log_file(path: String) -> Result<tauri::ipc::Response, String> {
@@ -53,7 +53,7 @@ fn read_bounded(mut reader: impl Read, limit: u64) -> Result<Vec<u8>, String> {
 #[tauri::command]
 pub fn read_text_file(path: String) -> Result<String, String> {
     let file = fs::File::open(&path).map_err(|e| format!("读取文件失败: {e}"))?;
-    let bytes = read_bounded(file, MAX_TEXT_FILE_BYTES)?;
+    let bytes = read_bounded(file, TEXT_FILE_MAX)?;
     Ok(decode_text_bytes(&bytes))
 }
 
@@ -82,28 +82,53 @@ pub fn file_io_save_text(
     if !dir.exists() {
         fs::create_dir_all(&dir).map_err(|e| format!("创建下载目录失败: {}", e))?;
     }
-    let mut path = dir.join(file_name.trim());
-    // 同名文件自动追加序号，避免覆盖
-    if path.exists() {
-        let stem = path
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "export".to_string());
-        let ext = path.extension().map(|s| s.to_string_lossy().to_string());
-        let mut counter = 1;
-        loop {
-            let candidate = match &ext {
+    let requested = dir.join(file_name.trim());
+    let stem = requested
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "export".to_string());
+    let ext = requested.extension().map(|s| s.to_string_lossy().to_string());
+
+    // 用 `create_new(true)` 在**打开文件这一步**就保证「不覆盖 + 不产生竞态」：
+    // 旧的 `exists()` → `fs::write()` 之间存在 TOCTOU，两个并发 IPC 会选中
+    // 同一候选名并互相截断（AUDIT-010）。
+    let mut counter: u32 = 0;
+    let path = loop {
+        let candidate = if counter == 0 {
+            requested.clone()
+        } else {
+            match &ext {
                 Some(e) => dir.join(format!("{}({}).{}", stem, counter, e)),
                 None => dir.join(format!("{}({})", stem, counter)),
-            };
-            if !candidate.exists() {
-                path = candidate;
-                break;
             }
-            counter += 1;
+        };
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(mut file) => {
+                let written = std::io::Write::write_all(&mut file, content.as_bytes())
+                    .and_then(|_| file.sync_all());
+                drop(file);
+                if let Err(e) = written {
+                    // 写入中断不留下半截文件。
+                    let _ = fs::remove_file(&candidate);
+                    return Err(format!("写入文件失败: {e}"));
+                }
+                break candidate;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                counter = counter
+                    .checked_add(1)
+                    .ok_or_else(|| "无法生成可用的导出文件名".to_string())?;
+                if counter > 10_000 {
+                    return Err("同名文件过多，请清理下载目录后重试".into());
+                }
+            }
+            Err(e) => return Err(format!("创建文件失败: {e}")),
         }
-    }
-    fs::write(&path, content).map_err(|e| format!("写入文件失败: {}", e))?;
+    };
     Ok(path.to_string_lossy().to_string())
 }
 
@@ -346,7 +371,10 @@ fn strip_unc(p: &Path) -> String {
 // ===================== 预览图片（相对路径 → data URL） =====================
 
 /// 单张图片内联上限：超过就拒绝预览，避免大图把 WebView 内存打满。
-const MAX_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
+/// Markdown 内嵌图片预览上限，与图片 Base64 转换（16 MiB）是不同功能，
+/// 不再共用同名常量（AUDIT-033）。
+const MARKDOWN_IMAGE_MAX: u64 =
+    crate::commands::foundation::defaults::sizes::MARKDOWN_IMAGE_MAX;
 
 fn image_mime(path: &Path) -> Option<&'static str> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
@@ -398,12 +426,12 @@ pub fn read_local_image(from: String, src: String) -> Result<Option<String>, Str
     if !meta.is_file() {
         return Ok(None);
     }
-    if meta.len() > MAX_IMAGE_BYTES {
-        return Err(format!("图片超过 {} MB，已跳过预览", MAX_IMAGE_BYTES / 1024 / 1024));
+    if meta.len() > MARKDOWN_IMAGE_MAX {
+        return Err(format!("图片超过 {} MB，已跳过预览", MARKDOWN_IMAGE_MAX / 1024 / 1024));
     }
     let mime = image_mime(&path).unwrap_or("application/octet-stream");
     let file = fs::File::open(&path).map_err(|e| format!("读取图片失败: {e}"))?;
-    let bytes = read_bounded(file, MAX_IMAGE_BYTES)?;
+    let bytes = read_bounded(file, MARKDOWN_IMAGE_MAX)?;
     Ok(Some(format!("data:{};base64,{}", mime, STANDARD.encode(bytes))))
 }
 

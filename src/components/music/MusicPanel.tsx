@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../utils/invokeOrReport";
 // 音乐播放器（纯本地）：
 // - 只能导入本地文件夹；曲库持久化在 data_dir/music/library.json，**启动不自动重扫**，
 //   只有点「重新扫描」才重新读盘；
@@ -206,7 +207,7 @@ export default function MusicPanel() {
     invoke("music_set_queue", {
       paths: visiblePaths,
       mode: settings.play_mode,
-    }).catch(() => {});
+    }).catch((e) => { reportInvokeError(e, "src/components/music/MusicPanel.tsx:209"); });
   }, [visiblePaths, settings?.play_mode]);
 
   /** 把后端状态同步到界面；后端可能自行切歌（含托盘模式），因此要同步选中行 */

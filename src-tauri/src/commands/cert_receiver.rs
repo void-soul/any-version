@@ -84,9 +84,17 @@ fn default_reload_mode() -> String {
 impl Default for CertReceiverConfig {
     fn default() -> Self {
         Self {
-            listen_addr: "0.0.0.0:9000".to_string(),
+            // 默认只监听回环；暴露到所有网卡必须由用户显式配置（AUDIT-001）。
+            listen_addr: format!(
+                "127.0.0.1:{}",
+                crate::commands::foundation::defaults::ports::CERT_RECEIVER
+            ),
             token: random_hex(16),
-            output_dir: "C:\\certs".to_string(),
+            // 默认落在应用数据目录，不写死 C 盘路径（AUDIT-038）。
+            output_dir: crate::commands::foundation::get_data_dir()
+                .join("certs")
+                .to_string_lossy()
+                .to_string(),
             layout: default_layout(),
             api_key: random_hex(16),
             reload_mode: default_reload_mode(),
@@ -110,6 +118,23 @@ impl CertReceiverConfig {
             ));
         }
         cert_deployment::credentials::validate_token(&self.token)?;
+        // RNG 失败会让 api_key 为空；空签名密钥等同于无签名，必须拦住（AUDIT-004）。
+        if self.api_key.trim().is_empty() {
+            return Err("签名密钥生成失败，请重启应用后重试".into());
+        }
+        // 非回环地址必须配强 token：默认 token 虽是随机的，仍禁止用户改成弱值后
+        // 把写入端点暴露到局域网（AUDIT-001）。
+        if let Ok(addr) = self.listen_addr.parse::<SocketAddr>() {
+            if !addr.ip().is_loopback() {
+                let token = self.token.trim();
+                if token.len() < 16 {
+                    return Err("监听局域网/公网时，共享 Token 至少 16 位".into());
+                }
+                if token.chars().all(|c| c.is_ascii_digit()) || token.chars().all(|c| c == '0') {
+                    return Err("监听局域网/公网时不能使用弱 Token".into());
+                }
+            }
+        }
         if self.output_dir.trim().is_empty() {
             return Err("证书输出目录不能为空".into());
         }
@@ -131,19 +156,11 @@ impl CertReceiverConfig {
     }
 }
 
+/// 生成鉴权凭据。**RNG 失败时返回空串**，由 `validate()` 拒绝并阻止服务启动；
+/// 绝不回退到时间戳/进程号这类可预测值（AUDIT-004）。
+/// `Default` 不能返回 Result，因此这里用空串作为「生成失败」的显式信号。
 fn random_hex(n: usize) -> String {
-    let mut buf = vec![0u8; n];
-    if getrandom::getrandom(&mut buf).is_err() {
-        // 极端情况退回时间戳混合，保证不会写出空 token
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        for (i, b) in buf.iter_mut().enumerate() {
-            *b = (((nanos >> (i % 16)) & 0xff) as u8) ^ (i as u8).wrapping_mul(31);
-        }
-    }
-    buf.iter().map(|b| format!("{:02x}", b)).collect()
+    crate::commands::foundation::secure_random::secure_hex(n).unwrap_or_default()
 }
 
 /// 旧配置文件名（迁移用；集成后不再写它）
@@ -399,11 +416,29 @@ async fn push(
         return Err(e);
     }
 
-    let permit = deployment_slot()
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| (StatusCode::CONFLICT, "已有证书正在部署，请稍后重试".into()))?;
+    // 推送去重：TTL 内相同证书 ID + 相同内容视为重试，直接返回成功，
+    // 不再写盘与 reload（AUDIT-014）。失败时移除占位以允许真正重试。
+    let request_id = crate::proxy::server::request_id::next_request_id();
+    let push_started = std::time::Instant::now();
+    data.state.log(format!("[{request_id}] 收到 /push 请求"));
+    let dedupe_now = now_ms();
     let certificate_id = body.certificate_id.clone();
+    // body 会被 move 进 spawn_blocking，key 必须提前算好。
+    let dedupe_key = push_dedupe_key(&certificate_id, &body);
+    if push_dedupe_check(&dedupe_key, dedupe_now) {
+        data.state
+            .log(format!("推送 {certificate_id} 命中去重窗口，跳过重复部署"));
+        return Ok(Json(json!({
+            "ok": true,
+            "certificateId": certificate_id,
+            "deduplicated": true,
+        })));
+    }
+
+    let permit = deployment_slot().clone().try_acquire_owned().map_err(|_| {
+        push_dedupe_forget(&dedupe_key);
+        (StatusCode::CONFLICT, "已有证书正在部署，请稍后重试".into())
+    })?;
     let push_data = data.clone();
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
@@ -411,9 +446,12 @@ async fn push(
     })
     .await
     .map_err(|e| {
+        // 内部细节只进日志，不回给远程调用方（AUDIT-007）。
+        data.state.log(format!("部署任务异常: {e}"));
+        push_dedupe_forget(&dedupe_key);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("部署任务异常: {e}"),
+            "证书部署失败，请稍后重试（E-PUSH）".into(),
         )
     })?;
     match &result {
@@ -426,14 +464,29 @@ async fn push(
                 written.len()
             ),
         ),
-        Err((code, msg)) => data.state.record_push(
-            false,
-            format!("{} 推送失败 [{}]: {}", peer.ip(), code.as_u16(), msg),
-        ),
+        Err((code, msg)) => {
+            crate::proxy::server::request_id::record(
+                "POST /push",
+                false,
+                push_started.elapsed().as_millis() as u64,
+            );
+            data.state.record_push(
+                false,
+                format!("{} 推送失败 [{}]: {}", peer.ip(), code.as_u16(), msg),
+            );
+            // 失败必须允许重试，不能被去重窗口挡住。
+            push_dedupe_forget(&dedupe_key);
+        }
     }
     let (written, reload) = result?;
+    crate::proxy::server::request_id::record(
+        "POST /push",
+        true,
+        push_started.elapsed().as_millis() as u64,
+    );
     Ok(Json(json!({
         "ok": true,
+        "requestId": request_id,
         "certificateId": certificate_id,
         "written": written,
         "reload": reload,
@@ -488,6 +541,100 @@ fn lower_md5(s: &str) -> String {
     format!("{:x}", md5::compute(s.as_bytes()))
 }
 
+/// 恒定时间字符串比较，避免用 `==` 的提前退出泄露签名前缀（AUDIT-007）。
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// 5 分钟有效期内的签名重放缓存：同一签名在同一时间戳下只允许成功一次。
+/// 容量有界，定期清理过期项；防止抓包后重放拉取证书（AUDIT-007）。
+fn replay_seen() -> &'static std::sync::Mutex<std::collections::HashMap<String, u128>> {
+    static SEEN: OnceLock<std::sync::Mutex<std::collections::HashMap<String, u128>>> =
+        OnceLock::new();
+    SEEN.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// 推送去重窗口（AUDIT-014）：TTL 内相同 (certificate_id, 内容摘要) 直接
+/// 返回上次结果，避免推送方超时重试造成重复写证书与重复 reload。
+fn push_recent() -> &'static std::sync::Mutex<std::collections::HashMap<String, (u128, String)>> {
+    static RECENT: OnceLock<std::sync::Mutex<std::collections::HashMap<String, (u128, String)>>> =
+        OnceLock::new();
+    RECENT.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+const PUSH_DEDUPE_WINDOW_MS: u128 = 60_000;
+
+fn push_dedupe_key(id: &str, body: &PushBody) -> String {
+    // CertificatePush 只派生 Deserialize；用公开字段拼摘要，避免改共享 crate 的 derive。
+    let payload = format!(
+        "{}|{}|{}|{}|{}|{}",
+        body.domain,
+        body.domains.join(","),
+        body.cert,
+        body.key,
+        body.ca,
+        body.expired_time
+    );
+    format!("{}:{:x}", id, md5::compute(payload.as_bytes()))
+}
+
+/// 返回 true 表示这是窗口内的重复推送，调用方应直接返回成功而不重复部署。
+/// 首次推送会先占位，失败时调用 `push_dedupe_forget` 移除以便重试。
+fn push_dedupe_check(key: &str, now: u128) -> bool {
+    let mut recent = push_recent().lock().unwrap_or_else(|e| e.into_inner());
+    recent.retain(|_, (ts, _)| now.abs_diff(*ts) <= PUSH_DEDUPE_WINDOW_MS);
+    if recent.contains_key(key) {
+        return true;
+    }
+    recent.insert(key.to_string(), (now, String::new()));
+    false
+}
+
+fn push_dedupe_forget(key: &str) {
+    if let Ok(mut recent) = push_recent().lock() {
+        recent.remove(key);
+    }
+}
+
+fn replay_is_duplicate(sign: &str, ts: u128) -> bool {
+    let mut seen = replay_seen().lock().unwrap_or_else(|e| e.into_inner());
+    seen.retain(|_, t| {
+        ts.abs_diff(*t) <= crate::commands::foundation::defaults::timestamp::VALID_WINDOW_MS
+    });
+    let key = format!("{}:{}", sign, ts);
+    if seen.contains_key(&key) {
+        return true;
+    }
+    seen.insert(key, ts);
+    false
+}
+
+/// 时间戳必须为毫秒（13 位左右）。秒级时间戳会被判「已过期」而难以排查，
+/// 这里提前给出明确单位错误（AUDIT-046）。
+fn timestamp_unit_error(ts: u128, now: u128) -> Option<&'static str> {
+    const MS_MIN: u128 = 1_000_000_000_000; // 2001-09-09 之后
+    if ts < MS_MIN {
+        let as_ms = ts.saturating_mul(1000);
+        let diff = if as_ms > now {
+            as_ms - now
+        } else {
+            now - as_ms
+        };
+        if diff <= 5 * 60 * 1000 {
+            return Some("timestamp 必须是毫秒（13 位），当前看起来像秒级时间戳");
+        }
+    }
+    None
+}
+
 async fn get_certificate(
     State(data): State<Arc<AppData>>,
     Query(q): Query<ApiQuery>,
@@ -504,6 +651,9 @@ async fn get_certificate(
         .parse()
         .map_err(|_| (StatusCode::BAD_REQUEST, "timestamp 无效".into()))?;
     let now = now_ms();
+    if let Some(hint) = timestamp_unit_error(ts, now) {
+        return Err((StatusCode::BAD_REQUEST, hint.into()));
+    }
     let diff = if ts > now { ts - now } else { now - ts };
     if diff > 5 * 60 * 1000 {
         return Err((
@@ -527,10 +677,16 @@ async fn get_certificate(
         .collect::<Vec<_>>()
         .join("&");
     let expect = lower_md5(&string_for_sign);
-    if q.sign.to_lowercase() != expect {
+    if !constant_time_eq(&q.sign.to_lowercase(), &expect) {
         data.state
             .log(format!("拉取 {} 失败：签名校验不通过", q.certificate_id));
         return Err((StatusCode::UNAUTHORIZED, "签名校验失败".into()));
+    }
+    // 校验通过后再记重放，避免用错误签名污染缓存。
+    if replay_is_duplicate(&q.sign.to_lowercase(), ts) {
+        data.state
+            .log(format!("拉取 {} 失败：请求已重放", q.certificate_id));
+        return Err((StatusCode::UNAUTHORIZED, "请求已失效，请重新发起".into()));
     }
     let _ = q.api_key; // 请求里可以不带 apiKey，只参与签名
 
@@ -546,9 +702,10 @@ async fn get_certificate(
         tokio::task::spawn_blocking(move || cert_deployment::reading::read_certificate(&root, &id))
             .await
             .map_err(|e| {
+                data.state.log(format!("读取证书任务异常: {e}"));
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("读取证书任务异常: {e}"),
+                    "读取证书失败，请稍后重试（E-READ）".into(),
                 )
             })?
             .map_err(|e| {

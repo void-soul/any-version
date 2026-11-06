@@ -30,7 +30,7 @@ import { graphScope, hopFade } from "../utils/graphScope";
 import { treeLayout } from "../utils/treeLayout";
 import EdgeStyleSelect from "./shared/EdgeStyleSelect";
 import GraphLookPrefs from "./shared/GraphLookPrefs";
-import type { JsonValue, SearchMatches } from "./SystemTools/JsonBrowser";
+import type { JsonValue, SearchMatches } from "../contracts/jsonBrowser";
 import { flattenTreeRows } from "./SystemTools/JsonBrowser.tree";
 
 type JsonGraphItem = {

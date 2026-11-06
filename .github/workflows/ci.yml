@@ -25,11 +25,21 @@ jobs:
       # 锁文件漂移设防：与本地 lockfile 不一致时直接失败。
       - run: pnpm install --frozen-lockfile
       - run: pnpm check:architecture
+      - run: pnpm check:catches
       - run: pnpm exec tsc --noEmit
       - run: pnpm test
+      - run: pnpm test:coverage
+      # 跨端 DTO 契约：Rust serde wire format 与 TS interface / invoke 入参。
+      # 脚本从自身位置推导仓库根，不依赖开发机绝对路径；--strict 下真实错配直接失败。
+      - name: wire format contract gate
+        run: python3 scripts/wire-format-audit.py --strict
       # 依赖漏洞扫描：生产依赖存在 high/critical 漏洞时阻断。
       - name: pnpm audit (production)
         run: pnpm audit --prod --audit-level=high
+      # 全量依赖（含 dev）的 moderate 级漏洞报告，避免只扫 --prod 时漏掉测试工具链。
+      - name: pnpm audit (all, report)
+        run: pnpm audit --audit-level=moderate
+        continue-on-error: true
 
   backend:
     # AnyVersion 是 Windows-only 应用（基于 WebView2），在 Windows runner 上编译检查
@@ -53,11 +63,22 @@ jobs:
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
       - name: certificate deployment core tests
         run: cargo test --locked --manifest-path crates/cert-deployment/Cargo.toml
-      # 软性检查：clippy / fmt 仅报告不阻断 CI（应用项目不过度追求零 lint warning）。
+      # 依赖漏洞扫描（Rust 侧）：仓库有两个独立 Cargo.lock（主程序 + 证书 crate），
+      # 逐个显式扫描，避免只扫仓库根时漏掉 crates/cert-deployment。
+      - uses: taiki-e/install-action@cargo-audit
+      - name: cargo audit (main)
+        run: cargo audit --file src-tauri/Cargo.lock
+      - name: cargo audit (cert-deployment)
+        run: cargo audit --file crates/cert-deployment/Cargo.lock
+      # 增量格式闸：存量未格式化文件在 scripts/rustfmt-baseline.txt 白名单内，
+      # 任何新增/新改动的 Rust 文件未格式化都会失败（避免全库格式化产生无关 diff）。
+      - name: rustfmt (incremental gate)
+        run: python scripts/check-rustfmt-incremental.py
+      # 锁中毒：生产路径禁止裸 .lock().unwrap()（AUDIT-043）。
+      - name: lock poisoning gate
+        run: python scripts/check-lock-poisoning.py
+      # 软性检查：clippy 仅报告不阻断 CI（应用项目不过度追求零 lint warning）。
       - name: cargo clippy (report only)
         run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -W warnings
-        continue-on-error: true
-      - name: cargo fmt (report only)
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
         continue-on-error: true
 

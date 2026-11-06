@@ -1,3 +1,4 @@
+import { reportInvokeError, ignoreInvokeError } from "../../utils/invokeOrReport";
 import { trimDebugLogs } from "./debugLogBudget";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -332,9 +333,7 @@ export function useWsDebugger() {
       const id = activeIdRef.current;
       activeIdRef.current = "";
       if (id) {
-        void invoke("wstool_disconnect", { id }).catch(() => {
-          /* 卸载路径，失败无可上报 */
-        });
+        void invoke("wstool_disconnect", { id }).catch((e) => ignoreInvokeError(e, "卸载路径，失败无可上报"));
       }
     };
   }, [clearReconnectTimer, recordLog, rememberTarget, scheduleReconnect]);
@@ -425,7 +424,7 @@ export function useWsDebugger() {
       }
       // 连接过程中用户切了协议 / 点了断开：后端会话可能刚好建成，补一次清理
       if (!alive.current || connectEpochRef.current !== epoch) {
-        await invoke("wstool_disconnect", { id }).catch(() => {});
+        await invoke("wstool_disconnect", { id }).catch((e) => { reportInvokeError(e, "src/components/devtools/useWsDebugger.ts:428"); });
         return;
       }
       if (activeIdRef.current === id) { connectedRef.current = true; setConnected(true); setConnectedAt((previous) => previous ?? Date.now()); }

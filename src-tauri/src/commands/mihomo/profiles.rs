@@ -3,7 +3,11 @@ use super::*;
 // ---- Profiles ----
 #[tauri::command]
 pub fn mihomo_get_profile_config(state: State<'_, MihomoState>) -> ProfileConfig {
-    state.profile_config.lock().unwrap().clone()
+    state
+        .profile_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
 }
 #[tauri::command]
 pub fn mihomo_set_profile_config(
@@ -12,7 +16,10 @@ pub fn mihomo_set_profile_config(
     cfg: ProfileConfig,
 ) -> Result<(), String> {
     save_profile_config(&state.data_dir, &cfg).ok();
-    *state.profile_config.lock().unwrap() = cfg;
+    *state
+        .profile_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = cfg;
     emit_state(&app, &state);
     Ok(())
 }
@@ -24,7 +31,7 @@ pub fn mihomo_get_profile_item(
     state
         .profile_config
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .items
         .iter()
         .find(|i| i.id == id)
@@ -33,7 +40,10 @@ pub fn mihomo_get_profile_item(
 }
 #[tauri::command]
 pub fn mihomo_get_profile_str(state: State<'_, MihomoState>, id: String) -> Result<String, String> {
-    let pc = state.profile_config.lock().unwrap();
+    let pc = state
+        .profile_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let item = pc
         .items
         .iter()
@@ -48,7 +58,10 @@ pub fn mihomo_get_profile_file_path(
     state: State<'_, MihomoState>,
     id: String,
 ) -> Result<String, String> {
-    let pc = state.profile_config.lock().unwrap();
+    let pc = state
+        .profile_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let item = pc
         .items
         .iter()
@@ -76,7 +89,10 @@ pub fn mihomo_set_profile_str(
     content: String,
 ) -> Result<(), String> {
     let mut cfg = {
-        let pc = state.profile_config.lock().unwrap();
+        let pc = state
+            .profile_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let item = pc
             .items
             .iter()
@@ -89,7 +105,10 @@ pub fn mihomo_set_profile_str(
         it.updated_at = Some(now_secs());
     }
     save_profile_config(&state.data_dir, &cfg).ok();
-    *state.profile_config.lock().unwrap() = cfg;
+    *state
+        .profile_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = cfg;
     Ok(())
 }
 #[tauri::command]
@@ -98,13 +117,20 @@ pub fn mihomo_add_profile(
     state: State<'_, MihomoState>,
     item: ProfileItem,
 ) -> Result<(), String> {
-    let mut cfg = state.profile_config.lock().unwrap().clone();
+    let mut cfg = state
+        .profile_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     if cfg.items.iter().any(|i| i.id == item.id) {
         return Err("id 已存在".into());
     }
     cfg.items.push(item);
     save_profile_config(&state.data_dir, &cfg).ok();
-    *state.profile_config.lock().unwrap() = cfg;
+    *state
+        .profile_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = cfg;
     emit_state(&app, &state);
     Ok(())
 }
@@ -114,13 +140,20 @@ pub fn mihomo_remove_profile(
     state: State<'_, MihomoState>,
     id: String,
 ) -> Result<(), String> {
-    let mut cfg = state.profile_config.lock().unwrap().clone();
+    let mut cfg = state
+        .profile_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     cfg.items.retain(|i| i.id != id);
     if cfg.current == id {
         cfg.current = cfg.items.first().map(|i| i.id.clone()).unwrap_or_default();
     }
     save_profile_config(&state.data_dir, &cfg).ok();
-    *state.profile_config.lock().unwrap() = cfg;
+    *state
+        .profile_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = cfg;
     emit_state(&app, &state);
     Ok(())
 }
@@ -130,14 +163,21 @@ pub fn mihomo_update_profile(
     state: State<'_, MihomoState>,
     item: ProfileItem,
 ) -> Result<(), String> {
-    let mut cfg = state.profile_config.lock().unwrap().clone();
+    let mut cfg = state
+        .profile_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     if let Some(it) = cfg.items.iter_mut().find(|i| i.id == item.id) {
         *it = item;
     } else {
         cfg.items.push(item);
     }
     save_profile_config(&state.data_dir, &cfg).ok();
-    *state.profile_config.lock().unwrap() = cfg;
+    *state
+        .profile_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = cfg;
     emit_state(&app, &state);
     Ok(())
 }
@@ -159,17 +199,21 @@ pub async fn switch_current_profile(
     if !inner
         .profile_config
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .items
         .iter()
         .any(|i| i.id == id)
     {
         return Err("profile 不存在".into());
     }
-    let mut app_config = inner.app_config.lock().unwrap().clone();
+    let mut app_config = inner
+        .app_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     app_config.current_profile = id.to_string();
     save_app_config(&inner.data_dir, &app_config).ok();
-    *inner.app_config.lock().unwrap() = app_config;
+    *inner.app_config.lock().unwrap_or_else(|e| e.into_inner()) = app_config;
     emit_state(app, inner);
     if !inner.stop_flag.load(Ordering::SeqCst) {
         reload_config(app, Arc::clone(inner)).await?;

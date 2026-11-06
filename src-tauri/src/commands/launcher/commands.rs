@@ -319,10 +319,88 @@ pub async fn launcher_extract_icon(path: String) -> Result<Option<String>, Strin
 ///
 /// - 读取 `LauncherSetting.external_editor`；未配置时回退 `launcher_reveal_file`
 ///   （资源管理器定位，与旧行为一致）。
-/// - 编辑器命令包含 `{file}` 占位符 → 整行经 `cmd /C` 执行（支持 PATH 命令、
-///   自带参数与引号组合）；不含占位符 → 编辑器作为可执行文件直接 spawn，
+/// - 编辑器命令包含 `{file}` 占位符 → 拆成「程序 + 参数数组」直接 spawn，
+///   不经过 shell；不含占位符 → 编辑器作为可执行文件直接 spawn，
 ///   文件路径追加为最后一个参数。
 /// - 编辑器不存在/启动失败时返回错误，前端可提示改用资源管理器定位。
+/// 按 shell 词法把命令行模板拆成参数数组（支持双引号），并把 `{file}` 占位符
+/// 替换为真实路径。返回值是 (可执行程序, 参数列表)，**不经过任何 shell**。
+///
+/// 这样路径里的空格、`%VAR%`、`!VAR!`、`^`、`&` 都只作为普通字符传给编辑器，
+/// 不会被 cmd.exe 展开或拆成多条命令（AUDIT-045）。
+fn parse_editor_template(template: &str, file: &str) -> Result<(String, Vec<String>), String> {
+    let mut tokens: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut started = false;
+    for ch in template.chars() {
+        match ch {
+            '"' => {
+                in_quotes = !in_quotes;
+                started = true;
+            }
+            c if c.is_whitespace() && !in_quotes => {
+                if started {
+                    tokens.push(std::mem::take(&mut current));
+                    started = false;
+                }
+            }
+            c => {
+                current.push(c);
+                started = true;
+            }
+        }
+    }
+    if in_quotes {
+        return Err("编辑器模板的引号未闭合".into());
+    }
+    if started {
+        tokens.push(current);
+    }
+    let mut parts = tokens.into_iter().map(|t| t.replace("{file}", file));
+    let program = parts
+        .next()
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| "编辑器模板缺少可执行程序".to_string())?;
+    Ok((program, parts.collect()))
+}
+
+#[cfg(test)]
+mod editor_template_tests {
+    use super::parse_editor_template;
+
+    #[test]
+    fn quoted_program_and_flags_are_split_without_a_shell() {
+        let (prog, args) = parse_editor_template(
+            r#""C:\Program Files\Editor\app.exe" --reuse {file} --line=3"#,
+            r"C:\data\report & summary%2026%.md",
+        )
+        .unwrap();
+        assert_eq!(prog, r"C:\Program Files\Editor\app.exe");
+        assert_eq!(
+            args,
+            vec![
+                "--reuse",
+                r"C:\data\report & summary%2026%.md",
+                "--line=3",
+            ]
+        );
+    }
+
+    #[test]
+    fn placeholder_inside_a_flag_stays_one_argument() {
+        let (prog, args) = parse_editor_template("editor --file={file}", "C:\\a b\\c.md").unwrap();
+        assert_eq!(prog, "editor");
+        assert_eq!(args, vec!["--file=C:\\a b\\c.md"]);
+    }
+
+    #[test]
+    fn malformed_templates_are_rejected() {
+        assert!(parse_editor_template(r#""unclosed {file}"#, "x").is_err());
+        assert!(parse_editor_template("   ", "x").is_err());
+    }
+}
+
 #[tauri::command]
 pub async fn launcher_open_with_editor(path: String) -> Result<(), String> {
     use std::process::Command;
@@ -347,25 +425,19 @@ pub async fn launcher_open_with_editor(path: String) -> Result<(), String> {
         editor, canonical
     ));
     if editor.contains("{file}") {
-        // 命令行模板模式：{file} 替换为带引号的绝对路径后整行执行
-        let line = editor.replace("{file}", &format!("\"{}\"", canonical));
+        // 模板拆成「程序 + 参数数组」，直接 Command::new(prog).args(...)。
+        // 旧实现把整行交给 cmd /C（或 sh -c），Windows 文件名里的 % / ! / ^ / &
+        // 会被 shell 展开或拼出额外命令（AUDIT-045）。
+        let (program, args) = parse_editor_template(&editor, &canonical)?;
+        let mut cmd = Command::new(&program);
+        cmd.args(&args);
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
-            Command::new("cmd.exe")
-                .raw_arg(format!("/C {}", line))
-                .creation_flags_detached()
-                .spawn()
-                .map_err(|e| format!("启动编辑器失败: {}", e))?;
+            cmd.creation_flags_detached();
         }
-        #[cfg(not(windows))]
-        {
-            Command::new("sh")
-                .arg("-c")
-                .arg(line.replace(&format!("\"{}\"", canonical), &canonical))
-                .spawn()
-                .map_err(|e| format!("启动编辑器失败: {}", e))?;
-        }
+        cmd.spawn()
+            .map_err(|e| format!("启动编辑器失败（{}）: {}", program, e))?;
     } else {
         // 直接程序模式：编辑器作为可执行文件，文件路径作为参数
         let mut cmd = Command::new(&editor);

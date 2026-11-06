@@ -12,10 +12,41 @@ use std::sync::Mutex;
 
 use std::time::SystemTime;
 
+/// 返回可用的日志文件路径。
+///
+/// 安装到 `C:\Program Files\...` 时 exe 同级目录通常不可写，而
+/// `windows_subsystem = "windows"` 下 stderr 不可见 —— 两个通道同时失效，
+/// 最需要日志的「无法退出」故障会零诊断（AUDIT-017）。
+/// 因此优先尝试 exe 同级，失败则回退到应用数据目录（%APPDATA%/kira）。
 fn log_path() -> Option<std::path::PathBuf> {
-    let mut dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    dir.push("exit.log");
-    Some(dir)
+    if let Some(mut path) = std::env::current_exe()
+        .ok()?
+        .parent()
+        .map(|p| p.join("exit.log"))
+    {
+        if is_writable(&path) {
+            return Some(path);
+        }
+        path = crate::commands::foundation::get_data_dir().join("exit.log");
+        if is_writable(&path) {
+            return Some(path);
+        }
+    }
+    // 最后兜底：系统临时目录也写不进去时，至少 stderr 已由调用方输出。
+    Some(std::env::temp_dir().join("kira-exit.log"))
+}
+
+fn is_writable(path: &std::path::Path) -> bool {
+    if let Some(parent) = path.parent() {
+        if std::fs::create_dir_all(parent).is_err() {
+            return false;
+        }
+    }
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .is_ok()
 }
 
 /// 追加一行带时间戳的退出诊断日志。同步写入并立即 flush，绝不阻塞调用方。
@@ -34,10 +65,32 @@ pub fn exit_log(msg: &str) {
     eprint!("{}", line);
 
     if let Some(path) = log_path() {
-        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
-            let _ = f.write_all(line.as_bytes());
-            let _ = f.flush();
+        match OpenOptions::new().create(true).append(true).open(&path) {
+            Ok(mut f) => {
+                if let Err(e) = f.write_all(line.as_bytes()).and_then(|_| f.flush()) {
+                    eprintln!("[exit-log] 写入 {} 失败: {e}", path.display());
+                }
+            }
+            Err(e) => eprintln!("[exit-log] 打开 {} 失败: {e}", path.display()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_path_is_writable_or_falls_back_to_temp() {
+        let path = log_path().expect("应始终返回可尝试的路径");
+        assert!(path.file_name().is_some());
+        assert!(is_writable(&path) || path.starts_with(std::env::temp_dir()));
+    }
+
+    #[test]
+    fn is_writable_rejects_impossible_paths() {
+        let impossible = std::path::Path::new("/dev/null/impossible/exit.log");
+        assert!(!is_writable(impossible) || cfg!(windows));
     }
 }
 

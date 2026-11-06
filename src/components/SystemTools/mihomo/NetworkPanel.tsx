@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../../utils/invokeOrReport";
 // 网络信息页 —— 1:1 复刻 clash-party src/renderer/src/pages/network.tsx
 // （出口 IP 直连/经代理 · 延迟测试 · 网络拓扑 · 网卡枚举）
 // 视觉主题改用 Kira 的 emerald/glass 风格；拓扑改为无依赖的可折叠树（功能等价）
@@ -276,8 +277,7 @@ export default function NetworkPanel() {
     try {
       const r: any = await mihomoApi.getInterfaces(force);
       setInterfaces(Array.isArray(r?.items) ? r.items : []);
-    } catch {
-    } finally {
+    } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/NetworkPanel.tsx:279"); } finally {
       setLoadingItf(false);
     }
   }, []);
@@ -291,7 +291,7 @@ export default function NetworkPanel() {
         if (Array.isArray(extra.networkLatencyTargets) && extra.networkLatencyTargets.length)
           setLatencyTargets(extra.networkLatencyTargets);
         if (typeof extra.networkHideIp === "boolean") setHideIp(extra.networkHideIp);
-      } catch {}
+      } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/NetworkPanel.tsx:294"); }
     })();
     refreshIp();
     refreshInterfaces();
@@ -306,7 +306,7 @@ export default function NetworkPanel() {
         const info: any = await mihomoApi.getConnections();
         if (!alive) return;
         setConnections(info?.connections ?? []);
-      } catch {}
+      } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/NetworkPanel.tsx:309"); }
     };
     tick();
     const id = setInterval(tick, CONN_REFRESH_MS);
@@ -397,11 +397,11 @@ export default function NetworkPanel() {
     setLatencyResults({});
   };
   const persistTargets = (arr: typeof latencyTargets) => {
-    mihomoApi.patchAppConfig({ extra: { networkLatencyTargets: arr } }).catch(() => {});
+    mihomoApi.patchAppConfig({ extra: { networkLatencyTargets: arr } }).catch((e) => { reportInvokeError(e, "src/components/SystemTools/mihomo/NetworkPanel.tsx:400"); });
   };
 
   const copy = (text: string) => {
-    navigator.clipboard?.writeText(text).catch(() => {});
+    navigator.clipboard?.writeText(text).catch((e) => { reportInvokeError(e, "src/components/SystemTools/mihomo/NetworkPanel.tsx:404"); });
   };
 
   const renderIpCard = (type: "direct" | "proxy") => (
@@ -463,7 +463,7 @@ export default function NetworkPanel() {
               onClick={() => {
                 setHideIp((h) => {
                   const v = !h;
-                  mihomoApi.patchAppConfig({ extra: { networkHideIp: v } }).catch(() => {});
+                  mihomoApi.patchAppConfig({ extra: { networkHideIp: v } }).catch((e) => { reportInvokeError(e, "src/components/SystemTools/mihomo/NetworkPanel.tsx:466"); });
                   return v;
                 });
               }}

@@ -48,6 +48,75 @@ fn config_validate_rejects_obviously_wrong_values() {
 }
 
 #[test]
+fn defaults_bind_loopback_and_use_app_data_dir() {
+    let c = CertReceiverConfig::default();
+    assert!(c.listen_addr.starts_with("127.0.0.1:"), "{}", c.listen_addr);
+    assert!(!c.listen_addr.starts_with("0.0.0.0"), "{}", c.listen_addr);
+    // 关键是不再写死 C:\certs，而不是「不能在 C 盘」（用户数据目录可能就在 C 盘）。
+    assert_ne!(c.output_dir, "C:\\certs", "{}", c.output_dir);
+    assert!(c.output_dir.ends_with("certs"), "{}", c.output_dir);
+    assert!(!c.token.is_empty() && !c.api_key.is_empty());
+    assert_eq!(c.token.len(), 32);
+}
+
+#[test]
+fn non_loopback_listen_requires_strong_token() {
+    let mut c = CertReceiverConfig::default();
+    c.listen_addr = "0.0.0.0:9000".into();
+    c.token = "123".into();
+    assert!(c.validate().unwrap_err().contains("至少 16 位"));
+    c.token = "1234567890123456".into();
+    assert!(c.validate().unwrap_err().contains("弱 Token"));
+    c.token = "a-strong-random-token-0123456789".into();
+    assert!(c.validate().is_ok(), "{:?}", c.validate());
+}
+
+#[test]
+fn empty_signing_key_is_rejected() {
+    let mut c = CertReceiverConfig::default();
+    c.api_key = String::new();
+    assert!(c.validate().unwrap_err().contains("签名密钥"));
+}
+
+#[test]
+fn constant_time_eq_handles_length_and_content() {
+    assert!(constant_time_eq("abcdef", "abcdef"));
+    assert!(!constant_time_eq("abcdef", "abcdeg"));
+    assert!(!constant_time_eq("abc", "abcdef"));
+    assert!(!constant_time_eq("", "a"));
+    assert!(constant_time_eq("", ""));
+}
+
+#[test]
+fn replay_is_detected_within_window() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    // 用唯一签名避免与同进程其它测试串扰
+    let sign = format!("sign-{}", now);
+    assert!(!replay_is_duplicate(&sign, now));
+    assert!(replay_is_duplicate(&sign, now));
+    assert!(!replay_is_duplicate(&format!("{sign}-other"), now));
+}
+
+#[test]
+fn second_precision_timestamp_is_rejected_with_unit_hint() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let seconds = now / 1000;
+    assert_eq!(
+        timestamp_unit_error(seconds, now),
+        Some("timestamp 必须是毫秒（13 位），当前看起来像秒级时间戳")
+    );
+    assert_eq!(timestamp_unit_error(now, now), None);
+}
+
+#[test]
 fn legacy_toml_migration_keeps_old_fields() {
     let dir = std::env::temp_dir().join(format!("kira-certrecv-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
@@ -135,7 +204,11 @@ fn server_exit_is_not_reported_as_running() {
     finished.store(true, Ordering::SeqCst);
     assert!(!st.status().running);
     st.stop_server().unwrap();
-    assert!(st.server.lock().unwrap().is_none());
+    assert!(st
+        .server
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_none());
 }
 
 #[test]
@@ -184,7 +257,7 @@ fn stopping_remains_running_until_exit_is_confirmed() {
     assert!(st
         .server
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .as_ref()
         .unwrap()
         .shutdown
@@ -192,5 +265,9 @@ fn stopping_remains_running_until_exit_is_confirmed() {
     done.send(()).unwrap();
     worker.join().unwrap().unwrap();
     assert!(!st.status().running);
-    assert!(st.server.lock().unwrap().is_none());
+    assert!(st
+        .server
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_none());
 }

@@ -540,7 +540,13 @@ pub async fn download_bin_assets(app: tauri::AppHandle) -> Result<(), String> {
     let mut downloaded: u64 = 0;
     let start = std::time::Instant::now();
 
-    while let Some(item) = stream.next().await {
+    // 逐块 idle 超时：对端停止发送数据时不能无限等待（AUDIT-031）。
+    // 不用整体 timeout，因为大文件下载允许很长时间，只要持续有数据即可。
+    const CHUNK_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+    while let Some(item) = tokio::time::timeout(CHUNK_IDLE_TIMEOUT, stream.next())
+        .await
+        .map_err(|_| "下载超时：30 秒未收到数据，请检查网络后重试".to_string())?
+    {
         let chunk = item.map_err(|e| e.to_string())?;
         std::io::Write::write_all(&mut file, &chunk).map_err(|e| e.to_string())?;
         downloaded += chunk.len() as u64;

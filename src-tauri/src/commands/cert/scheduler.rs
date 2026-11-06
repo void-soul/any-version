@@ -17,7 +17,7 @@ pub fn start_scheduler(app: tauri::AppHandle) {
             // 读取间隔（短锁，不跨 await）
             let interval = {
                 let st = app.state::<CertScheduler>();
-                let s = st.state.lock().unwrap();
+                let s = st.state.lock().unwrap_or_else(|e| e.into_inner());
                 s.interval_minutes
             };
             let delay_secs = if first {
@@ -31,7 +31,7 @@ pub fn start_scheduler(app: tauri::AppHandle) {
             // 收集本周期需要续期的证书（短锁，不跨 await）
             let due_certs: Vec<String> = {
                 let st = app.state::<CertScheduler>();
-                let s = st.state.lock().unwrap();
+                let s = st.state.lock().unwrap_or_else(|e| e.into_inner());
                 if !s.enabled {
                     Vec::new()
                 } else {
@@ -87,7 +87,7 @@ pub fn start_scheduler(app: tauri::AppHandle) {
                 let deployment_failed = result.as_ref().is_ok_and(|r| r.deployment.fail_count > 0);
                 {
                     let st = app.state::<CertScheduler>();
-                    let mut s = st.state.lock().unwrap();
+                    let mut s = st.state.lock().unwrap_or_else(|e| e.into_inner());
                     s.push_log(SchedulerLogEntry {
                         at: Utc::now().to_rfc3339(),
                         cert_id: id.clone(),
@@ -120,7 +120,12 @@ pub fn start_scheduler(app: tauri::AppHandle) {
 
             // A fresh certificate is no longer due for issuance. Retry failed local deployments
             // from its existing PEM on later cycles, without requesting another ACME certificate.
-            let retry_enabled = app.state::<CertScheduler>().state.lock().unwrap().enabled;
+            let retry_enabled = app
+                .state::<CertScheduler>()
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .enabled;
             if retry_enabled {
                 super::local_retry::retry_local_deployments(&app, &due_certs).await;
             }
@@ -128,7 +133,7 @@ pub fn start_scheduler(app: tauri::AppHandle) {
             // 到期扫描后顺带检查外部域名证书（同一调度周期）
             let scheduler_enabled = {
                 let st = app.state::<CertScheduler>();
-                let s = st.state.lock().unwrap();
+                let s = st.state.lock().unwrap_or_else(|e| e.into_inner());
                 s.enabled
             };
             if scheduler_enabled {
@@ -139,7 +144,7 @@ pub fn start_scheduler(app: tauri::AppHandle) {
 
             // 更新运行时间（短锁）
             let st = app.state::<CertScheduler>();
-            let mut s = st.state.lock().unwrap();
+            let mut s = st.state.lock().unwrap_or_else(|e| e.into_inner());
             let now = Utc::now();
             s.last_run_at = Some(now.to_rfc3339());
             s.next_run_at = Some((now + Duration::minutes(interval as i64)).to_rfc3339());
@@ -152,7 +157,7 @@ fn scheduler_error(app: &tauri::AppHandle, message: String) {
     app.state::<CertScheduler>()
         .state
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .push_log(SchedulerLogEntry {
             at: Utc::now().to_rfc3339(),
             cert_id: String::new(),

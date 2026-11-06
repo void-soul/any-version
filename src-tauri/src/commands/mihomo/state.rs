@@ -25,8 +25,16 @@ pub struct MihomoInner {
 
 impl MihomoInner {
     pub fn current_profile(&self) -> ProfileItem {
-        let id = self.app_config.lock().unwrap().current_profile.clone();
-        let pc = self.profile_config.lock().unwrap();
+        let id = self
+            .app_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .current_profile
+            .clone();
+        let pc = self
+            .profile_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(p) = pc.items.iter().find(|i| i.id == id) {
             return p.clone();
         }
@@ -106,7 +114,7 @@ pub(super) fn get_u64(v: &Value, k: &str) -> Option<u64> {
 
 pub(super) fn refresh_core_version(inner: &MihomoInner) {
     let core = {
-        let cfg = inner.app_config.lock().unwrap();
+        let cfg = inner.app_config.lock().unwrap_or_else(|e| e.into_inner());
         resolve_core_path(&cfg)
     };
     eprintln!(
@@ -115,7 +123,7 @@ pub(super) fn refresh_core_version(inner: &MihomoInner) {
         core.exists()
     );
     if !core.exists() {
-        *inner.core_version.lock().unwrap() = None;
+        *inner.core_version.lock().unwrap_or_else(|e| e.into_inner()) = None;
         return;
     }
     // 运行 -v 获取版本号（mihomo 不支持 --version，且可能把版本信息打到 stderr）。
@@ -154,14 +162,15 @@ pub(super) fn refresh_core_version(inner: &MihomoInner) {
                         line.clone()
                     }
                 });
-            *inner.core_version.lock().unwrap() = Some(version);
+            *inner.core_version.lock().unwrap_or_else(|e| e.into_inner()) = Some(version);
         }
         Err(e) => {
             eprintln!(
                 "[mihomo] -v 运行失败: {:?}，但核心文件存在，标记为已安装",
                 e
             );
-            *inner.core_version.lock().unwrap() = Some("已安装".to_string());
+            *inner.core_version.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some("已安装".to_string());
         }
     }
 }
@@ -171,8 +180,12 @@ pub(super) fn build_state_view(inner: &MihomoInner) -> MihomoStateView {
     // 对同一个 Mutex 重复 lock 会死锁，因此这里每个锁都只取一次并提前释放。
     // 锁顺序与 launch_core 保持一致（先 app_config 后 child），避免跨锁顺序反转。
     let (running, pid) = {
-        let mixed_port = inner.app_config.lock().unwrap().mixed_port;
-        let g = inner.child.lock().unwrap();
+        let mixed_port = inner
+            .app_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .mixed_port;
+        let g = inner.child.lock().unwrap_or_else(|e| e.into_inner());
         let child_running = g.as_ref().map(|c| c.id() > 0).unwrap_or(false)
             && !inner.stop_flag.load(Ordering::SeqCst);
         // running 判断与 launch_core 幂等检测一致（child 或端口监听），
@@ -183,10 +196,22 @@ pub(super) fn build_state_view(inner: &MihomoInner) -> MihomoStateView {
             g.as_ref().map(|c| c.id() as i64),
         )
     };
-    let app_config = inner.app_config.lock().unwrap().clone();
+    let app_config = inner
+        .app_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     let installed = resolve_core_path(&app_config).exists();
-    let core_version = inner.core_version.lock().unwrap().clone();
-    let runtime_config = inner.runtime_config_str.lock().unwrap().clone();
+    let core_version = inner
+        .core_version
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let runtime_config = inner
+        .runtime_config_str
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     let is_admin = crate::commands::mihomo::manager::is_admin();
     let mut warnings: Vec<String> = Vec::new();
     if app_config.tun_enabled && !is_admin {
@@ -200,7 +225,14 @@ pub(super) fn build_state_view(inner: &MihomoInner) -> MihomoStateView {
             resolve_core_path(&app_config).display()
         ));
     }
-    warnings.extend(inner.runtime_warnings.lock().unwrap().iter().cloned());
+    warnings.extend(
+        inner
+            .runtime_warnings
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .cloned(),
+    );
     MihomoStateView {
         installed,
         core_version,

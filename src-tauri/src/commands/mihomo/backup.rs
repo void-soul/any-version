@@ -145,7 +145,7 @@ fn dav_of(state: &State<'_, MihomoState>) -> Result<Dav, String> {
     // 注意：WebDAV 三个凭据是 AppConfig 的 snake_case 字段，不是 extra 里的驼峰键。
     // 之前读 `webdavUrl` / `webdavUsername` / `webdavPassword`，永远取不到值，
     // WebDAV 备份在界面上无论怎么配都只会报「未配置 WebDAV 地址」。
-    let app = state.app_config.lock().unwrap();
+    let app = state.app_config.lock().unwrap_or_else(|e| e.into_inner());
     let url = app.webdav_url.trim().to_string();
     if url.is_empty() {
         return Err("未配置 WebDAV 地址".into());
@@ -171,10 +171,10 @@ fn dav_of(state: &State<'_, MihomoState>) -> Result<Dav, String> {
 /// 备份覆盖了 app/controled/profile/override 四份 JSON，但 MihomoInner 里是启动时
 /// 载入的内存副本；不重载的话，即使前端重启内核，用的仍是恢复前的旧配置。
 fn reload_state_from_disk(state: &State<'_, MihomoState>) {
-    *state.app_config.lock().unwrap() = crate::commands::mihomo::config::load_app_config(&state.data_dir);
-    *state.controled_config.lock().unwrap() = crate::commands::mihomo::config::load_controled(&state.data_dir);
-    *state.profile_config.lock().unwrap() = crate::commands::mihomo::config::load_profile_config(&state.data_dir);
-    *state.override_config.lock().unwrap() = crate::commands::mihomo::config::load_override_config(&state.data_dir);
+    *state.app_config.lock().unwrap_or_else(|e| e.into_inner()) = crate::commands::mihomo::config::load_app_config(&state.data_dir);
+    *state.controled_config.lock().unwrap_or_else(|e| e.into_inner()) = crate::commands::mihomo::config::load_controled(&state.data_dir);
+    *state.profile_config.lock().unwrap_or_else(|e| e.into_inner()) = crate::commands::mihomo::config::load_profile_config(&state.data_dir);
+    *state.override_config.lock().unwrap_or_else(|e| e.into_inner()) = crate::commands::mihomo::config::load_override_config(&state.data_dir);
 }
 
 fn dav_client() -> reqwest::Client {

@@ -322,7 +322,13 @@ async fn dropped_ai_future_releases_run_flags_and_waiting_answer() {
     };
     drop(pending);
     assert!(is_cancelled(&flag));
-    assert!(!cancel_registry().lock().unwrap().contains_key(id));
-    assert!(!ask_registry().lock().unwrap().contains_key(id));
+    assert!(!cancel_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains_key(id));
+    assert!(!ask_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains_key(id));
     assert!(received.try_recv().is_ok());
 }

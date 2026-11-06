@@ -42,6 +42,23 @@ pub const READ_BODY_TIMEOUT: Duration = Duration::from_secs(60);
 /// 重试无额外计费风险；退避时间短是因为空壳/限流响应都是毫秒级返回。
 pub const EMPTY_RETRY_MAX: usize = 2;
 pub const EMPTY_RETRY_DELAY: Duration = Duration::from_secs(1);
+/// 同时发往上游的请求上限（AUDIT-026）。每个请求有 180s TTFB 窗口，无上限时
+/// 多 Agent 并发会占满 reqwest 连接池 / SSE 流 / 文件描述符，拖垮整个桌面应用。
+/// 可用 `ANY_VERSION_PROXY_MAX_INFLIGHT` 覆盖（范围 1..=64）。
+pub const DEFAULT_MAX_INFLIGHT: usize = 8;
+const MAX_INFLIGHT_ENV: &str = "ANY_VERSION_PROXY_MAX_INFLIGHT";
+
+fn inflight_slots() -> &'static tokio::sync::Semaphore {
+    static SLOTS: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+    SLOTS.get_or_init(|| {
+        let n = std::env::var(MAX_INFLIGHT_ENV)
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .map(|v| v.clamp(1, 64))
+            .unwrap_or(DEFAULT_MAX_INFLIGHT);
+        tokio::sync::Semaphore::new(n)
+    })
+}
 /// 断点续写最大重试次数（每次续写先校验已累积内容是否已成完整 JSON，成功则提前返回，
 /// 因此多数情况一次续写即可完成）。
 pub const STREAM_RESUME_MAX: usize = 3;
@@ -254,13 +271,23 @@ async fn send_with_retries(
                 log_preview(&serde_json::to_string_pretty(body).unwrap_or_default())
             ),
         );
+        // 并发闸：超限直接失败（由上层分类为可重试错误），不无限占用连接。
+        let permit = inflight_slots()
+            .try_acquire()
+            .map_err(|_| "并发请求数已达上限，请稍后重试".to_string())?;
         let started = std::time::Instant::now();
+        // 请求级稳定幂等键：由 call_id 派生，重试间保持不变；上游若支持可据此去重，
+        // 避免「已接收并计费但响应头超时」时重发造成二次计费（AUDIT-011）。
+        let idempotency_key = format!("kira-{call_id}-{}", provider.id());
         let req = client
             .post(url)
             .header("Authorization", format!("Bearer {}", provider.api_key()))
             .header("Content-Type", "application/json")
+            .header("Idempotency-Key", &idempotency_key)
             .json(body);
-        match tokio::time::timeout(REQUEST_TTFB_TIMEOUT, req.send()).await {
+        let sent = tokio::time::timeout(REQUEST_TTFB_TIMEOUT, req.send()).await;
+        drop(permit);
+        match sent {
             Ok(Ok(resp)) => {
                 let st = resp.status();
                 log_call(

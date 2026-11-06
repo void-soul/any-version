@@ -1,3 +1,4 @@
+import { ignoreInvokeError } from "../../utils/invokeOrReport";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
@@ -227,15 +228,11 @@ export function useSerialMonitor() {
       // **卸载时主动关串口/停模拟设备**：只注销事件的话，后端的读线程与句柄会一直活着
       //（端口保持被占用、持续 emit），而重进本页时按钮显示「未连接」。
       if (openRef.current) {
-        void invoke("serial_close", portOwner.current ?? { portName: portNameRef.current }).catch(() => {
-          /* 卸载路径，失败无可上报 */
-        });
+        void invoke("serial_close", portOwner.current ?? { portName: portNameRef.current }).catch((e) => ignoreInvokeError(e, "卸载路径，失败无可上报"));
       }
       openRef.current = false; portOwner.current = null; setOpen(false);
       if (simActiveRef.current) {
-        void invoke("serial_sim_stop", { sessionId: simOwner.current }).catch(() => {
-          /* 卸载路径，失败无可上报 */
-        });
+        void invoke("serial_sim_stop", { sessionId: simOwner.current }).catch((e) => ignoreInvokeError(e, "卸载路径，失败无可上报"));
       }
       simActiveRef.current = false; simOwner.current = null; setSimActive(false);
       pendingRef.current = []; setPendingCount(0);

@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../../utils/invokeOrReport";
 // DNS 页 —— 1:1 复刻 clash-party src/renderer/src/pages/dns.tsx
 // （开关 / 增强模式 fake-ip·redir-host·normal / fake-ip 范围+过滤模式+过滤列表 /
 //   IPv6 / respect-rules / 4 组 nameserver 列表 / nameserver-policy /
@@ -90,7 +91,7 @@ export default function DnsPanel() {
           nameserverPolicy: Object.entries(app?.nameserverPolicy || {}).map(([domain, value]) => ({ domain, value })),
           hosts: Object.entries(c?.hosts || {}).map(([domain, value]) => ({ domain, value })),
         });
-      } catch {}
+      } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/DnsPanel.tsx:93"); }
     })();
   }, []);
 

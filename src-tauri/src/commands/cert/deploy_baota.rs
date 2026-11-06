@@ -3,12 +3,25 @@ use super::*;
 // --- 宝塔面板：网站 SSL / 面板 SSL ---
 
 /// 面板地址归一化：补全 scheme、去掉结尾斜杠。
+/// 注意：此函数被 1Panel / 群晖 / OSS 等多个部署器共用，默认 scheme 保持 http
+/// 以兼容内网自签面板；宝塔单独走 `baota_base_url`（AUDIT-005）。
 pub(super) fn http_base_url(raw: &str) -> String {
     let mut u = raw.trim().trim_end_matches('/').to_string();
     if !u.is_empty() && !u.starts_with("http://") && !u.starts_with("https://") {
         u = format!("http://{}", u);
     }
     u
+}
+
+/// 宝塔专用：裸主机名默认补 **https**。`baota_post` 会把由 api_sk 派生的
+/// `request_token` 与证书内容 POST 出去，补 http 会让凭据走明文（AUDIT-005）。
+/// 用户仍可显式写 `http://`（自签/内网面板），但 UI 应给出风险提示。
+pub(super) fn baota_base_url(raw: &str) -> String {
+    let u = raw.trim().trim_end_matches('/');
+    if u.is_empty() || u.starts_with("http://") || u.starts_with("https://") {
+        return u.to_string();
+    }
+    format!("https://{}", u)
 }
 
 pub(super) fn baota_sign(api_sk: &str) -> (String, String) {
@@ -79,7 +92,7 @@ pub(super) async fn deploy_baota(
     pems: &(String, String, String),
     target: &str,
 ) -> Result<(), String> {
-    let base = http_base_url(&cfg(node, "url"));
+    let base = baota_base_url(&cfg(node, "url"));
     let api_sk = baota_api_sk(node);
     if base.is_empty() || api_sk.is_empty() {
         return Err("宝塔节点缺少面板地址或 API 密钥".into());
@@ -125,7 +138,7 @@ pub(super) async fn deploy_baota(
 }
 
 pub(super) async fn baota_test(node: &DeployNode) -> Result<String, String> {
-    let base = http_base_url(&cfg(node, "url"));
+    let base = baota_base_url(&cfg(node, "url"));
     let api_sk = baota_api_sk(node);
     if base.is_empty() || api_sk.is_empty() {
         return Err("宝塔节点缺少面板地址或 API 密钥".into());

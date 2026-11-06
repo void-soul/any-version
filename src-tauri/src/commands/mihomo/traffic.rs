@@ -158,7 +158,7 @@ pub fn start_recorder(inner: std::sync::Arc<super::MihomoInner>) {
                 continue;
             }
             let (cfg, data_dir) = {
-                let c = inner.app_config.lock().unwrap().clone();
+                let c = inner.app_config.lock().unwrap_or_else(|e| e.into_inner()).clone();
                 (c, inner.data_dir.clone())
             };
             if let Ok(text) = super::api::mihomo_api_raw(

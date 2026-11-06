@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../../utils/invokeOrReport";
 // 嗅探页 —— 1:1 复刻 clash-party src/renderer/src/pages/sniffer.tsx
 // （开关 / 覆盖目标 / 强制 DNS 映射 / 纯 IP 解析 / HTTP·TLS·QUIC 端口 /
 //   跳过域名 / 强制嗅探域名 / 跳过目标·来源地址）
@@ -57,7 +58,7 @@ export default function SnifferPanel() {
           skipDstAddress: s["skip-dst-address"] ?? DEFAULT_SNIFFER.skipDstAddress,
           skipSrcAddress: s["skip-src-address"] ?? [],
         });
-      } catch {}
+      } catch (e) { reportInvokeError(e, "src/components/SystemTools/mihomo/SnifferPanel.tsx:60"); }
     })();
   }, []);
 

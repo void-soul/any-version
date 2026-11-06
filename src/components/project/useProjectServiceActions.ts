@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../utils/invokeOrReport";
 import { useEffect, useCallback } from "react";
 import { theamedAlert, alertError } from "../shared/ThemedAlert";
 import { useTranslation } from "react-i18next";
@@ -110,7 +111,7 @@ export function useProjectServiceActions({ pid, patch, refreshSingle, detail, se
     const poll = () => {
       invoke<ProjectDetail>("project_detail", { id: pid })
         .then((d) => patch(pid, { detail: d }))
-        .catch(() => {});
+        .catch((e) => { reportInvokeError(e, "src/components/project/useProjectServiceActions.ts:113"); });
     };
     const t = setInterval(poll, 3000);
     return () => clearInterval(t);

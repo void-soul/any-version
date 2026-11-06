@@ -15,7 +15,11 @@ pub(super) async fn tray_api(
     body: Option<Value>,
 ) -> Result<String, String> {
     let state = tray_state(app)?;
-    let app_config = state.app_config.lock().unwrap().clone();
+    let app_config = state
+        .app_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     api::mihomo_api_raw(&app_config, method, path, body).await
 }
 
@@ -51,17 +55,21 @@ pub async fn tray_change_profile(app: &AppHandle, id: &str) -> Result<(), String
     if !state
         .profile_config
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .items
         .iter()
         .any(|i| i.id == id)
     {
         return Err("profile 不存在".into());
     }
-    let mut app_config = state.app_config.lock().unwrap().clone();
+    let mut app_config = state
+        .app_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     app_config.current_profile = id.to_string();
     save_app_config(&state.data_dir, &app_config).ok();
-    *state.app_config.lock().unwrap() = app_config;
+    *state.app_config.lock().unwrap_or_else(|e| e.into_inner()) = app_config;
     emit_state(app, &state);
     if !state.stop_flag.load(Ordering::SeqCst) {
         reload_config(app, Arc::clone(&state)).await?;

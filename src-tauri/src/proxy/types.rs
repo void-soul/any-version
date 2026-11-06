@@ -25,9 +25,14 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub source: String,
     /// 本地代理鉴权 token（每次启动随机生成；工具通过 Authorization: Bearer /
-    /// x-api-key / x-goog-api-key 携带。空串 = 不鉴权，用于启动早期/协同等旧路径）。
+    /// x-api-key / x-goog-api-key 携带）。
     #[serde(default)]
     pub auth_token: String,
+    /// 是否允许无鉴权访问。**必须显式声明**，不再用「auth_token 为空」隐式表达。
+    /// 仅用于：协同房间代理（有独立 X-Collab-Token / hooks 校验）与 2API 本机服务。
+    /// 其余路径一律要求非空 token，避免上游 API Key 被任意本机进程冒用。
+    #[serde(default)]
+    pub allow_unauthenticated: bool,
 
     // ─── 协议 ───
     /// 入站协议列表：工具支持的协议（"anthropic" | "openai" | "google"）
@@ -234,9 +239,11 @@ impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
             listen_address: "127.0.0.1".to_string(),
-            listen_port: 15721,
+            listen_port: crate::commands::foundation::defaults::ports::AI_PROXY,
             source: String::new(),
             auth_token: String::new(),
+            // 安全默认：无显式声明一律要求鉴权。
+            allow_unauthenticated: false,
             inbound_protocols: vec!["openai".to_string()],
             outbound_protocol: "openai".to_string(),
             conversion_mode: "none".to_string(),

@@ -69,7 +69,7 @@ pub fn mihomo_upgrade_ui() -> Value {
 // ---- SubStore（最小化集成）----
 #[tauri::command]
 pub fn mihomo_open_substore(state: State<'_, MihomoState>) -> Value {
-    serde_json::json!({ "enabled": state.app_config.lock().unwrap().substore_enabled, "message": "SubStore 需在 clash-party 中独立部署，此处仅作配置开关" })
+    serde_json::json!({ "enabled": state.app_config.lock().unwrap_or_else(|e| e.into_inner()).substore_enabled, "message": "SubStore 需在 clash-party 中独立部署，此处仅作配置开关" })
 }
 
 // ---- 防火墙 / UWP 回环 / 覆写执行日志 ----
@@ -77,7 +77,13 @@ pub fn mihomo_open_substore(state: State<'_, MihomoState>) -> Value {
 /// 重置 Windows 防火墙规则：为 mihomo 内核放行（TUN 模式常见故障排查项）
 #[tauri::command]
 pub fn mihomo_setup_firewall(state: State<'_, MihomoState>) -> Result<String, String> {
-    let core = resolve_core_path(&state.app_config.lock().unwrap().clone());
+    let core = resolve_core_path(
+        &state
+            .app_config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone(),
+    );
     if !core.exists() {
         return Err("未找到 mihomo 内核，无法配置防火墙".into());
     }
