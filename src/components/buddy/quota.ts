@@ -273,9 +273,18 @@ export function segmentHue(segment: CreditSegment, now: number = Date.now()): nu
   return Math.round(ratio * CREDIT_HUE_SAFE);
 }
 
-/** 时间戳归一：数字（秒 / 毫秒）与 ISO 字符串都支持，非法值返回 null。 */
+/**
+ * 时间戳归一：数字（秒 / 毫秒）与 ISO 字符串都支持，非法值返回 null。
+ *
+ * `0` / 负数 / 空值一律视为「到期时间未知」，返回 null（= 永不过期），**不要**当作
+ * epoch 0 的 1970-01-01。参考 D（workbuddy-manager）的判定是
+ * `is_expired = exp > 0 and now >= exp`：官方在账号导入时把缺失到期写为 0，
+ * 而 `quota.rs::json_scalar_string` 会把数字 0 转成字符串 `"0"` 送到这里。
+ * 早期把 0 解析成 1970 会让整段积分被画灰、不显示天数、并被轮换建议剔除。
+ */
 export function parseCreditTimestamp(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
+    if (value <= 0) return null;
     // 秒级时间戳（< 1e12）归一为毫秒
     return value < 1e12 ? Math.round(value * 1000) : Math.round(value);
   }

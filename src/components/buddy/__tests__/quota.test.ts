@@ -6,6 +6,7 @@ import {
   formatQuotaPlain,
   mergeCreditSegments,
   nearestExpiringSegment,
+  parseCreditTimestamp,
   segmentDaysLeft,
   segmentDayLabels,
   segmentHue,
@@ -338,5 +339,50 @@ describe("segmentHue", () => {
   it("returns null when already expired (caller paints it grey, not red)", () => {
     // 过期的积分用不掉了，按「紧急程度」染红会让人以为还能抢救
     expect(segmentHue(segment({ expiresAt: NOW - 1 }), NOW)).toBeNull();
+  });
+});
+
+/**
+ * 参考 D（workbuddy-manager）语义：expiresAt=0 是「到期时间未知」，不是 1970-01-01。
+ * 上游 `CycleEndTime` 给 0 / "0" / 空串 / null 时，整段积分不能被画成已过期，
+ * 也不能被轮换建议的 `expiresAt > now` 过滤掉。
+ */
+describe("unknown expiry timestamps (workbuddy-manager D11)", () => {
+  it("treats zero, negative and empty timestamps as unknown, not epoch zero", () => {
+    expect(parseCreditTimestamp(0)).toBeNull();
+    expect(parseCreditTimestamp("0")).toBeNull();
+    expect(parseCreditTimestamp(-1)).toBeNull();
+    expect(parseCreditTimestamp("-1700000000")).toBeNull();
+    expect(parseCreditTimestamp("")).toBeNull();
+    expect(parseCreditTimestamp("   ")).toBeNull();
+    expect(parseCreditTimestamp(null)).toBeNull();
+    expect(parseCreditTimestamp(undefined)).toBeNull();
+  });
+
+  it("keeps ISO strings and valid second/millisecond timestamps unchanged", () => {
+    expect(parseCreditTimestamp("2026-10-01T00:00:00Z")).toBe(Date.parse("2026-10-01T00:00:00Z"));
+    expect(parseCreditTimestamp(1_793_934_111)).toBe(1_793_934_111_000);
+    expect(parseCreditTimestamp(1_793_934_111_000)).toBe(1_793_934_111_000);
+    expect(parseCreditTimestamp("1793934111")).toBe(1_793_934_111_000);
+  });
+
+  it("does not mark a whole credit segment as expired when CycleEndTime is 0", () => {
+    const segments = segmentsFromQuotaItems([item({ cycleEndTime: "0" })]);
+    expect(segments).toHaveLength(1);
+    expect(segments[0].expiresAt).toBeNull();
+    // 永不过期 = 安全色；已过期是 null（灰）
+    expect(segmentHue(segments[0], NOW)).toBe(CREDIT_HUE_SAFE);
+    expect(segmentDayLabels(segments, NOW)).toEqual([null]);
+  });
+
+  it("keeps unknown-expiry segments eligible for rotation suggestions", () => {
+    const segment = segmentsFromQuotaItems([item({ cycleEndTime: "0" })])[0];
+    expect(nearestExpiringSegment([segment], NOW)?.remaining).toBe(500);
+    // 真正过期的段仍然被排除，避免「一律不过期」掩盖到期数据
+    const expired = segmentsFromQuotaItems([
+      item({ cycleEndTime: new Date(NOW - DAY).toISOString() }),
+    ])[0];
+    expect(segmentHue(expired, NOW)).toBeNull();
+    expect(nearestExpiringSegment([expired], NOW)).toBeNull();
   });
 });
