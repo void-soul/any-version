@@ -1,6 +1,7 @@
 import { DbDocumentToolbar } from "./DbDocumentToolbar";
 import { DbRelationsEditor } from "./DbRelationsEditor";
 import { DbIndexesEditor } from "./DbIndexesEditor";
+import { DbChecksEditor } from "./DbChecksEditor";
 import { DbNodeAppearanceEditor } from "./DbNodeAppearanceEditor";
 import { DbTableNavigationList } from "./DbTableNavigationList";
 import { useDbEditorDock } from "./useDbEditorDock";
@@ -133,7 +134,7 @@ export default function DbDesignerPanel() {
   }, [result]);
   const [commonFieldsOpen, setCommonFieldsOpen] = useState(false);
   /** 底部 dock：页签（字段 / 索引 / 关联）+ 折叠。属性编辑全在这里，画布只负责摆表。 */
-  const [dockTab, setDockTab] = useState<"fields" | "indexes" | "relations">("fields");
+  const [dockTab, setDockTab] = useState<"fields" | "indexes" | "checks" | "relations">("fields");
   /** 关联页签筛选：全部 / 我是主表 / 我是子表 */
   const [relFilter, setRelFilter] = useState<"all" | "parent" | "child">("all");
   /** 标签筛选（画布）：命中的表才显示；空 = 全显示 */
@@ -334,6 +335,9 @@ export default function DbDesignerPanel() {
     addIndex,
     toggleIndexField,
     removeIndex,
+    updateCheck,
+    addCheck,
+    removeCheck,
     renameField,
     addRelation,
     updateRelation,
@@ -843,6 +847,7 @@ export default function DbDesignerPanel() {
                     [
                       ["fields", t("dbd.fields"), selected.table?.fields.length ?? 0],
                       ["indexes", t("dbd.indexes"), selected.table?.indexes?.length ?? 0],
+                      ["checks", t("dbd.checks"), selected.table?.checks?.length ?? 0],
                       ["relations", t("dbd.relations"), tableRelations.length],
                     ] as const
                   ).map(([id, label, count]) => (
@@ -884,6 +889,16 @@ export default function DbDesignerPanel() {
                       toggleIndexField={toggleIndexField}
                     />
                   ) : null}
+
+                {/* CHECK 约束：后端导出/逆向早已支持，这里补上编辑入口 */}
+                {dockTab === "checks" ? (
+                  <DbChecksEditor
+                    addCheck={addCheck}
+                    selected={selected}
+                    updateCheck={updateCheck}
+                    removeCheck={removeCheck}
+                  />
+                ) : null}
 
                 {/* 关联：建关联的主入口是「拖线」，这里是补录 / 改属性 */}
                 {dockTab === "relations" ? (

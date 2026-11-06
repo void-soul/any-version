@@ -36,10 +36,16 @@ export interface DbIndex {
   fields: string[];
 }
 
+/** 表级 CHECK 约束；`name` 为空时导出不带 `CONSTRAINT <name>` 前缀。 */
+export interface DbCheck {
+  name: string;
+  expression: string;
+}
+
 export interface DbTableBody {
   fields: DbField[];
   indexes?: DbIndex[];
-  checks?: { name: string; expression: string }[];
+  checks?: DbCheck[];
 }
 
 export interface DbViewBody {
@@ -70,7 +76,10 @@ export interface DbRelationEnd {
 
 export interface DbDesignRelation {
   id: string;
+  /** 画布备注名（导航列表标题），不是数据库约束名 */
   name?: string;
+  /** 数据库层 FOREIGN KEY 约束名；留空时导出回退 `fk_{表}_{字段}` */
+  constraintName?: string;
   from: DbRelationEnd;
   to: DbRelationEnd;
   kind: "1-1" | "1-n" | "n-n";

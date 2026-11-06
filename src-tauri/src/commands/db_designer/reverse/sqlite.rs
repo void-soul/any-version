@@ -220,6 +220,7 @@ pub fn reverse_sqlite(path: &str, name: &str) -> Result<DbDesignDocument, String
                 doc.relations.push(DbDesignRelation {
                     id: new_id("r"),
                     name: String::new(),
+                    constraint_name: String::new(),
                     from: DbRelationEnd {
                         node: child_id.clone(),
                         field: from_field,

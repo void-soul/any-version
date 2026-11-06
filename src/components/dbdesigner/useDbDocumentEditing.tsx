@@ -2,7 +2,7 @@ import { useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "../shared/Toast";
-import { type DbDesignDocument, type DbDesignNode, type DbDesignRelation, type DbField, type DbIndex } from "./types";
+import { type DbCheck, type DbDesignDocument, type DbDesignNode, type DbDesignRelation, type DbField, type DbIndex } from "./types";
 import { emptyField, newId } from "./DbDesignerPanel.model";
 import type { Dispatch, SetStateAction } from "react";
 
@@ -191,6 +191,43 @@ export function useDbDocumentEditing({ doc, patchDoc, setSelectedId, setHighligh
     });
   };
 
+  /** 表级 CHECK 约束：与索引同构，纯前端文档编辑，不新增 IPC 命令。 */
+  const updateCheck = (nodeId: string, index: number, patch: Partial<DbCheck>) => {
+    if (!doc) return;
+    patchDoc({
+      ...doc,
+      nodes: doc.nodes.map((n) => {
+        if (n.id !== nodeId || !n.table) return n;
+        const checks = (n.table.checks ?? []).map((x, i) => (i === index ? { ...x, ...patch } : x));
+        return { ...n, table: { ...n.table, checks } };
+      }),
+    });
+  };
+
+  const addCheck = (nodeId: string) => {
+    if (!doc) return;
+    patchDoc({
+      ...doc,
+      nodes: doc.nodes.map((n) =>
+        n.id === nodeId && n.table
+          ? { ...n, table: { ...n.table, checks: [...(n.table.checks ?? []), { name: "", expression: "" }] } }
+          : n,
+      ),
+    });
+  };
+
+  const removeCheck = (nodeId: string, index: number) => {
+    if (!doc) return;
+    patchDoc({
+      ...doc,
+      nodes: doc.nodes.map((n) =>
+        n.id === nodeId && n.table
+          ? { ...n, table: { ...n.table, checks: (n.table.checks ?? []).filter((_, i) => i !== index) } }
+          : n,
+      ),
+    });
+  };
+
   /** 改名走后端命令：它会级联更新关联与索引（前端不自己改，避免漏掉连线） */  const renameField = async (nodeId: string, oldName: string, newName: string) => {
     if (!doc || !newName.trim() || newName === oldName) return;
     try {
@@ -307,6 +344,9 @@ export function useDbDocumentEditing({ doc, patchDoc, setSelectedId, setHighligh
     addIndex,
     toggleIndexField,
     removeIndex,
+    updateCheck,
+    addCheck,
+    removeCheck,
     renameField,
     addRelation,
     updateRelation,

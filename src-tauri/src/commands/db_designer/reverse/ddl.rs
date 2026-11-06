@@ -21,14 +21,17 @@ pub fn reverse_ddl(text: &str, dialect: &str, name: &str) -> Result<DbDesignDocu
     };
     // 表名 → 节点 id（外键按表名找节点，所以这里必须先收齐再建关系）
     let mut by_name: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    let mut pending_fks: Vec<(String, String, String, String, String, String)> = Vec::new();
+    // (子表, 子列, 父表, 父列, 约束名, onDelete, onUpdate)
+    let mut pending_fks: Vec<(String, String, String, String, String, String, String)> = Vec::new();
 
     for stmt in split_statements(&clean) {
         let lower = stmt.to_lowercase();
         if lower.contains("create table") {
-            let Some((table_name, body)) = parse_create_table(&stmt) else {
+            let Some((table_name, raw_body)) = parse_create_table(&stmt) else {
                 continue;
             };
+            // 外来 DDL 可能漏写约束之间的逗号：先补，再交给按逗号切分的解析器。
+            let body = restore_missing_commas(&raw_body);
             let id = new_id("t");
             let (fields, indexes) = parse_table_body(&body, &lower);
             // 列级 REFERENCES（内联外键，如 `uid INTEGER REFERENCES users(id)`）也要收
@@ -38,6 +41,7 @@ pub fn reverse_ddl(text: &str, dialect: &str, name: &str) -> Result<DbDesignDocu
                     from_field,
                     to_table,
                     to_field,
+                    String::new(), // 列级 REFERENCES 没有约束名
                     String::new(),
                     String::new(),
                 ));
@@ -99,7 +103,7 @@ pub fn reverse_ddl(text: &str, dialect: &str, name: &str) -> Result<DbDesignDocu
     }
 
     // 表级 FOREIGN KEY（现在表都收齐了，才能把表名解析成节点 id）
-    for (child, cols, parent, pcols, on_delete, on_update) in parse_inline_table_fks(&clean) {
+    for (child, cols, parent, pcols, constraint_name, on_delete, on_update) in parse_inline_table_fks(&clean) {
         for (i, c) in cols.iter().enumerate() {
             let pc = pcols
                 .get(i)
@@ -110,13 +114,14 @@ pub fn reverse_ddl(text: &str, dialect: &str, name: &str) -> Result<DbDesignDocu
                 c.clone(),
                 parent.clone(),
                 pc,
+                constraint_name.clone(),
                 on_delete.clone(),
                 on_update.clone(),
             ));
         }
     }
 
-    for (child, from_field, parent, to_field, on_delete, on_update) in pending_fks {
+    for (child, from_field, parent, to_field, constraint_name, on_delete, on_update) in pending_fks {
         let (Some(child_id), Some(parent_id)) = (
             by_name.get(&child.to_lowercase()).cloned(),
             by_name.get(&parent.to_lowercase()).cloned(),
@@ -129,6 +134,7 @@ pub fn reverse_ddl(text: &str, dialect: &str, name: &str) -> Result<DbDesignDocu
         doc.relations.push(DbDesignRelation {
             id: new_id("r"),
             name: String::new(),
+            constraint_name,
             from: DbRelationEnd {
                 node: child_id,
                 field: from_field,
@@ -284,6 +290,75 @@ fn is_check_clause(item: &str) -> bool {
         }
     } else { item };
     rest.to_lowercase().starts_with("check") && rest[5..].trim_start().starts_with('(')
+}
+
+/// 修补表体里**漏写的逗号**：例如某条 `CONSTRAINT ... FOREIGN KEY ... ON UPDATE RESTRICT`
+/// 之后直接跟了下一条 `CONSTRAINT ... CHECK (...)`，按逗号切分会把两者粘成一项，
+/// 导致 CHECK 被静默吞掉。
+///
+/// 只在「顶层（不在括号内/引号内）遇到新约束起始关键字，且它与上一个顶层逗号之间
+/// 已经包含 `REFERENCES` / `ON DELETE` / `ON UPDATE`」时补一个逗号 ——
+/// 也就是前一个外键项明显已经结束却没分隔符。`CONSTRAINT x FOREIGN KEY` 里的
+/// `FOREIGN KEY` 不满足条件，不会被误切；格式正确的 DDL 逐字不变。
+pub(super) fn restore_missing_commas(body: &str) -> String {
+    const KEYS: [&str; 6] = [
+        "constraint ", "check ", "primary key", "unique ", "key ", "foreign key",
+    ];
+    let bytes = body.as_bytes();
+    let mut inserts: Vec<usize> = Vec::new();
+    let (mut last_sep, mut depth, mut quote, mut i) = (0usize, 0i32, None::<u8>, 0usize);
+    while i < bytes.len() {
+        let c = bytes[i];
+        if let Some(q) = quote {
+            if c == b'\\' { i += 2; continue; }
+            if c == q { quote = None; }
+            i += 1;
+            continue;
+        }
+        match c {
+            b'\'' | b'"' | b'`' => { quote = Some(c); i += 1; continue; }
+            b'(' => { depth += 1; i += 1; continue; }
+            b')' => { depth -= 1; i += 1; continue; }
+            b',' if depth == 0 => { last_sep = i; i += 1; continue; }
+            _ => {}
+        }
+        let word_start = c.is_ascii_alphabetic()
+            && (i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_'));
+        if depth == 0 && word_start {
+            let mut key_len = 0;
+            for key in KEYS {
+                if body.get(i..i + key.len()).is_some_and(|s| s.eq_ignore_ascii_case(key)) {
+                    key_len = key.len();
+                    break;
+                }
+            }
+            if key_len > 0 {
+                let between = body[last_sep..i].to_ascii_lowercase();
+                if between.contains("references")
+                    || between.contains("on delete")
+                    || between.contains("on update")
+                {
+                    inserts.push(i);
+                    last_sep = i;
+                }
+                i += key_len;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    if inserts.is_empty() {
+        return body.to_string();
+    }
+    let mut out = String::with_capacity(body.len() + inserts.len());
+    let mut prev = 0;
+    for pos in inserts {
+        out.push_str(&body[prev..pos]);
+        out.push(',');
+        prev = pos;
+    }
+    out.push_str(&body[prev..]);
+    out
 }
 
 fn parse_checks(body: &str) -> Vec<DbCheck> {
@@ -560,10 +635,22 @@ pub(super) fn inline_column_refs(body: &str) -> Vec<(String, String, String)> {
     out
 }
 
-/// 表体里的 `FOREIGN KEY (a) REFERENCES t(b)` → (子表, 列, 父表, 父列, onDelete, onUpdate)
+/// 从 `CONSTRAINT <name> ...` 片段取约束名（支持反引号 / 双引号 / 方括号）。
+/// 没有 CONSTRAINT 前缀时返回空串，由导出层回退到自动名。
+fn constraint_name_from(fragment: &str) -> String {
+    let t = fragment.trim_start();
+    if !t.to_lowercase().starts_with("constraint ") {
+        return String::new();
+    }
+    let rest = &t["constraint ".len()..];
+    first_ident(rest).map(|s| unquote_ident(&s)).unwrap_or_default()
+}
+
+/// 表体里的 `FOREIGN KEY (a) REFERENCES t(b)` →
+/// (子表, 列, 父表, 父列, 约束名, onDelete, onUpdate)
 pub(super) fn parse_inline_table_fks(
     clean: &str,
-) -> Vec<(String, Vec<String>, String, Vec<String>, String, String)> {
+) -> Vec<(String, Vec<String>, String, Vec<String>, String, String, String)> {
     let mut out = Vec::new();
     for stmt in split_statements(clean) {
         let lower = stmt.to_lowercase();
@@ -578,6 +665,9 @@ pub(super) fn parse_inline_table_fks(
             if !low.contains("foreign key") {
                 continue;
             }
+            // `CONSTRAINT fk_x FOREIGN KEY ...` 的名字要带进设计文档，
+            // 否则逆向后再导出会被自动名 `fk_{表}_{字段}` 覆盖。
+            let constraint_name = constraint_name_from(&item);
             let Some(fi) = low.find("foreign key") else {
                 continue;
             };
@@ -611,21 +701,26 @@ pub(super) fn parse_inline_table_fks(
             let on_delete = fk_action_from(&tail_after, "on delete");
             let on_update = fk_action_from(&tail_after, "on update");
             if !cols.is_empty() && !parent.is_empty() {
-                out.push((table.clone(), cols, parent, pcols, on_delete, on_update));
+                out.push((table.clone(), cols, parent, pcols, constraint_name, on_delete, on_update));
             }
         }
     }
     out
 }
 
-/// `ALTER TABLE t ADD [CONSTRAINT x] FOREIGN KEY (a) REFERENCES p(b) [ON DELETE ...]`
+/// `ALTER TABLE t ADD [CONSTRAINT x] FOREIGN KEY (a) REFERENCES p(b) [ON DELETE ...]` →
+/// (子表, 子列, 父表, 父列, 约束名, onDelete, onUpdate)
 pub(super) fn parse_alter_add_fk(
     stmt: &str,
-) -> Option<(String, String, String, String, String, String)> {
+) -> Option<(String, String, String, String, String, String, String)> {
     let lower = stmt.to_lowercase();
     if !lower.contains("alter table") || !lower.contains("foreign key") {
         return None;
     }
+    let constraint_name = lower
+        .find("constraint")
+        .map(|i| constraint_name_from(&stmt[i..]))
+        .unwrap_or_default();
     let ti = lower.find("alter table")? + "alter table".len();
     let rest = stmt[ti..].trim_start();
     let child = normalize_qualified(rest.split_whitespace().next()?);
@@ -663,7 +758,7 @@ pub(super) fn parse_alter_add_fk(
     if cols.is_empty() || parent.is_empty() || pcol.is_empty() {
         return None;
     }
-    Some((child, cols[0].clone(), parent, pcol, on_delete, on_update))
+    Some((child, cols[0].clone(), parent, pcol, constraint_name, on_delete, on_update))
 }
 
 /// `CREATE [UNIQUE] INDEX name ON table (cols)` → (名, 表, 列, 是否唯一)

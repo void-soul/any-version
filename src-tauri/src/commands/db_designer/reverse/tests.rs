@@ -234,6 +234,97 @@ fn sqlite_reverse_rejects_non_sqlite_files() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 用户给的 MySQL 片段：两条命名外键 + 一条命名 CHECK。
+/// 故意保留第 2 条 FK 与 CHECK 之间**缺失的逗号**，作为容错回归样本。
+const CONSTRAINT_DDL: &str = r#"
+    CREATE TABLE `parents` (
+      `parent_id` BIGINT NOT NULL AUTO_INCREMENT,
+      PRIMARY KEY (`parent_id`)
+    );
+    CREATE TABLE `sports` (
+      `sport_id` BIGINT NOT NULL AUTO_INCREMENT,
+      PRIMARY KEY (`sport_id`)
+    );
+    CREATE TABLE `certificates` (
+      `certificate_id` BIGINT NOT NULL AUTO_INCREMENT,
+      `member_id` BIGINT NOT NULL,
+      `sport_id` BIGINT NOT NULL,
+      `amount_cents` BIGINT NOT NULL,
+      PRIMARY KEY (`certificate_id`),
+      KEY `idx_certificates_member` (`member_id`),
+      KEY `idx_certificates_sport` (`sport_id`),
+      CONSTRAINT `fk_certificates_member` FOREIGN KEY (`member_id`) REFERENCES `parents` (`parent_id`) ON DELETE CASCADE ON UPDATE RESTRICT,
+      CONSTRAINT `fk_certificates_sport` FOREIGN KEY (`sport_id`) REFERENCES `sports` (`sport_id`) ON DELETE RESTRICT ON UPDATE RESTRICT
+      CONSTRAINT `commerce_orders_chk_1` CHECK (`amount_cents` >= 0)
+    );
+    "#;
+
+#[test]
+fn named_fk_constraints_keep_names_and_actions() {
+    let doc = reverse_ddl(CONSTRAINT_DDL, "mysql", "证书库").unwrap();
+    assert_eq!(doc.relations.len(), 2, "{:?}", doc.relations);
+    let member = doc.relations.iter().find(|r| r.from.field == "member_id").unwrap();
+    assert_eq!(member.constraint_name, "fk_certificates_member");
+    assert_eq!(member.on_delete, "CASCADE");
+    assert_eq!(member.on_update, "RESTRICT");
+    let sport = doc.relations.iter().find(|r| r.from.field == "sport_id").unwrap();
+    assert_eq!(sport.constraint_name, "fk_certificates_sport");
+    assert_eq!(sport.on_delete, "RESTRICT");
+    assert_eq!(sport.on_update, "RESTRICT");
+}
+
+#[test]
+fn named_check_survives_missing_comma_after_fk() {
+    let doc = reverse_ddl(CONSTRAINT_DDL, "mysql", "证书库").unwrap();
+    let table = doc.nodes.iter().find(|n| n.name == "certificates").unwrap().table.as_ref().unwrap();
+    assert_eq!(table.checks.len(), 1, "缺逗号不该把 CHECK 吞掉: {:?}", table.checks);
+    assert_eq!(table.checks[0].name, "commerce_orders_chk_1");
+    assert!(table.checks[0].expression.contains("amount_cents"), "{:?}", table.checks);
+}
+
+#[test]
+fn no_action_is_not_truncated_to_no() {
+    let ddl = r#"
+        CREATE TABLE parents (parent_id BIGINT PRIMARY KEY);
+        CREATE TABLE children (
+            child_id BIGINT PRIMARY KEY,
+            parent_id BIGINT NOT NULL,
+            KEY idx_children_parent (parent_id),
+            CONSTRAINT fk_children_parent FOREIGN KEY (parent_id) REFERENCES parents (parent_id)
+                ON DELETE NO ACTION ON UPDATE NO ACTION
+        );
+        "#;
+    let doc = reverse_ddl(ddl, "mysql", "x").unwrap();
+    let r = &doc.relations[0];
+    assert_eq!(r.on_delete, "NO ACTION");
+    assert_eq!(r.on_update, "NO ACTION");
+    assert_eq!(r.constraint_name, "fk_children_parent");
+}
+
+#[test]
+fn constraint_names_survive_export_then_reverse() {
+    let doc = reverse_ddl(CONSTRAINT_DDL, "mysql", "证书库").unwrap();
+    let sql = super::super::export::export_sql(&doc).unwrap();
+    assert!(sql.contains("CONSTRAINT `fk_certificates_member`"), "{}", sql);
+    assert!(sql.contains("CONSTRAINT `commerce_orders_chk_1` CHECK"), "{}", sql);
+    let again = reverse_ddl(&sql, "mysql", "roundtrip").unwrap();
+    let names: Vec<&str> = again.relations.iter().map(|r| r.constraint_name.as_str()).collect();
+    assert!(names.contains(&"fk_certificates_member"), "{:?}", names);
+    assert!(names.contains(&"fk_certificates_sport"), "{:?}", names);
+    let table = again.nodes.iter().find(|n| n.name == "certificates").unwrap().table.as_ref().unwrap();
+    assert!(table.checks.iter().any(|c| c.name == "commerce_orders_chk_1"), "{:?}", table.checks);
+}
+
+/// 守护：容错不能把正常 DDL 切出额外的 CHECK 或关系。
+#[test]
+fn well_formed_ddl_is_not_changed_by_comma_recovery() {
+    let doc = reverse_ddl(MYSQL_DUMP, "mysql", "订单库").unwrap();
+    assert_eq!(doc.relations.len(), 1, "{:?}", doc.relations);
+    assert_eq!(doc.relations[0].constraint_name, "fk_orders_uid");
+    let orders = doc.nodes.iter().find(|n| n.name == "orders").unwrap().table.as_ref().unwrap();
+    assert!(orders.checks.is_empty(), "正常 DDL 不该凭空多出 CHECK: {:?}", orders.checks);
+}
+
 #[test]
 fn mysql_check_constraints_and_literal_comment_markers_survive_roundtrip() {
     let sql = r#"

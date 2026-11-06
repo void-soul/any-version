@@ -494,19 +494,33 @@ fn export_relational(doc: &DbDesignDocument, d: Dialect, opts: ExportOptions) ->
             format!("  PRIMARY KEY ({}, {})", quote(d, &a_col), quote(d, &b_col)),
         ];
         if opts.foreign_keys {
+            // 中间表的两条外键与内联外键同规则：命名 + ON DELETE / ON UPDATE 都给全。
+            // SQLite 内联不支持 ALTER ADD CONSTRAINT，但建表内写 CONSTRAINT 名是合法的；
+            // 历史行为是不命名，这里保持一致，只在 MySQL / PG 命名。
+            let named = |col: &str| -> String {
+                if d == Dialect::Sqlite {
+                    String::new()
+                } else {
+                    format!("CONSTRAINT {} ", quote(d, &format!("fk_{}_{}", jt, col)))
+                }
+            };
             jl.push(format!(
-                "  FOREIGN KEY ({}) REFERENCES {} ({}) ON DELETE {}",
+                "  {}FOREIGN KEY ({}) REFERENCES {} ({}) ON DELETE {} ON UPDATE {}",
+                named(&a_col),
                 quote(d, &a_col),
                 quote(d, a.map(|n| n.name.as_str()).unwrap_or("a")),
                 quote(d, &rel.from.field),
-                fk_action(&rel.on_delete)
+                fk_action(&rel.on_delete),
+                fk_action(&rel.on_update)
             ));
             jl.push(format!(
-                "  FOREIGN KEY ({}) REFERENCES {} ({}) ON DELETE {}",
+                "  {}FOREIGN KEY ({}) REFERENCES {} ({}) ON DELETE {} ON UPDATE {}",
+                named(&b_col),
                 quote(d, &b_col),
                 quote(d, b.map(|n| n.name.as_str()).unwrap_or("b")),
                 quote(d, &rel.to.field),
-                fk_action(&rel.on_delete)
+                fk_action(&rel.on_delete),
+                fk_action(&rel.on_update)
             ));
         }
         out.push_str(&jl.join(",\n"));
@@ -537,12 +551,14 @@ fn kw_for_create(d: Dialect, kind: &str) -> String {
     }
 }
 
-fn fk_action(a: &str) -> &str {
-    if a.trim().is_empty() {
-        "RESTRICT"
-    } else {
-        a.trim()
+/// 外键动作归一化：只接受 `FK_ACTIONS` 白名单，其余（含空值、AI/前端写入的
+/// 任意串）一律回退 `RESTRICT`，避免导出跑不起来的 SQL。
+fn fk_action(a: &str) -> &'static str {
+    let value = a.trim().split_whitespace().collect::<Vec<_>>().join(" ").to_uppercase();
+    if value.is_empty() {
+        return "RESTRICT";
     }
+    FK_ACTIONS.iter().copied().find(|allowed| *allowed == value).unwrap_or("RESTRICT")
 }
 
 /// 关联里「另一端」的表（当前节点是 from 时取 to，反之亦然）
@@ -566,7 +582,14 @@ fn fk_clause(d: Dialect, table: &DbDesignNode, rel: &DbDesignRelation, target: &
     } else {
         (&rel.to.field, &rel.from.field)
     };
-    let name = format!("fk_{}_{}", table.name, local_field);
+    // 约束名优先用 DDL 逆向/用户编辑带来的名字；留空时回退自动名，
+    // 保证手工建的旧设计文件导出结果一字不变。
+    let auto_name = format!("fk_{}_{}", table.name, local_field);
+    let name = if rel.constraint_name.trim().is_empty() {
+        auto_name.as_str()
+    } else {
+        rel.constraint_name.trim()
+    };
     let base = format!(
         "FOREIGN KEY ({}) REFERENCES {} ({})",
         quote(d, local_field),

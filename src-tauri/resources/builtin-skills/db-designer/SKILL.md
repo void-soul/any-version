@@ -69,6 +69,7 @@ any-version 的数据库设计器是**纯文件**的：画的是「表 / 视图�
   "relations": [
     {
       "id": "r1",
+      "constraintName": "fk_orders_user",
       "from": { "node": "t_orders", "field": "user_id" },
       "to": { "node": "t_users", "field": "user_id" },
       "kind": "1-n",
@@ -89,6 +90,14 @@ any-version 的数据库设计器是**纯文件**的：画的是「表 / 视图�
 
 > 若目标设计文件启用了 `commonFields`：**不要手动创建那些字段**（如 `created_at`），
 > 导出时会自动附加；你手动写的会因重名被跳过（表自己的定义优先）。
+
+> **表级 CHECK 约束**：`table.checks` 是 `{name, expression}[]`，例如
+> `{"name":"commerce_orders_chk_1","expression":"amount_cents >= 0"}`。
+> `expression` 只写括号里的条件，不自己再包 `()`；`name` 可留空（导出时不带约束名）。
+> **外键约束名**：`relations[].constraintName` 是数据库层的 `CONSTRAINT <name>`，
+> 与 `relations[].name`（画布备注）不是一回事；从 DDL 逆向时要原样保留，别改写成自动名。
+> `onDelete` / `onUpdate` 只允许 `RESTRICT | CASCADE | SET NULL | SET DEFAULT | NO ACTION`，
+> 注意 `NO ACTION` 是两个词。详见 references/schema.md §2.1 / §6。
 
 ## 2. 关键约定（最容易写错的地方）
 

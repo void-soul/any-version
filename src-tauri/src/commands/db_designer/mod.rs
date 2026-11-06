@@ -101,6 +101,7 @@ mod tests {
             relations: vec![DbDesignRelation {
                 id: "r1".to_string(),
                 name: "订单属于用户".to_string(),
+                constraint_name: String::new(),
                 from: DbRelationEnd { node: "n_order".to_string(), field: "uid".to_string() },
                 to: DbRelationEnd { node: "n_user".to_string(), field: "user_id".to_string() },
                 kind: "1-n".to_string(),
@@ -126,6 +127,77 @@ fn naming_rules_reject_bare_id_and_generic_names() {
     doc.nodes[1].table.as_mut().unwrap().fields[1].name = "name".to_string();
     let errs = validate(&doc).errors.join("\n");
     assert!(errs.contains("应改为 order_name"), "{}", errs);
+}
+
+/// 约束相关的校验一律是 warning：老设计文件不该因为新规则突然保存/导出失败。
+#[test]
+fn invalid_fk_action_warns_but_does_not_block_export() {
+    let mut doc = sample("mysql");
+    doc.relations[0].on_delete = "DROP TABLE".to_string();
+    let r = validate(&doc);
+    assert!(r.is_ok(), "warning 不该阻断: {:?}", r.errors);
+    assert!(r.warnings.iter().any(|w| w.contains("动作")), "{:?}", r.warnings);
+    assert!(export_sql(&doc).is_ok(), "导出仍应成功（动作回退 RESTRICT）");
+}
+
+#[test]
+fn duplicate_fk_constraint_names_warn() {
+    let mut doc = sample("mysql");
+    doc.relations[0].constraint_name = "fk_dup".to_string();
+    let mut second = doc.relations[0].clone();
+    second.id = "r2".to_string();
+    doc.relations.push(second);
+    let r = validate(&doc);
+    assert!(r.warnings.iter().any(|w| w.contains("约束名")), "{:?}", r.warnings);
+}
+
+#[test]
+fn blank_check_expression_warns() {
+    let mut doc = sample("mysql");
+    doc.nodes[1].table.as_mut().unwrap().checks.push(DbCheck {
+        name: "chk_amount".to_string(),
+        expression: "   ".to_string(),
+    });
+    let r = validate(&doc);
+    assert!(r.warnings.iter().any(|w| w.contains("CHECK")), "{:?}", r.warnings);
+}
+
+#[test]
+fn unbalanced_check_parentheses_warn() {
+    let mut doc = sample("mysql");
+    doc.nodes[1].table.as_mut().unwrap().checks.push(DbCheck {
+        name: "chk_amount".to_string(),
+        expression: "amount_cents >= (0".to_string(),
+    });
+    let r = validate(&doc);
+    assert!(r.warnings.iter().any(|w| w.contains("括号")), "{:?}", r.warnings);
+}
+
+#[test]
+fn duplicate_check_names_warn() {
+    let mut doc = sample("mysql");
+    let check = DbCheck { name: "chk_amount".to_string(), expression: "amount_cents >= 0".to_string() };
+    let table = doc.nodes[1].table.as_mut().unwrap();
+    table.checks.push(check.clone());
+    table.checks.push(check);
+    let r = validate(&doc);
+    assert!(r.warnings.iter().any(|w| w.contains("CHECK")), "{:?}", r.warnings);
+}
+
+/// 守护：合法约束不该凭空产生新 warning。
+#[test]
+fn valid_constraints_add_no_warnings() {
+    let mut doc = sample("mysql");
+    doc.relations[0].constraint_name = "fk_orders_uid".to_string();
+    doc.nodes[1].table.as_mut().unwrap().checks.push(DbCheck {
+        name: "chk_amount".to_string(),
+        expression: "amount_cents >= 0".to_string(),
+    });
+    let r = validate(&doc);
+    let noise: Vec<&String> = r.warnings.iter()
+        .filter(|w| w.contains("CHECK") || w.contains("动作") || w.contains("约束名"))
+        .collect();
+    assert!(noise.is_empty(), "{:?}", noise);
 }
 
 #[test]
@@ -221,6 +293,75 @@ fn normalize_skips_rename_when_target_name_taken() {
         let doc = sample("mysql");
         assert_eq!(relation_fields(&doc, "n_order"), vec!["uid".to_string()]);
         assert_eq!(relation_fields(&doc, "n_user"), vec!["user_id".to_string()]);
+    }
+
+    /// 从 JSON 注入 FK 约束名。serde 会忽略当前模型还不认识的键，
+    /// 因此这些测试在 `constraint_name` 字段落地前也能编译，并正确「因功能缺失」而失败。
+    fn with_fk_constraint_name(dialect: &str, name: &str) -> DbDesignDocument {
+        let doc = sample(dialect);
+        let mut value = serde_json::to_value(&doc).unwrap();
+        value["relations"][0]["constraintName"] = serde_json::Value::String(name.to_string());
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn mysql_export_preserves_explicit_fk_constraint_name() {
+        let sql = export_sql(&with_fk_constraint_name("mysql", "fk_certificates_member")).unwrap();
+        assert!(sql.contains("CONSTRAINT `fk_certificates_member` FOREIGN KEY (`uid`)"), "{}", sql);
+        assert!(!sql.contains("`fk_orders_uid`"), "不该再用自动生成的约束名: {}", sql);
+    }
+
+    #[test]
+    fn postgres_export_preserves_explicit_fk_constraint_name() {
+        let sql = export_sql(&with_fk_constraint_name("postgres", "fk_certificates_sport")).unwrap();
+        assert!(sql.contains("ADD CONSTRAINT \"fk_certificates_sport\""), "{}", sql);
+    }
+
+    /// 回归守护：约束名留空时仍用 `fk_{表}_{字段}`，手工建的老文档导出结果不变。
+    #[test]
+    fn blank_fk_constraint_name_keeps_generated_name() {
+        let sql = export_sql(&with_fk_constraint_name("mysql", "")).unwrap();
+        assert!(sql.contains("CONSTRAINT `fk_orders_uid`"), "{}", sql);
+    }
+
+    #[test]
+    fn junction_table_fks_include_on_update() {
+        let mut doc = sample("mysql");
+        doc.nodes.push(DbDesignNode {
+            id: "n_tag".to_string(),
+            kind: "table".to_string(),
+            name: "tags".to_string(),
+            x: 0.0,
+            y: 200.0,
+            table: Some(DbTableBody {
+                fields: vec![DbField { pk: true, auto_increment: true, ..field("tag_id", "bigint") }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        doc.relations.push(DbDesignRelation {
+            id: "r2".to_string(),
+            name: String::new(),
+            constraint_name: String::new(),
+            from: DbRelationEnd { node: "n_order".to_string(), field: "order_id".to_string() },
+            to: DbRelationEnd { node: "n_tag".to_string(), field: "tag_id".to_string() },
+            kind: "n-n".to_string(),
+            on_delete: "CASCADE".to_string(),
+            on_update: "CASCADE".to_string(),
+            mirror: false,
+        });
+        let sql = export_sql(&doc).unwrap();
+        let junction = sql.split("CREATE TABLE `orders_tags`").nth(1).unwrap_or("");
+        assert_eq!(junction.matches("ON UPDATE CASCADE").count(), 2, "中间表两条外键都应带 ON UPDATE:\n{}", sql);
+    }
+
+    #[test]
+    fn invalid_fk_action_falls_back_to_restrict() {
+        let mut doc = sample("mysql");
+        doc.relations[0].on_delete = "DROP TABLE".to_string();
+        let sql = export_sql(&doc).unwrap();
+        assert!(sql.contains("ON DELETE RESTRICT"), "非法动作应回退 RESTRICT:\n{}", sql);
+        assert!(!sql.contains("DROP TABLE"), "非法动作不该出现在 SQL 里:\n{}", sql);
     }
 
     #[test]
@@ -642,6 +783,7 @@ fn normalize_skips_rename_when_target_name_taken() {
         doc.relations.push(DbDesignRelation {
             id: "r2".to_string(),
             name: String::new(),
+            constraint_name: String::new(),
             from: DbRelationEnd { node: "n_order".to_string(), field: "order_id".to_string() },
             to: DbRelationEnd { node: "n_tag".to_string(), field: "tag_id".to_string() },
             kind: "n-n".to_string(),
@@ -719,6 +861,7 @@ fn normalize_skips_rename_when_target_name_taken() {
         doc.relations.push(DbDesignRelation {
             id: "r2".to_string(),
             name: String::new(),
+            constraint_name: String::new(),
             from: DbRelationEnd { node: "n_order".to_string(), field: "order_id".to_string() },
             to: DbRelationEnd { node: "n_tag".to_string(), field: "tag_id".to_string() },
             kind: "n-n".to_string(),

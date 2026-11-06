@@ -287,26 +287,29 @@ fn normalize_qualified(raw: &str) -> String {
 }
 
 /// 取 `ON DELETE <动作>` / `ON UPDATE <动作>` 的动作部分。
-/// `SET NULL` / `SET DEFAULT` 是两个词，只取一个词会得到没意义的 "SET"。
+/// 按 `FK_ACTIONS` 白名单做**最长匹配**：`SET NULL` / `SET DEFAULT` / `NO ACTION`
+/// 都是两个词，只取第一个词会得到没意义的 `"SET"` / `"NO"`。
 fn fk_action_from(tail_low: &str, keyword: &str) -> String {
     let Some(i) = tail_low.find(keyword) else {
         return String::new();
     };
-    let rest = tail_low[i + keyword.len()..].trim_start();
-    let mut words = rest.split_whitespace();
-    let Some(first) = words.next() else {
-        return String::new();
-    };
-    let mut action = first
-        .trim_end_matches(';')
-        .trim_end_matches(',')
-        .to_uppercase();
-    if action == "SET" {
-        if let Some(second) = words.next() {
-            action = format!("SET {}", second.trim_end_matches(';').to_uppercase());
+    let words: Vec<String> = tail_low[i + keyword.len()..]
+        .split_whitespace()
+        .map(|w| w.trim_end_matches(|c| c == ';' || c == ',' || c == ')').to_uppercase())
+        .collect();
+    for allowed in FK_ACTIONS.iter() {
+        let parts: Vec<&str> = allowed.split_whitespace().collect();
+        if words.len() >= parts.len()
+            && words[..parts.len()]
+                .iter()
+                .zip(parts.iter())
+                .all(|(a, b)| a == b)
+        {
+            return (*allowed).to_string();
         }
     }
-    action
+    // 未知动作保留首词，交给导出层归一化到 RESTRICT（不在这里悄悄丢信息）。
+    words.into_iter().next().unwrap_or_default()
 }
 
 // ─────────────────────────── DDL 解析 ───────────────────────────

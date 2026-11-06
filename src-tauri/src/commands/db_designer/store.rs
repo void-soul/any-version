@@ -25,6 +25,27 @@ const BASE_TYPES: [&str; 18] = [
     "text", "date", "time", "datetime", "timestamp", "boolean", "json", "uuid", "blob",
 ];
 
+/// CHECK 表达式的括号配对检查；引号内的括号与转义字符不计。
+fn balanced_parens(expr: &str) -> bool {
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    let mut chars = expr.chars().peekable();
+    while let Some(c) = chars.next() {
+        if let Some(q) = quote {
+            if c == '\\' { chars.next(); continue; }
+            if c == q { quote = None; }
+            continue;
+        }
+        match c {
+            '\'' | '"' | '`' => quote = Some(c),
+            '(' => depth += 1,
+            ')' => { depth -= 1; if depth < 0 { return false; } }
+            _ => {}
+        }
+    }
+    depth == 0
+}
+
 pub fn validate(doc: &DbDesignDocument) -> ValidationReport {
     let mut r = ValidationReport::default();
 
@@ -309,6 +330,69 @@ pub fn validate(doc: &DbDesignDocument) -> ValidationReport {
         }
     }
 
+
+// ── 约束提示（一律 warning，不阻断老设计文件）──
+    let legal_action = |a: &str| {
+        let v = a.trim().split_whitespace().collect::<Vec<_>>().join(" ").to_uppercase();
+        v.is_empty() || FK_ACTIONS.contains(&v.as_str())
+    };
+    for rel in &doc.relations {
+        for (keyword, action) in [("ON DELETE", &rel.on_delete), ("ON UPDATE", &rel.on_update)] {
+            if !legal_action(action) {
+                r.warnings.push(format!(
+                    "关联「{}」的 {} 动作「{}」不在允许列表（{}），导出时会按 RESTRICT 处理",
+                    rel.id, keyword, action.trim(), FK_ACTIONS.join(" / ")
+                ));
+            }
+        }
+    }
+
+    // 外键约束名重复（MySQL schema 内唯一 / PG·SQLite 全库唯一，与索引名规则同构）
+    let mut seen_fk: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for rel in &doc.relations {
+        let name = rel.constraint_name.trim();
+        if !name.is_empty() {
+            seen_fk.entry(name.to_lowercase()).or_default().push(rel.id.clone());
+        }
+    }
+    for (name, ids) in seen_fk {
+        if ids.len() > 1 {
+            r.warnings.push(format!(
+                "外键约束名「{}」被 {} 条关联共用（{}）：{}，重名会建表失败",
+                name,
+                ids.len(),
+                ids.join(" / "),
+                if doc.dialect == "mysql" { "MySQL 要求 schema 内唯一" } else { "PostgreSQL / SQLite 要求全库唯一" }
+            ));
+        }
+    }
+
+    let mut seen_check: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for node in &doc.nodes {
+        let Some(table) = &node.table else { continue };
+        for check in &table.checks {
+            let expr = check.expression.trim();
+            if expr.is_empty() {
+                r.warnings.push(format!("表「{}」有一条 CHECK 约束的表达式为空，导出会生成无效 SQL", node.name));
+            } else if !balanced_parens(expr) {
+                r.warnings.push(format!("表「{}」的 CHECK 约束「{}」括号不配对：{}", node.name, check.name, expr));
+            }
+            let name = check.name.trim();
+            if !name.is_empty() {
+                seen_check.entry(name.to_lowercase()).or_default().push(node.name.clone());
+            }
+        }
+    }
+    for (name, tables) in seen_check {
+        if tables.len() > 1 {
+            r.warnings.push(format!(
+                "CHECK 约束名「{}」被多个表共用（{}），重名会建表失败，请加上表名前缀",
+                name, tables.join(" / ")
+            ));
+        }
+    }
 
 // ── 命名规范与外键索引 ──
     validate_naming(doc, &mut r);

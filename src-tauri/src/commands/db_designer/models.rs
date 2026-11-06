@@ -190,6 +190,9 @@ pub const DIALECTS: [&str; 3] = ["mysql", "postgres", "sqlite"];
 pub const NODE_KINDS: [&str; 2] = ["table", "view"];
 pub const RELATION_KINDS: [&str; 3] = ["1-1", "1-n", "n-n"];
 pub const INDEX_KINDS: [&str; 4] = ["primary", "unique", "index", "fulltext"];
+/// SQL 外键引用动作白名单（唯一真源：导出归一化、校验提示、离线校验器都对齐它）。
+/// `SET NULL` / `SET DEFAULT` / `NO ACTION` 是两词动作，逆向解析时不能只取第一个词。
+pub const FK_ACTIONS: [&str; 5] = ["RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT", "NO ACTION"];
 
 fn default_dialect() -> String {
     "mysql".to_string()
@@ -335,8 +338,13 @@ pub struct DbDesignRelation {
     /// 同上：缺 id 当空，收尾时补。
     #[serde(default, deserialize_with = "de_text")]
     pub id: String,
+    /// 画布上的备注名（导航列表标题用），**不是**数据库约束名。
     #[serde(default, deserialize_with = "de_text")]
     pub name: String,
+    /// 数据库层 `CONSTRAINT <name> FOREIGN KEY` 的约束名，来自 DDL 逆向或用户编辑。
+    /// 留空时导出回退到自动名 `fk_{表}_{字段}`，保证旧设计文件产物不变。
+    #[serde(default, deserialize_with = "de_text")]
+    pub constraint_name: String,
     #[serde(default)]
     pub from: DbRelationEnd,
     #[serde(default)]

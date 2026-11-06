@@ -159,6 +159,27 @@ export function DbRelationsEditor({ REL_FILTERS, setRelFilter, relFilter, addRel
             {t("dbd.chipMirror")}
           </label>
         </div>
+        {/* 数据库层约束名：DDL 逆向来的名字要能就地改，留空则导出时自动生成。 */}
+        <div className="mt-0.5 flex items-center gap-1">
+          <input
+            value={r.constraintName ?? ""}
+            onChange={(e) => updateRelation(r.id, { constraintName: e.target.value })}
+            placeholder={t("dbd.constraintName")}
+            title={t("dbd.constraintName")}
+            className="min-w-0 flex-1 rounded bg-white/5 px-1 py-0.5 font-mono text-micro text-slate-200 outline-none placeholder:font-sans placeholder:text-slate-600"
+          />
+          <span className="shrink-0 text-micro text-slate-600">{t("dbd.onUpdate")}</span>
+          <select
+            value={r.onUpdate ?? "RESTRICT"}
+            onChange={(e) => updateRelation(r.id, { onUpdate: e.target.value })}
+            className="min-w-0 flex-1 rounded bg-white/5 px-1 py-0.5 text-micro text-slate-200 outline-none"
+            title={t("dbd.onUpdate")}
+          >
+            {FK_ACTIONS.map((a) => (
+              <option key={a} value={a}>{a}</option>
+            ))}
+          </select>
+        </div>
       </div>
       );
     })}

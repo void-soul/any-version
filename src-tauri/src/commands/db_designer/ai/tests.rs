@@ -773,6 +773,7 @@ fn ai_output_passes_validation_after_normalizing() {
     doc.relations.push(DbDesignRelation {
         id: String::new(),
         name: String::new(),
+        constraint_name: String::new(),
         from: super::super::models::DbRelationEnd {
             node: doc.nodes[1].id.clone(),
             field: "type_id".into(),

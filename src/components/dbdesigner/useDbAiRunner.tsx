@@ -1,3 +1,4 @@
+import { reportInvokeError } from "../../utils/invokeOrReport";
 import { resolveModelChoice } from "./modelChoice";
 import type { FieldRowMode } from "./types";
 import { useEffect, useCallback, useMemo, useRef, useState } from "react";
@@ -163,7 +164,7 @@ const aiStatusText = aiBusy
     setAiModelId(modelId);
     void invoke("dbd_save_settings", {
       settings: modelChoiceSettings({ providerId, modelId }),
-    }).catch(() => {});
+    }).catch((e) => { reportInvokeError(e, "src/components/dbdesigner/useDbAiRunner.tsx:166"); });
   }, []);
 
   /**
@@ -469,7 +470,7 @@ const aiStatusText = aiBusy
         setAiProviderId(choice.providerId);
         setAiModelId(choice.modelId);
       })
-      .catch(() => {});
+      .catch((e) => { reportInvokeError(e, "src/components/dbdesigner/useDbAiRunner.tsx:472"); });
   }, []);
   return {
     aiText,

@@ -21,6 +21,8 @@ BASE_TYPES = {
 NODE_KINDS = {"table", "view"}
 REL_KINDS = {"1-1", "1-n", "n-n"}
 INDEX_KINDS = {"primary", "unique", "index", "fulltext"}
+# 真源是 Rust `models.rs::FK_ACTIONS`、前端 `DbDesignerPanel.model.tsx::FK_ACTIONS`；
+# 三处必须一致（前端有 constraints.test.ts 静态守护）。
 FK_ACTIONS = {"RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT", "NO ACTION"}
 DIALECTS = {"mysql", "postgres", "sqlite"}
 
@@ -131,6 +133,29 @@ def check_type(t, where):
             warn(f"{where}：decimal 没写 precision，导出时按 10 处理")
         if t.get("scale") is None:
             warn(f"{where}：decimal 没写 scale，导出时按 2 处理")
+
+
+def balanced_parens(expr):
+    """CHECK 表达式的括号是否配对（引号内的括号与转义字符不计）。"""
+    depth, quote, i = 0, None, 0
+    while i < len(expr):
+        c = expr[i]
+        if quote:
+            if c == "\\":
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+        elif c in "'\"`":
+            quote = c
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth < 0:
+                return False
+        i += 1
+    return depth == 0
 
 
 def check_table(node, dialect="mysql"):
@@ -265,6 +290,28 @@ def check_table(node, dialect="mysql"):
                         f"（需要指定前缀长度，如 ({c}(191))），导出会跳过它"
                     )
 
+    # 表级 CHECK 约束：应用侧 store.rs::validate 对这些只出 warning，这里同口径。
+    checks = table.get("checks") or []
+    if not isinstance(checks, list):
+        err(f"表 {name}：table.checks 必须是数组")
+    else:
+        check_names = set()
+        for ci, chk in enumerate(checks):
+            where = f"表 {name} 第 {ci + 1} 个 CHECK"
+            if not isinstance(chk, dict):
+                err(f"{where}：不是对象 {{name, expression}}")
+                continue
+            expr = chk.get("expression")
+            if not isinstance(expr, str) or not expr.strip():
+                warn(f"{where}：expression 为空，导出会生成无效 SQL")
+            elif not balanced_parens(expr):
+                warn(f"{where}：括号不配对：{expr!r}")
+            cname = chk.get("name") or ""
+            if cname:
+                if cname in check_names:
+                    warn(f"{where}：约束名重复 {cname!r}（重名会建表失败）")
+                check_names.add(cname)
+
     # 命名规范：主键命名 + 通用裸名
     check_naming(name, table, pk_cols, None)
 
@@ -381,6 +428,7 @@ def check(doc):
     if not isinstance(rels, list):
         err("relations 必须是数组")
         return
+    fk_names = {}
     for i, r in enumerate(rels):
         where = f"第 {i + 1} 条关联"
         if not isinstance(r, dict):
@@ -415,6 +463,17 @@ def check(doc):
             v = r.get(act)
             if v and str(v).upper() not in FK_ACTIONS:
                 err(f"{where}：{act}={v!r} 越界（允许 {'/'.join(sorted(FK_ACTIONS))}）")
+        # 约束名：来自 DDL 逆向或用户编辑，留空时后端自动按 fk_{表}_{字段} 命名。
+        # 离线自检比应用侧更严（应用侧对非法动作只出 warning，这里直接拦在产出阶段）。
+        cname = r.get("constraintName")
+        if cname is not None and not isinstance(cname, str):
+            err(f"{where}：constraintName 必须是字符串")
+        elif cname and cname.strip():
+            key = cname.strip().lower()
+            if key in fk_names:
+                warn(f"{where}：外键约束名 {cname!r} 与第 {fk_names[key]} 条重复（重名会建表失败）")
+            else:
+                fk_names[key] = i + 1
 
         # 外键字段必须有索引（error 级，与应用侧 validate_naming 同口径）
         # n-n 中间表例外：联合主键自带索引

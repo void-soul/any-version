@@ -213,6 +213,7 @@ mod tests {
         doc.relations.push(crate::commands::db_designer::models::DbDesignRelation {
             id: "r".to_string(),
             name: String::new(),
+            constraint_name: String::new(),
             from: crate::commands::db_designer::models::DbRelationEnd {
                 node: "n1".to_string(),
                 field: "ghost".to_string(),

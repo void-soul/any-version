@@ -57,6 +57,19 @@
 |---|---|---|---|
 | `fields` | 字段[] | 是（可为空） | 见 §3。字段名不允许重复 |
 | `indexes` | 索引[] | 否 | 见 §4。缺省当空数组 |
+| `checks` | `{name, expression}[]` | 否 | 表级 CHECK 约束，缺省当空数组。见 §4.1 |
+
+### 2.1 检查约束 `checks[]`
+
+```jsonc
+{ "name": "commerce_orders_chk_1", "expression": "amount_cents >= 0" }
+```
+
+- `name` 可留空：导出时不带 `CONSTRAINT <name>` 前缀；从 DDL 逆向时保留原名。
+- `expression` 是括号内的条件文本，**不要**自己再包一层 `()`。
+- 应用侧 `store.rs::validate` 对「表达式为空 / 括号不配对 / 约束名重复」只出 warning；
+  离线自检 `scripts/validate.py` 同口径。
+- 约束名与索引名是不同的命名空间，各自独立判重。
 
 ## 3. 字段 `fields[]`
 
@@ -134,7 +147,8 @@
 ```jsonc
 {
   "id": "r1",
-  "name": "",                                  // 可选，关系备注
+  "name": "",                                  // 可选，关系备注（画布标题，不是数据库约束名）
+  "constraintName": "fk_orders_user",         // 可选，数据库层 FOREIGN KEY 约束名；留空则导出时自动生成 fk_{表}_{字段}
   "from": { "node": "t_orders", "field": "user_id" },   // 子表（外键侧，"多"）
   "to":   { "node": "t_users",  "field": "id"      },   // 父表（被引用，"一"）
   "kind": "1-n",                               // 1-1 | 1-n（默认）| n-n
@@ -147,7 +161,13 @@
 **方向铁律**：`from` = 子表 = 外键所在的那一端。外键只建在 `from` 上，`to` 侧不会被挂外键。
 `from.node` / `to.node` 是**节点 id**，`from.field` / `to.field` 是**字段名**（这是最容易混的地方）。
 
-- `n-n`（多对多）：导出时后端自动生成一张 `a_b` 中间表；中间表要带额外字段（数量、备注）时自己显式建表
+- `onDelete` / `onUpdate` 取值：`RESTRICT | CASCADE | SET NULL | SET DEFAULT | NO ACTION`
+  （真源 `models.rs::FK_ACTIONS`；非法值应用侧只出 warning 且导出回退 `RESTRICT`，
+  离线自检脚本会直接判 error）。`NO ACTION` 是两个词，别写成 `NO`。
+- `constraintName` 来自 DDL 逆向或用户编辑，导出时原样保留；留空则按 `fk_{表}_{字段}` 自动生成。
+  MySQL 要求 schema 内唯一、PG / SQLite 要求全库唯一，重名会建表失败。
+- `n-n`（多对多）：导出时后端自动生成一张 `a_b` 中间表；中间表的两条外键也带
+  `ON DELETE` / `ON UPDATE`；要带额外字段（数量、备注）时自己显式建表
 - 关联两端引用了不存在的字段 / 视图 → 校验失败
 - 自关联（`from.node === to.node`）会被忽略，不要这么写
 

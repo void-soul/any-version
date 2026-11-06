@@ -129,6 +129,7 @@ pub fn sync_mirrored_relations(doc: &mut DbDesignDocument) -> usize {
                     doc.relations.push(DbDesignRelation {
                         id: format!("r_{}_{}", child_id, pk),
                         name: String::new(),
+                        constraint_name: String::new(),
                         from: super::models::DbRelationEnd {
                             node: child_id.clone(),
                             field: pk.clone(),
@@ -220,6 +221,7 @@ mod tests {
         DbDesignRelation {
             id: format!("r_{}_{}", child, fieldname),
             name: String::new(),
+            constraint_name: String::new(),
             from: super::super::models::DbRelationEnd {
                 node: child.into(),
                 field: fieldname.into(),

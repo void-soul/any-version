@@ -84,7 +84,8 @@ export const MIN_CANVAS_HEIGHT = 120;
 
 export const DEFAULT_DOCK_HEIGHT = 320;
 
-export const FK_ACTIONS = ["RESTRICT", "CASCADE", "SET NULL", "NO ACTION"];
+/** 与 Rust `models.rs::FK_ACTIONS` 一一对应（由 __tests__/constraints.test.ts 守护）。 */
+export const FK_ACTIONS = ["RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT", "NO ACTION"];
 
 export const REL_KINDS = ["1-1", "1-n", "n-n"];
 
