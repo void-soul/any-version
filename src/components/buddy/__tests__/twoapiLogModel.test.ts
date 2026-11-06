@@ -3,9 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   bucketByMinute,
   groupIntoRequests,
+  loadHiddenKeys,
   parseLogLine,
   parseUsageLine,
+  saveHiddenKeys,
+  stableRowKey,
   summarize,
+  summarizeSelection,
+  toggleSelectAll,
   type RequestLogEntry,
 } from "../twoapiLogModel";
 
@@ -175,5 +180,119 @@ describe("bucketByMinute", () => {
         const buckets = bucketByMinute(rows);
         expect(buckets).toHaveLength(60);
         expect(buckets[59].label).toBe("11:29");
+    });
+});
+
+describe("stableRowKey", () => {
+    const lines = REAL_REQUEST.map((e) => e.message);
+
+    it("is deterministic and independent of the array index", () => {
+        const a = stableRowKey("11:01:51.330", lines, 0);
+        const b = stableRowKey("11:01:51.330", [...lines], 0);
+        expect(a).toBe(b);
+        expect(a.length).toBeGreaterThan(8);
+        // 不能再用「时间戳 + 数组下标」当键：轮询后下标会漂移。
+        expect(a).not.toContain("-0");
+    });
+
+    it("changes when content changes and separates same-millisecond duplicates", () => {
+        const base = stableRowKey("11:01:51.330", lines, 0);
+        expect(stableRowKey("11:01:51.330", lines.slice(0, 3), 0)).not.toBe(base);
+        expect(stableRowKey("11:01:51.331", lines, 0)).not.toBe(base);
+        expect(stableRowKey("11:01:51.330", lines, 1)).not.toBe(base);
+    });
+
+    it("gives every row a unique stable key even when the buffer shifts", () => {
+        const rows = groupIntoRequests(REAL_REQUEST);
+        const shifted = groupIntoRequests([
+            entry("11:00:00.000", "→ POST /v1/models"),
+            ...REAL_REQUEST,
+        ]);
+        expect(rows[0].key).toBe(stableRowKey(rows[0].ts, rows[0].rawLines, 0));
+        expect(shifted[1].key).toBe(rows[0].key);
+        expect(new Set(shifted.map((r) => r.key)).size).toBe(shifted.length);
+    });
+});
+
+describe("summarizeSelection", () => {
+    const rows = groupIntoRequests([
+        ...REAL_REQUEST,
+        entry("11:02:01.100", "→ POST /v1/messages"),
+        entry("11:02:02.200", "用量: 积分 0.02 · 10→5 (共15) tok · 额度 0%"),
+        entry("11:02:02.201", "← 200 /v1/messages (1000ms)"),
+    ]);
+
+    it("returns zeroes for an empty selection", () => {
+        expect(summarizeSelection(rows, new Set())).toEqual({
+            count: 0, inTokens: 0, outTokens: 0, totalTokens: 0,
+            totalDurationMs: 0, avgDurationMs: 0, totalCredit: 0,
+        });
+    });
+
+    it("aggregates token, duration and credit only for selected existing rows", () => {
+        expect(summarizeSelection(rows, new Set([rows[0].key, rows[1].key, "gone"]))).toEqual({
+            count: 2, inTokens: 72, outTokens: 17, totalTokens: 89,
+            totalDurationMs: 2546, avgDurationMs: 1273, totalCredit: 0.03,
+        });
+    });
+
+    it("treats missing numeric fields as zero", () => {
+        const partial = groupIntoRequests([
+            entry("11:03:00.000", "→ POST /v1/models"),
+            entry("11:03:00.100", "← 200 /v1/models (20ms)"),
+        ]);
+        expect(summarizeSelection(partial, new Set([partial[0].key]))).toMatchObject({
+            count: 1, totalTokens: 0, totalCredit: 0, totalDurationMs: 20, avgDurationMs: 20,
+        });
+    });
+});
+
+describe("toggleSelectAll", () => {
+    const rows = groupIntoRequests([
+        ...REAL_REQUEST,
+        ...REAL_REQUEST.map((e) => entry("11:02:51.330", e.message)),
+    ]);
+
+    it("selects all shown rows when only some are selected", () => {
+        const next = toggleSelectAll(rows, new Set([rows[0].key]));
+        expect(next.size).toBe(2);
+        expect(next.has(rows[1].key)).toBe(true);
+    });
+
+    it("deselects all shown rows when all are already selected", () => {
+        const all = new Set(rows.map((r) => r.key));
+        expect(toggleSelectAll(rows, all).size).toBe(0);
+    });
+
+    it("handles an empty shown list without throwing", () => {
+        expect(toggleSelectAll([], new Set()).size).toBe(0);
+    });
+});
+
+describe("hidden key persistence", () => {
+    const memoryStorage = () => {
+        const store = new Map<string, string>();
+        return {
+            getItem: (k: string) => store.get(k) ?? null,
+            setItem: (k: string, v: string) => { store.set(k, v); },
+            store,
+        };
+    };
+
+    it("returns an empty set without DOM and tolerates dirty data", () => {
+        expect(loadHiddenKeys(undefined).size).toBe(0);
+        const dirty = memoryStorage();
+        dirty.setItem("kira.2api.hiddenLogs", "not-json");
+        expect(loadHiddenKeys(dirty).size).toBe(0);
+        dirty.setItem("kira.2api.hiddenLogs", JSON.stringify({ nope: 1 }));
+        expect(loadHiddenKeys(dirty).size).toBe(0);
+    });
+
+    it("round-trips a key set", () => {
+        const s = memoryStorage();
+        saveHiddenKeys(new Set(["aaa", "bbb"]), s);
+        expect(loadHiddenKeys(s)).toEqual(new Set(["aaa", "bbb"]));
+        saveHiddenKeys(new Set(), s);
+        expect(loadHiddenKeys(s).size).toBe(0);
     });
 });

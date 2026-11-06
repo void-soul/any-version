@@ -11,7 +11,9 @@ import { useTranslation } from "react-i18next";
 import { Check, Copy, Play, RefreshCw, Square, Trash2 } from "lucide-react";
 import { TwoApiLogTable } from "./TwoApiLogTable";
 import { TwoApiUsageChart } from "./TwoApiUsageChart";
-import { bucketByMinute, groupIntoRequests, summarize } from "./twoapiLogModel";
+import {
+  bucketByMinute, groupIntoRequests, loadHiddenKeys, saveHiddenKeys, summarize,
+} from "./twoapiLogModel";
 
 type Phase = "stopped" | "starting" | "running" | "failed";
 
@@ -80,13 +82,26 @@ export default function TwoApiPanel() {
 
   // 一次请求会拆成多行日志，归并成「一条请求一行」再交给表格/图表。
   const rows = useMemo(() => groupIntoRequests(logs), [logs]);
-  const summary = useMemo(() => summarize(rows), [rows]);
-  const buckets = useMemo(() => bucketByMinute(rows), [rows]);
+  // 「删除」是前端隐藏：键基于内容而非数组下标，轮询后仍稳定；会话内持久化。
+  const [hidden, setHidden] = useState<Set<string>>(() => loadHiddenKeys());
+  const visibleRows = useMemo(() => rows.filter((r) => !hidden.has(r.key)), [rows, hidden]);
+  const summary = useMemo(() => summarize(visibleRows), [visibleRows]);
+  const buckets = useMemo(() => bucketByMinute(visibleRows), [visibleRows]);
+
+  const updateHidden = (next: Set<string>) => {
+    setHidden(next);
+    saveHiddenKeys(next);
+  };
+  const deleteLogRow = (key: string) => {
+    if (hidden.has(key)) return;
+    updateHidden(new Set([...hidden, key]));
+  };
 
   const clearLogs = async () => {
     try {
       await invoke("buddy2api_clear_request_logs");
       setLogs([]);
+      updateHidden(new Set());
     } catch (e) {
       setNotice(String(e));
     }
@@ -317,7 +332,7 @@ export default function TwoApiPanel() {
       <div className="flex flex-col rounded bg-black/20 border border-white/8">
         <div className="flex items-center gap-2 px-2 py-1.5 border-b border-white/8">
           <span className="text-slate-300 font-semibold">{t("buddy.twoapi.requestLog")}</span>
-          <span className="text-slate-600 tabular-nums">({rows.length})</span>
+          <span className="text-slate-600 tabular-nums">({visibleRows.length})</span>
           <div className="flex items-center gap-0.5 rounded-ctl bg-white/5 p-0.5">
             {(["table", "stats"] as const).map((view) => (
               <button
@@ -351,7 +366,12 @@ export default function TwoApiPanel() {
           </button>
         </div>
         {logView === "table" ? (
-          <TwoApiLogTable rows={rows} />
+          <TwoApiLogTable
+            rows={visibleRows}
+            hiddenCount={hidden.size}
+            onDeleteRow={deleteLogRow}
+            onRestoreHidden={() => updateHidden(new Set())}
+          />
         ) : (
           <TwoApiUsageChart summary={summary} buckets={buckets} />
         )}

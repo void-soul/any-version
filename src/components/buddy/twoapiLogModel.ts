@@ -68,6 +68,22 @@ export interface MinuteBucket {
   credit: number;
 }
 
+export interface SelectionSummary {
+  count: number;
+  inTokens: number;
+  outTokens: number;
+  totalTokens: number;
+  totalDurationMs: number;
+  avgDurationMs: number;
+  totalCredit: number;
+}
+
+/** 最小存储接口：让隐藏集合在单测里可用内存实现，不必依赖真实 DOM。 */
+export interface StorageLike {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
 const numberIn = (text: string, re: RegExp): number | null => {
   const m = re.exec(text);
   if (!m) return null;
@@ -136,8 +152,23 @@ export function parseLogLine(entry: RequestLogEntry): ParsedLogLine {
   return base;
 }
 
+/**
+ * 稳定内容键：对「首行时间戳 + 该请求全部原始日志行」做 FNV-1a 风格哈希。
+ * 不能用数组下标——后端是 1000 条环形缓冲，轮询时下标会整体漂移。
+ * `ordinal` 区分同一毫秒内内容完全相同的两条请求。
+ */
+export function stableRowKey(ts: string, rawLines: string[], ordinal = 0): string {
+  const text = `${ts}\n${rawLines.join("\n")}\n#${ordinal}`;
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${(hash >>> 0).toString(16).padStart(8, "0")}#${ordinal}`;
+}
+
 const emptyRow = (entry: RequestLogEntry, index: number): LogRow => ({
-  key: `${entry.ts}-${index}`,
+  key: `pending-${index}`,
   ts: entry.ts,
   model: null,
   path: null,
@@ -193,6 +224,14 @@ export function groupIntoRequests(entries: RequestLogEntry[]): LogRow[] {
     }
   });
 
+  // rawLines 收齐后统一重算键；同毫秒且内容相同的请求按顺序编号区分。
+  const seen = new Map<string, number>();
+  for (const row of rows) {
+    const base = stableRowKey(row.ts, row.rawLines, 0);
+    const ordinal = seen.get(base) ?? 0;
+    seen.set(base, ordinal + 1);
+    row.key = ordinal === 0 ? base : stableRowKey(row.ts, row.rawLines, ordinal);
+  }
   return rows;
 }
 
@@ -212,6 +251,77 @@ export function summarize(rows: LogRow[]): LogSummary {
       ? Math.round(durations.reduce((n, d) => n + d, 0) / durations.length)
       : 0,
   };
+}
+
+/** 只汇总「被选中且仍存在」的行；被隐藏或已被环形缓冲挤出的键自动忽略。 */
+export function summarizeSelection(
+  rows: LogRow[],
+  selected: ReadonlySet<string>,
+): SelectionSummary {
+  const chosen = rows.filter((r) => selected.has(r.key));
+  const durations = chosen
+    .map((r) => r.durationMs)
+    .filter((d): d is number => d !== null);
+  const round = (n: number) => Math.round(n * 1e6) / 1e6;
+  const totalDurationMs = durations.reduce((n, d) => n + d, 0);
+  return {
+    count: chosen.length,
+    inTokens: chosen.reduce((n, r) => n + (r.inTokens ?? 0), 0),
+    outTokens: chosen.reduce((n, r) => n + (r.outTokens ?? 0), 0),
+    totalTokens: chosen.reduce((n, r) => n + (r.totalTokens ?? 0), 0),
+    totalDurationMs,
+    avgDurationMs: durations.length > 0 ? Math.round(totalDurationMs / durations.length) : 0,
+    totalCredit: round(chosen.reduce((n, r) => n + (r.credit ?? 0), 0)),
+  };
+}
+
+/** 全选 / 取消全选当前筛选结果：已全选则取消，否则补齐。 */
+export function toggleSelectAll(
+  shown: LogRow[],
+  selected: ReadonlySet<string>,
+): Set<string> {
+  const next = new Set(selected);
+  const allSelected = shown.length > 0 && shown.every((r) => next.has(r.key));
+  for (const row of shown) {
+    if (allSelected) next.delete(row.key);
+    else next.add(row.key);
+  }
+  return next;
+}
+
+const HIDDEN_KEY = "kira.2api.hiddenLogs";
+
+const sessionStorageOrNull = (): StorageLike | null => {
+  try {
+    return typeof globalThis !== "undefined" && "sessionStorage" in globalThis
+      ? (globalThis as unknown as { sessionStorage: StorageLike }).sessionStorage
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+/** 读取被用户「删除」的行键；无 DOM / 脏数据都安全返回空集合。 */
+export function loadHiddenKeys(storage?: StorageLike | null): Set<string> {
+  const target = storage === undefined ? sessionStorageOrNull() : storage;
+  if (!target) return new Set();
+  try {
+    const parsed: unknown = JSON.parse(target.getItem(HIDDEN_KEY) ?? "[]");
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((x): x is string => typeof x === "string"));
+  } catch {
+    return new Set();
+  }
+}
+
+export function saveHiddenKeys(keys: ReadonlySet<string>, storage?: StorageLike | null): void {
+  const target = storage === undefined ? sessionStorageOrNull() : storage;
+  if (!target) return;
+  try {
+    target.setItem(HIDDEN_KEY, JSON.stringify([...keys]));
+  } catch {
+    // WebView 禁用存储时退化为组件内 state，不影响功能。
+  }
 }
 
 /** 按 `HH:MM` 分桶；`ts` 没有日期，跨小时会重叠，仅用于当前会话近况。 */
