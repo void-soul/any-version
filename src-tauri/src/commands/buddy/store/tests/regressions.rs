@@ -8,7 +8,10 @@ struct Scope {
 impl Scope {
     fn new() -> Self {
         let (_, guard) = test_root();
-        let previous = TEST_DATA_ROOT.lock().unwrap().clone();
+        let previous = TEST_DATA_ROOT
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let root = std::env::temp_dir().join(format!(
             "buddy-store-regression-{}-{}",
             std::process::id(),
@@ -28,7 +31,7 @@ impl Scope {
 }
 impl Drop for Scope {
     fn drop(&mut self) {
-        *TEST_DATA_ROOT.lock().unwrap() = self.previous.take();
+        *TEST_DATA_ROOT.lock().unwrap_or_else(|e| e.into_inner()) = self.previous.take();
         let _ = std::fs::remove_dir_all(&self.root);
     }
 }

@@ -15,6 +15,10 @@ fn test_root() -> (std::path::PathBuf, TestGuard) {
         set_test_data_root(d.clone());
         d
     });
+    // 每个写入型测试都从干净目录开始：TEST_DATA_ROOT 是进程级全局，
+    // 前一个测试若断言失败没走到 delete_account，残留账号会让后续测试连锁失败
+    // （全量并发时表现为 buddy::store 多个用例偶发 FAILED，单独跑却全绿）。
+    let _ = std::fs::remove_dir_all(dir.join("buddy"));
     (dir.clone(), guard)
 }
 

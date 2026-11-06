@@ -1,8 +1,17 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
+const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+// 存量 ≥500 行文件白名单（AUDIT-049）。只允许收缩：
+// - 白名单内文件不得比登记时更大；
+// - 白名单外的新增文件必须 < 500 行。
+const baseline = new Map(
+    require("./large-file-baseline.json").files.map((f) => [f.file, f.lines]),
+);
+const NEW_FILE_LIMIT = 500;
 const failures = [];
 const extensions = new Set([".rs", ".ts", ".tsx", ".js", ".jsx"]);
 const files = [];
@@ -23,7 +32,20 @@ for (const file of files) {
   const text = await readFile(path.join(root, file), "utf8");
   const lines = text ? text.split(/\r?\n/).length - Number(text.endsWith("\n")) : 0;
   const code = text.replace(/^\s*\/\/.*$/gm, "");
-  if (lines >= 1000) failures.push(`${file}: ${lines} lines (limit: fewer than 1000)`);
+  const baselineLines = baseline.get(file);
+  if (baselineLines !== undefined) {
+    // 存量文件：允许保持原样或变小，禁止继续膨胀。
+    if (lines > baselineLines) {
+      failures.push(`${file}: ${lines} lines (存量基线 ${baselineLines}，不得继续增长)`);
+    }
+    if (lines < baselineLines) {
+      // 提醒维护者重新生成白名单，让阈值随拆分逐步收紧。
+      console.log(`[info] ${file}: ${lines} < ${baselineLines}，可运行 node scripts/gen-large-file-baseline.mjs 收缩白名单`);
+    }
+  } else if (lines >= NEW_FILE_LIMIT) {
+    // 新文件（含新建或此前 <500 行后膨胀的文件）：硬上限 500 行。
+    failures.push(`${file}: 新增文件 ${lines} lines (limit: fewer than ${NEW_FILE_LIMIT})`);
+  }
 
   // Check source imports, including type imports. This is a narrow layer guard,
   // not a claim to infer runtime dependencies or the whole application graph.
