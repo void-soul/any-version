@@ -5,10 +5,13 @@ import { useVisibleInterval } from "../../utils/useVisibleInterval";
 // 后端是内嵌在 kira 主进程的 axum 服务（buddy/twoapi），协议转换复用 src-tauri/src/proxy。
 // 这里只做控制与展示；账号联动由后端两处完成：Buddy 面板切号时 `on_account_switched`
 // 立刻热更新，在 WorkBuddy 客户端里自己切号则由服务运行期间的凭据巡查兜住（最坏 30s）。
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
 import { Check, Copy, Play, RefreshCw, Square, Trash2 } from "lucide-react";
+import { TwoApiLogTable } from "./TwoApiLogTable";
+import { TwoApiUsageChart } from "./TwoApiUsageChart";
+import { bucketByMinute, groupIntoRequests, summarize } from "./twoapiLogModel";
 
 type Phase = "stopped" | "starting" | "running" | "failed";
 
@@ -64,7 +67,7 @@ export default function TwoApiPanel() {
 
   // ─── 请求日志 ───
   const [logs, setLogs] = useState<RequestLogEntry[]>([]);
-  const logsEndRef = useRef<HTMLDivElement>(null);
+  const [logView, setLogView] = useState<"table" | "stats">("table");
 
   const refreshLogs = useCallback(() => {
     invoke<RequestLogEntry[]>("buddy2api_request_logs")
@@ -75,10 +78,10 @@ export default function TwoApiPanel() {
   // 日志轮询（与状态轮询同频；请求日志是内存环形缓冲，轮询拿全量）。
   useVisibleInterval(refreshLogs, 2000);
 
-  // 有新日志时滚到底部
-  useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ block: "nearest" });
-  }, [logs]);
+  // 一次请求会拆成多行日志，归并成「一条请求一行」再交给表格/图表。
+  const rows = useMemo(() => groupIntoRequests(logs), [logs]);
+  const summary = useMemo(() => summarize(rows), [rows]);
+  const buckets = useMemo(() => bucketByMinute(rows), [rows]);
 
   const clearLogs = async () => {
     try {
@@ -181,7 +184,7 @@ export default function TwoApiPanel() {
   const baseUrl = status ? "http://127.0.0.1:" + status.port : "http://127.0.0.1:8788";
 
   return (
-    <div className="flex flex-col gap-3 p-3 text-tiny">
+    <div className="flex min-h-0 flex-col gap-3 overflow-y-auto p-3 text-tiny">
       {/* ① 状态条 */}
       <div className="flex items-center gap-2 flex-wrap">
         <span
@@ -314,7 +317,22 @@ export default function TwoApiPanel() {
       <div className="flex flex-col rounded bg-black/20 border border-white/8">
         <div className="flex items-center gap-2 px-2 py-1.5 border-b border-white/8">
           <span className="text-slate-300 font-semibold">{t("buddy.twoapi.requestLog")}</span>
-          <span className="text-slate-600 tabular-nums">({logs.length})</span>
+          <span className="text-slate-600 tabular-nums">({rows.length})</span>
+          <div className="flex items-center gap-0.5 rounded-ctl bg-white/5 p-0.5">
+            {(["table", "stats"] as const).map((view) => (
+              <button
+                key={view}
+                onClick={() => setLogView(view)}
+                className={`cursor-pointer rounded px-1.5 py-0.5 text-micro transition ${
+                  logView === view
+                    ? "bg-[var(--module-accent)] text-white"
+                    : "text-slate-400 hover:text-slate-100"
+                }`}
+              >
+                {t(view === "table" ? "buddy.twoapi.logTab" : "buddy.twoapi.statsTab")}
+              </button>
+            ))}
+          </div>
           <div className="flex-1" />
           <button
             onClick={() => void refreshLogs()}
@@ -332,18 +350,11 @@ export default function TwoApiPanel() {
             <Trash2 className="w-3 h-3" /> {t("buddy.twoapi.clearLogs")}
           </button>
         </div>
-        <div className="px-2 py-1.5 font-mono text-[10px] leading-relaxed max-h-48 overflow-y-auto">
-          {logs.length === 0 ? (
-            <div className="text-slate-600">{t("buddy.twoapi.noRequestLog")}</div>
-          ) : (
-            logs.map((l, i) => (
-              <div key={i} className="text-slate-400 whitespace-pre-wrap break-all">
-                <span className="text-slate-600">{l.ts}</span> {l.message}
-              </div>
-            ))
-          )}
-          <div ref={logsEndRef} />
-        </div>
+        {logView === "table" ? (
+          <TwoApiLogTable rows={rows} />
+        ) : (
+          <TwoApiUsageChart summary={summary} buckets={buckets} />
+        )}
       </div>
 
       {/* 说明 */}
