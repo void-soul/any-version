@@ -47,6 +47,22 @@
           "to": 523
         }
       ]
+    },
+    {
+      "date": "2026-11-06",
+      "reason": "2026-11-06 2API usage summary: new formatter/tests + rustfmt recursion on proxy submodules",
+      "growth": [
+        {
+          "file": "src-tauri/src/proxy/server/response.rs",
+          "from": 823,
+          "to": 863
+        },
+        {
+          "file": "src-tauri/src/proxy/server.rs",
+          "from": 591,
+          "to": 601
+        }
+      ]
     }
   ],
   "files": [
@@ -239,6 +255,10 @@
       "lines": 871
     },
     {
+      "file": "src-tauri/src/proxy/server/response.rs",
+      "lines": 863
+    },
+    {
       "file": "src-tauri/src/proxy/convert.rs",
       "lines": 857
     },
@@ -261,10 +281,6 @@
     {
       "file": "src-tauri/src/commands/db_designer/ai/tests.rs",
       "lines": 830
-    },
-    {
-      "file": "src-tauri/src/proxy/server/response.rs",
-      "lines": 823
     },
     {
       "file": "src-tauri/src/commands/port.rs",
@@ -400,6 +416,10 @@
     },
     {
       "file": "src-tauri/src/commands/clipboard/db.rs",
+      "lines": 704
+    },
+    {
+      "file": "src-tauri/src/proxy/server/observability.rs",
       "lines": 704
     },
     {
@@ -551,16 +571,16 @@
       "lines": 601
     },
     {
+      "file": "src-tauri/src/proxy/server.rs",
+      "lines": 601
+    },
+    {
       "file": "src/components/SystemTools/CertReceiverView.tsx",
       "lines": 596
     },
     {
       "file": "src/components/dbdesigner/useDbCanvasGraph.tsx",
       "lines": 595
-    },
-    {
-      "file": "src-tauri/src/proxy/server.rs",
-      "lines": 591
     },
     {
       "file": "src-tauri/src/commands/s3_common.rs",
@@ -728,6 +748,10 @@
     },
     {
       "file": "src/components/PickyPanel.tsx",
+      "lines": 504
+    },
+    {
+      "file": "src-tauri/src/proxy/server/dispatch.rs",
       "lines": 504
     },
     {

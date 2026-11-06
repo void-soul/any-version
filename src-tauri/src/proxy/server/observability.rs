@@ -88,6 +88,95 @@ pub fn get_request_logs(source_filter: &str) -> Vec<RequestLogEntry> {
         .collect()
 }
 
+/// 取数值的**原始文本**：优先 JSON number（保留 `0.01` 这类字面量，避免浮点毛刺），
+/// 也接受上游偶尔给的数字字符串；非数值返回 None。
+fn numeric_text(v: &Value) -> Option<String> {
+    match v {
+        Value::Number(n) => Some(n.to_string()),
+        Value::String(s) => {
+            let t = s.trim();
+            if !t.is_empty() && t.parse::<f64>().is_ok() {
+                Some(t.to_string())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn numeric_u64(v: &Value) -> Option<u64> {
+    match v {
+        Value::Number(n) => n.as_u64(),
+        Value::String(s) => s.trim().parse::<u64>().ok(),
+        _ => None,
+    }
+}
+
+/// 从上游 `usage` 块生成一行用量摘要。字段全部可选，一个都没有时返回 None
+/// （调用方据此跳过写日志，不产生「用量: 」这种空行）。
+pub(super) fn format_usage_summary(usage: Option<&Value>) -> Option<String> {
+    let obj = usage?.as_object()?;
+    let mut parts: Vec<String> = Vec::new();
+
+    // credit 是本次请求消耗的积分（不是账号余额；余额走独立的 quota 接口）。
+    if let Some(credit) = obj.get("credit").and_then(numeric_text) {
+        parts.push(format!("积分 {credit}"));
+    }
+
+    // total_tokens 上游可能漏给，用 prompt + completion 兜底。
+    if let (Some(p), Some(c)) = (
+        obj.get("prompt_tokens").and_then(numeric_u64),
+        obj.get("completion_tokens").and_then(numeric_u64),
+    ) {
+        let total = obj
+            .get("total_tokens")
+            .and_then(numeric_u64)
+            .unwrap_or_else(|| p.saturating_add(c));
+        parts.push(format!("{p}→{c} (共{total}) tok"));
+    }
+
+    if let Some(percent) = obj
+        .get("quota")
+        .and_then(|q| q.get("percent"))
+        .and_then(numeric_text)
+    {
+        parts.push(format!("额度 {percent}%"));
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" · "))
+    }
+}
+
+/// SSE 帧里 `usage` 可能多次出现（首帧给 prompt、末帧给完整结算）。
+/// 只保留最后一个**对象**形态的 usage，null / 字符串帧不抹掉已拿到的值。
+pub(super) fn observe_usage_chunk(last: &mut Option<Value>, chunk: &Value) {
+    if let Some(u) = chunk.get("usage") {
+        if u.is_object() {
+            *last = Some(u.clone());
+        }
+    }
+}
+
+/// 生成要写入请求日志的用量行。仅 2API 来源需要（其它面板不关心上游积分），
+/// 且 usage 里没有任何可用字段时不产生空行。抽成纯函数便于单测，不碰全局缓冲。
+pub(super) fn usage_summary_line(source: &str, usage: Option<&Value>) -> Option<String> {
+    if source != "2api" {
+        return None;
+    }
+    format_usage_summary(usage).map(|summary| format!("用量: {summary}"))
+}
+
+/// 只给 2API 面板写用量摘要，避免每个请求在多个来源面板重复刷一行。
+pub(super) fn push_usage_summary(source: &str, usage: Option<&Value>) {
+    if let Some(line) = usage_summary_line(source, usage) {
+        push_request_log(source, line);
+    }
+}
+
 /// 清空请求日志缓冲。
 pub fn clear_request_logs() {
     REQUEST_LOG
@@ -491,5 +580,125 @@ mod tests {
             cfg.allow_unauthenticated,
             "/chat/completions"
         ));
+    }
+
+    /// 2API 上游真实响应的 usage 块（脱敏后，2026-11-06 用户提供）。
+    fn real_usage() -> Value {
+        json!({
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cached_tokens": 0,
+            "completion_thinking_tokens": 0,
+            "completion_tokens": 12,
+            "completion_tokens_details": {"cached_tokens": 0, "reasoning_tokens": 0},
+            "credit": 0.01,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 62,
+            "prompt_cache_write_tokens": 0,
+            "prompt_tokens": 62,
+            "quota": {
+                "model": "deepseek-v4.1-flash",
+                "percent": 0,
+                "reset_at": "1794019448",
+                "shared_models": []
+            },
+            "total_tokens": 74
+        })
+    }
+
+    #[test]
+    fn usage_summary_shows_credit_tokens_and_quota_from_real_2api_response() {
+        let summary = format_usage_summary(Some(&real_usage()));
+        assert_eq!(
+            summary.as_deref(),
+            Some("积分 0.01 · 62→12 (共74) tok · 额度 0%")
+        );
+    }
+
+    #[test]
+    fn usage_summary_returns_none_when_nothing_usable() {
+        assert_eq!(format_usage_summary(None), None);
+        assert_eq!(format_usage_summary(Some(&json!({}))), None);
+        assert_eq!(format_usage_summary(Some(&json!("not-an-object"))), None);
+    }
+
+    #[test]
+    fn usage_summary_falls_back_total_tokens_to_prompt_plus_completion() {
+        let usage = json!({"prompt_tokens": 62, "completion_tokens": 12, "credit": 0.01});
+        assert_eq!(
+            format_usage_summary(Some(&usage)).as_deref(),
+            Some("积分 0.01 · 62→12 (共74) tok")
+        );
+    }
+
+    #[test]
+    fn usage_summary_omits_missing_credit_and_quota_segments() {
+        let usage = json!({"prompt_tokens": 5, "completion_tokens": 7, "total_tokens": 12});
+        assert_eq!(
+            format_usage_summary(Some(&usage)).as_deref(),
+            Some("5→7 (共12) tok")
+        );
+    }
+
+    #[test]
+    fn usage_summary_keeps_numeric_strings_and_ignores_non_numeric_values() {
+        // 上游偶尔把数字写成字符串；不可解析的值不能让整行日志消失或 panic。
+        let usage = json!({
+            "credit": "0.02",
+            "quota": {"percent": "12.5"},
+            "prompt_tokens": {},
+            "completion_tokens": null,
+            "total_tokens": "30"
+        });
+        let summary = format_usage_summary(Some(&usage)).unwrap();
+        assert!(summary.contains("积分 0.02"), "{summary}");
+        assert!(summary.contains("额度 12.5%"), "{summary}");
+        assert!(!summary.contains("tok"), "{summary}");
+    }
+
+    #[test]
+    fn observe_usage_chunk_keeps_last_object_and_ignores_noise() {
+        let mut last: Option<Value> = None;
+        observe_usage_chunk(
+            &mut last,
+            &json!({"choices": [{"delta": {"content": "hi"}}]}),
+        );
+        assert!(last.is_none());
+        observe_usage_chunk(&mut last, &json!({"usage": "not-an-object"}));
+        assert!(last.is_none(), "非对象 usage 不能覆盖");
+        observe_usage_chunk(
+            &mut last,
+            &json!({"usage": {"prompt_tokens": 1, "credit": 0.01}}),
+        );
+        observe_usage_chunk(&mut last, &json!({"usage": null}));
+        assert_eq!(
+            last.as_ref()
+                .and_then(|v| v.get("credit"))
+                .and_then(|v| v.as_f64()),
+            Some(0.01),
+            "null 帧不应抹掉已拿到的 usage"
+        );
+        observe_usage_chunk(
+            &mut last,
+            &json!({"usage": {"prompt_tokens": 62, "completion_tokens": 12, "total_tokens": 74, "credit": 0.02}}),
+        );
+        assert_eq!(
+            format_usage_summary(last.as_ref()).as_deref(),
+            Some("积分 0.02 · 62→12 (共74) tok")
+        );
+    }
+
+    #[test]
+    fn usage_line_is_built_only_for_2api_and_only_with_data() {
+        let usage = real_usage();
+        assert_eq!(
+            usage_summary_line("2api", Some(&usage)).as_deref(),
+            Some("用量: 积分 0.01 · 62→12 (共74) tok · 额度 0%")
+        );
+        // 其它来源的面板不显示上游积分
+        assert_eq!(usage_summary_line("ai", Some(&usage)), None);
+        // 字段全缺时不产生「用量: 」空行
+        assert_eq!(usage_summary_line("2api", Some(&json!({}))), None);
+        assert_eq!(usage_summary_line("2api", None), None);
     }
 }

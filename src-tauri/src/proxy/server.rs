@@ -550,13 +550,22 @@ mod tests {
         super::clear_request_logs();
         assert!(super::get_request_logs(SRC).is_empty());
 
-        // 上限：超出后丢最旧的
+        // 上限：超出后丢最旧的。缓冲是**全局**的，别的测试（如 lifecycle 起真实代理）
+        // 可能并发 push 几条把最旧的挤掉，所以不断言「恰好 CAP 条」，只验证
+        // 上限生效、最旧的已丢、最新的还在——这才是不依赖并发时序的语义。
         for i in 0..(super::REQUEST_LOG_CAP + 10) {
             super::push_request_log(SRC, format!("msg {i}"));
         }
         let all = super::get_request_logs(SRC);
-        assert_eq!(all.len(), super::REQUEST_LOG_CAP);
-        assert!(all[0].message.contains("msg 10"), "{}", all[0].message);
+        assert!(all.len() <= super::REQUEST_LOG_CAP, "缓冲不应超过上限");
+        assert!(
+            !all.iter().any(|e| e.message == "msg 0"),
+            "最旧的条目应被丢弃"
+        );
+        assert!(
+            all.iter().any(|e| e.message == "msg 1009"),
+            "最新的条目应保留"
+        );
 
         super::clear_request_logs();
     }
@@ -570,8 +579,9 @@ pub use lifecycle::wait_for_stopped_proxies;
 use observability::{
     catch_all_handler, emit_proxy_event, extract_inbound_delta_text, extract_inbound_full_text,
     get_collab_msg_id, log_proxy, log_proxy_json_full, log_proxy_raw, log_requests_mw,
-    proxy_debug_enabled, record_proxy_usage, require_proxy_token_mw, store_proxy_text_for,
-    store_proxy_text_with, REQUEST_LOG_CAP, RUNNING_CONFIGS,
+    observe_usage_chunk, proxy_debug_enabled, push_usage_summary, record_proxy_usage,
+    require_proxy_token_mw, store_proxy_text_for, store_proxy_text_with, REQUEST_LOG_CAP,
+    RUNNING_CONFIGS,
 };
 pub use observability::{
     clear_collab_msg_id, clear_request_logs, get_request_logs, push_request_log, set_collab_msg_id,

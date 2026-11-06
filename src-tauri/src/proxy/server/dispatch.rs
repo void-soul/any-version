@@ -122,9 +122,19 @@ pub(super) async fn process_request(
 
     // ⑤ 预防式整流（P_out 形态）
     optimizers::apply_preventive_rectifiers(&mut out_body, &outbound, &config);
-    let reasoning_base = config.model_routes.get(&actual_model)
-        .map(|route| route.base_url.as_str()).unwrap_or(&config.upstream_base_url);
-    crate::proxy::reasoning_effort::apply(inbound, &outbound, &body, &mut out_body, &actual_model, reasoning_base);
+    let reasoning_base = config
+        .model_routes
+        .get(&actual_model)
+        .map(|route| route.base_url.as_str())
+        .unwrap_or(&config.upstream_base_url);
+    crate::proxy::reasoning_effort::apply(
+        inbound,
+        &outbound,
+        &body,
+        &mut out_body,
+        &actual_model,
+        reasoning_base,
+    );
 
     // ⑥ 转发
     // 出站为 OpenAI / Anthropic 时，确保请求体带 stream 字段：
@@ -398,7 +408,14 @@ pub(super) async fn process_request(
             let mut fb_body = convert_request(inbound, "openai", &body, &actual_model);
             optimizers::apply_optimizers(&mut fb_body, "openai", &fb_config);
             optimizers::apply_preventive_rectifiers(&mut fb_body, "openai", &fb_config);
-            crate::proxy::reasoning_effort::apply(inbound, "openai", &body, &mut fb_body, &actual_model, &fb_config.upstream_base_url);
+            crate::proxy::reasoning_effort::apply(
+                inbound,
+                "openai",
+                &body,
+                &mut fb_body,
+                &actual_model,
+                &fb_config.upstream_base_url,
+            );
             if is_stream && (fb_config.outbound_protocol == "openai") {
                 if let Some(o) = fb_body.as_object_mut() {
                     o.insert("stream".into(), json!(true));

@@ -4,10 +4,10 @@ use tauri::Emitter;
 use super::{
     convert_response, emit_proxy_event, extract_inbound_delta_text, extract_inbound_full_text,
     extract_stream_usage, get_collab_msg_id, google, header, json, log_proxy, log_proxy_json_full,
-    log_proxy_raw, proxy_debug_enabled, push_request_log, reasoning_fallback, record_proxy_usage,
-    record_usage_from_response, set_response_model, sse, store_proxy_text_for,
-    store_proxy_text_with, stream_guard, transform, Body, Event, Infallible, Instant, Json,
-    ProxyConfig, ProxyState, Response, Sse, StatusCode, Value,
+    log_proxy_raw, observe_usage_chunk, proxy_debug_enabled, push_request_log, push_usage_summary,
+    reasoning_fallback, record_proxy_usage, record_usage_from_response, set_response_model, sse,
+    store_proxy_text_for, store_proxy_text_with, stream_guard, transform, Body, Event, Infallible,
+    Instant, Json, ProxyConfig, ProxyState, Response, Sse, StatusCode, Value,
 };
 
 #[cfg(test)]
@@ -101,6 +101,11 @@ pub(super) async fn process_response(
         &in_resp,
         actual_model,
         start.elapsed().as_millis() as u64,
+    );
+    // 上游 usage 里的积分/额度是协议外字段，转换后可能被丢掉，优先取原始响应。
+    push_usage_summary(
+        &config.source,
+        resp_json.get("usage").or_else(|| in_resp.get("usage")),
     );
 
     if proxy_debug_enabled() {
@@ -200,16 +205,23 @@ pub(super) async fn aggregate_upstream_stream(
             let block = match buffer.next_block() {
                 Ok(Some(block)) => block,
                 Ok(None) => break,
-                Err(error) => { failure = Some(error); break 'read; }
+                Err(error) => {
+                    failure = Some(error);
+                    break 'read;
+                }
             };
             let Some(data) = sse::extract_sse_data(&block) else {
                 continue;
             };
-            if let Err(error) = collect_aggregate_payload(&data, outbound, &mut chunks, &mut progress) {
+            if let Err(error) =
+                collect_aggregate_payload(&data, outbound, &mut chunks, &mut progress)
+            {
                 failure = Some(error);
                 break 'read;
             }
-            if progress.saw_done() { break 'read; }
+            if progress.saw_done() {
+                break 'read;
+            }
         }
     }
     // 流末尾可能还挂着没分隔符的半帧
@@ -217,7 +229,9 @@ pub(super) async fn aggregate_upstream_stream(
         match buffer.finish() {
             Ok(Some(block)) => {
                 if let Some(data) = sse::extract_sse_data(&block) {
-                    failure = collect_aggregate_payload(&data, outbound, &mut chunks, &mut progress).err();
+                    failure =
+                        collect_aggregate_payload(&data, outbound, &mut chunks, &mut progress)
+                            .err();
                 }
             }
             Ok(None) => {}
@@ -238,7 +252,9 @@ pub(super) async fn aggregate_upstream_stream(
         stats.failed_requests += 1;
         push_request_log(&config.source, format!("✗ 聚合流失败 502: {message}"));
         crate::proxy::hooks::current().record_failure(
-            &config.tool_id, actual_model, &config.provider_id,
+            &config.tool_id,
+            actual_model,
+            &config.provider_id,
             crate::proxy::failure::FailureClass::Transient.as_str(),
         );
         return (
@@ -274,6 +290,11 @@ pub(super) async fn aggregate_upstream_stream(
         actual_model,
         start.elapsed().as_millis() as u64,
     );
+    // 2API 强制上游流式、客户端要非流式时走这里：聚合结果保留了完整 usage。
+    push_usage_summary(
+        &config.source,
+        aggregated.get("usage").or_else(|| in_resp.get("usage")),
+    );
 
     let full_text = extract_inbound_full_text(inbound, &in_resp);
     log_proxy(&format!(
@@ -308,8 +329,13 @@ fn collect_aggregate_payload(
     progress: &mut stream_guard::StreamProgress,
 ) -> Result<(), &'static str> {
     let data = data.trim();
-    if data.is_empty() { return Ok(()); }
-    if data == "[DONE]" { progress.observe_done(); return Ok(()); }
+    if data.is_empty() {
+        return Ok(());
+    }
+    if data == "[DONE]" {
+        progress.observe_done();
+        return Ok(());
+    }
     let value: Value = serde_json::from_str(data).map_err(|_| "invalid upstream stream frame")?;
     if value.get("error").is_some_and(|error| !error.is_null()) {
         return Err("upstream stream returned an error frame");
@@ -321,15 +347,23 @@ fn collect_aggregate_payload(
 
 fn raw_sse_event(raw: &str) -> Event {
     let mut event = Event::default();
-    if let Some(name) = sse::extract_sse_event(raw) { event = event.event(name); }
-    if let Some(data) = sse::extract_sse_data(raw) { event = event.data(data); }
+    if let Some(name) = sse::extract_sse_event(raw) {
+        event = event.event(name);
+    }
+    if let Some(data) = sse::extract_sse_data(raw) {
+        event = event.data(data);
+    }
     event
 }
 
 fn protocol_error_event(protocol: &str, message: &str) -> Event {
     let data = json!({"type":"error", "error":{"message":message,"type":"upstream_error","code":"upstream_parse"}});
     let event = Event::default().data(data.to_string());
-    if protocol == "anthropic" { event.event("error") } else { event }
+    if protocol == "anthropic" {
+        event.event("error")
+    } else {
+        event
+    }
 }
 
 /// 流式响应：把上游（出站协议）SSE 转换为入站协议 SSE。
@@ -372,6 +406,7 @@ pub(super) async fn stream_response(
             let mut acc_out: u64 = 0;
             let mut acc_text = String::new();
             let mut chunk_count: u64 = 0;
+            let mut last_usage: Option<Value> = None;
             // 收尾判定：有内容 / 有 finish_reason / 有 [DONE]
             let mut progress = stream_guard::StreamProgress::new();
             // 传输层是否出过错（`yield Err` 之后 break 的情况）
@@ -426,6 +461,7 @@ pub(super) async fn stream_response(
                                 let (i, o) = extract_stream_usage(&proto, &cj);
                                 if i > 0 { acc_in = i; }
                                 if o > 0 { acc_out = o; }
+                                observe_usage_chunk(&mut last_usage, &cj);
                                 // 提取文本增量
                                 if let Some(text) = extract_inbound_delta_text(&proto, &cj) {
                                     if !text.is_empty() {
@@ -546,6 +582,7 @@ pub(super) async fn stream_response(
                     first_token_ms,
                 );
             }
+            push_usage_summary(&ls, last_usage.as_ref());
             let mut s = stats.write().await;
             if transport_failed || truncated {
                 // 截断/断流不计成功：否则日志里只剩一条 tok 正常的假成功
@@ -583,6 +620,7 @@ pub(super) async fn stream_response(
                 tokio::pin!(stream);
                 let mut acc_text = String::new();
                 let mut chunk_count: u64 = 0;
+                let mut last_usage: Option<Value> = None;
                 // 上游是否已发过 [DONE]：OpenAI/Google 出站下它就是完整终止标记，
                 // 补收尾会重复发一次；Anthropic 出站下它不算终止，仍需补 message_stop
                 let mut sent_done = false;
@@ -661,6 +699,7 @@ pub(super) async fn stream_response(
                         }
                         if let Ok(cj) = serde_json::from_str::<Value>(&data_str) {
                             progress.observe_value(&out_proto, &cj);
+                            observe_usage_chunk(&mut last_usage, &cj);
                             // 从出站协议形态的 chunk 提取文本
                             if let Some(text) = extract_inbound_delta_text(&out_proto, &cj) {
                                 if !text.is_empty() {
@@ -778,6 +817,7 @@ pub(super) async fn stream_response(
                         first_token_ms,
                     );
                 }
+                push_usage_summary(&ls, last_usage.as_ref());
                 let mut s = stats.write().await;
                 if truncated || transport_failed {
                     s.failed_requests += 1;
