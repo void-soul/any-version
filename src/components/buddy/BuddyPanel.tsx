@@ -22,12 +22,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
-import CreditSegmentsBar from "./CreditSegmentsBar";
 import TwoApiPanel from "./TwoApiPanel";
 import { Plug } from "lucide-react";
-import { formatQuotaNumber, mergeCreditSegments } from "./quota";
+import { formatQuotaNumber } from "./quota";
 import { RefreshCw, Download, Upload, Trash2, Check, Loader2, Users, AlertTriangle, CircleAlert, CircleCheck, Plus, MessageSquareText, CalendarCheck, LogIn, X, Settings, Star } from "lucide-react";
-import { ACC_BTN, COL_ACTIONS, COL_CREDITS_MIN, COL_INFO, COL_W, LABEL_TONE, PLATFORMS, TOOL_BTN, TOOL_BTN_DANGER, TOOL_BTN_PRIMARY, accountCreditSegments, describeLabel, getDosageText, getPlanBadge, parseQuotaItems, summarizeQuota, type BuddyAccount, type BuddyActionLogEntry, type BuddyAutoCheckinConfig, type BuddyAutoTravelConfig, type BuddyCheckinTasksView, type BuddyConflictProgress, type BuddyPaths, type BuddySwitchProgress, type BuddyTravelTasksView, type Tab } from "./BuddyPanel.model";
+import { ACC_BTN, COL_ACTIONS, COL_CREDITS_MIN, COL_INFO, COL_W, LABEL_TONE, PLATFORMS, TOOL_BTN, TOOL_BTN_DANGER, TOOL_BTN_PRIMARY, describeLabel, getDosageText, getPlanBadge, parseQuotaItems, summarizeQuota, type BuddyAccount, type BuddyActionLogEntry, type BuddyAutoCheckinConfig, type BuddyAutoTravelConfig, type BuddyCheckinTasksView, type BuddyConflictProgress, type BuddyPaths, type BuddySwitchProgress, type BuddyTravelTasksView, type Tab } from "./BuddyPanel.model";
+import { BuddyCreditCell, UsageStaleHint } from "./UsageFreshnessHints";
 import { QuotaBar } from "./BuddyPanel.QuotaBar";
 
 export default function BuddyPanel() {
@@ -534,6 +534,7 @@ export default function BuddyPanel() {
                     title={`${formatQuotaNumber(globalQuota.remain)}/${formatQuotaNumber(globalQuota.total)}`}
                   />
                 )}
+                <UsageStaleHint accounts={accounts} now={now} />
               </span>
             )}
             <select
@@ -810,21 +811,8 @@ export default function BuddyPanel() {
                         )}
                         <BuddyAccountName account={acc} platform={platform} scope={platformScope} onSaved={(id, remark) => setAccounts((previous) => previous.map((account) => account.id === id ? { ...account, remark } : account))} />
                       </div>
-                      {/* 积分：构成条（一段一方块，块内是剩余天数）+ 右侧剩余总额 —— 填充列 */}
-                      <div
-                        style={{ minWidth: COL_CREDITS_MIN }}
-                        className="flex-1 min-w-0 flex items-center px-2 border-l border-white/5"
-                      >
-                        {quota.unlimited ? (
-                          <span className="text-emerald-400">∞</span>
-                        ) : (
-                          <CreditSegmentsBar
-                            segments={mergeCreditSegments(accountCreditSegments(acc))}
-                            now={now}
-                            onClick={() => setUsageAccountId(acc.id)}
-                          />
-                        )}
-                      </div>
+                      {/* 积分：构成条 + 总额 + 新鲜度圆点 */}
+                      <BuddyCreditCell account={acc} quota={quota} now={now} onOpen={() => setUsageAccountId(acc.id)} />
                       {/* 登录 token 到期：只读倒计时（`55.21` = 55 天 21 小时；已过带负号） */}
                       <div style={{ width: COL_W }} className="px-1 py-1 flex-shrink-0 border-l border-white/5">
                         {(() => {

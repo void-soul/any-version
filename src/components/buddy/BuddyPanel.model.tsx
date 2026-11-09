@@ -653,7 +653,7 @@ export function describeLabel(ts: number, now: number): LabelState {
 
 export function formatTime(t: number | null | undefined): string {
   if (!t) return "—";
-  return new Date(t * 1000).toLocaleString();
+  return new Date((t > 1e11 ? Math.floor(t / 1000) : t) * 1000).toLocaleString();
 }
 
 // 宽松解析用户输入/粘贴的时间：自动去空格、统一分隔符，容忍

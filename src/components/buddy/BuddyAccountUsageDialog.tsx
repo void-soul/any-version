@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { formatQuotaNumber } from "./quota";
 import { RefreshCw, Loader2, Gauge, X } from "lucide-react";
 import { formatTime, type BuddyAccount } from "./BuddyPanel.model";
+import { usageFreshness, usageFreshnessLabel } from "./usageFreshness";
 import type { Dispatch, SetStateAction } from "react";
 
 interface BuddyAccountUsageDialogProps {
@@ -19,7 +20,7 @@ interface BuddyAccountUsageDialogProps {
 
 /** Pure BuddyAccountUsageDialog view; its owning panel retains side effects and state. */
 export function BuddyAccountUsageDialog({ displayName, usageAccount, planBadge, setUsageAccountId, quotaItems, dosageText, refreshAccount, busy }: BuddyAccountUsageDialogProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   return (
     <div className="fixed inset-0 z-[130] modal-mask flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
       <div role="dialog" aria-modal="true" aria-label={displayName(usageAccount)} className="w-[460px] max-w-[95vw] max-h-[85vh] overflow-y-auto ui-modal shadow-2xl p-5">
@@ -105,11 +106,25 @@ export function BuddyAccountUsageDialog({ displayName, usageAccount, planBadge, 
             {t("buddy.paymentType")}: {usageAccount.paymentType}
           </div>
         )}
-        {usageAccount.usageUpdatedAt ? (
-          <div className="text-micro text-slate-600 mb-3">
-            {t("buddy.usageUpdatedAt")}: {formatTime(usageAccount.usageUpdatedAt)}
-          </div>
-        ) : null}
+        {(() => {
+          const freshness = usageFreshness(usageAccount, Date.now());
+          const hint = usageFreshnessLabel(freshness, i18n.language);
+          if (!usageAccount.usageUpdatedAt && !hint) return null;
+          return (
+            <div className="mb-3">
+              {usageAccount.usageUpdatedAt ? (
+                <div className="text-micro text-slate-600">
+                  {t("buddy.usageUpdatedAt")}: {formatTime(usageAccount.usageUpdatedAt)}
+                </div>
+              ) : null}
+              {hint ? (
+                <div className={`text-micro ${freshness.kind === "failed" ? "text-rose-400" : "text-amber-400/80"}`}>
+                  {hint.age ? t(hint.key, { age: hint.age }) : t(hint.key)}
+                </div>
+              ) : null}
+            </div>
+          );
+        })()}
 
         <div className="flex justify-end gap-2 pt-1">
           <button

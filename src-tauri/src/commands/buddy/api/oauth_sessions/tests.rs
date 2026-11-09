@@ -303,3 +303,15 @@ async fn releasing_module_discards_ready_credentials_and_invalidates_optional_sa
         .unwrap_or_else(|e| e.into_inner())
         .is_empty());
 }
+
+#[test]
+fn mark_usage_fetched_writes_seconds() {
+    let mut account = sample_account("u", "u@example.com");
+    account.quota_query_last_error = Some("old failure".into());
+    mark_usage_fetched(&mut account);
+    let ts = account.usage_updated_at.expect("必须写入用量时间戳");
+    // 秒级 10 位；写成毫秒会把前端自动同步的 Math.max 判据永久顶掉
+    assert!(ts > 1_700_000_000 && ts < 100_000_000_000, "单位应为秒: {ts}");
+    assert!(account.quota_query_last_error.is_none());
+    assert!(account.quota_query_last_error_at.is_none());
+}

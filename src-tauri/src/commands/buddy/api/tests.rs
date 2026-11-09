@@ -324,3 +324,67 @@ fn checkin_http_error_marks_auth_expired() {
     assert!(!checkin_http_error(500, "boom").starts_with(AUTH_EXPIRED_PREFIX));
     assert_eq!(TRAVEL_AUTH_EXPIRED_PREFIX, AUTH_EXPIRED_PREFIX);
 }
+
+fn refresh_payload_for(base: &BuddyAccount, usage_fetched: bool) -> RefreshPayload {
+    RefreshPayload {
+        email: base.email.clone(),
+        uid: base.uid.clone(),
+        nickname: base.nickname.clone(),
+        enterprise_id: base.enterprise_id.clone(),
+        enterprise_name: base.enterprise_name.clone(),
+        access_token: base.access_token.clone(),
+        refresh_token: base.refresh_token.clone(),
+        token_type: base.token_type.clone(),
+        expires_at: base.expires_at,
+        domain: base.domain.clone(),
+        plan_type: base.plan_type.clone(),
+        dosage_notify_code: base.dosage_notify_code.clone(),
+        dosage_notify_zh: base.dosage_notify_zh.clone(),
+        dosage_notify_en: base.dosage_notify_en.clone(),
+        payment_type: base.payment_type.clone(),
+        quota_raw: base.quota_raw.clone(),
+        profile_raw: base.profile_raw.clone(),
+        usage_raw: usage_fetched.then(|| json!({})),
+        status: base.status.clone(),
+        status_reason: base.status_reason.clone(),
+    }
+}
+
+#[test]
+fn failed_usage_query_keeps_previous_usage_timestamp() {
+    let mut base = sample_account_for_refresh();
+    base.usage_updated_at = Some(1_792_728_000);
+    base.usage_raw = Some(json!({"old": true}));
+    let next = payload_to_account(
+        BuddyPlatform::Workbuddy,
+        refresh_payload_for(&base, false),
+        Some(&base),
+    );
+    // 旧数据仍要展示，但时间戳不能推进成「刚刚」，否则界面会谎报实时
+    assert_eq!(next.usage_updated_at, Some(1_792_728_000));
+    assert_eq!(next.usage_raw, base.usage_raw);
+}
+
+#[test]
+fn successful_usage_query_advances_usage_timestamp() {
+    let mut base = sample_account_for_refresh();
+    base.usage_updated_at = Some(1_792_728_000);
+    let before = chrono::Utc::now().timestamp();
+    let next = payload_to_account(
+        BuddyPlatform::Workbuddy,
+        refresh_payload_for(&base, true),
+        Some(&base),
+    );
+    assert!(next.usage_updated_at.unwrap() >= before);
+}
+
+#[test]
+fn failed_usage_query_without_previous_data_has_no_timestamp() {
+    let base = sample_account_for_refresh();
+    let next = payload_to_account(
+        BuddyPlatform::Workbuddy,
+        refresh_payload_for(&base, false),
+        Some(&base),
+    );
+    assert_eq!(next.usage_updated_at, None);
+}

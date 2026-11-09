@@ -348,10 +348,17 @@ async fn enrich_oauth_metadata(
     quota.insert("userResource".into(), resource.clone());
     account.quota_raw = Some(Value::Object(quota));
     account.usage_raw = Some(resource);
-    account.usage_updated_at = Some(chrono::Utc::now().timestamp_millis());
+    mark_usage_fetched(&mut account);
+    Ok(account)
+}
+
+/// 用量时间戳统一写**秒**：refresh.rs::payload_to_account、前端 formatTime 与自动同步
+/// 判据都按秒读。写毫秒会让新登录账号显示成公元 5xxxx 年，并把整个平台的陈旧
+/// 判据（Math.max）永久顶掉。
+fn mark_usage_fetched(account: &mut BuddyAccount) {
+    account.usage_updated_at = Some(now_timestamp());
     account.quota_query_last_error = None;
     account.quota_query_last_error_at = None;
-    Ok(account)
 }
 
 #[cfg(test)]
