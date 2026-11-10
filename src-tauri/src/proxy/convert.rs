@@ -60,7 +60,11 @@ pub fn normalize_openai_message_roles(body: &mut Value) {
 /// 抄 CodexPlusPlus `protocol_proxy.rs::collapse_system_messages_to_head`：MiniMax 等上游
 /// 要求 system 必须**前置**（且只认一条），Codex 的 Responses 请求会把系统提示拆成多条
 /// `developer`（归一化后变 `system`）散在 input 里，不折叠就报 400 2013。
-/// 只在出站 OpenAI 时调用（与 [`normalize_openai_message_roles`] 同一条链路）。
+///
+/// 2026-11-09 补 cc-switch `abf441fe`：**会话中途、后面紧接 user 的 system**（Codex 在
+/// 权限/协作模式/模型切换时于新回合开头注入）不能并进头部 —— 那会改写已发过的前缀，
+/// 让上游 prompt cache 从第一条断开、整段重算。这类消息原地改成 user；夹在工具调用循环
+/// 里的 system 后面是 tool，仍并进头部（保 11148 工具配对）。
 pub fn collapse_system_messages_to_head(body: &mut Value) {
     use serde_json::json;
 
@@ -68,23 +72,37 @@ pub fn collapse_system_messages_to_head(body: &mut Value) {
         return;
     };
     // 没有 system 消息时零改动（避免无谓的整数组重排）。
-    if !messages
-        .iter()
-        .any(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
-    {
+    if !messages.iter().any(is_system_message) {
         return;
+    }
+
+    // 反向扫描：每个位置之后（跳过连续 system）的第一条非 system 消息是不是 user。
+    let mut followed_by_user = vec![false; messages.len()];
+    let mut next_is_user = false;
+    for (idx, msg) in messages.iter().enumerate().rev() {
+        followed_by_user[idx] = next_is_user;
+        if !is_system_message(msg) {
+            next_is_user = msg.get("role").and_then(|r| r.as_str()) == Some("user");
+        }
     }
 
     let mut chunks = Vec::new();
     let mut rest = Vec::with_capacity(messages.len());
-    for msg in messages.drain(..) {
-        if msg.get("role").and_then(|r| r.as_str()) == Some("system") {
+    let mut seen_non_system = false;
+    for (idx, msg) in messages.drain(..).enumerate() {
+        if is_system_message(&msg) {
             let text = system_message_text(msg.get("content"));
-            if !text.trim().is_empty() {
+            if text.trim().is_empty() {
+                continue;
+            }
+            if seen_non_system && followed_by_user[idx] {
+                rest.push(json!({ "role": "user", "content": text }));
+            } else {
                 chunks.push(text);
             }
             continue;
         }
+        seen_non_system = true;
         rest.push(msg);
     }
 
@@ -95,6 +113,10 @@ pub fn collapse_system_messages_to_head(body: &mut Value) {
         );
     }
     *messages = rest;
+}
+
+fn is_system_message(msg: &Value) -> bool {
+    msg.get("role").and_then(|r| r.as_str()) == Some("system")
 }
 
 /// 取 system 消息的文本内容：字符串直接返回，数组取各 part 的 `text`，其余为空。
@@ -645,99 +667,8 @@ mod developer_role_tests {
 }
 
 #[cfg(test)]
-mod system_collapse_tests {
-    use super::{collapse_system_messages_to_head, normalize_openai_message_roles};
-    use serde_json::json;
-
-    /// 插件把 notice 插在 `assistant(tool_calls)` 与 `tool` 结果之间时，
-    /// 上游会回 `11148 tool calls and tool results do not match`（参考侧专门打了个
-    /// `tool-result-pairing` 补丁来搬 notice）。
-    ///
-    /// 我们没抄那个补丁：`collapse_system_messages_to_head` 会把**所有** `system` /
-    /// `developer` 合并到头部，notice 自然离开 tool 组，配对恢复连续。这条用例钉住
-    /// 该规避效果 —— 将来谁改 collapse 都必须保证 tool 结果仍紧跟 assistant。
-    #[test]
-    fn interleaved_notice_does_not_break_tool_pairing() {
-        let mut body = json!({"messages": [
-            {"role": "assistant", "content": null, "tool_calls": [
-                {"id": "c1", "type": "function", "function": {"name": "f", "arguments": "{}"}}
-            ]},
-            {"role": "developer", "content": "URI guard"},
-            {"role": "tool", "tool_call_id": "c1", "content": "ok"},
-            {"role": "user", "content": "next"}
-        ]});
-        normalize_openai_message_roles(&mut body);
-        collapse_system_messages_to_head(&mut body);
-        let msgs = body["messages"].as_array().unwrap();
-
-        // notice 内容不丢：并进头部 system
-        assert_eq!(msgs[0]["role"], json!("system"));
-        assert!(msgs[0]["content"]
-            .as_str()
-            .unwrap()
-            .contains("URI guard"));
-        // 关键：tool 结果紧跟 assistant，中间不再有 notice
-        assert_eq!(msgs[1]["role"], json!("assistant"));
-        assert_eq!(msgs[2]["role"], json!("tool"));
-        assert_eq!(msgs[2]["tool_call_id"], json!("c1"));
-        assert_eq!(msgs[3]["role"], json!("user"));
-        assert_eq!(msgs.len(), 4);
-    }
-
-    /// 多条散落的 system（字符串 content）收拢到头部合成一条。
-    #[test]
-    fn folds_multiple_system_messages_to_head() {
-        let mut body = json!({"messages": [
-            {"role": "user", "content": "q1"},
-            {"role": "system", "content": "sys-a"},
-            {"role": "assistant", "content": "a"},
-            {"role": "system", "content": "sys-b"}
-        ]});
-        collapse_system_messages_to_head(&mut body);
-        let msgs = body["messages"].as_array().unwrap();
-        assert_eq!(msgs[0]["role"], json!("system"));
-        assert_eq!(msgs[0]["content"], json!("sys-a\n\nsys-b"));
-        let roles: Vec<&str> = msgs.iter().map(|m| m["role"].as_str().unwrap()).collect();
-        assert_eq!(roles, vec!["system", "user", "assistant"]);
-    }
-
-    /// 空内容的 system 直接丢弃，不合成空 system。
-    #[test]
-    fn drops_empty_system_messages() {
-        let mut body = json!({"messages": [
-            {"role": "system", "content": ""},
-            {"role": "system", "content": "   "},
-            {"role": "user", "content": "q"}
-        ]});
-        collapse_system_messages_to_head(&mut body);
-        let msgs = body["messages"].as_array().unwrap();
-        assert_eq!(msgs.len(), 1, "只剩 user 消息");
-        assert_eq!(msgs[0]["role"], json!("user"));
-    }
-
-    /// content 为 parts 数组的 system 取各 part 的 text 拼接。
-    #[test]
-    fn reads_parts_array_content() {
-        let mut body = json!({"messages": [
-            {"role": "system", "content": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]},
-            {"role": "user", "content": "q"}
-        ]});
-        collapse_system_messages_to_head(&mut body);
-        assert_eq!(body["messages"][0]["content"], json!("a\n\nb"));
-    }
-
-    /// 没有 system 时零改动。
-    #[test]
-    fn untouched_without_system() {
-        let body = json!({"messages": [
-            {"role": "user", "content": "q"},
-            {"role": "assistant", "content": "a"}
-        ]});
-        let mut b = body.clone();
-        collapse_system_messages_to_head(&mut b);
-        assert_eq!(b, body);
-    }
-}
+#[path = "convert_system_collapse_tests.rs"]
+mod system_collapse_tests;
 
 #[cfg(test)]
 mod glm_image_tests {

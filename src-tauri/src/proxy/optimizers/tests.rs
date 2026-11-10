@@ -301,3 +301,28 @@ fn max_effort_tracks_version_and_variant() {
         );
     }
 }
+
+/// cc-switch 4a0baf69：纯文本上游不接受 file/audio/document parts。
+/// Anthropic 入站时这些块在 transform 阶段已丢弃，但同协议 OpenAI 透传会原样带到出站，
+/// 一个附件会让后续每轮都 400 —— 因此发送前与图片块一起降级成文本标记。
+#[test]
+fn strips_non_image_media_blocks_for_text_only_models() {
+    let mut body = json!({"messages": [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "看这个"},
+            {"type": "file", "file": {"filename": "a.pdf"}},
+            {"type": "input_file", "filename": "b.txt"},
+            {"type": "input_audio", "data": "AAAA"},
+            {"type": "document", "source": {"type": "base64", "data": "AAAA"}},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+        ]
+    }]});
+    let n = replace_image_blocks(&mut body);
+    assert_eq!(n, 5, "图片 + 四类非图片媒体都要降级，text 块不动");
+    let parts = body["messages"][0]["content"].as_array().unwrap();
+    assert_eq!(parts[0]["text"], json!("看这个"));
+    assert_eq!(parts[1]["text"], json!("[Unsupported Attachment]"));
+    assert_eq!(parts[5]["text"], json!("[Unsupported Image]"));
+    assert!(parts.iter().all(|p| p["type"] == json!("text")));
+}

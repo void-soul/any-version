@@ -71,7 +71,7 @@ pub(super) async fn process_response(
 
     // ⑧ 协议转换响应：P_out → P_in
     // 先把上游可能写进 content 的方言工具调用还原成 tool_calls（见 xml_tools 文档）
-    let mut resp_json = resp_json;
+    let mut resp_json = match crate::proxy::empty_answer::guard_non_stream(state, outbound, resp_json).await { Ok(v) => v, Err(r) => return r };
     if outbound == "openai" {
         let dialects = crate::proxy::xml_tools::dialects_from(
             config.rectifier_enabled && config.rectifier_toolcall_dialect,

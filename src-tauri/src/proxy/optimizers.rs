@@ -426,10 +426,9 @@ pub fn replace_image_blocks(body: &mut Value) -> usize {
             if let Some(content) = msg.get_mut("content").and_then(|v| v.as_array_mut()) {
                 for block in content.iter_mut() {
                     let btype = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                    if btype == "image" || btype == "image_url" || btype == "input_image" {
+                    if matches!(btype, "image" | "image_url" | "input_image" | "file" | "input_file" | "input_audio" | "document") {
                         let cache_control = block.get("cache_control").cloned();
-                        let mut replacement =
-                            json!({"type": "text", "text": "[Unsupported Image]"});
+                        let mut replacement = json!({"type": "text", "text": if matches!(btype, "image" | "image_url" | "input_image") { "[Unsupported Image]" } else { "[Unsupported Attachment]" }});
                         if let Some(cc) = cache_control {
                             replacement
                                 .as_object_mut()
