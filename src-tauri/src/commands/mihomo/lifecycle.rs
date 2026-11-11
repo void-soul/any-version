@@ -71,13 +71,21 @@ pub fn init_state() -> MihomoState {
 /// 定时更新远程订阅（对齐 clash-party profileUpdater：按 item.interval 重新下载并热重载）
 pub(super) async fn auto_update_profiles(app: &AppHandle, inner: &Arc<MihomoInner>) {
     let now = now_secs();
-    let (items, current) = {
+    // 当前配置的真值在 app_config.current_profile；ProfileConfig.current 恒为
+    // "default"，用它判断会导致当前订阅自动更新后不 reload 内核。
+    let items = {
         let cfg = inner
             .profile_config
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        (cfg.items.clone(), cfg.current.clone())
+        cfg.items.clone()
     };
+    let current = inner
+        .app_config
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .current_profile
+        .clone();
     for item in items {
         if !item.auto_update || item.update_interval == 0 {
             continue;
@@ -98,53 +106,25 @@ pub(super) async fn auto_update_profiles(app: &AppHandle, inner: &Arc<MihomoInne
         } else if now.saturating_sub(item.updated_at.unwrap_or(0)) < item.update_interval {
             continue;
         }
-        let client = match reqwest::Client::builder()
-            .timeout(Duration::from_secs(item.update_timeout.max(5)))
-            .build()
-        {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        let mut req = client.get(&url).header(
-            "User-Agent",
-            item.user_agent
-                .clone()
-                .unwrap_or_else(|| "clash-verge/v1.7.0".into()),
-        );
-        if let Some(token) = &item.auth_token {
-            req = req.header("Authorization", format!("Bearer {token}"));
-        }
-        let Ok(resp) = req.send().await else {
-            eprintln!("[mihomo] 订阅自动更新失败: {}", item.name);
-            continue;
-        };
-        let userinfo = resp
-            .headers()
-            .get("subscription-userinfo")
-            .and_then(|h| h.to_str().ok())
-            .map(|s| s.to_string());
-        let Ok(text) = resp.text().await else {
-            continue;
-        };
-        // 嗅探并处理内容（age 解密 / base64 节点解码 / YAML），保持与手动更新一致
-        let processed = match crate::commands::mihomo::subparse::process_subscription_content(
-            &text,
-            item.age_secret_key.as_deref(),
-        ) {
-            Ok(p) => p,
+        // 与手动刷新共用同一套请求头（含默认 UA）、内容处理与结构校验。
+        let mixed_port = inner
+            .app_config
+            .lock()
+            .ok()
+            .and_then(|c| mixed_port_of(&*c));
+        let (text, userinfo) = match fetch_subscription_text(&item, &url, mixed_port).await {
+            Ok(v) => v,
             Err(e) => {
-                eprintln!("[mihomo] 订阅自动更新内容解析失败 {}: {}", item.name, e);
+                eprintln!("[mihomo] 订阅自动更新失败 {}: {}", item.name, e);
                 continue;
             }
         };
-        if serde_yaml::from_str::<Value>(&processed).is_err() {
-            eprintln!("[mihomo] 订阅自动更新内容非法 YAML: {}", item.name);
-            continue;
-        }
         let mut updated = item.clone();
         updated.subscription_userinfo = parse_subinfo(userinfo.as_deref());
         updated.updated_at = Some(now);
-        if write_profile_content(&inner.data_dir, &updated, &processed).is_err() {
+        // 结构校验通过才落盘；错误页不会覆盖已有配置。
+        if let Err(e) = commit_subscription_content(&inner.data_dir, &updated, &text) {
+            eprintln!("[mihomo] 订阅自动更新内容无效 {}: {}", item.name, e);
             continue;
         }
         {

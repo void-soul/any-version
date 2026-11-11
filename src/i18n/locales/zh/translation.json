@@ -1708,6 +1708,7 @@
     "name": "名称",
     "subUrl": "订阅地址",
     "userAgent": "User Agent",
+    "userAgentHint": "留空默认 clash-verge/v1.7.0",
     "authToken": "授权令牌",
     "updateInterval": "更新间隔（分钟）",
     "updateCron": "cron 表达式（可选）",

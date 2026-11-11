@@ -467,13 +467,19 @@ pub fn read_profile_content(dir: &Path, item: &ProfileItem) -> Option<String> {
 }
 pub fn write_profile_content(dir: &Path, item: &ProfileItem, content: &str) -> std::io::Result<()> {
     if let Some(p) = &item.file_path {
-        return fs::write(p, content);
+        return atomic_write(Path::new(p), content);
     }
     let p = profile_content_path(dir, &item.id);
     if let Some(parent) = p.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(p, content)
+    // 覆盖前留一份旧配置：刷新若拿到错误页或格式不同的内容，可从 .bak 恢复，
+    // 不必「删除重加」。首次写入（文件不存在）不产生备份。
+    if p.exists() {
+        let _ = fs::copy(&p, p.with_extension("yaml.bak"));
+    }
+    // 原子写：避免内核读到半截配置。
+    atomic_write(&p, content)
 }
 pub fn read_override_content(dir: &Path, item: &OverrideItem) -> Option<String> {
     fs::read_to_string(override_content_path(dir, &item.id, &item.ext)).ok()

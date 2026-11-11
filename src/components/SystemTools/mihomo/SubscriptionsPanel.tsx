@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
-import { mihomoApi } from "../mihomoApi";
+import { mihomoApi, listenSubscriptionUpdated } from "../mihomoApi";
 import {
   inputCls, labelCls, btnSec, btnPrimary, tagCls, cardCls,
   Toggle, Modal, calcTraffic,
@@ -164,7 +164,7 @@ export default function SubscriptionsPanel({
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); return listenSubscriptionUpdated(load); }, []);
 
   // 定时更新由后端调度器负责（对齐 clash-party profileUpdater 在主进程执行），
   // 界面只负责定期同步列表状态，避免关闭面板后不再更新、以及前后端重复下载
@@ -663,7 +663,7 @@ function EditInfoModal({ item, overrides, onClose, onSaved }: any) {
         </div>
         <div>
           <label className={labelCls}>{t("subs.userAgent")}</label>
-          <input className={inputCls} value={v.user_agent || ""} placeholder="clash-verge/v1.7.0"
+          <input className={inputCls} value={v.user_agent || ""} placeholder={t("subs.userAgentHint")}
             onChange={(e) => set("user_agent", e.target.value)} />
         </div>
         <div>

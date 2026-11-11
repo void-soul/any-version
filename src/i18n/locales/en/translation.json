@@ -1702,6 +1702,7 @@
     "name": "Name",
     "subUrl": "Subscription URL",
     "userAgent": "User Agent",
+    "userAgentHint": "Leave blank: clash-verge/v1.7.0",
     "authToken": "Auth token",
     "updateInterval": "Update interval (minutes)",
     "updateCron": "Cron expression (optional)",

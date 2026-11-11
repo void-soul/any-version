@@ -1,5 +1,6 @@
 // Mihomo 后端命令封装（对齐 clash-party ipc.ts）
 import { invoke } from "@tauri-apps/api/core";
+export { listenSubscriptionUpdated } from "./mihomo/subscriptionEvents";
 
 export const mihomoApi = {
   // ---- state ----
