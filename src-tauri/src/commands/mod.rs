@@ -49,4 +49,6 @@ pub mod wstool;
 pub mod music;
 pub mod favorites;
 pub mod suno;
+pub mod rdp;
+pub mod ssh;
 

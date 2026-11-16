@@ -34,6 +34,7 @@ pub const MODULE_IDS: &[&str] = &[
     "suno",
     "tasks",
     "dbdesigner",
+    "rdp",
 ];
 
 /// 无法用 IPC 闸单独拦截的模块（AUDIT-030）：它们只使用跨模块共享能力，
@@ -87,6 +88,9 @@ fn owner(path: &str) -> Option<&'static str> {
         "otp" => Some("otp"),
         "favorites" => Some("favorites"),
         "suno" => Some("suno"),
+        "rdp" => Some("rdp"),
+        // 内建 SSH 终端挂在同一个「远程连接」模块 id 下，禁用该模块时一并拦截
+        "ssh" => Some("rdp"),
         "tasks" => Some("tasks"),
         "launcher" => Some("launcher"),
         "http_server" => Some("httpServer"),

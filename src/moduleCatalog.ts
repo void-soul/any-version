@@ -29,6 +29,7 @@ import {
   Star,
   CalendarDays,
   Database,
+  Monitor,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import i18n from "./i18n/index";
@@ -261,6 +262,14 @@ export const MODULE_CATALOG: ModuleMeta[] = [
     label: "数据库设计",
     icon: Database,
     color: "#0ea5e9",
+    defaultToolbar: false,
+  },
+  // —— Windows 远程桌面连接（FinalShell 密码密文透传）——
+  {
+    id: "rdp",
+    label: "远程连接",
+    icon: Monitor,
+    color: "#38bdf8",
     defaultToolbar: false,
   },
 ];

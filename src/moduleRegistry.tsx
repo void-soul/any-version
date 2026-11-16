@@ -50,6 +50,7 @@ const PAGE_LOADERS: Record<string, ComponentType<any>> = {
   suno: lazyLoad(() => import("./components/suno/SunoPanel")),
   tasks: lazyLoad(() => import("./components/tasks/TaskCalendarPanel")),
   dbdesigner: lazyLoad(() => import("./components/dbdesigner/DbDesignerPanel")),
+  rdp: lazyLoad(() => import("./components/rdp/RdpPanel")),
 };
 
 export const MODULES: ModuleDef[] = MODULE_CATALOG.map((meta) => ({ ...meta, Component: PAGE_LOADERS[meta.id] }));

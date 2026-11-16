@@ -63,6 +63,17 @@
           "to": 601
         }
       ]
+    },
+    {
+      "date": "2026-11-11",
+      "reason": "新增 Windows 远程桌面模块：注册 8 条 rdp 命令；FinalShell 密码加解密 2 条；SSH 终端阶段 1 4 条；SFTP 阶段 2 8 条；主机信任/端口转发阶段 3 5 条；信任库与密钥库管理 4 条（AUDIT-049 growth approval）",
+      "growth": [
+        {
+          "file": "src-tauri/src/app_commands.rs",
+          "from": 883,
+          "to": 922
+        }
+      ]
     }
   ],
   "files": [
@@ -240,7 +251,7 @@
     },
     {
       "file": "src-tauri/src/app_commands.rs",
-      "lines": 883
+      "lines": 922
     },
     {
       "file": "src-tauri/src/commands/ai/codex_plugins.rs",

@@ -20,6 +20,11 @@ pub const MODULE_ASSETS: &[ModuleAssets] = &[
     ModuleAssets { module: "otp", files: &["otp/otp.db"], directories: &[], migration_roots: &["otp"] },
     ModuleAssets { module: "buddy", files: &[], directories: &["buddy"], migration_roots: &["buddy"] },
     ModuleAssets { module: "suno", files: &["suno/profiles.json", "suno/downloaded.json"], directories: &[], migration_roots: &["suno"] },
+    ModuleAssets { module: "rdp", files: &["rdp/connections.json"], directories: &[], migration_roots: &["rdp"] },
+    // SSH 会话是内存态；主机密钥信任库随之备份。
+    // 注意：`ssh/keys/`（用户导入的私钥）**有意不纳入自动备份** —— 备份文件一旦外泄
+    // 就等于泄露私钥；换机器时应由用户重新导入，而不是随备份静默复制。
+    ModuleAssets { module: "ssh", files: &["ssh/known_hosts"], directories: &[], migration_roots: &["ssh"] },
     ModuleAssets { module: "db_designer", files: &["db_designer_settings.json"], directories: &["db_designer"], migration_roots: &["db_designer", "db_designer_settings.json"] },
     ModuleAssets { module: "music", files: &["music/settings.json", "music/library.json", "music/plugins/registry.json"], directories: &["music/plugins/scripts"], migration_roots: &["music"] },
     ModuleAssets { module: "mihomo", files: &["mihomo/app.json", "mihomo/controled.json", "mihomo/profile.json", "mihomo/override.json"], directories: &["mihomo/profiles", "mihomo/override"], migration_roots: &["mihomo"] },

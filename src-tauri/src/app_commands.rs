@@ -148,14 +148,19 @@ pub(crate) fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         commands::music::music_plugin_clear_cache,
         commands::music::music_plugin_set_download_dir,
         commands::music::music_plugin_storage_info,
-        // ---- 收藏 / 星标聚合（只读导入） ----
-        commands::favorites::fav_import_github,
+        commands::favorites::fav_import_github, // 收藏 / 星标聚合（只读导入）
         commands::favorites::fav_cancel,
         commands::favorites::fav_classify,
         commands::favorites::fav_plan_category_moves,
         commands::favorites::fav_apply_category_moves,
         commands::favorites::fav_check_gone,
         commands::favorites::fav_import_zhihu,
+        commands::favorites::fav_import_x,
+        commands::favorites::fav_import_x_official,
+        commands::favorites::fav_x_oauth_start,
+        commands::favorites::fav_x_oauth_save_token,
+        commands::favorites::fav_x_oauth_status,
+        commands::favorites::fav_import_state,
         commands::favorites::fav_credential_status,
         commands::favorites::fav_get_content,
         commands::favorites::fav_github_readme,
@@ -514,32 +519,27 @@ pub(crate) fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         commands::mihomo::mihomo_set_file_str,
         commands::mihomo::mihomo_convert_mrs_ruleset,
         commands::mihomo::mihomo_detach_core,
-        // ---- 内核版本管理 ----
-        commands::mihomo::github::mihomo_core_variants,
+        commands::mihomo::github::mihomo_core_variants, // 内核版本管理
         // ---- 托盘菜单配置 ----
         commands::config::get_tray_menu_config,
         commands::config::set_tray_menu_config,
         commands::mihomo::github::mihomo_download_ui,
-        // ---- 网络信息 ----
-        commands::mihomo::netinfo::mihomo_fetch_ip_info,
+        commands::mihomo::netinfo::mihomo_fetch_ip_info, // 网络信息
         commands::mihomo::netinfo::mihomo_measure_latency,
         commands::mihomo::netinfo::mihomo_get_interfaces,
-        // ---- 备份恢复 ----
-        commands::mihomo::backup::mihomo_export_local_backup,
+        commands::mihomo::backup::mihomo_export_local_backup, // 备份恢复
         commands::mihomo::backup::mihomo_import_local_backup,
         commands::mihomo::backup::mihomo_webdav_backup,
         commands::mihomo::backup::mihomo_webdav_list,
         commands::mihomo::backup::mihomo_webdav_restore,
         commands::mihomo::backup::mihomo_webdav_delete,
-        // ---- Sub-Store ----
-        commands::mihomo::substore::mihomo_substore_download,
+        commands::mihomo::substore::mihomo_substore_download, // Sub-Store
         commands::mihomo::substore::mihomo_substore_start,
         commands::mihomo::substore::mihomo_substore_stop,
         commands::mihomo::substore::mihomo_substore_status,
         commands::mihomo::substore::mihomo_substore_subs,
         commands::mihomo::substore::mihomo_substore_collections,
-        // ---- 杂项 ----
-        commands::mihomo::misc::mihomo_check_admin,
+        commands::mihomo::misc::mihomo_check_admin, // 杂项
         commands::mihomo::misc::mihomo_restart_as_admin,
         commands::mihomo::misc::mihomo_check_tun_permissions,
         commands::mihomo::misc::mihomo_hot_reload,
@@ -547,8 +547,7 @@ pub(crate) fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         commands::mihomo::misc::mihomo_clear_logs,
         commands::mihomo::misc::mihomo_open_path,
         commands::mihomo::misc::mihomo_cleanup_logs,
-        // ---- 任务 ----
-        commands::api::api_init,
+        commands::api::api_init, // 任务
         commands::api::api_list_projects,
         commands::api::api_create_project,
         commands::api::api_update_project,
@@ -688,8 +687,7 @@ pub(crate) fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         commands::db_designer::commands::dbd_reverse_sqlite,
         commands::db_designer::commands::dbd_reverse_ddl_text,
         commands::db_designer::commands::dbd_reverse_ddl_file,
-        // ---- Node 项目管理器 ----
-        commands::node_manager::npm_list_projects,
+        commands::node_manager::npm_list_projects, // Node 项目管理器
         commands::node_manager::npm_deps,
         commands::node_manager::npm_status,
         commands::node_manager::npm_install,
@@ -711,8 +709,7 @@ pub(crate) fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         commands::node_manager::docker_env_check,
         commands::node_manager::docker_service_config,
         commands::node_manager::docker_save_service_config,
-        // ---- 启动器模块（复刻 DawnLauncher） ----
-        commands::launcher::commands::launcher_get_classifications,
+        commands::launcher::commands::launcher_get_classifications, // 启动器模块（复刻 DawnLauncher）
         commands::launcher::commands::launcher_save_classification,
         commands::launcher::commands::launcher_delete_classification,
         commands::launcher::commands::launcher_reorder_classifications,
@@ -749,16 +746,14 @@ pub(crate) fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         commands::launcher::commands::launcher_export_backup,
         commands::launcher::commands::launcher_import_backup,
         commands::launcher::commands::launcher_take_focus_category,
-        // ---- 文件搜索（Everything 式：按盘符索引 + 悬浮窗） ----
-        commands::launcher::file_search::file_search_list_drives,
+        commands::launcher::file_search::file_search_list_drives, // 文件搜索（按盘符索引 + 悬浮窗）
         commands::launcher::file_search::file_search_start_index,
         commands::launcher::file_search::file_search_cancel_index,
         commands::launcher::file_search::file_search_delete_index,
         commands::launcher::file_search::file_search_query,
         commands::launcher::file_search::open_file_search_popup,
         commands::launcher::file_search::hide_file_search_popup,
-        // ---- 剪贴板管理器（复刻 CopyQ） ----
-        commands::clipboard::clipboard_get_items,
+        commands::clipboard::clipboard_get_items, // 剪贴板管理器（复刻 CopyQ）
         commands::clipboard::clipboard_delete_item,
         commands::clipboard::clipboard_pin_item,
         commands::clipboard::clipboard_clear_history,
@@ -850,8 +845,7 @@ pub(crate) fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         commands::buddy::buddy_read_conflict_messages,
         commands::buddy::buddy_get_client_paths,
         commands::buddy::buddy_set_client_path,
-        // ---- Picky 收藏/归档（与 Flutter 端同数据接口 + S3 同步） ----
-        commands::picky::picky_get_state,
+        commands::picky::picky_get_state, // Picky 收藏/归档（与 Flutter 端同数据接口 + S3 同步）
         commands::picky::picky_add_bookmark,
         commands::picky::picky_update_bookmark,
         commands::picky::picky_set_refined,
@@ -872,6 +866,51 @@ pub(crate) fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         commands::state_sync::state_sync_save_config,
         commands::state_sync::state_sync_export,
         commands::state_sync::state_sync_import,
+        // ---- Windows 远程桌面连接（FinalShell 密码密文透传，不解密） ----
+        commands::rdp::rdp_list,
+        commands::rdp::rdp_save,
+        commands::rdp::rdp_delete,
+        commands::rdp::rdp_import_finalshell,
+        commands::rdp::rdp_export_finalshell,
+        commands::rdp::rdp_export_backup,
+        commands::rdp::rdp_import_backup,
+        commands::rdp::rdp_launch,
+        commands::rdp::rdp_reveal_password,
+        commands::rdp::rdp_set_finalshell_password,
+        // ---- 内建 SSH 终端（阶段 1） ----
+        commands::ssh::ssh_connect,
+        commands::ssh::ssh_write,
+        commands::ssh::ssh_resize,
+        commands::ssh::ssh_disconnect,
+        // ---- SFTP 文件管理（阶段 2） ----
+        commands::ssh::sftp_open,
+        commands::ssh::sftp_list,
+        commands::ssh::sftp_mkdir,
+        commands::ssh::sftp_remove,
+        commands::ssh::sftp_rename,
+        commands::ssh::sftp_download,
+        commands::ssh::sftp_download_compressed,
+        commands::ssh::sftp_download_dir,
+        commands::ssh::sftp_upload,
+        commands::ssh::sftp_disconnect,
+        // ---- SSH 阶段 3：主机信任 + 端口转发 ----
+        commands::ssh::ssh_parse_host_key_prompt,
+        commands::ssh::ssh_trust_host,
+        commands::ssh::ssh_forward_start,
+        commands::ssh::ssh_forward_stop,
+        commands::ssh::ssh_forward_list,
+        commands::ssh::ssh_list_trusted_hosts,
+        commands::ssh::ssh_forget_host,
+        commands::ssh::ssh_import_key,
+        commands::ssh::ssh_list_keys,
+        commands::ssh::ssh_monitor_open,
+        commands::ssh::ssh_monitor_sample,
+        commands::ssh::ssh_monitor_close,
+        commands::ssh::ssh_monitor_processes,
+        commands::ssh::ssh_monitor_netlinks,
+        commands::ssh::ssh_monitor_kill,
+        commands::ssh::ssh_snippets_load,
+        commands::ssh::ssh_snippets_save,
     ];
     move |invoke: tauri::ipc::Invoke<tauri::Wry>| {
         if let Err(error) = crate::module_policy::check_command(invoke.message.command()) {
