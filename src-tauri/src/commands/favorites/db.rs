@@ -58,14 +58,36 @@ fn init_connection() -> Result<Connection, String> {
         run: |tx| migrate(tx),
     }];
     ensure_schema(&mut conn, &steps)?;
-    // 一次性清理历史遗留的孤儿行（旧版本删除逻辑没有清子表）。
+    cleanup_orphans(&conn)?;
+    Ok(conn)
+}
+
+/// 一次性清理历史遗留的孤儿行（旧版本删除逻辑没有清子表）。
+fn cleanup_orphans(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "DELETE FROM favorite_content WHERE favorite_id NOT IN (SELECT id FROM favorite);
-         DELETE FROM favorite_item_category WHERE favorite_id NOT IN (SELECT id FROM favorite);
-         DELETE FROM favorite_tag WHERE favorite_id NOT IN (SELECT id FROM favorite);",
+         DELETE FROM favorite_item_category WHERE favorite_id NOT IN (SELECT id FROM favorite);",
     )
     .map_err(|e| format!("清理收藏孤儿数据失败: {}", e))?;
-    Ok(conn)
+
+    // `favorite_tag` 只存在于尚未完成升级的老库：新库不创建它（AUDIT-023），
+    // 老库迁移成功后也会被 DROP。所以不能无条件 DELETE——那会让新库初始化时
+    // 直接报 `no such table: favorite_tag`，整个收藏模块打不开。
+    let has_legacy_tags: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='favorite_tag'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("检查旧标签表失败: {e}"))?;
+    if has_legacy_tags > 0 {
+        conn.execute(
+            "DELETE FROM favorite_tag WHERE favorite_id NOT IN (SELECT id FROM favorite)",
+            [],
+        )
+        .map_err(|e| format!("清理收藏孤儿数据失败: {}", e))?;
+    }
+    Ok(())
 }
 
 /// 在全局连接上执行一段逻辑（首次调用自动初始化）。
@@ -294,3 +316,5 @@ mod statistics;
 pub use statistics::*;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod cleanup_tests;

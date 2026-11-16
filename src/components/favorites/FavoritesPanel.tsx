@@ -20,11 +20,12 @@ import VexEmptyState from "../VexEmptyState";
 import { GithubTokenDialog } from "../project/GithubTokenDialog";
 import { MarkdownRenderer } from "../shared/markdown/MarkdownRenderer";
 import { CredentialDialog } from "./CredentialDialog";
+import { XOAuthDialog } from "./XOAuthDialog";
 import type { AiConfig, AiProvider } from "../../contracts/ai";
 import { ModelSelector } from "../shared/ai/ModelSelector";
 import { SOURCE_LABELS, expiringInDays, statusBadge, type CachedContent, type CredentialStatus, type FavoriteDeletedRow, type FavoriteRow, type FavoriteSettings, type FavoriteStats } from "./types";
 import { DEFAULT_AGENT_ROUNDS, DEFAULT_AI_WIDTH, DEFAULT_LEFT_WIDTH, MAX_AGENT_ROUNDS, MAX_AI_WIDTH, MAX_LEFT_WIDTH, MIN_AGENT_ROUNDS, MIN_AI_WIDTH, MIN_LEFT_WIDTH, isImportTask } from "./FavoritesPanel.model";
-import { CredDot } from "./FavoritesPanel.CredDot";
+import { FavoritesImportMenu } from "./FavoritesPanel.importMenu";
 import { LinkButton } from "./FavoritesPanel.LinkButton";
 import { Divider } from "./FavoritesPanel.Divider";
 
@@ -46,35 +47,41 @@ export default function FavoritesPanel() {
   const [providers, setProviders] = useState<AiProvider[]>([]);
   const [providerId, setProviderId] = useState<string>("");
   const [modelId, setModelId] = useState<string>("");
+  const tasks = useFavoriteTasks({
+    refresh: () => refresh(),
+    providerId,
+    modelId,
+  });
   const {
     running,
     importRunning,
     processRunning,
     progressRows,
-    biliConfigured,
     setBiliConfigured,
     cookieOpen,
     setCookieOpen,
-    zhihuCookieConfigured,
     setZhihuCookieConfigured,
     zhihuCookieOpen,
     setZhihuCookieOpen,
-    tokenConfigured,
+    setXCookieConfigured,
+    xCookieOpen,
+    setXCookieOpen,
+    setXQueryIdConfigured,
+    xQueryIdOpen,
+    setXQueryIdOpen,
+    xOauth,
+    setXOauth,
+    xOauthOpen,
+    setXOauthOpen,
+    xLastRunAt,
+    refreshXStatus,
     setTokenConfigured,
     tokenOpen,
     setTokenOpen,
-    runImport,
-    runImportBili,
-    runImportZhihu,
-    runImportBookmarks,
     runClassify,
     runCheck,
     requestStop,
-  } = useFavoriteTasks({
-    refresh: () => refresh(),
-    providerId,
-    modelId,
-  });
+  } = tasks;
 
   const [leftWidth, setLeftWidth] = useState(DEFAULT_LEFT_WIDTH);
   const [aiWidth, setAiWidth] = useState(DEFAULT_AI_WIDTH);
@@ -204,6 +211,13 @@ export default function FavoritesPanel() {
     invoke<boolean>("fav_has_credential", { source: "zhihu-cookie" })
       .then(setZhihuCookieConfigured)
       .catch(() => setZhihuCookieConfigured(false));
+    invoke<boolean>("fav_has_credential", { source: "x-cookie" })
+      .then(setXCookieConfigured)
+      .catch(() => setXCookieConfigured(false));
+    invoke<boolean>("fav_has_credential", { source: "x-query-id" })
+      .then(setXQueryIdConfigured)
+      .catch(() => setXQueryIdConfigured(false));
+    void refreshXStatus();
     invoke<string>("fav_get_github_token")
       .then((token) => setTokenConfigured(!!token.trim()))
       .catch(() => setTokenConfigured(false));
@@ -446,94 +460,7 @@ export default function FavoritesPanel() {
           导入（各来源 + 各自的密钥）与 归类（供应商 / 模型 + 开始归类）。
           跑着的导入会在菜单外露出「停止」，那是当下最该点的东西，不能藏进菜单。 */}
       <div className="flex flex-wrap items-center gap-2 min-w-0 whitespace-nowrap [&>*]:shrink-0">
-        <Menu
-          label={
-            <span className="relative" title={credLevel ? t("favorites.credExpiredHintShort") : undefined}>
-              {t("favorites.importMenu")}
-              <CredDot level={credLevel} />
-            </span>
-          }
-          busy={importRunning}
-          disabled={processRunning}
-          title={processRunning ? t("favorites.importBlockedByProcess") : t("favorites.importMenuHint")}
-          items={[
-            {
-              key: "github",
-              label: "GitHub star",
-              active: running.includes("github"),
-              hint: running.includes("github")
-                ? t("favorites.importingShort")
-                : tokenConfigured
-                  ? t("favorites.keyReady")
-                  : t("favorites.keyMissing"),
-              disabled: running.includes("github") || processRunning,
-              onSelect: () => void runImport(),
-            },
-            {
-              key: "edge",
-              label: t("favorites.edgeBookmarks"),
-              active: running.includes("bookmark"),
-              hint: running.includes("bookmark") ? t("favorites.importingShort") : undefined,
-              disabled: running.includes("bookmark") || processRunning,
-              onSelect: () => void runImportBookmarks("edge"),
-            },
-            {
-              key: "chrome",
-              label: t("favorites.chromeBookmarks"),
-              active: running.includes("bookmark"),
-              disabled: running.includes("bookmark") || processRunning,
-              onSelect: () => void runImportBookmarks("chrome"),
-            },
-            {
-              key: "bilibili",
-              label: t("favorites.biliFavorites"),
-              active: running.includes("bilibili"),
-              hint: running.includes("bilibili")
-                ? t("favorites.importingShort")
-                : biliConfigured
-                  ? t("favorites.keyReady")
-                  : t("favorites.keyMissing"),
-              disabled: running.includes("bilibili") || processRunning,
-              onSelect: () => (biliConfigured ? void runImportBili() : setCookieOpen(true)),
-            },
-            {
-              key: "zhihu",
-              label: t("favorites.zhihuFavorites"),
-              active: running.includes("zhihu"),
-              hint: running.includes("zhihu")
-                ? t("favorites.importingShort")
-                : zhihuCookieConfigured
-                  ? t("favorites.keyReady")
-                  : t("favorites.keyMissing"),
-              disabled: running.includes("zhihu") || processRunning,
-              onSelect: () => void runImportZhihu(),
-            },
-            { key: "sep-keys", type: "separator" },
-            { key: "hdr-keys", type: "header", label: t("favorites.keysHeader") },
-            // 密钥**永远打开弹窗**（回显已存的 Cookie）：配过就直接跑的写法
-            // 让用户再也进不去弹窗，改不了一份过期 Cookie。
-            {
-              key: "key-github",
-              label: t("favorites.githubTokenShort"),
-              hint: tokenConfigured ? t("favorites.keyReady") : t("favorites.keyMissing"),
-              onSelect: () => setTokenOpen(true),
-            },
-            {
-              key: "key-bilibili",
-              label: t("favorites.biliCookieShort"),
-              hint: biliConfigured ? t("favorites.keyReady") : t("favorites.keyMissing"),
-              active: credAlert("bilibili") != null,
-              onSelect: () => setCookieOpen(true),
-            },
-            {
-              key: "key-zhihu",
-              label: t("favorites.zhihuCookieShort"),
-              hint: zhihuCookieConfigured ? t("favorites.keyReady") : t("favorites.keyMissing"),
-              active: credAlert("zhihu-cookie") != null,
-              onSelect: () => setZhihuCookieOpen(true),
-            },
-          ]}
-        />
+        <FavoritesImportMenu tasks={tasks} credLevel={credLevel} credAlert={credAlert} />
 
         {/* 跑着的导入：各自一个「停止」，直接露在外面 */}
         {running.filter(isImportTask).map((task) => (
@@ -936,6 +863,45 @@ export default function FavoritesPanel() {
           setZhihuCookieConfigured(configured);
           // 换了 Cookie 就把健康状态刷新一下：后端会把 status 重置为「未验证」
           void refresh().catch((e) => { reportInvokeError(e, "src/components/favorites/FavoritesPanel.tsx:937"); });
+        }}
+      />
+
+      {/* X：Cookie 与接口 ID 分开存（键不同互不覆盖），接口 ID 只在 X 改版时才需更新 */}
+      <CredentialDialog
+        open={xCookieOpen}
+        onClose={() => setXCookieOpen(false)}
+        source="x-cookie"
+        title={t("favorites.xCookieTitle")}
+        hint={t("favorites.xCookieHint")}
+        placeholder={t("favorites.xCookiePlaceholder")}
+        note={t("favorites.xCookieNote")}
+        multiline
+        onSaved={(configured) => {
+          setXCookieConfigured(configured);
+          void refresh().catch((e) => { reportInvokeError(e, "src/components/favorites/FavoritesPanel.tsx:x-cookie"); });
+        }}
+      />
+
+      <CredentialDialog
+        open={xQueryIdOpen}
+        onClose={() => setXQueryIdOpen(false)}
+        source="x-query-id"
+        title={t("favorites.xQueryIdTitle")}
+        hint={t("favorites.xQueryIdHint")}
+        placeholder={t("favorites.xQueryIdPlaceholder")}
+        note={t("favorites.xQueryIdNote")}
+        onSaved={setXQueryIdConfigured}
+      />
+
+      {/* X 官方 API：填 Client ID → 拉起浏览器 → 本地回调授权（与 Cookie 通道并存） */}
+      <XOAuthDialog
+        open={xOauthOpen}
+        onClose={() => setXOauthOpen(false)}
+        account={xOauth}
+        lastRunAt={xLastRunAt}
+        onSaved={(account) => {
+          setXOauth(account);
+          void refreshXStatus();
         }}
       />
 

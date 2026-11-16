@@ -3,7 +3,7 @@
 /** 一条收藏条目（后端 `FavoriteRow` 用 `rename_all = "camelCase"` 序列化） */
 export interface FavoriteRow {
   id: number;
-  source: string; // github | bilibili | zhihu
+  source: string; // github | bilibili | zhihu | x
   externalId: string;
   url: string;
   title: string;
@@ -212,10 +212,25 @@ export function expiringInDays(expiresAt?: number | null, within = 3): number | 
   return days <= within ? Math.ceil(days) : null;
 }
 
+/** X 官方 API 的授权信息（后端 `XAccount`，**不含 token**） */
+export interface XAccount {
+  screenName: string;
+  name: string;
+  clientId: string;
+  expiresAt: number;
+}
+
+/** 某来源的导入状态（后端 `ImportState`） */
+export interface ImportState {
+  lastRunAt?: string | null;
+  total: number;
+}
+
 export const SOURCE_LABELS: Record<string, string> = {
   github: "GitHub",
   bilibili: "B站",
   zhihu: "知乎",
+  x: "X",
   // 浏览器收藏夹（Edge / Chrome）导入的条目
   bookmark: "浏览器",
 };

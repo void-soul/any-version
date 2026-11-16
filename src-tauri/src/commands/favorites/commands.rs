@@ -13,6 +13,9 @@ use super::classify::{self, BATCH_SIZE};
 use super::db::{self, NewFavorite};
 use super::github;
 use super::organize;
+use super::x;
+use super::x_api;
+use super::x_oauth;
 use super::zhihu;
 
 // ─── 任务调度：谁可以和谁同时跑 ───
@@ -31,12 +34,14 @@ use super::zhihu;
 const TASK_GITHUB: &str = "github";
 const TASK_BILIBILI: &str = "bilibili";
 const TASK_ZHIHU: &str = "zhihu";
+const TASK_X: &str = "x";
 const TASK_CLASSIFY: &str = "classify";
 const TASK_CHECK: &str = "check";
-const ALL_TASKS: [&str; 5] = [
+const ALL_TASKS: [&str; 6] = [
     TASK_GITHUB,
     TASK_BILIBILI,
     TASK_ZHIHU,
+    TASK_X,
     TASK_CLASSIFY,
     TASK_CHECK,
 ];
@@ -54,7 +59,7 @@ fn tasks_lock<'a>(
 }
 
 fn is_import_task(task: &str) -> bool {
-    matches!(task, TASK_GITHUB | TASK_BILIBILI | TASK_ZHIHU)
+    matches!(task, TASK_GITHUB | TASK_BILIBILI | TASK_ZHIHU | TASK_X)
 }
 
 fn task_label(task: &str) -> &'static str {
@@ -62,6 +67,7 @@ fn task_label(task: &str) -> &'static str {
         TASK_GITHUB => "GitHub 导入",
         TASK_BILIBILI => "B站导入",
         TASK_ZHIHU => "知乎导入",
+        TASK_X => "X 导入",
         TASK_CLASSIFY => "AI 归类",
         TASK_CHECK => "失效检测",
         _ => "其他任务",
@@ -357,6 +363,10 @@ mod bilibili_import;
 pub use bilibili_import::*;
 mod zhihu_import;
 pub use zhihu_import::*;
+mod x_import;
+pub use x_import::*;
+mod x_official;
+pub use x_official::*;
 mod classification;
 pub use classification::*;
 mod checking;

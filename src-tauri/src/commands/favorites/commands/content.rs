@@ -6,7 +6,13 @@ use super::*;
 #[tauri::command]
 pub fn fav_credential_status() -> Result<Vec<db::CredentialStatus>, String> {
     db::with_conn(|conn| {
-        ["github", "bilibili", zhihu::COOKIE_KEY]
+        [
+            "github",
+            "bilibili",
+            zhihu::COOKIE_KEY,
+            x::COOKIE_KEY,
+            x_oauth::OAUTH_KEY,
+        ]
             .iter()
             .map(|source| db::credential_status(conn, source))
             .collect()

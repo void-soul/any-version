@@ -8,9 +8,16 @@ export const DEFAULT_LEFT_WIDTH = 180;
  * 三个平台的导入可以同时跑（各拉各的接口），但导入与「加工」（归类 / 失效检测）
  * 必须互斥：加工要扫全库挑条目，和正在写入的导入抢同一份数据。
  */
-export type FavTask = "github" | "bilibili" | "zhihu" | "bookmark" | "classify" | "check";
+export type FavTask =
+  | "github"
+  | "bilibili"
+  | "zhihu"
+  | "x"
+  | "bookmark"
+  | "classify"
+  | "check";
 
-export const IMPORT_TASKS: FavTask[] = ["github", "bilibili", "zhihu", "bookmark"];
+export const IMPORT_TASKS: FavTask[] = ["github", "bilibili", "zhihu", "x", "bookmark"];
 
 export const isImportTask = (task: FavTask) => IMPORT_TASKS.includes(task);
 

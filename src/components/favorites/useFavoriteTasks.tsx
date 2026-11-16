@@ -1,11 +1,19 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 import { progressKeyOf, progressRowsOf } from "./progress";
 import { toast } from "../shared/Toast";
-import { type CheckResult, type ClassifyResult, type FavoritesProgress, type ImportResult } from "./types";
+import {
+  type CheckResult,
+  type ClassifyResult,
+  type FavoritesProgress,
+  type ImportResult,
+  type ImportState,
+  type XAccount,
+} from "./types";
 import { isImportTask, type FavTask } from "./FavoritesPanel.model";
+import { pickXImportChannel } from "./xImportChannel";
 
 /** Owns the FavoriteTasks feature, independently of page rendering. */
 export function useFavoriteTasks({ refresh, providerId, modelId }: {
@@ -68,6 +76,33 @@ export function useFavoriteTasks({ refresh, providerId, modelId }: {
   const [zhihuCookieConfigured, setZhihuCookieConfigured] = useState(false);
 
   const [zhihuCookieOpen, setZhihuCookieOpen] = useState(false);
+
+  // X：Cookie + 接口 ID 两件套（接口 ID 会随 X 前端发版变化，需可覆盖）
+  const [xCookieConfigured, setXCookieConfigured] = useState(false);
+
+  const [xCookieOpen, setXCookieOpen] = useState(false);
+
+  const [xQueryIdConfigured, setXQueryIdConfigured] = useState(false);
+
+  const [xQueryIdOpen, setXQueryIdOpen] = useState(false);
+
+  // X 官方 API：授权一次后优先走官方（稳定、只读），未授权再回落到 Cookie
+  const [xOauth, setXOauth] = useState<XAccount | null>(null);
+
+  const [xOauthOpen, setXOauthOpen] = useState(false);
+
+  /** 上次读取时间：官方接口不返回收藏时间，只能记录本地同步时间（增量判断也靠它） */
+  const [xLastRunAt, setXLastRunAt] = useState<string | null>(null);
+
+  /** 刷新 X 的授权状态与上次读取时间（面板打开、授权完成、导入结束后调用） */
+  const refreshXStatus = useCallback(async () => {
+    const [account, state] = await Promise.all([
+      invoke<XAccount | null>("fav_x_oauth_status").catch(() => null),
+      invoke<ImportState | null>("fav_import_state", { source: "x" }).catch(() => null),
+    ]);
+    setXOauth(account);
+    setXLastRunAt(state?.lastRunAt ?? null);
+  }, []);
 
   // GitHub Token：**收藏模块自己的一份**，与 SDK 模块的 token 互不共享
   const [tokenConfigured, setTokenConfigured] = useState(false);
@@ -175,6 +210,49 @@ export function useFavoriteTasks({ refresh, providerId, modelId }: {
     } finally {
       endTask("zhihu");
       clearProgress("zhihu");
+    }
+  };
+
+  // X：官方授权优先；没有官方凭证才用 Cookie + 接口 ID。两边都没配就引导去授权。
+  const runImportX = async () => {
+    const channel = pickXImportChannel({
+      cookieReady: xCookieConfigured && xQueryIdConfigured,
+      officialReady: xOauth != null,
+    });
+    if (channel === "none") {
+      setXOauthOpen(true);
+      return;
+    }
+    startTask("x");
+    try {
+      const result = await invoke<ImportResult>(
+        channel === "official" ? "fav_import_x_official" : "fav_import_x",
+      );
+      await refresh();
+      await refreshXStatus();
+      if (result.cancelled) {
+        toast(t("favorites.importCancelled"), "ok");
+      } else {
+        toast(
+          t("favorites.importDone", {
+            added: result.added,
+            updated: result.updated,
+            skipped: result.skipped,
+          }),
+          "ok",
+        );
+      }
+      reportSkippedDeleted(result.skippedDeleted);
+    } catch (e) {
+      const message = String(e);
+      toast(t("favorites.importFail", { err: message }), "err");
+      // 授权失效 / 接口 ID 换版是最常见的两类失败：直接递对应的配置弹窗
+      if (message.includes("授权") || message.includes("Client ID")) setXOauthOpen(true);
+      else if (message.includes("接口 ID")) setXQueryIdOpen(true);
+      else setXCookieOpen(true);
+    } finally {
+      endTask("x");
+      clearProgress("x");
     }
   };
 
@@ -315,6 +393,20 @@ export function useFavoriteTasks({ refresh, providerId, modelId }: {
     setZhihuCookieConfigured,
     zhihuCookieOpen,
     setZhihuCookieOpen,
+    xCookieConfigured,
+    setXCookieConfigured,
+    xCookieOpen,
+    setXCookieOpen,
+    xQueryIdConfigured,
+    setXQueryIdConfigured,
+    xQueryIdOpen,
+    setXQueryIdOpen,
+    xOauth,
+    setXOauth,
+    xOauthOpen,
+    setXOauthOpen,
+    xLastRunAt,
+    refreshXStatus,
     tokenConfigured,
     setTokenConfigured,
     tokenOpen,
@@ -322,9 +414,13 @@ export function useFavoriteTasks({ refresh, providerId, modelId }: {
     runImport,
     runImportBili,
     runImportZhihu,
+    runImportX,
     runImportBookmarks,
     runClassify,
     runCheck,
     requestStop,
   };
 }
+
+/** 供子组件复用的返回类型（导入菜单抽到独立文件后按整个对象传递） */
+export type FavoriteTasks = ReturnType<typeof useFavoriteTasks>;

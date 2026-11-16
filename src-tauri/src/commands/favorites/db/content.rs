@@ -76,6 +76,31 @@ pub fn mark_imported(conn: &Connection, source: &str, total: usize) -> Result<()
     Ok(())
 }
 
+/// 某来源的导入状态（给 UI 展示「上次读取时间」）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportState {
+    pub last_run_at: Option<String>,
+    pub total: usize,
+}
+
+/// 读某来源的上次导入时间与累计条数；从没导入过返回 `None`。
+pub fn get_import_state(conn: &Connection, source: &str) -> Result<Option<ImportState>, String> {
+    let mut statement = conn
+        .prepare("SELECT last_run_at, total FROM favorite_import_state WHERE source = ?1")
+        .map_err(|e| format!("读取导入状态失败: {e}"))?;
+    match statement.query_row([source], |row| {
+        Ok(ImportState {
+            last_run_at: row.get(0)?,
+            total: row.get::<_, i64>(1)? as usize,
+        })
+    }) {
+        Ok(state) => Ok(Some(state)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("读取导入状态失败: {e}")),
+    }
+}
+
 /// 写入并返回条目 id（正文缓存要按 id 挂，而 upsert 本身不返回 id）。
 pub fn upsert_with_id(
     conn: &Connection,

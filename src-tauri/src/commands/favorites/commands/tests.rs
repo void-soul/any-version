@@ -51,6 +51,7 @@ fn every_progress_literal_sets_task() {
         include_str!("github_import.rs"),
         include_str!("bilibili_import.rs"),
         include_str!("zhihu_import.rs"),
+        include_str!("x_import.rs"),
         include_str!("classification.rs"),
         include_str!("checking.rs"),
         include_str!("content.rs"),
@@ -97,6 +98,10 @@ fn every_progress_literal_sets_task() {
 fn import_tasks_can_run_concurrently_but_block_processing() {
     assert!(!tasks_conflict(TASK_GITHUB, TASK_BILIBILI));
     assert!(!tasks_conflict(TASK_BILIBILI, TASK_ZHIHU));
+    assert!(
+        !tasks_conflict(TASK_ZHIHU, TASK_X),
+        "X 导入同样属于导入任务，可与其它导入并发"
+    );
     // 同一任务不能重入（界面已置灰，这里是兜底）
     assert!(tasks_conflict(TASK_GITHUB, TASK_GITHUB));
     // 导入 × 加工互斥（双向）
@@ -106,6 +111,7 @@ fn import_tasks_can_run_concurrently_but_block_processing() {
     // 加工任务之间也互斥
     assert!(tasks_conflict(TASK_CLASSIFY, TASK_CHECK));
     assert!(is_import_task(TASK_ZHIHU) && !is_import_task(TASK_CHECK));
+    assert!(is_import_task(TASK_X) && !is_import_task(TASK_CHECK));
 }
 
 /// 停止标记按任务分开：停掉 GitHub 不该顺手停掉正在跑的 B站导入，
@@ -126,7 +132,12 @@ fn cancel_flags_are_per_task() {
 
     // 不带任务名 = 全停
     request_cancel(None);
-    assert!(is_cancelled(TASK_GITHUB) && is_cancelled(TASK_BILIBILI) && is_cancelled(TASK_ZHIHU));
+    assert!(
+        is_cancelled(TASK_GITHUB)
+            && is_cancelled(TASK_BILIBILI)
+            && is_cancelled(TASK_ZHIHU)
+            && is_cancelled(TASK_X)
+    );
     for t in ALL_TASKS {
         reset_cancel(t);
     }
