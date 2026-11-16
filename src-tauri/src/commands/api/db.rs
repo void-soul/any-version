@@ -139,9 +139,15 @@ fn build_connection() -> Result<rusqlite::Connection, String> {
 }
 
 /// 初始化数据库（幂等）。
+///
+/// 建连与 DDL **必须在全局锁内**执行：`build_connection` 会跑 `CREATE TABLE` 与
+/// `ALTER TABLE` 迁移，多个线程并发初始化会抢 schema 写锁并报 `database is locked`。
+/// 这也避免了「后初始化者覆盖前者连接」的浪费。与 `with_db` 的临界区约定保持一致。
 pub fn init_db() -> Result<(), String> {
-    let conn = build_connection()?;
-    *DB_CONN.lock().map_err(|e| e.to_string())? = Some(conn);
+    let mut guard = DB_CONN.lock().map_err(|e| e.to_string())?;
+    if guard.is_none() {
+        *guard = Some(build_connection()?);
+    }
     Ok(())
 }
 
@@ -361,6 +367,24 @@ mod column_contract_tests {
         "query_params", "path_params", "body", "body_type", "description",
         "docs_md", "timeout_ms", "created_at", "updated_at",
     ];
+
+    /// 多个命令/测试可能同时触发初始化。若建连与 DDL 在全局锁之外执行，
+    /// 并发跑 schema 会拿不到写锁（`database is locked`），表现为随机失败。
+    #[test]
+    fn concurrent_init_db_is_safe() {
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    for _ in 0..25 {
+                        super::init_db().expect("并发初始化不应失败");
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().expect("初始化线程不应 panic");
+        }
+    }
 
     #[test]
     fn ddl_column_order_matches_positional_row_mapping() {

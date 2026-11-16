@@ -55,3 +55,7 @@ tmp_bins.txt
 # <<< kira skills <<<
 __pycache__
 .trae
+
+# 本地测试凭据（含明文密码，绝不提交）
+/test.txt
+/x.txt
