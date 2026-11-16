@@ -97,6 +97,8 @@ windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
   "Win32_Networking_WinInet",
   "Win32_Security",
+  # DPAPI：把 RDP 密码加密成 .rdp 的 `password 51:b:` 字段（绑定当前用户+机器）
+  "Win32_Security_Cryptography",
   "Win32_System_Threading",
   "Win32_UI_WindowsAndMessaging",
   "Win32_UI_Shell",
@@ -118,8 +120,21 @@ dirs = "5"
 # VS Code safe storage 解密（macOS/Linux：AES-128-CBC + PBKDF2）
 aes = "0.8"
 cbc = { version = "0.1", features = ["alloc"] }
+# FinalShell 连接密码兼容：DES/ECB/PKCS5Padding，密钥由 8 字节 salt 经 Java Random + MD5 派生
+des = "0.8"
+ecb = { version = "0.1", features = ["alloc", "block-padding"] }
+# 内建 SSH 客户端。锁 0.63.1：0.63.2+ 的 MSRV 是 1.89，本项目工具链为 1.88。
+# 关掉默认 feature 里的 aws-lc-rs（需要 C 工具链），改用 ring，保证新机器可直接构建。
+russh = { version = "=0.63.1", default-features = false, features = ["ring", "flate2"] }
+# SFTP 协议层（阶段 2）：只依赖 bytes/tokio，russh 仅其 dev 依赖，可与 0.63.1 共存。
+russh-sftp = "=3.0.1"
 rodio = { version = "0.22.2", features = ["symphonia-all"] }
 # 音频标签/时长读取。0.24 会拉起 ogg_pager 0.7.2（要求 rustc 1.89），
 # 本项目工具链为 1.88，故锁在 0.22。
 lofty = "0.22"
+
+# russh 的 Windows 无条件依赖 pageant ^0.2，0.2.3+ 要求 rustc 1.89（本项目 1.88）。
+# 显式钳制传递依赖版本，保证新机器重新解析依赖时不会拉到不兼容版本。
+[target.'cfg(windows)'.dependencies]
+pageant = "=0.2.2"
 
