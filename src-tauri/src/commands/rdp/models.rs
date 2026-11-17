@@ -36,6 +36,12 @@ pub struct RdpConnection {
     pub key_passphrase: String,
     #[serde(default)]
     pub domain: String,
+    /// 是否把本地驱动器映射进远程会话（`.rdp` 的 `drivestoredirect`）。默认开启，与 FinalShell 一致。
+    #[serde(default = "default_true")]
+    pub map_drives: bool,
+    /// 是否共享剪贴板（`.rdp` 的 `redirectclipboard`）。默认开启。
+    #[serde(default = "default_true")]
+    pub clipboard: bool,
     #[serde(default)]
     pub note: String,
     #[serde(default)]
@@ -51,6 +57,11 @@ pub struct RdpConnection {
 
 fn default_kind() -> String {
     "rdp".to_string()
+}
+
+/// 驱动器映射与剪贴板共享默认开启（对齐 FinalShell）。
+fn default_true() -> bool {
+    true
 }
 
 fn default_auth_type() -> String {
@@ -74,6 +85,8 @@ impl RdpConnection {
             private_key_path: String::new(),
             key_passphrase: String::new(),
             domain: String::new(),
+            map_drives: true,
+            clipboard: true,
             note: String::new(),
             group: String::new(),
             source: "local".to_string(),

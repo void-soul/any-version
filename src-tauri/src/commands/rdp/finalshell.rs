@@ -61,6 +61,12 @@ pub fn parse_finalshell(text: &str) -> Result<Option<(RdpConnection, String)>, S
     conn.finalshell_raw = Some(text.to_string());
     conn.group = str_field(&value, "parent_id");
     conn.note = str_field(&value, "description");
+    // FinalShell 把「驱动器映射」直接存成 drivestoredirect；不读它就会表现为
+    // 「FinalShell 里能看到的磁盘，导入后没了」。
+    conn.map_drives = value
+        .get("drivestoredirect")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     conn.source = "finalshell".to_string();
     conn.created_at = value.get("create_time").and_then(Value::as_i64).unwrap_or(now);
     Ok(Some((conn, text.to_string())))
@@ -77,11 +83,16 @@ pub fn export_finalshell(conn: &RdpConnection) -> Result<String, String> {
     let original: Value = serde_json::from_str(raw)
         .map_err(|e| format!("保存的 FinalShell 原始配置损坏: {e}"))?;
     let current_cipher = conn.finalshell_cipher.clone().unwrap_or_default();
+    let original_drives = original
+        .get("drivestoredirect")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let same = str_field(&original, "name") == conn.name
         && str_field(&original, "host") == conn.host
         && str_field(&original, "user_name") == conn.username
         && original.get("port").and_then(Value::as_u64) == Some(u64::from(conn.port))
-        && str_field(&original, "password") == current_cipher;
+        && str_field(&original, "password") == current_cipher
+        && original_drives == conn.map_drives;
     if same {
         return Ok(raw.to_string());
     }
@@ -94,6 +105,7 @@ pub fn export_finalshell(conn: &RdpConnection) -> Result<String, String> {
         obj.insert("host".into(), Value::String(conn.host.clone()));
         obj.insert("user_name".into(), Value::String(conn.username.clone()));
         obj.insert("port".into(), Value::from(conn.port));
+        obj.insert("drivestoredirect".into(), Value::Bool(conn.map_drives));
         if !current_cipher.is_empty() {
             obj.insert("password".into(), Value::String(current_cipher));
         }

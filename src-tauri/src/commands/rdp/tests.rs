@@ -111,3 +111,32 @@ fn local_connection_cannot_be_exported_as_finalshell() {
     let conn = RdpConnection::new("Mine".into(), "127.0.0.1".into(), 3389, "u".into());
     assert!(export_finalshell(&conn).is_err());
 }
+
+// ─── 分组维护：重命名 / 删除（批量改连接上的 group 标签） ───
+
+
+
+// ─── 驱动器映射（对应 FinalShell 的 drivestoredirect） ───
+
+/// FinalShell 里开了磁盘映射的连接，导入后必须保留，否则用户会觉得「功能丢了」。
+#[test]
+fn finalshell_drive_redirection_is_imported() {
+    let text = sample(101, CIPHER).replace("\"port\":3389,", "\"port\":3389,\"drivestoredirect\":true,");
+    let (conn, _) = parse_finalshell(&text).unwrap().unwrap();
+    assert!(conn.map_drives, "FinalShell 开了磁盘映射，导入后应保留");
+}
+
+#[test]
+fn finalshell_missing_drive_flag_defaults_off() {
+    let (conn, _) = parse_finalshell(&sample(101, CIPHER)).unwrap().unwrap();
+    assert!(!conn.map_drives, "没有该字段时按关闭处理");
+}
+
+/// 在我们这边切换开关后，导出必须写回，否则 FinalShell 侧看到的还是旧值。
+#[test]
+fn export_writes_back_drive_redirection_change() {
+    let (mut conn, _) = parse_finalshell(&sample(101, CIPHER)).unwrap().unwrap();
+    conn.map_drives = true;
+    let out = export_finalshell(&conn).unwrap();
+    assert!(out.contains("\"drivestoredirect\":true"), "{out}");
+}
