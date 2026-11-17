@@ -34,7 +34,59 @@ fn safe_file_name(name: &str) -> String {
 
 #[tauri::command]
 pub fn rdp_list() -> Result<Vec<RdpConnection>, String> {
+    // 旧记录缺 mapDrives / clipboard 键时按默认补齐（幂等）
+    store::migrate_legacy_switches()?;
     store::load()
+}
+
+/// 文件夹操作后的完整状态，前端一次拿到连接与文件夹清单。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderState {
+    pub connections: Vec<RdpConnection>,
+    pub folders: Vec<String>,
+}
+
+/// 列出所有文件夹路径（含空文件夹）。
+#[tauri::command]
+pub fn rdp_groups_list() -> Result<Vec<String>, String> {
+    store::load_groups()
+}
+
+/// 新建文件夹（自动补齐中间层）。
+#[tauri::command]
+pub fn rdp_folder_create(path: String) -> Result<FolderState, String> {
+    let mut folders = store::load_groups()?;
+    if super::folders::create_folder(&mut folders, &path) {
+        store::save_groups(&folders)?;
+    }
+    Ok(FolderState { connections: store::load()?, folders })
+}
+
+/// 重命名 / 移动文件夹：同步改写后代文件夹与其中的连接路径。
+#[tauri::command]
+pub fn rdp_folder_rename(from: String, to: String) -> Result<FolderState, String> {
+    let mut connections = store::load()?;
+    let mut folders = store::load_groups()?;
+    let changed = super::folders::rename_folder(&mut connections, &mut folders, &from, &to);
+    if changed > 0 {
+        store::save(&connections)?;
+    }
+    store::save_groups(&folders)?;
+    Ok(FolderState { connections, folders })
+}
+
+/// 删除文件夹：里面的连接上移到父级（**连接本身不删**），子文件夹一并移除。
+#[tauri::command]
+pub fn rdp_folder_delete(path: String) -> Result<FolderState, String> {
+    let mut connections = store::load()?;
+    let mut folders = store::load_groups()?;
+    let changed = super::folders::delete_folder(&mut connections, &mut folders, &path);
+    if changed > 0 {
+        store::save(&connections)?;
+    }
+    store::save_groups(&folders)?;
+    Ok(FolderState { connections, folders })
 }
 
 #[tauri::command]
@@ -233,25 +285,16 @@ pub fn rdp_launch(id: String) -> Result<Option<String>, String> {
     if conn.kind == "ssh" {
         return Err("该连接是 SSH 服务器，请使用终端按钮连接".to_string());
     }
-    let mut text = format!(
-        "full address:s:{}:{}\r\nusername:s:{}\r\n",
-        conn.host, conn.port, conn.username
-    );
-    if !conn.domain.is_empty() {
-        text.push_str(&format!("domain:s:{}\r\n", conn.domain));
-    }
-
-    // 优先把密码以 DPAPI 密文写进 .rdp，做到与 FinalShell 一样免输入。
+        // 优先把密码以 DPAPI 密文写进 .rdp，做到与 FinalShell 一样免输入。
     // 取不到密码或加密失败时回退到系统凭据框，并如实告知原因（不静默降级）。
     let mut warning: Option<String> = None;
-    let mut embedded = false;
+    let mut password_line: Option<String> = None;
     match super::credentials::resolve_plain_password(&conn) {
         Ok(Some(plain)) if !plain.is_empty() => match super::credentials::protect(&plain) {
             Ok(blob) => {
                 let line = super::credentials::rdp_password_line(&blob);
                 if !line.is_empty() {
-                    text.push_str(&line);
-                    embedded = true;
+                    password_line = Some(line);
                 }
             }
             Err(e) => warning = Some(format!("无法自动填写密码，将弹出系统凭据框：{e}")),
@@ -259,9 +302,7 @@ pub fn rdp_launch(id: String) -> Result<Option<String>, String> {
         Ok(_) => {}
         Err(e) => warning = Some(format!("密码解密失败，将弹出系统凭据框：{e}")),
     }
-    if !embedded {
-        text.push_str("prompt for credentials:i:1\r\n");
-    }
+    let text = super::rdp_file::build_rdp_file(&conn, password_line.as_deref());
 
     let key: String = conn
         .id
@@ -276,9 +317,11 @@ pub fn rdp_launch(id: String) -> Result<Option<String>, String> {
         .map_err(|e| format!("启动 mstsc 失败: {e}"))?;
 
     // mstsc 启动后会自己读取该文件；延迟删除，避免密码密文长期留在磁盘。
+    // 60 秒而不是 5 秒：首次启动/杀软扫描时 mstsc 可能迟迟才读到文件，
+    // 过早删除会导致部分设置（如驱动器重定向）被静默忽略。
     let cleanup = path.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_secs(5));
+        std::thread::sleep(std::time::Duration::from_secs(60));
         let _ = std::fs::remove_file(&cleanup);
     });
     Ok(warning)

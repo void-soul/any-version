@@ -2,6 +2,8 @@
 //! FinalShell 密文未编辑时逐字节透传，解密能力在 finalshell_crypto。
 mod commands;
 pub mod credentials;
+pub mod folders;
+pub mod rdp_file;
 pub mod finalshell;
 pub mod finalshell_crypto;
 pub mod models;
@@ -15,3 +17,11 @@ mod tests;
 #[cfg(test)]
 #[path = "credentials_tests.rs"]
 mod credentials_tests;
+
+#[cfg(test)]
+#[path = "folder_tests.rs"]
+mod folder_tests;
+
+#[cfg(test)]
+#[path = "rdp_file_tests.rs"]
+mod rdp_file_tests;
