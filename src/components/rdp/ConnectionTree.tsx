@@ -102,12 +102,12 @@ export function ConnectionTree({ connections, folders, onMoveConnection, onMoveF
       className="flex items-center gap-2 border-t border-white/5 py-1.5 pr-2 hover:bg-white/5"
       style={{ paddingLeft: 26 + depth * 14 }}
     >
-      <span className="w-14 shrink-0 text-micro text-slate-500">
+      <span className="w-14 shrink-0 text-tiny text-slate-500">
         {conn.kind === "ssh" ? t("rdp.kindSshShort") : t("rdp.kindRdpShort")}
       </span>
       <span className="min-w-0 flex-1" title={conn.note || undefined}>
         <span className="block truncate font-medium text-slate-200">{conn.name}</span>
-        <span className="block truncate text-micro text-slate-500">
+        <span className="block truncate text-tiny text-slate-500">
           {conn.username ? `${conn.username}@` : ""}{conn.host}:{conn.port}
         </span>
       </span>
@@ -133,7 +133,7 @@ export function ConnectionTree({ connections, folders, onMoveConnection, onMoveF
                   if (e.key === "Escape") { setCreating(false); setNewName(""); }
                 }}
                 placeholder={t("folders.namePlaceholder")}
-                className="min-w-0 flex-1 rounded bg-black/40 px-1.5 py-0.5 text-tiny text-slate-100 outline-none ring-1 ring-sky-400"
+                className="min-w-0 flex-1 rounded bg-black/40 px-1.5 py-0.5 text-caption text-slate-100 outline-none ring-1 ring-sky-400"
               />
             </div>
           )}
@@ -173,10 +173,10 @@ export function ConnectionTree({ connections, folders, onMoveConnection, onMoveF
                 if (e.key === "Enter") commitRename(node.path);
                 if (e.key === "Escape") setEditing(null);
               }}
-              className="min-w-0 flex-1 rounded bg-black/40 px-1.5 py-0.5 text-tiny text-slate-100 outline-none ring-1 ring-sky-400"
+              className="min-w-0 flex-1 rounded bg-black/40 px-1.5 py-0.5 text-caption text-slate-100 outline-none ring-1 ring-sky-400"
             />
           ) : (
-            <span className="min-w-0 flex-1 truncate text-tiny text-slate-200">{node.name}</span>
+            <span className="min-w-0 flex-1 truncate text-caption text-slate-100">{node.name}</span>
           )}
           <span className="text-micro text-slate-500">{node.items.length}</span>
           <span className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
@@ -210,13 +210,13 @@ export function ConnectionTree({ connections, folders, onMoveConnection, onMoveF
     <div className="min-h-0 flex-1 overflow-auto rounded border border-white/10">
       <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-white/10 bg-slate-900/95 px-2 py-1.5">
         <button
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-tiny text-slate-300 hover:bg-white/10"
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-caption text-slate-300 hover:bg-white/10"
           onClick={() => { setCreating(true); setNewName(""); }}
         >
           <FolderPlus className="h-3.5 w-3.5" />
           {t("folders.create")}
         </button>
-        <span className="text-micro text-slate-500">{t("folders.hint")}</span>
+        <span className="text-tiny text-slate-500">{t("folders.hint")}</span>
       </div>
       {renderNode(tree, 0)}
     </div>

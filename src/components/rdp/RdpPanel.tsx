@@ -39,8 +39,9 @@ function kindLabelKey(kind: SessionKind): string {
   }
 }
 
-const btn = "inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-tiny border border-white/10 bg-black/30 text-slate-200 hover:bg-white/10 disabled:opacity-40";
-const field = "w-full rounded border border-white/10 bg-black/30 px-2 py-1.5 text-tiny text-slate-100 outline-none focus:border-sky-500/60";
+// 字号按 App.css 的语义：按钮默认 caption(11px)，输入框 body(12px)，不再压到 tiny(10px)
+const btn = "inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-caption border border-white/10 bg-black/30 text-slate-200 hover:bg-white/10 disabled:opacity-40";
+const field = "w-full rounded border border-white/10 bg-black/30 px-2 py-1.5 text-body text-slate-100 outline-none focus:border-sky-500/60";
 
 export default function RdpPanel() {
   const { t } = useTranslation();
@@ -314,7 +315,7 @@ export default function RdpPanel() {
       {showTrusted && <TrustedHostsDialog onClose={() => setShowTrusted(false)} />}
       {showTerminalSettings && <TerminalSettingsDialog onClose={() => setShowTerminalSettings(false)} />}
 
-      {toast && <div className="rounded border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-tiny text-amber-200">{toast}</div>}
+      {toast && <div className="rounded border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-caption text-amber-200">{toast}</div>}
 
       <ConnectionTree
         connections={list}
@@ -352,25 +353,25 @@ export default function RdpPanel() {
         <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/70 p-4">
           <div className="w-[440px] max-w-full rounded border border-white/10 bg-slate-900 p-4 shadow-2xl">
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-caption font-semibold">{editing.id ? t("rdp.edit") : t("rdp.add")}</h3>
+              <h3 className="text-title font-semibold">{editing.id ? t("rdp.edit") : t("rdp.add")}</h3>
               <button className={btn} onClick={() => setEditing(null)}><X className="h-3.5 w-3.5" /></button>
             </div>
             <div className="space-y-2">
-              <label className="block text-tiny text-slate-400">{t("rdp.kind")}
+              <label className="block text-caption text-slate-400">{t("rdp.kind")}
                 <select className={field} value={editing.kind} onChange={(e) => changeKind(e.target.value)}>
                   <option value="rdp">{t("rdp.kindRdp")}</option>
                   <option value="ssh">{t("rdp.kindSsh")}</option>
                 </select>
               </label>
-              <label className="block text-tiny text-slate-400">{t("rdp.name")}<input className={field} value={editing.name} onChange={(e) => patch("name", e.target.value)} /></label>
+              <label className="block text-caption text-slate-400">{t("rdp.name")}<input className={field} value={editing.name} onChange={(e) => patch("name", e.target.value)} /></label>
               <div className="grid grid-cols-[1fr_90px] gap-2">
-                <label className="block text-tiny text-slate-400">{t("rdp.host")}<input className={field} value={editing.host} onChange={(e) => patch("host", e.target.value)} /></label>
-                <label className="block text-tiny text-slate-400">{t("rdp.port")}<input className={field} type="number" value={editing.port} onChange={(e) => patch("port", Number(e.target.value))} /></label>
+                <label className="block text-caption text-slate-400">{t("rdp.host")}<input className={field} value={editing.host} onChange={(e) => patch("host", e.target.value)} /></label>
+                <label className="block text-caption text-slate-400">{t("rdp.port")}<input className={field} type="number" value={editing.port} onChange={(e) => patch("port", Number(e.target.value))} /></label>
               </div>
-              <label className="block text-tiny text-slate-400">{t("rdp.username")}<input className={field} value={editing.username} onChange={(e) => patch("username", e.target.value)} /></label>
+              <label className="block text-caption text-slate-400">{t("rdp.username")}<input className={field} value={editing.username} onChange={(e) => patch("username", e.target.value)} /></label>
               {editing.kind === "ssh" && (
                 <>
-                  <label className="block text-tiny text-slate-400">{t("rdp.authType")}
+                  <label className="block text-caption text-slate-400">{t("rdp.authType")}
                     <select className={field} value={editing.authType} onChange={(e) => patch("authType", e.target.value)}>
                       <option value="password">{t("rdp.authPassword")}</option>
                       <option value="key">{t("rdp.authKey")}</option>
@@ -378,7 +379,7 @@ export default function RdpPanel() {
                   </label>
                   {editing.authType === "key" && (
                     <>
-                      <label className="block text-tiny text-slate-400">{t("rdp.keyPath")}
+                      <label className="block text-caption text-slate-400">{t("rdp.keyPath")}
                         <div className="flex gap-1">
                           <input className={field} value={editing.privateKeyPath} onChange={(e) => patch("privateKeyPath", e.target.value)} placeholder="id_ed25519 / id_rsa" />
                           <button className={btn} title={t("rdp.pickKeyFile")} onClick={() => void pickKeyPath()}><FolderOpen className="h-3.5 w-3.5" /></button>
@@ -391,7 +392,7 @@ export default function RdpPanel() {
                           </select>
                         )}
                       </label>
-                      <label className="block text-tiny text-slate-400">{t("rdp.keyPassphrase")}
+                      <label className="block text-caption text-slate-400">{t("rdp.keyPassphrase")}
                         <input className={field} type="password" autoComplete="new-password" value={passphraseDraft} onChange={(e) => setPassphraseDraft(e.target.value)} />
                       </label>
                     </>
@@ -400,8 +401,8 @@ export default function RdpPanel() {
               )}
               {editing.kind === "rdp" && (
                 <>
-                  <label className="block text-tiny text-slate-400">{t("rdp.domain")}<input className={field} value={editing.domain} onChange={(e) => patch("domain", e.target.value)} /></label>
-                  <label className="flex items-center gap-2 text-tiny text-slate-300">
+                  <label className="block text-caption text-slate-400">{t("rdp.domain")}<input className={field} value={editing.domain} onChange={(e) => patch("domain", e.target.value)} /></label>
+                  <label className="flex items-center gap-2 text-caption text-slate-300">
                     <input
                       type="checkbox"
                       checked={editing.mapDrives}
@@ -409,7 +410,7 @@ export default function RdpPanel() {
                     />
                     {t("rdp.mapDrives")}
                   </label>
-                  <label className="flex items-center gap-2 text-tiny text-slate-300">
+                  <label className="flex items-center gap-2 text-caption text-slate-300">
                     <input
                       type="checkbox"
                       checked={editing.clipboard}
@@ -417,10 +418,10 @@ export default function RdpPanel() {
                     />
                     {t("rdp.clipboard")}
                   </label>
-                  <div className="text-micro text-slate-500">{t("rdp.mapDrivesHint")}</div>
+                  <div className="text-tiny text-slate-500">{t("rdp.mapDrivesHint")}</div>
                 </>
               )}
-              <label className="block text-tiny text-slate-400">{t("rdp.password")}
+              <label className="block text-caption text-slate-400">{t("rdp.password")}
                 <div className="flex gap-1">
                   <input className={field} type="password" autoComplete="new-password" placeholder={t("rdp.passwordPlaceholder")} value={passwordDraft} onChange={(e) => setPasswordDraft(e.target.value)} />
                   {editing.finalshellCipher && (
@@ -428,8 +429,8 @@ export default function RdpPanel() {
                   )}
                 </div>
               </label>
-              {editing.finalshellCipher && <div className="text-micro text-amber-300">{t("rdp.fsCipherNote")}</div>}
-              <label className="block text-tiny text-slate-400">{t("rdp.note")}<input className={field} value={editing.note} onChange={(e) => patch("note", e.target.value)} /></label>
+              {editing.finalshellCipher && <div className="text-tiny text-amber-300">{t("rdp.fsCipherNote")}</div>}
+              <label className="block text-caption text-slate-400">{t("rdp.note")}<input className={field} value={editing.note} onChange={(e) => patch("note", e.target.value)} /></label>
             </div>
             <div className="mt-4 flex justify-end gap-2">
               <button className={btn} onClick={() => setEditing(null)}>{t("rdp.cancel")}</button>
@@ -444,11 +445,11 @@ export default function RdpPanel() {
   if (manageVisible) return listView;
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col text-slate-200">
       {/* 这两个对话框必须在每个分支都渲染，否则在会话视图里点按钮只会改 state 而不出界面 */}
       {showTrusted && <TrustedHostsDialog onClose={() => setShowTrusted(false)} />}
       {showTerminalSettings && <TerminalSettingsDialog onClose={() => setShowTerminalSettings(false)} />}
-      {toast && <div className="mx-3 mt-2 rounded border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-tiny text-amber-200">{toast}</div>}
+      {toast && <div className="mx-3 mt-2 rounded border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-caption text-amber-200">{toast}</div>}
       <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2">
         <ConnectionSwitcher
           connections={list}
@@ -462,7 +463,7 @@ export default function RdpPanel() {
           }}
           onManage={() => setManageVisible(true)}
         />
-        <span className="text-micro text-slate-500">{t("tabs.hint")}</span>
+        <span className="text-tiny text-slate-500">{t("tabs.hint")}</span>
         <div className="ml-auto flex gap-1.5">
           <button className={btn} title={t("trust.title")} onClick={() => setShowTrusted(true)}><ShieldCheck className="h-3.5 w-3.5" /></button>
           <button className={btn} title={t("terminalSettings.title")} onClick={() => setShowTerminalSettings(true)}><Settings2 className="h-3.5 w-3.5" /></button>
@@ -485,7 +486,7 @@ export default function RdpPanel() {
           />
         </div>
       ) : (
-        <div className="flex flex-1 items-center justify-center text-tiny text-slate-500">{t("rdp.noSessions")}</div>
+        <div className="flex flex-1 items-center justify-center text-caption text-slate-500">{t("rdp.noSessions")}</div>
       )}
     </div>
   );
