@@ -1,5 +1,6 @@
 pub mod types;
 pub mod dirs;
+pub mod online_install;
 pub mod registry;
 pub mod scanner;
 pub mod commands;

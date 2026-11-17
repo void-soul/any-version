@@ -9,6 +9,8 @@ use tauri::Emitter;
 
 mod management;
 pub use management::*;
+mod version_control;
+pub use version_control::*;
 mod runtime_commands;
 pub use runtime_commands::*;
 mod cache_queries;

@@ -471,8 +471,8 @@ pub async fn upgrade_tool(project_id: String, app: tauri::AppHandle) -> Result<T
         }
     }
 
-    // Strategy 2: Check if tool has download_url_template - try to install latest version
-    if def.download_url_template.is_some() && def.remote_versions_config.is_some() {
+    // Strategy 2: 能装在线版本（模板/前缀映射/gh资产/npm/git 任一）→ 尝试装最新版
+    if crate::commands::project::online_install::supports_online_install(&def) {
         if let Ok(Some(version)) = fetch_latest_version(&def).await {
             if let Some(current_ver) = detect_current_version(&def) {
                 if is_newer(&version, &current_ver) {

@@ -39,6 +39,7 @@
   "version_exe": "redis-server",
   "download_file_ext": "zip",
   "version_url_prefix_map": {
+    "8.": "https://github.com/redis-windows/redis-windows/releases/download/{version}/Redis-{version}-Windows-x64-msys2.zip",
     "7.": "https://github.com/redis-windows/redis-windows/releases/download/{version}/Redis-{version}-Windows-x64-msys2.zip",
     "6.": "https://github.com/redis-windows/redis-windows/releases/download/{version}/Redis-{version}-Windows-x64-msys2.zip",
     "5.": "https://github.com/tporadowski/redis/releases/download/v{version}/Redis-x64-{version}.zip",

@@ -14,6 +14,7 @@ import type { ProjectStatus, ProjectDetail, ProjectDef, ManagePreview, ProjectDe
 import type { SubTabProps } from "./ProjectSubTabs";
 import { VersionsTab, EnvVarsTab, ServicesTab, PackageManagerTab, LegacyTab, DataDirsTab, ConfigTab } from "./ProjectSubTabs";
 import { ConfirmDialogHost } from "../shared/ConfirmDialog";
+import { ProjectInstallActions } from "./EnableVersionControlButton";
 import type { ConfirmRequest } from "../shared/ConfirmDialog";
 import { EMPTY_UI, baseTabKeys, ensureListeners, hasVersionSupportOf, type ProjectUIState, type Props, type SubTab } from "./ProjectDetailPanel.model";
 
@@ -514,12 +515,8 @@ export default function ProjectDetailPanel({
               {t("projdetail.simpleManagedHint")}
             </p>
           </div>
-          <button
-            onClick={handleSelectCustomPath}
-            className="px-5 py-2.5 bg-[var(--module-accent)] hover:bg-[var(--module-accent-strong)] text-white rounded-card text-body font-semibold shadow-lg shadow-[var(--module-accent-ring)] cursor-pointer transition-all flex items-center gap-1.5 hover:scale-[1.02] active:scale-[0.98]"
-          >
-            {"手动指定目录"}
-          </button>
+          <ProjectInstallActions id={pid} hasVersionSupport={hasVersionSupport}
+            onPickDir={handleSelectCustomPath} onDone={() => refreshSingle(pid)} />
         </div>
       ) : (
         <>

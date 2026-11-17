@@ -268,7 +268,7 @@ mod tests {
             .join("projects")
     }
 
-    fn load_all() -> Vec<ProjectDef> {
+    pub(crate) fn load_all() -> Vec<ProjectDef> {
         let dir = repo_projects_dir();
         assert!(dir.is_dir(), "未找到 projects 目录: {}", dir.display());
         load_from_dir(&dir).unwrap_or_else(|| {
