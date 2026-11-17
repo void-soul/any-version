@@ -93,13 +93,20 @@
     "pickConnection": "Select connection",
     "searchConnection": "Search name / host / user / group",
     "manageConnections": "Manage connections…",
-    "noSessions": "Pick a connection from the top-left to start"
+    "noSessions": "Pick a connection from the top-left to start",
+    "refreshed": "Connection list refreshed",
+    "kindSshShort": "SSH",
+    "kindRdpShort": "RDP",
+    "mapDrives": "Map local drives",
+    "mapDrivesHint": "Lets the remote session access your local disks (sets drivestoredirect in the .rdp file, same as FinalShell's drive option).",
+    "clipboard": "Share clipboard"
   },
   "tabs": {
     "hint": "Open multiple sessions at once; switching tabs keeps connections alive",
     "split": "Split view",
     "unsplit": "Exit split view",
-    "close": "Close session"
+    "close": "Close session",
+    "splitNeedsTwo": "Open at least two sessions to use split view"
   },
   "snippets": {
     "title": "Quick commands",
@@ -4093,7 +4100,9 @@
     "unmanaging": "Unmanaging...",
     "unmanage": "Unmanage",
     "managingBtn": "Managing...",
-    "manageProject": "Manage This Project"
+    "manageProject": "Manage This Project",
+    "enableVersionControl": "Enable online install",
+    "enableVersionControlDesc": "This project has an online version source. Enable it to download and install from the Versions tab instead of preparing a folder manually."
   },
   "picky": {
     "loadFail": "Load failed: {{err}}",
@@ -4660,13 +4669,6 @@
     "theme": "Theme",
     "themeDark": "Dark",
     "themeLight": "Light"
-  },
-  "connGroups": {
-    "title": "Groups",
-    "all": "All connections",
-    "ungrouped": "Ungrouped",
-    "expand": "Expand",
-    "collapse": "Collapse"
   },
   "groups": {
     "simpleTitle": "Simple mode",
@@ -6626,5 +6628,13 @@
     "clear": "Clear command history",
     "empty": "No commands yet",
     "run": "Run: {{cmd}}"
+  },
+  "folders": {
+    "create": "New folder",
+    "namePlaceholder": "Folder name",
+    "rename": "Rename folder",
+    "remove": "Delete folder",
+    "removeConfirm": "Delete folder '{{name}}'? Its connections move one level up and are not deleted.",
+    "hint": "Drag a connection or folder here to file it"
   }
 }

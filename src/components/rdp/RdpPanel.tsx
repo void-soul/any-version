@@ -5,10 +5,10 @@ import { useTranslation } from "react-i18next";
 import { Activity, Download, Eye, Files, FolderOpen, GitBranch, Monitor, Network, Pencil, Play, Plus, RefreshCw, Settings2, ShieldCheck, TerminalSquare, Trash2, Upload, X } from "lucide-react";
 import { TrustedHostsDialog } from "../ssh/TrustedHostsDialog";
 import { TerminalSettingsDialog } from "../ssh/TerminalSettingsDialog";
-import { GroupSidebar } from "./GroupSidebar";
+import { ConnectionTree } from "./ConnectionTree";
 import { SessionWorkspace } from "./SessionWorkspace";
 import { ConnectionSwitcher } from "./ConnectionSwitcher";
-import { buildGroups, filterConnections, groupOptions } from "./connectionGroups";
+import { normalizePath } from "./groupTree";
 import { ignoreInvokeError } from "../../utils/invokeOrReport";
 import { activateTab, closeTab, openTab, toggleSplit, type SessionKind, type TabsState } from "./sessionTabs";
 
@@ -16,7 +16,7 @@ interface RdpConnection {
   id: string; name: string; host: string; port: number; kind: string; username: string;
   password: string | null; finalshellCipher: string | null; finalshellRaw: string | null;
   authType: string; privateKeyPath: string; keyPassphrase: string;
-  domain: string; note: string; group: string; source: string; createdAt: number; updatedAt: number;
+  domain: string; mapDrives: boolean; clipboard: boolean; note: string; group: string; source: string; createdAt: number; updatedAt: number;
 }
 interface ImportReport { imported: number; skipped: number; failed: number; messages: string[] }
 
@@ -24,7 +24,8 @@ const emptyConn = (): RdpConnection => ({
   id: "", name: "", host: "", port: 3389, kind: "rdp", username: "", password: null,
   finalshellCipher: null, finalshellRaw: null,
   authType: "password", privateKeyPath: "", keyPassphrase: "",
-  domain: "", note: "", group: "", source: "local", createdAt: 0, updatedAt: 0,
+  // 驱动器映射与剪贴板默认开启（对齐 FinalShell）
+  domain: "", mapDrives: true, clipboard: true, note: "", group: "", source: "local", createdAt: 0, updatedAt: 0,
 });
 
 /** 会话类型 → 标题后缀的 i18n key（终端不加后缀）。 */
@@ -46,6 +47,24 @@ export default function RdpPanel() {
   const [list, setList] = useState<RdpConnection[]>([]);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
+
+  // 提示需要有生命周期：否则「已刷新」这类提示会永久停在顶部
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(""), 4000);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  /** 刷新连接列表并给出可见反馈（原来的刷新成功时没有任何提示，看起来像没反应）。 */
+  const refreshWithToast = useCallback(async () => {
+    try {
+      setList(await invoke<RdpConnection[]>("rdp_list"));
+      setFolders(await invoke<string[]>("rdp_groups_list"));
+      setToast(t("rdp.refreshed"));
+    } catch (e) {
+      setToast(t("rdp.fail", { err: String(e) }));
+    }
+  }, [t]);
   const [editing, setEditing] = useState<RdpConnection | null>(null);
   const [passwordDraft, setPasswordDraft] = useState("");
   const [passphraseDraft, setPassphraseDraft] = useState("");
@@ -54,8 +73,8 @@ export default function RdpPanel() {
   const [manageVisible, setManageVisible] = useState(false);
   /** 同一主机多开终端时给 tab id 加序号，避免与已有会话冲突 */
   const sessionSeq = useRef(0);
-  const [groupFilter, setGroupFilter] = useState<string | null>(null);
-  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  /** 空文件夹清单（连接为空的文件夹只能靠它存在）。 */
+  const [folders, setFolders] = useState<string[]>([]);
   const [showTrusted, setShowTrusted] = useState(false);
   const [showTerminalSettings, setShowTerminalSettings] = useState(false);
   const [keyList, setKeyList] = useState<string[]>([]);
@@ -65,7 +84,13 @@ export default function RdpPanel() {
     catch (e) { setToast(t("rdp.fail", { err: String(e) })); }
   }, [t]);
 
-  useEffect(() => { void load(); }, [load]);
+  /** 空文件夹清单与连接一起加载：只靠连接推导会丢掉没有内容的文件夹。 */
+  const loadFolders = useCallback(async () => {
+    try { setFolders(await invoke<string[]>("rdp_groups_list")); }
+    catch (e) { ignoreInvokeError(e, "文件夹清单加载失败不影响连接列表"); }
+  }, []);
+
+  useEffect(() => { void load(); void loadFolders(); }, [load, loadFolders]);
 
   const report = (r: ImportReport) => {
     const tail = r.messages.length ? ` · ${r.messages.join(" / ")}` : "";
@@ -163,13 +188,39 @@ export default function RdpPanel() {
     } catch (e) { setToast(t("rdp.fail", { err: String(e) })); }
   };
 
-  const moveToGroup = async (connId: string, group: string) => {
+  /** 拖拽连接 → 文件夹：只改这条连接的 `group` 路径。 */
+  const moveConnection = async (connId: string, folder: string) => {
     const target = list.find((c) => c.id === connId);
-    if (!target || target.group === group) return;
+    const next = normalizePath(folder);
+    if (!target || normalizePath(target.group) === next) return;
     try {
-      setList(await invoke<RdpConnection[]>("rdp_save", { conn: { ...target, group } }));
+      setList(await invoke<RdpConnection[]>("rdp_save", { conn: { ...target, group: next } }));
     } catch (e) { setToast(t("rdp.fail", { err: String(e) })); }
   };
+
+  type FolderState = { connections: RdpConnection[]; folders: string[] };
+  const applyFolderState = (state: FolderState) => {
+    setList(state.connections);
+    setFolders(state.folders);
+  };
+
+  const createFolder = async (path: string) => {
+    try { applyFolderState(await invoke<FolderState>("rdp_folder_create", { path })); }
+    catch (e) { setToast(t("rdp.fail", { err: String(e) })); }
+  };
+
+  const renameFolder = async (from: string, to: string) => {
+    try { applyFolderState(await invoke<FolderState>("rdp_folder_rename", { from, to })); }
+    catch (e) { setToast(t("rdp.fail", { err: String(e) })); }
+  };
+
+  const deleteFolder = async (path: string) => {
+    if (!window.confirm(t("folders.removeConfirm", { name: path }))) return;
+    try { applyFolderState(await invoke<FolderState>("rdp_folder_delete", { path })); }
+    catch (e) { setToast(t("rdp.fail", { err: String(e) })); }
+  };
+
+
 
   const revealPassword = async () => {
     if (!editing?.id || !editing.finalshellCipher) return;
@@ -203,7 +254,7 @@ export default function RdpPanel() {
       .then(setKeyList)
       .catch((e) => ignoreInvokeError(e, "密钥库列表加载失败不影响手动填写路径"));
   };
-  const patch = (key: keyof RdpConnection, value: string | number) =>
+  const patch = (key: keyof RdpConnection, value: string | number | boolean) =>
     setEditing((prev) => prev ? { ...prev, [key]: value } : prev);
 
   const changeKind = (kind: string) =>
@@ -254,7 +305,7 @@ export default function RdpPanel() {
           <button className={btn} disabled={busy} onClick={() => void exportFs()}><Download className="h-3.5 w-3.5" />{t("rdp.exportFs")}</button>
           <button className={btn} disabled={busy} onClick={() => void exportBackup()}>{t("rdp.exportBackup")}</button>
           <button className={btn} disabled={busy} onClick={() => void importBackup()}>{t("rdp.importBackup")}</button>
-          <button className={btn} disabled={busy} onClick={() => void load()}><RefreshCw className="h-3.5 w-3.5" />{t("rdp.refresh")}</button>
+          <button className={btn} disabled={busy} onClick={() => void refreshWithToast()}><RefreshCw className="h-3.5 w-3.5" />{t("rdp.refresh")}</button>
           <button className={btn} title={t("trust.title")} onClick={() => setShowTrusted(true)}><ShieldCheck className="h-3.5 w-3.5" /></button>
           <button className={btn} title={t("terminalSettings.title")} onClick={() => setShowTerminalSettings(true)}><Settings2 className="h-3.5 w-3.5" /></button>
         </div>
@@ -265,62 +316,37 @@ export default function RdpPanel() {
 
       {toast && <div className="rounded border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-tiny text-amber-200">{toast}</div>}
 
-      <div className="flex min-h-0 flex-1 gap-2">
-        <GroupSidebar
-          groups={buildGroups(list)}
-          total={list.length}
-          selected={groupFilter}
-          collapsed={collapsedGroups}
-          onSelect={setGroupFilter}
-          onToggle={(key) => setCollapsedGroups((prev) => ({ ...prev, [key]: !prev[key] }))}
-          onMove={(id, group) => void moveToGroup(id, group)}
-        />
-        <div className="min-h-0 flex-1 overflow-auto rounded border border-white/10">
-        <table className="w-full text-tiny">
-          <thead className="sticky top-0 bg-slate-900/90 text-slate-400">
-            <tr>
-              <th className="px-3 py-2 text-left">{t("rdp.kind")}</th>
-              <th className="px-3 py-2 text-left">{t("rdp.name")}</th>
-              <th className="px-3 py-2 text-left">{t("rdp.host")}</th>
-              <th className="px-3 py-2 text-left">{t("rdp.port")}</th>
-              <th className="px-3 py-2 text-left">{t("rdp.username")}</th>
-              <th className="px-3 py-2 text-left">{t("rdp.source")}</th>
-              <th className="px-3 py-2 text-left">{t("rdp.actions")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {list.length === 0 && <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-500">{t("rdp.empty")}</td></tr>}
-            {filterConnections(list, groupFilter).map((c) => (
-              <tr key={c.id} className="border-t border-white/5 hover:bg-white/5">
-                <td className="px-3 py-2 text-slate-400">{c.kind === "ssh" ? t("rdp.kindSsh") : t("rdp.kindRdp")}</td>
-                <td className="px-3 py-2"><div className="font-medium">{c.name}</div>{c.note && <div className="text-slate-500">{c.note}</div>}</td>
-                <td className="px-3 py-2">{c.host}</td>
-                <td className="px-3 py-2">{c.port}</td>
-                <td className="px-3 py-2">{c.username}</td>
-                <td className="px-3 py-2 text-slate-400">{c.source === "finalshell" ? t("rdp.fromFs") : t("rdp.fromLocal")}</td>
-                <td className="px-3 py-2">
-                  <div className="flex gap-1">
-                    {c.kind === "ssh" ? (
-                      <>
-                        <button className={btn} title={t("ssh.openTerminal")} onClick={() => openSession(c, "terminal")}><TerminalSquare className="h-3 w-3" /></button>
-                        <button className={btn} title={t("sftp.open")} onClick={() => openSession(c, "sftp")}><Files className="h-3 w-3" /></button>
-                        <button className={btn} title={t("forward.open")} onClick={() => openSession(c, "forward")}><GitBranch className="h-3 w-3" /></button>
-                        <button className={btn} title={t("ssh.process")} onClick={() => openSession(c, "process")}><Activity className="h-3 w-3" /></button>
-                        <button className={btn} title={t("ssh.netlinks")} onClick={() => openSession(c, "net")}><Network className="h-3 w-3" /></button>
-                      </>
-                    ) : (
-                      <button className={btn} title={t("rdp.launch")} onClick={() => void launch(c.id)}><Play className="h-3 w-3" /></button>
-                    )}
-                    <button className={btn} title={t("rdp.edit")} onClick={() => openEditor(c)}><Pencil className="h-3 w-3" /></button>
-                    <button className={btn} title={t("rdp.delete")} onClick={() => void remove(c.id)}><Trash2 className="h-3 w-3" /></button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        </div>
-      </div>
+      <ConnectionTree
+        connections={list}
+        folders={folders}
+        emptyText={t("rdp.empty")}
+        onMoveConnection={(id, folder) => void moveConnection(id, folder)}
+        onMoveFolder={(from, to) => void renameFolder(from, to)}
+        onRenameFolder={(from, to) => void renameFolder(from, to)}
+        onDeleteFolder={(path) => void deleteFolder(path)}
+        onCreateFolder={(path) => void createFolder(path)}
+        renderActions={(c) => {
+          const conn = list.find((item) => item.id === c.id);
+          if (!conn) return null;
+          return (
+            <div className="flex gap-1">
+              {conn.kind === "ssh" ? (
+                <>
+                  <button className={btn} title={t("ssh.openTerminal")} onClick={() => openSession(conn, "terminal")}><TerminalSquare className="h-3 w-3" /></button>
+                  <button className={btn} title={t("sftp.open")} onClick={() => openSession(conn, "sftp")}><Files className="h-3 w-3" /></button>
+                  <button className={btn} title={t("forward.open")} onClick={() => openSession(conn, "forward")}><GitBranch className="h-3 w-3" /></button>
+                  <button className={btn} title={t("ssh.process")} onClick={() => openSession(conn, "process")}><Activity className="h-3 w-3" /></button>
+                  <button className={btn} title={t("ssh.netlinks")} onClick={() => openSession(conn, "net")}><Network className="h-3 w-3" /></button>
+                </>
+              ) : (
+                <button className={btn} title={t("rdp.launch")} onClick={() => void launch(conn.id)}><Play className="h-3 w-3" /></button>
+              )}
+              <button className={btn} title={t("rdp.edit")} onClick={() => openEditor(conn)}><Pencil className="h-3 w-3" /></button>
+              <button className={btn} title={t("rdp.delete")} onClick={() => void remove(conn.id)}><Trash2 className="h-3 w-3" /></button>
+            </div>
+          );
+        }}
+      />
 
       {editing && (
         <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/70 p-4">
@@ -373,7 +399,26 @@ export default function RdpPanel() {
                 </>
               )}
               {editing.kind === "rdp" && (
-                <label className="block text-tiny text-slate-400">{t("rdp.domain")}<input className={field} value={editing.domain} onChange={(e) => patch("domain", e.target.value)} /></label>
+                <>
+                  <label className="block text-tiny text-slate-400">{t("rdp.domain")}<input className={field} value={editing.domain} onChange={(e) => patch("domain", e.target.value)} /></label>
+                  <label className="flex items-center gap-2 text-tiny text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={editing.mapDrives}
+                      onChange={(e) => patch("mapDrives", e.target.checked)}
+                    />
+                    {t("rdp.mapDrives")}
+                  </label>
+                  <label className="flex items-center gap-2 text-tiny text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={editing.clipboard}
+                      onChange={(e) => patch("clipboard", e.target.checked)}
+                    />
+                    {t("rdp.clipboard")}
+                  </label>
+                  <div className="text-micro text-slate-500">{t("rdp.mapDrivesHint")}</div>
+                </>
               )}
               <label className="block text-tiny text-slate-400">{t("rdp.password")}
                 <div className="flex gap-1">
@@ -384,12 +429,6 @@ export default function RdpPanel() {
                 </div>
               </label>
               {editing.finalshellCipher && <div className="text-micro text-amber-300">{t("rdp.fsCipherNote")}</div>}
-              <label className="block text-tiny text-slate-400">{t("rdp.group")}
-                <input className={field} list="rdp-group-options" value={editing.group} onChange={(e) => patch("group", e.target.value)} placeholder={t("rdp.groupPlaceholder")} />
-                <datalist id="rdp-group-options">
-                  {groupOptions(list).map((g) => <option key={g} value={g} />)}
-                </datalist>
-              </label>
               <label className="block text-tiny text-slate-400">{t("rdp.note")}<input className={field} value={editing.note} onChange={(e) => patch("note", e.target.value)} /></label>
             </div>
             <div className="mt-4 flex justify-end gap-2">
@@ -406,6 +445,10 @@ export default function RdpPanel() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {/* 这两个对话框必须在每个分支都渲染，否则在会话视图里点按钮只会改 state 而不出界面 */}
+      {showTrusted && <TrustedHostsDialog onClose={() => setShowTrusted(false)} />}
+      {showTerminalSettings && <TerminalSettingsDialog onClose={() => setShowTerminalSettings(false)} />}
+      {toast && <div className="mx-3 mt-2 rounded border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-tiny text-amber-200">{toast}</div>}
       <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2">
         <ConnectionSwitcher
           connections={list}
@@ -423,7 +466,7 @@ export default function RdpPanel() {
         <div className="ml-auto flex gap-1.5">
           <button className={btn} title={t("trust.title")} onClick={() => setShowTrusted(true)}><ShieldCheck className="h-3.5 w-3.5" /></button>
           <button className={btn} title={t("terminalSettings.title")} onClick={() => setShowTerminalSettings(true)}><Settings2 className="h-3.5 w-3.5" /></button>
-          <button className={btn} onClick={() => void load()}><RefreshCw className="h-3.5 w-3.5" /></button>
+          <button className={btn} title={t("rdp.refresh")} onClick={() => void refreshWithToast()}><RefreshCw className="h-3.5 w-3.5" /></button>
         </div>
       </div>
       {hasTabs ? (
@@ -434,6 +477,7 @@ export default function RdpPanel() {
             onActivate={(id) => setTabs((prev) => activateTab(prev, id))}
             onClose={(id) => setTabs((prev) => closeTab(prev, id))}
             onToggleSplit={() => setTabs((prev) => toggleSplit(prev))}
+            onSplitBlocked={() => setToast(t("tabs.splitNeedsTwo"))}
             onOpenMonitor={(connectionId, view) => {
               const conn = list.find((item) => item.id === connectionId);
               if (conn) openSession(conn, view);

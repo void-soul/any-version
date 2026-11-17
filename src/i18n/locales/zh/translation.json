@@ -93,13 +93,20 @@
     "pickConnection": "选择连接",
     "searchConnection": "搜索名称 / 主机 / 用户 / 分组",
     "manageConnections": "管理连接…",
-    "noSessions": "从左上角选择一个连接开始"
+    "noSessions": "从左上角选择一个连接开始",
+    "refreshed": "已刷新连接列表",
+    "kindSshShort": "SSH",
+    "kindRdpShort": "RDP",
+    "mapDrives": "映射本地驱动器",
+    "mapDrivesHint": "开启后远程会话里能直接访问本机磁盘（对应 .rdp 的 drivestoredirect，与 FinalShell 的「驱动器」一致）。",
+    "clipboard": "共享剪贴板"
   },
   "tabs": {
     "hint": "可同时打开多个会话；标签切换不会断开连接",
     "split": "左右分屏",
     "unsplit": "取消分屏",
-    "close": "关闭会话"
+    "close": "关闭会话",
+    "splitNeedsTwo": "至少打开两个会话才能分屏"
   },
   "snippets": {
     "title": "快捷命令",
@@ -4099,7 +4106,9 @@
     "unmanaging": "取消托管中...",
     "unmanage": "取消托管",
     "managingBtn": "托管中...",
-    "manageProject": "托管此项目"
+    "manageProject": "托管此项目",
+    "enableVersionControl": "开启在线下载",
+    "enableVersionControlDesc": "该项目已配置在线版本来源。开启后可在「版本」页直接下载安装，无需手动准备目录。"
   },
   "picky": {
     "loadFail": "加载失败：{{err}}",
@@ -4660,13 +4669,6 @@
     "theme": "主题",
     "themeDark": "深色",
     "themeLight": "浅色"
-  },
-  "connGroups": {
-    "title": "分组",
-    "all": "全部连接",
-    "ungrouped": "未分组",
-    "expand": "展开",
-    "collapse": "收起"
   },
   "groups": {
     "simpleTitle": "简易模式",
@@ -6554,5 +6556,13 @@
     "clear": "清空命令缓存",
     "empty": "还没有执行过命令",
     "run": "执行：{{cmd}}"
+  },
+  "folders": {
+    "create": "新建文件夹",
+    "namePlaceholder": "文件夹名称",
+    "rename": "重命名文件夹",
+    "remove": "删除文件夹",
+    "removeConfirm": "删除文件夹「{{name}}」？里面的连接会移到上一级，连接本身不会被删除。",
+    "hint": "把连接或文件夹拖进去即可归类"
   }
 }

@@ -71,7 +71,7 @@
         {
           "file": "src-tauri/src/app_commands.rs",
           "from": 883,
-          "to": 922
+          "to": 928
         }
       ]
     }
@@ -251,7 +251,7 @@
     },
     {
       "file": "src-tauri/src/app_commands.rs",
-      "lines": 922
+      "lines": 928
     },
     {
       "file": "src-tauri/src/commands/ai/codex_plugins.rs",

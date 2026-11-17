@@ -102,6 +102,7 @@ pub(crate) fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         commands::project::commands::project_detail,
         commands::project::commands::project_preview_manage,
         commands::project::commands::project_manage,
+        commands::project::commands::project_enable_version_control,
         commands::project::commands::project_repair_env_vars,
         commands::project::commands::project_get_github_token,
         commands::project::commands::project_set_github_token,
@@ -869,6 +870,10 @@ pub(crate) fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         // ---- Windows 远程桌面连接（FinalShell 密码密文透传，不解密） ----
         commands::rdp::rdp_list,
         commands::rdp::rdp_save,
+        commands::rdp::rdp_groups_list,
+        commands::rdp::rdp_folder_create,
+        commands::rdp::rdp_folder_rename,
+        commands::rdp::rdp_folder_delete,
         commands::rdp::rdp_delete,
         commands::rdp::rdp_import_finalshell,
         commands::rdp::rdp_export_finalshell,

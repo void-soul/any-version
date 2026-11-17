@@ -27,18 +27,21 @@ function kindIcon(kind: SessionTab["kind"]) {
  * 终端占主区，右侧常驻「服务器状态 + 命令缓存」，下方可展开文件管理。
  * 所有标签都保持挂载（只隐藏非可见项），否则切换标签会断开 SSH 会话。
  */
-export function SessionWorkspace({ state, titleFor, onActivate, onClose, onToggleSplit, onOpenMonitor }: {
+export function SessionWorkspace({ state, titleFor, onActivate, onClose, onToggleSplit, onSplitBlocked, onOpenMonitor }: {
   state: TabsState;
   titleFor: (tab: SessionTab) => string;
   onActivate: (id: string) => void;
   onClose: (id: string) => void;
   onToggleSplit: () => void;
+  /** 会话数不足两个时点击分屏的反馈（禁用按钮的「没反应」用户看不出来） */
+  onSplitBlocked?: () => void;
   /** 从状态面板/底部按钮打开进程或网络列表 */
   onOpenMonitor?: (connectionId: string, view: "process" | "net") => void;
 }) {
   const { t } = useTranslation();
   const visible = new Set(splitTabs(state).map((t) => t.id));
   const split = Boolean(state.splitId);
+  const canSplit = state.tabs.length >= 2;
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [bottomTab, setBottomTab] = useState<Record<string, "files" | "snippets" | undefined>>({});
   const [history, setHistory] = useState<Record<string, string[]>>({});
@@ -73,10 +76,10 @@ export function SessionWorkspace({ state, titleFor, onActivate, onClose, onToggl
           </div>
         ))}
         <button
-          className={`${iconBtn} mb-1 ml-1`}
-          title={split ? t("tabs.unsplit") : t("tabs.split")}
-          disabled={state.tabs.length < 2}
-          onClick={onToggleSplit}
+          className={`${iconBtn} mb-1 ml-1 ${canSplit ? "" : "opacity-50"}`}
+          title={canSplit ? (split ? t("tabs.unsplit") : t("tabs.split")) : t("tabs.splitNeedsTwo")}
+          aria-disabled={!canSplit}
+          onClick={() => (canSplit ? onToggleSplit() : onSplitBlocked?.())}
         >
           <Columns2 className={`h-4 w-4 ${split ? "text-sky-400" : ""}`} />
         </button>
